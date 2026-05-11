@@ -5,6 +5,7 @@
 	import { AppStore, provideAppStore } from '$lib/stores/app-store.svelte';
 	import { PipelineRepository } from '$lib/services/pipeline-repository';
 	import { TauriAudioService } from '$lib/services/audio-service';
+    import {themeStore} from "$lib/stores/theme";
 
 	let { children } = $props();
 
@@ -29,6 +30,37 @@
 	});
 
 	onDestroy(() => unlisten?.());
+
+    // import { onNavigate } from '$app/navigation'
+    //
+    // // Transition API
+    // onNavigate((navigation) => {
+    //     if (!document.startViewTransition) return
+    //
+    //     return new Promise((resolve) => {
+    //         document.startViewTransition(async () => {
+    //             resolve()
+    //             await navigation.complete
+    //         })
+    //     })
+    // })
+
+    // if (browser) {
+    //     if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    //         document.documentElement.classList.add('dark')
+    //     } else {
+    //         document.documentElement.classList.remove('dark')
+    //     }
+    // }
+
+    import Header from '$lib/components/layout/header.svelte';
+    import { setContext } from 'svelte';
+
+    let header;
+
+    setContext('header', header);
 </script>
 
-{@render children()}
+<main>
+    {@render children()}
+</main>

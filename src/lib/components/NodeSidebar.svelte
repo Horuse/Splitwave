@@ -16,18 +16,18 @@
 	}
 </script>
 
-<aside class="w-56 shrink-0 border-l bg-gray-50 p-3">
-	<h2 class="mb-3 text-xs font-semibold tracking-wide text-gray-500 uppercase">Nodes</h2>
-	<ul class="space-y-2">
+<aside class="w-64 shrink-0 flex flex-col gap-3 border-l border-neutral-200 bg-background p-4">
+	<h2 class="text-xs font-semibold tracking-wide text-neutral-800 uppercase">Nodes</h2>
+	<ul class="flex flex-col gap-2">
 		{#each nodeKinds as kind (kind)}
 			<li
 				draggable="true"
 				ondragstart={(e) => onDragStart(e, kind)}
-				class="flex items-center justify-between rounded-md border bg-white p-2 text-sm shadow-sm hover:bg-gray-50"
+				class="bg-neutral-100 p-3 rounded-xl"
 			>
 				<span>{nodeRegistry[kind].label}</span>
 				<button
-					class="rounded px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100"
+					class="rounded px-2 py-0.5 text-xs text-neutral-800 hover:bg-gray-100"
 					onclick={() => onClickAdd(kind)}
 					aria-label={`Add ${nodeRegistry[kind].label}`}
 				>
@@ -36,5 +36,5 @@
 			</li>
 		{/each}
 	</ul>
-	<p class="mt-3 text-xs text-gray-400">Click + to add, or drag onto canvas</p>
+	<p class="mt-3 text-xs text-neutral-800">Click + to add, or drag onto canvas</p>
 </aside>

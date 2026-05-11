@@ -5,7 +5,6 @@ import type { AudioDevice } from '$lib/domain/device';
 import { PipelineRepository } from '$lib/services/pipeline-repository';
 import { TauriAudioService } from '$lib/services/audio-service';
 
-// Single rune-store for the demo. Splits when there's a reason to split.
 export class AppStore {
 	pipelines = $state<Pipeline[]>([]);
 	inputDevices = $state<AudioDevice[]>([]);

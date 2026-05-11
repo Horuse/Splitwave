@@ -106,7 +106,7 @@
 	ondragover={onDragOver}
 	ondrop={onDrop}
 >
-	<SvelteFlow bind:nodes bind:edges nodeTypes={xyNodeTypes} onconnect={onConnect} fitView>
+	<SvelteFlow class="!bg-background" bind:nodes bind:edges nodeTypes={xyNodeTypes} onconnect={onConnect} fitView>
 		<Background />
 		<Controls />
 	</SvelteFlow>

@@ -27,16 +27,21 @@
 			}
 		})();
 	});
+
+	import Header from '$lib/components/layout/header.svelte';
 </script>
 
-<div class="flex h-screen flex-col">
-	<header class="flex items-center justify-between border-b bg-white px-4 py-2">
+<Header>
+	{#snippet left()}
 		<div class="flex items-center gap-3">
-			<a href="/" class="text-sm text-gray-600 hover:underline">← Back</a>
+			<a href="/" class="text-sm button-header px-4">← Back</a>
 			{#if pipeline}
-				<h1 class="font-medium">{pipeline.name}</h1>
+				<input value={pipeline.name} class="input-base">
 			{/if}
 		</div>
+	{/snippet}
+
+	{#snippet right()}
 		<div class="flex items-center gap-3">
 			{#if store.lastError}
 				<span class="text-xs text-red-600">{store.lastError}</span>
@@ -45,8 +50,10 @@
 				<ActivationButton />
 			{/if}
 		</div>
-	</header>
+	{/snippet}
+</Header>
 
+<div class="flex h-screen w-full">
 	{#if notFound}
 		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
 	{:else if pipeline}

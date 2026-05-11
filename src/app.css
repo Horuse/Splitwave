@@ -1,1 +1,92 @@
 @import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --color-theme: black;
+    --color-background: oklch(0.99 0 0);
+    --color-primary: oklch(79.5% 0.184 86.047);
+
+    --color-contrast: oklch(0 0 0); /* куди йде шкала */
+
+    --color-neutral-50:  color-mix(in oklch, var(--color-contrast) 2.5%, var(--color-background));
+    --color-neutral-100: color-mix(in oklch, var(--color-contrast) 5%, var(--color-background));
+    --color-neutral-200: color-mix(in oklch, var(--color-contrast) 10%, var(--color-background));
+    --color-neutral-300: color-mix(in oklch, var(--color-contrast) 15%, var(--color-background));
+    --color-neutral-400: color-mix(in oklch, var(--color-contrast) 20%, var(--color-background));
+    --color-neutral-500: color-mix(in oklch, var(--color-contrast) 25%, var(--color-background));
+    --color-neutral-600: color-mix(in oklch, var(--color-contrast) 30%, var(--color-background));
+    --color-neutral-700: color-mix(in oklch, var(--color-contrast) 35%, var(--color-background));
+    --color-neutral-750: color-mix(in oklch, var(--color-contrast) 40%, var(--color-background));
+    --color-neutral-800: color-mix(in oklch, var(--color-contrast) 45%, var(--color-background));
+    --color-neutral-900: color-mix(in oklch, var(--color-contrast) 50%, var(--color-background));
+    --color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
+    --color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
+    --color-neutral-1200: color-mix(in oklch, var(--color-contrast) 80%, var(--color-background));
+}
+
+.dark {
+    --color-theme: white;
+    --color-background: oklch(0.28 0 0);
+    --color-primary: oklch(79.5% 0.184 86.047);
+
+    --color-contrast: oklch(1 0 0);
+}
+
+@layer base {
+    body {
+        @apply bg-background text-theme;
+    }
+
+    button {
+        @apply cursor-pointer;
+    }
+}
+
+@layer components {
+    .button-header {
+        @apply bg-neutral-200 hover:bg-neutral-300 hover:text-theme transition-all text-neutral-900 rounded-lg h-6.5 flex justify-center items-center;
+    }
+
+    .button-main {
+        @apply flex items-center justify-center rounded-2xl border px-4 py-1 font-medium;
+        @apply transition-all duration-500;
+
+        @variant hover {
+            @apply scale-[1.010];
+        }
+
+        @variant disabled {
+            @apply hover:scale-100 opacity-50 cursor-not-allowed;
+        }
+    }
+
+    .button-main.primary {
+        @apply border-neutral-400 bg-neutral-200 text-neutral-1000;
+
+        @variant hover {
+            @apply border-neutral-500 bg-neutral-300 text-neutral-1100;
+        }
+    }
+
+    .button-main.red {
+        @apply border-red-500/40 bg-red-500/40 text-red-800;
+
+        @variant hover {
+            @apply border-red-500/50 bg-red-500/50 text-red-900;
+        }
+
+        @variant dark {
+            @apply text-red-200 hover:text-red-100
+        }
+
+        @variant disabled {
+            @apply bg-primary border-theme/20 text-neutral-500;
+        }
+    }
+
+
+    .input-base {
+        @apply focus:outline-none px-2.5 bg-neutral-100 hover:bg-neutral-200 hover:text-theme transition-all text-neutral-800 rounded-lg h-6.5 flex justify-center items-center;
+    }
+}

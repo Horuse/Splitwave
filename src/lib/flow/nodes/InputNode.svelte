@@ -15,10 +15,10 @@
 	}
 </script>
 
-<div class="min-w-[200px] rounded-md border border-gray-300 bg-white p-3 shadow-sm">
+<div class="size-32 border-0 rounded-md bg-neutral-300 p-3">
 	<div class="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">Input</div>
 	<select
-		class="w-full rounded border px-2 py-1 text-sm"
+		class="w-full input-base rounded border px-2 py-1 text-sm"
 		value={data.deviceId ?? ''}
 		onchange={onChange}
 	>

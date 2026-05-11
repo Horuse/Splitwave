@@ -31,7 +31,7 @@
 </script>
 
 <button
-	class="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+	class="button-header px-4"
 	class:bg-green-600={!store.isRunning}
 	class:text-white={!store.isRunning}
 	class:bg-red-600={store.isRunning}

@@ -14,9 +14,12 @@
 	},
 	"license": "MIT",
 	"dependencies": {
+		"@paralleldrive/cuid2": "^3.3.0",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tauri-apps/api": "^2",
 		"@tauri-apps/plugin-opener": "^2",
+		"@tauri-apps/plugin-store": "^2.4.3",
+		"@xyflow/svelte": "^1.5.2",
 		"prettier-plugin-svelte": "^3.5.2",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"tailwindcss": "^4.3.0"

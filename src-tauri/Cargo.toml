@@ -39,6 +39,7 @@ cpal = "0.15"
 rtrb = "0.3"
 rubato = "0.16"
 hound = "3.5"
+base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -47,9 +48,12 @@ embed_plist = "1.2"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
     "NSArray", "NSString", "NSEnumerator", "NSError", "NSObject",
-    "NSObjCRuntime", "NSDictionary", "NSValue"
+    "NSObjCRuntime", "NSDictionary", "NSValue", "NSData"
 ] }
-objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSWorkspace", "NSRunningApplication",
+    "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics"
+] }
 # SCK integration uses a hand-rolled Swift static library at `native/`,
 # compiled by build.rs (direct `swiftc`, no SwiftPM). The screencapturekit
 # crate is rejected here because its build.rs uses `swift build` which fails

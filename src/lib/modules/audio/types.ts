@@ -11,7 +11,17 @@ export interface AudioDevice {
 export interface AudioApplication {
 	bundleId: string;
 	name: string;
+	/** Base64-encoded PNG icon (data URL body, no scheme prefix). */
+	icon?: string | null;
 }
+
+export interface NativeDeviceInfo {
+	sampleRate: number;
+	channels: number;
+	sampleFormat: string;
+}
+
+export type PermissionState = 'allowed' | 'denied' | 'unknown';
 
 export type AudioStateEvent =
 	| { kind: 'started' }

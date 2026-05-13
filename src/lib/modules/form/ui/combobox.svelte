@@ -4,6 +4,8 @@
 	interface Option {
 		value: string;
 		label: string;
+		/** Optional base64-encoded PNG (no data: prefix); rendered as a 16×16 icon. */
+		icon?: string | null;
 	}
 
 	interface Props {
@@ -88,8 +90,13 @@
 		class="nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
 		onclick={() => (open ? closePanel() : openPanel())}
 	>
-		<span class="truncate {selected ? '' : 'text-neutral-900'}">
-			{selected?.label ?? placeholder}
+		<span class="flex min-w-0 flex-1 items-center gap-1.5">
+			{#if selected?.icon}
+				<img src="data:image/png;base64,{selected.icon}" alt="" class="h-4 w-4 shrink-0" />
+			{/if}
+			<span class="truncate {selected ? '' : 'text-neutral-900'}">
+				{selected?.label ?? placeholder}
+			</span>
 		</span>
 		<svg viewBox="0 0 12 12" class="h-3 w-3 shrink-0 opacity-60" aria-hidden="true">
 			<path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -126,14 +133,17 @@
 						<button
 							type="button"
 							class={[
-								'block w-full px-2 py-1 text-left text-sm',
+								'flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm',
 								i === activeIndex ? 'bg-neutral-200 text-neutral-1000' : 'hover:bg-neutral-200',
 								opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
 							]}
 							onmouseenter={() => (activeIndex = i)}
 							onclick={() => pick(opt)}
 						>
-							{opt.label}
+							{#if opt.icon}
+								<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
+							{/if}
+							<span class="truncate">{opt.label}</span>
 						</button>
 					</li>
 				{/each}

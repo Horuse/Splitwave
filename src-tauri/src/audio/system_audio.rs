@@ -1,7 +1,3 @@
-//! NSWorkspace-backed enumeration of running applications used to populate the
-//! "App Audio" picker. Actual audio capture lives in `audio/sck_capture.rs`
-//! (Swift bridge to ScreenCaptureKit).
-
 use serde::Serialize;
 
 use crate::error::AppResult;
@@ -11,6 +7,8 @@ pub struct AudioApplication {
     #[serde(rename = "bundleId")]
     pub bundle_id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -27,7 +25,11 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
 mod macos {
     use std::collections::HashSet;
 
-    use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSRunningApplication, NSWorkspace,
+    };
+    use objc2_foundation::NSDictionary;
 
     use super::AudioApplication;
 
@@ -44,10 +46,10 @@ mod macos {
             // Dedupe — multiple `NSRunningApplication` entries can share a bundle id
             // (helpers, login items). The user just wants one entry per app.
             if seen.insert(bundle_id.clone()) {
-                out.push(AudioApplication { bundle_id, name });
+                let icon = icon_png_b64(&app);
+                out.push(AudioApplication { bundle_id, name, icon });
             }
         }
-        // Sort by display name for predictable UI ordering.
         out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         out
     }
@@ -58,5 +60,17 @@ mod macos {
 
     fn localized_name(app: &NSRunningApplication) -> Option<String> {
         app.localizedName().map(|s| s.to_string())
+    }
+
+    // NSImage → TIFF → NSBitmapImageRep is the only Cocoa path to PNG encoding.
+    fn icon_png_b64(app: &NSRunningApplication) -> Option<String> {
+        let img: objc2::rc::Retained<NSImage> = app.icon()?;
+        let tiff = img.TIFFRepresentation()?;
+        let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+        let empty_props = NSDictionary::new();
+        let png = unsafe {
+            rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &empty_props)
+        }?;
+        Some(STANDARD.encode(png.to_vec()))
     }
 }

@@ -24,9 +24,13 @@ pub fn run() {
             commands::list_input_devices,
             commands::list_output_devices,
             commands::list_audio_applications,
+            commands::device_info,
+            commands::check_screen_recording_permission,
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::update_effect,
+            commands::get_device_volume,
+            commands::set_device_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

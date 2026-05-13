@@ -65,19 +65,15 @@
 				role="img"
 				aria-label="Transfer curve preview"
 			>
-				<!-- Axis crosshair through origin -->
 				<line x1={xPx(0)} y1="0" x2={xPx(0)} y2={CURVE_H} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
 				<line x1="0" y1={yPx(0)} x2={CURVE_W} y2={yPx(0)} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
-				<!-- y = x unity reference -->
 				<line
 					x1={xPx(X_MIN)} y1={yPx(X_MIN)}
 					x2={xPx(X_MAX)} y2={yPx(X_MAX)}
 					stroke="rgb(163 163 163)" stroke-width="0.4" stroke-dasharray="1 2"
 				/>
-				<!-- Ceiling lines (±) — show where output is clamped -->
 				<line x1="0" y1={ceilingY()} x2={CURVE_W} y2={ceilingY()} stroke="rgb(239 68 68)" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.5" />
 				<line x1="0" y1={ceilingYNeg()} x2={CURVE_W} y2={ceilingYNeg()} stroke="rgb(239 68 68)" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.5" />
-				<!-- Curve -->
 				<path d={curvePath(data.thresholdDb, data.driveDb)} stroke="rgb(245 158 11)" stroke-width="1.2" fill="none" />
 			</svg>
 			<div class="flex flex-col gap-0.5 text-[9px] text-neutral-900">

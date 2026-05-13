@@ -6,6 +6,7 @@ pub mod format;
 pub mod graph;
 #[cfg(target_os = "macos")]
 pub mod macos_hal;
+pub mod permission;
 pub mod pipeline;
 pub mod recorder;
 pub mod resample;

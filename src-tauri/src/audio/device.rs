@@ -1,27 +1,76 @@
 use std::collections::HashSet;
 
 use cpal::traits::{DeviceTrait, HostTrait};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
 #[cfg(target_os = "macos")]
 use crate::audio::macos_hal;
 
-/// Direction of an audio device endpoint.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Input,
     Output,
 }
 
-/// Lightweight DTO sent to the frontend.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
     pub kind: DeviceKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeDeviceInfo {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub sample_format: &'static str,
+}
+
+#[cfg(target_os = "macos")]
+pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> {
+    let hal = match kind {
+        DeviceKind::Input => macos_hal::find_input_device(name),
+        DeviceKind::Output => macos_hal::find_output_device(name),
+    }
+    .ok_or_else(|| AppError::Device(format!("device not found: {name}")))?;
+    let channels: u16 = hal
+        .channels
+        .try_into()
+        .map_err(|_| AppError::Device(format!("device {name:?} has {} channels", hal.channels)))?;
+    Ok(NativeDeviceInfo {
+        sample_rate: hal.sample_rate,
+        channels,
+        sample_format: "f32",
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> {
+    let device = find(kind, name)?;
+    let configs: Vec<cpal::SupportedStreamConfigRange> = match kind {
+        DeviceKind::Input => device
+            .supported_input_configs()
+            .map_err(|e| AppError::Device(e.to_string()))?
+            .collect(),
+        DeviceKind::Output => device
+            .supported_output_configs()
+            .map_err(|e| AppError::Device(e.to_string()))?
+            .collect(),
+    };
+    let best = configs
+        .into_iter()
+        .max_by_key(|c| c.max_sample_rate().0)
+        .ok_or_else(|| AppError::Device("device exposes no configs".into()))?
+        .with_max_sample_rate();
+    Ok(NativeDeviceInfo {
+        sample_rate: best.sample_rate().0,
+        channels: best.channels(),
+        sample_format: "f32",
+    })
 }
 
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
@@ -87,15 +136,8 @@ fn unique_named(names: Vec<String>, kind: DeviceKind) -> Vec<DeviceInfo> {
         .collect()
 }
 
-/// Find a cpal device by name. We match purely on name — the cpal `Device` is
-/// only used to build the stream (AUHAL on macOS), which doesn't need to know
-/// or query the device's "current" config. Native sample rate and channel
-/// count are resolved separately via the HAL layer on macOS.
-///
-/// We use `host.devices()` (every AudioDeviceID) rather than `output_devices()`
-/// / `input_devices()` because those filter through cpal's active-format probe,
-/// which silently drops non-default routes (e.g. internal speakers while
-/// headphones are connected).
+/// `host.devices()` (not `output_devices()`): avoids cpal's active-format
+/// probe that drops non-default routes.
 pub fn find(_kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     let host = cpal::default_host();
     host.devices()

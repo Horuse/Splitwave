@@ -61,7 +61,7 @@
 		try {
 			await openPath(dirname(data.filePath));
 		} catch {
-			// not all hosts succeed — silent fail is fine for a convenience action
+			// silent fail
 		}
 	}
 
@@ -84,15 +84,14 @@
 		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 	}
 
-	// WAV PCM 32-bit float stereo → 4 bytes × 2 channels per frame, plus a tiny
-	// 44-byte RIFF header (negligible at any nontrivial duration).
+	// f32 stereo = 8 bytes/frame; +44 for the RIFF header.
 	let bytesPerFrame = 4 * 2;
 	let estimatedSize = $derived(frames * bytesPerFrame + 44);
 	let durationSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 </script>
 
 <Wrapper label="File Recording" accent="output" hasInput>
-	<div class="flex w-50 flex-col gap-1.5">
+	<div class="flex w-64 flex-col gap-1.5">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"
 			title={data.filePath ?? undefined}

@@ -26,7 +26,11 @@
 	}
 
 	let options = $derived(
-		audioStore.audioApplications.map((a) => ({ value: a.bundleId, label: a.name }))
+		audioStore.audioApplications.map((a) => ({
+			value: a.bundleId,
+			label: a.name,
+			icon: a.icon ?? null
+		}))
 	);
 	let missing = $derived(
 		!!data.bundleId && !audioStore.audioApplications.some((a) => a.bundleId === data.bundleId)
@@ -34,7 +38,7 @@
 </script>
 
 <Wrapper label="App Audio" accent="input" hasOutput>
-	<div class="flex w-50 flex-col gap-1">
+	<div class="flex w-64 flex-col gap-1">
 		<p class="text-[11px] text-neutral-900">
 			Capture audio from a specific running app (ScreenCaptureKit, macOS 13+).
 		</p>

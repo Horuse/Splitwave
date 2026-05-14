@@ -7,8 +7,8 @@ pub mod graph;
 #[cfg(target_os = "macos")]
 pub mod macos_hal;
 pub mod permission;
+pub mod encoders;
 pub mod pipeline;
-pub mod recorder;
 pub mod resample;
 #[cfg(target_os = "macos")]
 pub mod sck_capture;

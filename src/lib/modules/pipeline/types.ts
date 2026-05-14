@@ -33,8 +33,23 @@ export interface SpeakerNodeData extends Record<string, unknown> {
 	deviceId: string | null;
 }
 
+export type WavBitDepth = 'f32' | 'i24' | 'i16';
+export type FlacBitDepth = 'i24' | 'i16';
+export type FlacCompression = 'fast' | 'default' | 'best';
+export type OpusApplication = 'audio' | 'voip' | 'low-delay';
+export type AiffBitDepth = 'i24' | 'i16';
+
+export type RecordingFormat =
+	| { kind: 'wav'; bitDepth: WavBitDepth }
+	| { kind: 'flac'; bitDepth: FlacBitDepth; compression: FlacCompression }
+	| { kind: 'opus'; bitrate: number; application: OpusApplication }
+	| { kind: 'mp3'; bitrateKbps: number }
+	| { kind: 'aac'; bitrate: number }
+	| { kind: 'aiff'; bitDepth: AiffBitDepth };
+
 export interface FileRecordingNodeData extends Record<string, unknown> {
 	filePath: string | null;
+	format: RecordingFormat;
 }
 
 export interface GainNodeData extends Record<string, unknown> {

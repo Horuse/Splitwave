@@ -7,7 +7,7 @@
 //!   sources + effects reachable backward from that output. A `DspWorker`
 //!   thread mixes one block per real-time deadline and hands it off to:
 //!     * Speaker: a stereo SPSC ring that the cpal output callback drains.
-//!     * File: a crash-resistant `WavRecorder` (patches header on each flush).
+//!     * File: a `Box<dyn AudioEncoder>` (WAV / FLAC / …).
 //! - Effects with multiple incoming edges act as mixer-buses (sum first,
 //!   then apply DSP). Effects are constrained to at most one outgoing edge
 //!   in the validator.
@@ -29,10 +29,10 @@ use crate::audio::device::{self, DeviceKind};
 use crate::audio::effects::{
     instantiate_effect, EffectControl, EffectRegistry, LufsHandle, MeterHandle, RuntimeEffect,
 };
+use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{
-    EdgeKind, InputSpec, OutputSpec, ValidGraph, ValidInput, ValidOutput,
+    EdgeKind, InputSpec, OutputSpec, RecordingFormat, ValidGraph, ValidInput, ValidOutput,
 };
-use crate::audio::recorder::WavRecorder;
 use crate::audio::resample::StereoResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
@@ -92,6 +92,21 @@ impl ActivePipeline {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
         }
+    }
+}
+
+impl Drop for ActivePipeline {
+    fn drop(&mut self) {
+        // Stop inputs first (no new samples), then signal every recorder at
+        // once so their files cover the same wall-clock window — joining them
+        // sequentially would let later workers keep recording during earlier
+        // workers' finalize.
+        self._input_streams.clear();
+        self._speaker_streams.clear();
+        for w in &self._workers {
+            w.stop.store(true, Ordering::SeqCst);
+        }
+        self._workers.clear();
     }
 }
 
@@ -502,17 +517,19 @@ pub fn build(graph: &ValidGraph, app: AppHandle) -> AppResult<ActivePipeline> {
         }
     }
 
-    // File recorders use the highest source SR feeding them so the WAV never
-    // carries a downsampled signal.
+    // Recorders run at max-source SR — except Opus/MP3 which restrict legal SR.
     let mut output_runtime: HashMap<String, ResolvedOutput> = HashMap::new();
     for out in &graph.outputs {
-        let file_sr_hint: Option<u32> = if matches!(&out.spec, OutputSpec::FileRecording { .. }) {
-            inputs_feeding_output(out.id.as_str(), graph)
+        let file_sr_hint: Option<u32> = match &out.spec {
+            OutputSpec::FileRecording {
+                format: RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. },
+                ..
+            } => Some(48_000),
+            OutputSpec::FileRecording { .. } => inputs_feeding_output(out.id.as_str(), graph)
                 .into_iter()
                 .filter_map(|input_id| input_native_sr.get(input_id).copied())
-                .max()
-        } else {
-            None
+                .max(),
+            _ => None,
         };
         let resolved = resolve_output(out, file_sr_hint)?;
         output_runtime.insert(out.id.clone(), resolved);
@@ -592,11 +609,16 @@ pub fn build(graph: &ValidGraph, app: AppHandle) -> AppResult<ActivePipeline> {
             ResolvedOutput::Speaker(spec) => {
                 speaker_streams.push(start_speaker_stream(spec, og, &app)?);
             }
-            ResolvedOutput::File { path, sample_rate } => {
+            ResolvedOutput::File {
+                path,
+                sample_rate,
+                format,
+            } => {
                 workers.push(start_recorder_worker(
                     out.id.clone(),
                     path,
                     sample_rate,
+                    format,
                     og,
                     app.clone(),
                 )?);
@@ -1031,6 +1053,7 @@ enum ResolvedOutput {
     File {
         path: PathBuf,
         sample_rate: u32,
+        format: RecordingFormat,
     },
 }
 
@@ -1056,12 +1079,13 @@ fn resolve_output(out: &ValidOutput, file_sr_hint: Option<u32>) -> AppResult<Res
                 sample_rate: native.sample_rate,
             }))
         }
-        OutputSpec::FileRecording { file_path } => Ok(ResolvedOutput::File {
+        OutputSpec::FileRecording { file_path, format } => Ok(ResolvedOutput::File {
             path: PathBuf::from(file_path),
-            // Prefer the highest source rate so the WAV never carries a
+            // Prefer the highest source rate so the recording never carries a
             // downsampled signal. Fall back to 48 kHz only when there's no
             // input connected (engine will then error out anyway).
             sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
+            format: *format,
         }),
     }
 }
@@ -1462,10 +1486,10 @@ fn start_recorder_worker(
     node_id: String,
     path: PathBuf,
     sample_rate: u32,
+    format: RecordingFormat,
     graph: OutputGraph,
     app: AppHandle,
 ) -> AppResult<RecorderWorker> {
-    let recorder = WavRecorder::create(&path, sample_rate)?;
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let worker = DspWorker { graph };
@@ -1474,21 +1498,42 @@ fn start_recorder_worker(
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
+            // Inside the worker thread so slow encoder init (libopus,
+            // libmp3lame, AVAudioFile) doesn't stagger recorder starts.
+            let encoder: Box<dyn AudioEncoder> =
+                match build_encoder(&path, sample_rate, format) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        warn!(node = %node_id, error = %e, "recorder init failed");
+                        let _ = app.emit(
+                            "audio://recorder_progress",
+                            json!({
+                                "nodeId": node_id,
+                                "frames": 0u64,
+                                "sampleRate": sample_rate,
+                                "stopped": true,
+                                "error": e.to_string(),
+                            }),
+                        );
+                        return;
+                    }
+                };
+
             // A crash loses at most one flush interval of audio.
             const FLUSH_INTERVAL: Duration = Duration::from_secs(2);
             const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
             let mut last_flush = std::time::Instant::now();
             let mut last_progress = std::time::Instant::now();
             let mut frames_written: u64 = 0;
-            let mut recorder = recorder;
+            let mut encoder = encoder;
 
             worker.run(stop_thread, pacing, |block| {
-                recorder.write_stereo(block)?;
+                encoder.write_stereo(block)?;
                 frames_written += (block.len() / 2) as u64;
 
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
-                    if let Err(e) = recorder.flush() {
-                        warn!(error = %e, "wav flush failed");
+                    if let Err(e) = encoder.flush() {
+                        warn!(error = %e, "recorder flush failed");
                     }
                     last_flush = std::time::Instant::now();
                 }
@@ -1516,8 +1561,8 @@ fn start_recorder_worker(
                 }),
             );
 
-            if let Err(e) = recorder.finalize() {
-                warn!(error = %e, "wav finalize failed");
+            if let Err(e) = encoder.finalize() {
+                warn!(error = %e, "recorder finalize failed");
             }
         })
         .map_err(|e| AppError::Stream(format!("spawn recorder thread: {e}")))?;

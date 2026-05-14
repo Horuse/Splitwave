@@ -102,10 +102,81 @@ pub struct SpeakerData {
     pub device_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WavBitDepth {
+    F32,
+    I24,
+    I16,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum FlacBitDepth {
+    I24,
+    I16,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AiffBitDepth {
+    I24,
+    I16,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FlacCompression {
+    Fast,
+    Default,
+    Best,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpusApplication {
+    Audio,
+    Voip,
+    LowDelay,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum RecordingFormat {
+    Wav { #[serde(rename = "bitDepth")] bit_depth: WavBitDepth },
+    Flac {
+        #[serde(rename = "bitDepth")] bit_depth: FlacBitDepth,
+        compression: FlacCompression,
+    },
+    Opus {
+        bitrate: u32,
+        application: OpusApplication,
+    },
+    Mp3 {
+        #[serde(rename = "bitrateKbps")] bitrate_kbps: u32,
+    },
+    Aac {
+        bitrate: u32,
+    },
+    Aiff {
+        #[serde(rename = "bitDepth")] bit_depth: AiffBitDepth,
+    },
+}
+
+impl Default for RecordingFormat {
+    fn default() -> Self {
+        RecordingFormat::Wav {
+            bit_depth: WavBitDepth::F32,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileRecordingData {
     pub file_path: Option<String>,
+    #[serde(default)]
+    pub format: RecordingFormat,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -188,7 +259,7 @@ pub enum InputSpec {
 #[derive(Debug, Clone)]
 pub enum OutputSpec {
     Speaker { device_id: String },
-    FileRecording { file_path: String },
+    FileRecording { file_path: String, format: RecordingFormat },
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +484,7 @@ impl GraphSpec {
                         file_path: data
                             .file_path
                             .ok_or_else(|| miss(&n.id, "File Recording has no path"))?,
+                        format: data.format,
                     }
                 }
                 _ => unreachable!(),

@@ -75,9 +75,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'fileRecording',
 		category: 'output',
 		label: 'File Recording',
-		description: 'Record to a WAV file (32-bit float, stereo, lossless).',
+		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy).',
 		component: FileRecording,
-		defaultData: { filePath: null }
+		defaultData: {
+			filePath: null,
+			format: { kind: 'wav', bitDepth: 'f32' }
+		}
 	}),
 	gain: entry<'gain'>({
 		kind: 'gain',

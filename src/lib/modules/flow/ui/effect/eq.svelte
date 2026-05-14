@@ -46,6 +46,12 @@
 		audioMethods.updateEffect(id, patch as Record<string, unknown>).catch(() => {});
 	}
 
+	function toggleBypass() {
+		const patch = { bypassed: !data.bypassed };
+		flow.updateNodeData(id, patch);
+		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
+
 	function setBand(i: number, db: number) {
 		const next = data.gainsDb.slice();
 		next[i] = Math.max(GAIN_MIN, Math.min(GAIN_MAX, db));
@@ -165,7 +171,14 @@
 	}
 </script>
 
-<Wrapper label="EQ" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="EQ"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="flex w-72 flex-col gap-1.5">
 		<Combobox
 			options={presetOptions}

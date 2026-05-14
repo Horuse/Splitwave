@@ -19,9 +19,20 @@
 	function pctFmt(v: number): string {
 		return `${Math.round(v * 100)}%`;
 	}
+
+	function toggleBypass() {
+		patch('bypassed', !data.bypassed);
+	}
 </script>
 
-<Wrapper label="Reverb" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Reverb"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="flex w-52 flex-col gap-1.5">
 		<Slider
 			label="Room"

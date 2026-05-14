@@ -16,6 +16,10 @@
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
 
+	function toggleBypass() {
+		patchData({ bypassed: !data.bypassed });
+	}
+
 	function setLeft(v: number) {
 		const patch: Partial<ChannelBalanceNodeData> = { leftGainDb: v };
 		if (linked) patch.rightGainDb = -v;
@@ -47,7 +51,14 @@
 	}
 </script>
 
-<Wrapper label="Channel Balance" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Channel Balance"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="flex w-50 flex-col gap-1.5">
 		<div class="flex flex-col gap-0.5 text-[10px] text-neutral-1000">
 			<div class="flex items-baseline justify-between">

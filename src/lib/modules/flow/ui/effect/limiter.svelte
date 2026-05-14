@@ -25,9 +25,22 @@
 	function setLookahead(v: number) {
 		flow.updateNodeData(id, { lookaheadMs: v });
 	}
+
+	function toggleBypass() {
+		const patch = { bypassed: !data.bypassed };
+		flow.updateNodeData(id, patch);
+		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
 </script>
 
-<Wrapper label="Limiter" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Limiter"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="flex w-50 flex-col gap-1.5">
 		<Slider
 			label="Ceiling"

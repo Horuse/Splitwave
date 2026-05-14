@@ -21,6 +21,12 @@
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
 
+	function toggleBypass() {
+		const patch = { bypassed: !data.bypassed };
+		flow.updateNodeData(id, patch);
+		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
+
 	// Transfer curve mirrors `SaturatorEffect` in effects.rs: y = c·tanh(x·d/c).
 	const CURVE_W = 80;
 	const CURVE_H = 60;
@@ -55,7 +61,14 @@
 	}
 </script>
 
-<Wrapper label="Saturator" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Saturator"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="flex w-50 flex-col gap-1.5">
 		<div class="flex items-start gap-2">
 			<svg

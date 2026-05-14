@@ -15,6 +15,8 @@
 		hasOutput?: boolean;
 		inputs?: InputHandleConfig[];
 		outputLabel?: string;
+		bypassed?: boolean;
+		onBypass?: () => void;
 		children?: Snippet;
 	}
 
@@ -25,6 +27,8 @@
 		hasOutput = false,
 		inputs,
 		outputLabel,
+		bypassed,
+		onBypass,
 		children
 	}: Props = $props();
 
@@ -47,11 +51,30 @@
 		'min-w-32 max-w-80 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
 	]}
 >
-	<div class="mb-2 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
-		{label}
+	<div class="mb-2 flex items-center justify-between gap-2">
+		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+			{label}
+		</span>
+		{#if onBypass}
+			<button
+				type="button"
+				class={[
+					'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
+					bypassed
+						? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
+						: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+				]}
+				title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+				onclick={onBypass}
+			>
+				{bypassed ? 'BYP' : 'ON'}
+			</button>
+		{/if}
 	</div>
 
-	{@render children?.()}
+	<div class={bypassed ? 'opacity-40' : ''}>
+		{@render children?.()}
+	</div>
 
 	{#if inputs && inputs.length > 0}
 		{#each inputs as h (h.id)}

@@ -264,6 +264,8 @@ pub struct EffectBuild {
     pub meter: Option<MeterHandle>,
     /// Some only on the first instantiation per node id.
     pub lufs: Option<LufsHandle>,
+    pub bypass: Arc<AtomicBool>,
+    pub bypass_is_new: bool,
 }
 
 /// Shared atomics keyed by node id so a fan-out effect (one node feeding
@@ -271,6 +273,7 @@ pub struct EffectBuild {
 #[derive(Default)]
 pub struct EffectRegistry {
     controls: std::collections::HashMap<String, EffectControl>,
+    bypasses: std::collections::HashMap<String, Arc<AtomicBool>>,
     meters: std::collections::HashMap<String, MeterHandle>,
     lufs: std::collections::HashMap<String, LufsHandle>,
 }
@@ -287,167 +290,143 @@ pub fn instantiate_effect(
     sample_rate: u32,
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
+    let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
+        Some(b) => (b.clone(), false),
+        None => {
+            let b = Arc::new(AtomicBool::new(spec.bypassed()));
+            registry.bypasses.insert(node_id.to_string(), b.clone());
+            (b, true)
+        }
+    };
+    let mk = |effect: RuntimeEffect,
+              control: Option<EffectControl>,
+              meter: Option<MeterHandle>,
+              lufs: Option<LufsHandle>| EffectBuild {
+        effect,
+        control,
+        meter,
+        lufs,
+        bypass: bypass.clone(),
+        bypass_is_new,
+    };
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Gain { linear }) => EffectBuild {
-                effect: RuntimeEffect::Gain(GainEffect::from_state(linear.clone())),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+            Some(EffectControl::Gain { linear }) => mk(
+                RuntimeEffect::Gain(GainEffect::from_state(linear.clone())),
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = GainEffect::new(d);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Gain(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Gain(e), Some(c), None, None)
             }
         },
         EffectSpec::Mute(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Mute { muted }) => EffectBuild {
-                effect: RuntimeEffect::Mute(MuteEffect::from_state(muted.clone())),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+            Some(EffectControl::Mute { muted }) => mk(
+                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone())),
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = MuteEffect::new(d);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Mute(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Mute(e), Some(c), None, None)
             }
         },
         EffectSpec::ChannelBalance(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::ChannelBalance { left, right }) => EffectBuild {
-                effect: RuntimeEffect::ChannelBalance(ChannelBalanceEffect::from_state(
+            Some(EffectControl::ChannelBalance { left, right }) => mk(
+                RuntimeEffect::ChannelBalance(ChannelBalanceEffect::from_state(
                     left.clone(),
                     right.clone(),
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = ChannelBalanceEffect::new(d);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::ChannelBalance(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::ChannelBalance(e), Some(c), None, None)
             }
         },
         EffectSpec::Saturator(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Saturator { ceiling, drive }) => EffectBuild {
-                effect: RuntimeEffect::Saturator(SaturatorEffect::from_state(
+            Some(EffectControl::Saturator { ceiling, drive }) => mk(
+                RuntimeEffect::Saturator(SaturatorEffect::from_state(
                     ceiling.clone(),
                     drive.clone(),
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = SaturatorEffect::new(d);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Saturator(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Saturator(e), Some(c), None, None)
             }
         },
         EffectSpec::Eq(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Eq { gains }) => EffectBuild {
-                effect: RuntimeEffect::Eq(EqEffect::from_state(gains.clone(), sample_rate)),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+            Some(EffectControl::Eq { gains }) => mk(
+                RuntimeEffect::Eq(EqEffect::from_state(gains.clone(), sample_rate)),
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = EqEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Eq(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Eq(e), Some(c), None, None)
             }
         },
         EffectSpec::LevelMeter(d) => match registry.meters.get(node_id) {
-            Some(handle) => EffectBuild {
-                effect: RuntimeEffect::LevelMeter(LevelMeterEffect::from_handle(handle.clone())),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+            Some(handle) => mk(
+                RuntimeEffect::LevelMeter(LevelMeterEffect::from_handle(handle.clone())),
+                None,
+                None,
+                None,
+            ),
             None => {
                 let (e, handle) = LevelMeterEffect::new(d, node_id.to_string());
                 registry.meters.insert(node_id.to_string(), handle.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::LevelMeter(e),
-                    control: None,
-                    meter: Some(handle),
-                    lufs: None,
-                }
+                mk(RuntimeEffect::LevelMeter(e), None, Some(handle), None)
             }
         },
         EffectSpec::LufsMeter(d) => match registry.lufs.get(node_id) {
-            Some(handle) => EffectBuild {
-                effect: RuntimeEffect::LufsMeter(LufsMeterEffect::from_handle(
-                    handle.clone(),
-                    sample_rate,
-                )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+            Some(handle) => mk(
+                RuntimeEffect::LufsMeter(LufsMeterEffect::from_handle(handle.clone(), sample_rate)),
+                None,
+                None,
+                None,
+            ),
             None => {
                 let (e, handle) = LufsMeterEffect::new(d, node_id.to_string(), sample_rate);
                 registry.lufs.insert(node_id.to_string(), handle.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::LufsMeter(e),
-                    control: None,
-                    meter: None,
-                    lufs: Some(handle),
-                }
+                mk(RuntimeEffect::LufsMeter(e), None, None, Some(handle))
             }
         },
         EffectSpec::Limiter(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Limiter { ceiling, release_ms }) => {
                 let lookahead_frames =
                     ((d.lookahead_ms.max(0.1) * sample_rate as f32 / 1000.0) as usize).max(1);
-                EffectBuild {
-                    effect: RuntimeEffect::Limiter(LimiterEffect::from_state(
+                mk(
+                    RuntimeEffect::Limiter(LimiterEffect::from_state(
                         ceiling.clone(),
                         release_ms.clone(),
                         lookahead_frames,
                         sample_rate,
                     )),
-                    control: None,
-                    meter: None,
-                    lufs: None,
-                }
+                    None,
+                    None,
+                    None,
+                )
             }
             _ => {
                 let (e, c) = LimiterEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Limiter(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Limiter(e), Some(c), None, None)
             }
         },
         EffectSpec::Compressor(d) => match registry.controls.get(node_id) {
@@ -458,8 +437,8 @@ pub fn instantiate_effect(
                 release_ms,
                 knee_db,
                 makeup_db,
-            }) => EffectBuild {
-                effect: RuntimeEffect::Compressor(CompressorEffect::from_state(
+            }) => mk(
+                RuntimeEffect::Compressor(CompressorEffect::from_state(
                     threshold_db.clone(),
                     ratio.clone(),
                     attack_ms.clone(),
@@ -468,19 +447,14 @@ pub fn instantiate_effect(
                     makeup_db.clone(),
                     sample_rate,
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = CompressorEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Compressor(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Compressor(e), Some(c), None, None)
             }
         },
         EffectSpec::NoiseGate(d) => match registry.controls.get(node_id) {
@@ -490,8 +464,8 @@ pub fn instantiate_effect(
                 attack_ms,
                 hold_ms,
                 release_ms,
-            }) => EffectBuild {
-                effect: RuntimeEffect::NoiseGate(NoiseGateEffect::from_state(
+            }) => mk(
+                RuntimeEffect::NoiseGate(NoiseGateEffect::from_state(
                     threshold_db.clone(),
                     range_db.clone(),
                     attack_ms.clone(),
@@ -499,66 +473,51 @@ pub fn instantiate_effect(
                     release_ms.clone(),
                     sample_rate,
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = NoiseGateEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::NoiseGate(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::NoiseGate(e), Some(c), None, None)
             }
         },
         EffectSpec::Delay(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Delay { time_ms, feedback, mix }) => EffectBuild {
-                effect: RuntimeEffect::Delay(DelayEffect::from_state(
+            Some(EffectControl::Delay { time_ms, feedback, mix }) => mk(
+                RuntimeEffect::Delay(DelayEffect::from_state(
                     time_ms.clone(),
                     feedback.clone(),
                     mix.clone(),
                     sample_rate,
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = DelayEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Delay(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Delay(e), Some(c), None, None)
             }
         },
         EffectSpec::Reverb(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Reverb { room_size, damping, width, mix }) => EffectBuild {
-                effect: RuntimeEffect::Reverb(ReverbEffect::from_state(
+            Some(EffectControl::Reverb { room_size, damping, width, mix }) => mk(
+                RuntimeEffect::Reverb(ReverbEffect::from_state(
                     room_size.clone(),
                     damping.clone(),
                     width.clone(),
                     mix.clone(),
                     sample_rate,
                 )),
-                control: None,
-                meter: None,
-                lufs: None,
-            },
+                None,
+                None,
+                None,
+            ),
             _ => {
                 let (e, c) = ReverbEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
-                EffectBuild {
-                    effect: RuntimeEffect::Reverb(e),
-                    control: Some(c),
-                    meter: None,
-                    lufs: None,
-                }
+                mk(RuntimeEffect::Reverb(e), Some(c), None, None)
             }
         },
     }

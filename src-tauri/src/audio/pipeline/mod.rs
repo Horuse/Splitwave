@@ -13,7 +13,8 @@
 //!   in the validator.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use rtrb::Producer;
 use tauri::AppHandle;
@@ -63,6 +64,7 @@ pub struct ActivePipeline {
     /// shared by node id.
     effect_registry: EffectRegistry,
     effect_controls: HashMap<String, EffectControl>,
+    effect_bypasses: HashMap<String, Arc<AtomicBool>>,
 
     meters: HashMap<String, MeterHandle>,
     lufs: HashMap<String, LufsHandle>,
@@ -112,6 +114,7 @@ impl ActivePipeline {
             monitor: None,
             effect_registry: EffectRegistry::new(),
             effect_controls: HashMap::new(),
+            effect_bypasses: HashMap::new(),
             meters: HashMap::new(),
             lufs: HashMap::new(),
             meter_thread: None,
@@ -163,6 +166,11 @@ impl ActivePipeline {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
         }
+        if let Some(bypass) = self.effect_bypasses.get(node_id) {
+            if let Some(b) = data.get("bypassed").and_then(serde_json::Value::as_bool) {
+                bypass.store(b, Ordering::Relaxed);
+            }
+        }
     }
 
     /// Queue a seek on the audio-file input identified by `node_id`. Silent
@@ -212,6 +220,7 @@ impl ActivePipeline {
         self.monitor = None;
         self.meter_thread = None;
         self.effect_controls.clear();
+        self.effect_bypasses.clear();
         // Input meters live with their inputs and survive this teardown;
         // effect / output meters were dropped with the workers.
         let input_ids: HashSet<String> = self.inputs.keys().cloned().collect();
@@ -471,6 +480,9 @@ impl ActivePipeline {
             for (id, control) in built.controls {
                 self.effect_controls.entry(id).or_insert(control);
             }
+            for (id, bypass) in built.bypasses {
+                self.effect_bypasses.entry(id).or_insert(bypass);
+            }
             for m in built.meters {
                 self.meters.insert(m.node_id.clone(), m);
             }
@@ -503,6 +515,9 @@ impl ActivePipeline {
                 }
                 for (id, control) in built.controls {
                     self.effect_controls.entry(id).or_insert(control);
+                }
+                for (id, bypass) in built.bypasses {
+                    self.effect_bypasses.entry(id).or_insert(bypass);
                 }
                 for m in built.meters {
                     self.meters.insert(m.node_id.clone(), m);

@@ -99,7 +99,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Gain',
 		description: 'Linear amplitude scaling in dB.',
 		component: Gain,
-		defaultData: { gainDb: 0 }
+		defaultData: { gainDb: 0, bypassed: false }
 	}),
 	mute: entry<'mute'>({
 		kind: 'mute',
@@ -107,7 +107,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Mute',
 		description: 'Silence the signal.',
 		component: Mute,
-		defaultData: { muted: false }
+		defaultData: { muted: false, bypassed: false }
 	}),
 	channelBalance: entry<'channelBalance'>({
 		kind: 'channelBalance',
@@ -115,7 +115,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Channel Balance',
 		description: 'Separate gain for left and right channels.',
 		component: ChannelBalance,
-		defaultData: { leftGainDb: 0, rightGainDb: 0 }
+		defaultData: { leftGainDb: 0, rightGainDb: 0, bypassed: false }
 	}),
 	saturator: entry<'saturator'>({
 		kind: 'saturator',
@@ -123,7 +123,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Saturator',
 		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
 		component: Saturator,
-		defaultData: { thresholdDb: -0.3, driveDb: 0 }
+		defaultData: { thresholdDb: -0.3, driveDb: 0, bypassed: false }
 	}),
 	eq: entry<'eq'>({
 		kind: 'eq',
@@ -131,7 +131,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'EQ',
 		description: '10-band graphic EQ at ISO octave centres (32 Hz → 16 kHz).',
 		component: Eq,
-		defaultData: { gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
+		defaultData: { gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bypassed: false }
 	}),
 	levelMeter: entry<'levelMeter'>({
 		kind: 'levelMeter',
@@ -155,7 +155,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Limiter',
 		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
 		component: Limiter,
-		defaultData: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50 }
+		defaultData: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50, bypassed: false }
 	}),
 	compressor: entry<'compressor'>({
 		kind: 'compressor',
@@ -163,7 +163,15 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Compressor',
 		description: 'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
 		component: Compressor,
-		defaultData: { thresholdDb: -18, ratio: 3, attackMs: 10, releaseMs: 100, kneeDb: 6, makeupDb: 0 }
+		defaultData: {
+			thresholdDb: -18,
+			ratio: 3,
+			attackMs: 10,
+			releaseMs: 100,
+			kneeDb: 6,
+			makeupDb: 0,
+			bypassed: false
+		}
 	}),
 	noiseGate: entry<'noiseGate'>({
 		kind: 'noiseGate',
@@ -171,7 +179,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Noise Gate',
 		description: 'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
 		component: NoiseGate,
-		defaultData: { thresholdDb: -40, rangeDb: -40, attackMs: 1, holdMs: 50, releaseMs: 200 }
+		defaultData: {
+			thresholdDb: -40,
+			rangeDb: -40,
+			attackMs: 1,
+			holdMs: 50,
+			releaseMs: 200,
+			bypassed: false
+		}
 	}),
 	delay: entry<'delay'>({
 		kind: 'delay',
@@ -179,7 +194,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Delay',
 		description: 'Stereo delay (1-2000 ms) with feedback and dry/wet mix.',
 		component: Delay,
-		defaultData: { timeMs: 250, feedback: 0.4, mix: 0.35 }
+		defaultData: { timeMs: 250, feedback: 0.4, mix: 0.35, bypassed: false }
 	}),
 	reverb: entry<'reverb'>({
 		kind: 'reverb',
@@ -187,7 +202,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Reverb',
 		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
 		component: Reverb,
-		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33 }
+		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33, bypassed: false }
 	})
 };
 

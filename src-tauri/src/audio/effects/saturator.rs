@@ -64,6 +64,7 @@ mod tests {
         let (mut e, _) = SaturatorEffect::new(SaturatorData {
             threshold_db: 0.0,
             drive_db: 0.0,
+            bypassed: false,
         });
         let mut buf = [10.0, -10.0];
         e.process(&mut buf, 1);

@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn gain_applies_db() {
-        let (mut e, _) = GainEffect::new(GainData { gain_db: 6.0 });
+        let (mut e, _) = GainEffect::new(GainData { gain_db: 6.0, bypassed: false });
         let mut buf = [1.0_f32, 1.0];
         e.process(&mut buf, 1);
         assert!((buf[0] - 1.995).abs() < 0.01);
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn gain_control_changes_live() {
-        let (mut e, c) = GainEffect::new(GainData { gain_db: 0.0 });
+        let (mut e, c) = GainEffect::new(GainData { gain_db: 0.0, bypassed: false });
         c.apply_update(&serde_json::json!({ "gainDb": 6.0 }));
         let mut buf = [1.0_f32, 1.0];
         e.process(&mut buf, 1);

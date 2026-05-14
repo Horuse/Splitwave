@@ -49,6 +49,7 @@ mod tests {
         let (mut e, _) = ChannelBalanceEffect::new(ChannelBalanceData {
             left_gain_db: -6.0,
             right_gain_db: 0.0,
+            bypassed: false,
         });
         let mut buf = [1.0, 1.0];
         e.process(&mut buf, 1);

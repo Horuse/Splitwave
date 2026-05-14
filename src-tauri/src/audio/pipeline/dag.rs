@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -227,6 +229,7 @@ impl SourceState {
 
 struct EffectState {
     effect: RuntimeEffect,
+    bypass: Arc<AtomicBool>,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
@@ -345,9 +348,11 @@ impl OutputGraph {
                         }
                     }
                 }
-                let sc_slice = eff.sidechain_buf.as_deref();
-                eff.effect
-                    .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
+                if !eff.bypass.load(Ordering::Relaxed) {
+                    let sc_slice = eff.sidechain_buf.as_deref();
+                    eff.effect
+                        .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
+                }
             }
         }
         for s in output.iter_mut() {
@@ -370,6 +375,7 @@ impl OutputGraph {
 pub(super) struct BuiltOutputGraph {
     pub graph: OutputGraph,
     pub controls: Vec<(String, EffectControl)>,
+    pub bypasses: Vec<(String, Arc<AtomicBool>)>,
     pub meters: Vec<MeterHandle>,
     pub lufs: Vec<LufsHandle>,
 }
@@ -445,6 +451,7 @@ pub(super) fn build_output_graph(
     let mut nodes: Vec<DagNode> = Vec::with_capacity(topo.len());
     let mut id_to_index: HashMap<String, usize> = HashMap::new();
     let mut controls: Vec<(String, EffectControl)> = Vec::new();
+    let mut bypasses: Vec<(String, Arc<AtomicBool>)> = Vec::new();
     let mut meters: Vec<MeterHandle> = Vec::new();
     let mut lufs: Vec<LufsHandle> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
@@ -491,12 +498,16 @@ pub(super) fn build_output_graph(
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
             }
+            if build.bypass_is_new {
+                bypasses.push((id.clone(), build.bypass.clone()));
+            }
             if let Some(m) = build.meter {
                 meters.push(m);
             }
             if let Some(l) = build.lufs {
                 lufs.push(l);
             }
+            let bypass = build.bypass;
             let mut main_upstream: Vec<usize> = Vec::new();
             let mut side_upstream: Vec<usize> = Vec::new();
             for e in &valid.edges {
@@ -533,6 +544,7 @@ pub(super) fn build_output_graph(
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
                 effect: build.effect,
+                bypass,
                 incoming,
                 sidechain,
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
@@ -576,6 +588,7 @@ pub(super) fn build_output_graph(
             terminals,
         },
         controls,
+        bypasses,
         meters,
         lufs,
     })

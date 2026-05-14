@@ -214,6 +214,8 @@ pub struct FileRecordingData {
 #[ts(export)]
 pub struct GainData {
     pub gain_db: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -221,6 +223,8 @@ pub struct GainData {
 #[ts(export)]
 pub struct MuteData {
     pub muted: bool,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -229,6 +233,8 @@ pub struct MuteData {
 pub struct ChannelBalanceData {
     pub left_gain_db: f32,
     pub right_gain_db: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -237,6 +243,8 @@ pub struct ChannelBalanceData {
 pub struct SaturatorData {
     pub threshold_db: f32,
     pub drive_db: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -245,6 +253,8 @@ pub struct SaturatorData {
 pub struct EqData {
     /// One gain per ISO octave band (see `EQ_FREQUENCIES_HZ` in effects.rs).
     pub gains_db: [f32; 10],
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
@@ -264,6 +274,8 @@ pub struct LimiterData {
     pub ceiling_db: f32,
     pub lookahead_ms: f32,
     pub release_ms: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -276,6 +288,8 @@ pub struct CompressorData {
     pub release_ms: f32,
     pub knee_db: f32,
     pub makeup_db: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -287,6 +301,8 @@ pub struct NoiseGateData {
     pub attack_ms: f32,
     pub hold_ms: f32,
     pub release_ms: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -296,6 +312,8 @@ pub struct DelayData {
     pub time_ms: f32,
     pub feedback: f32,
     pub mix: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -306,6 +324,8 @@ pub struct ReverbData {
     pub damping: f32,
     pub width: f32,
     pub mix: f32,
+    #[serde(default)]
+    pub bypassed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,6 +356,24 @@ pub enum EffectSpec {
     NoiseGate(NoiseGateData),
     Delay(DelayData),
     Reverb(ReverbData),
+}
+
+impl EffectSpec {
+    pub fn bypassed(&self) -> bool {
+        match self {
+            EffectSpec::Gain(d) => d.bypassed,
+            EffectSpec::Mute(d) => d.bypassed,
+            EffectSpec::ChannelBalance(d) => d.bypassed,
+            EffectSpec::Saturator(d) => d.bypassed,
+            EffectSpec::Eq(d) => d.bypassed,
+            EffectSpec::Limiter(d) => d.bypassed,
+            EffectSpec::Compressor(d) => d.bypassed,
+            EffectSpec::NoiseGate(d) => d.bypassed,
+            EffectSpec::Delay(d) => d.bypassed,
+            EffectSpec::Reverb(d) => d.bypassed,
+            EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

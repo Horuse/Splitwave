@@ -16,6 +16,12 @@
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
 
+	function toggleBypass() {
+		const patch = { bypassed: !data.bypassed };
+		flow.updateNodeData(id, patch);
+		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
+
 	function valueClass(db: number): string {
 		if (db >= 12) return 'text-red-500';
 		if (db >= 3) return 'text-amber-600';
@@ -23,7 +29,14 @@
 	}
 </script>
 
-<Wrapper label="Gain" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Gain"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<div class="w-50">
 		<Slider
 			label="Level"

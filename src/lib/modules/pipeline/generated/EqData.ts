@@ -4,4 +4,4 @@ export type EqData = {
 /**
  * One gain per ISO octave band (see `EQ_FREQUENCIES_HZ` in effects.rs).
  */
-gainsDb: [number, number, number, number, number, number, number, number, number, number], };
+gainsDb: [number, number, number, number, number, number, number, number, number, number], bypassed: boolean, };

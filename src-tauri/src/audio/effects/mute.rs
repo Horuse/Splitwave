@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn mute_zeros() {
-        let (mut e, _) = MuteEffect::new(MuteData { muted: true });
+        let (mut e, _) = MuteEffect::new(MuteData { muted: true, bypassed: false });
         let mut buf = [0.5, -0.5, 0.3, -0.3];
         e.process(&mut buf, 2);
         assert_eq!(buf, [0.0, 0.0, 0.0, 0.0]);
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn mute_control_unmutes_live() {
-        let (mut e, c) = MuteEffect::new(MuteData { muted: true });
+        let (mut e, c) = MuteEffect::new(MuteData { muted: true, bypassed: false });
         c.apply_update(&serde_json::json!({ "muted": false }));
         let mut buf = [0.5_f32, -0.5];
         e.process(&mut buf, 1);

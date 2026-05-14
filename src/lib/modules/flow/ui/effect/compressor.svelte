@@ -19,6 +19,10 @@
 	function ratioFmt(v: number): string {
 		return `${v.toFixed(1)}:1`;
 	}
+
+	function toggleBypass() {
+		patch('bypassed', !data.bypassed);
+	}
 </script>
 
 <Wrapper
@@ -30,6 +34,8 @@
 		{ id: 'main', label: 'IN', position: 'left' },
 		{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }
 	]}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
 >
 	<div class="flex w-52 flex-col gap-1.5">
 		<Slider

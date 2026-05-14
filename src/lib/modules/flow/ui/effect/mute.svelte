@@ -14,9 +14,22 @@
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
+
+	function toggleBypass() {
+		const patch = { bypassed: !data.bypassed };
+		flow.updateNodeData(id, patch);
+		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
 </script>
 
-<Wrapper label="Mute" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Mute"
+	accent="effect"
+	hasInput
+	hasOutput
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+>
 	<button
 		title="Toggle mute (M)"
 		class={[

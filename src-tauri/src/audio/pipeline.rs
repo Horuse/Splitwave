@@ -326,21 +326,64 @@ impl SourceState {
 
 struct EffectState {
     effect: RuntimeEffect,
-    /// Indices into the parent `OutputGraph::nodes` of upstream nodes whose
-    /// out_bufs are summed into this effect's `out_buf` before DSP. Topo sort
-    /// guarantees every entry is < this effect's own index.
-    incoming: Vec<usize>,
+    /// Each entry sums one upstream `out_buf` into this effect's `out_buf`.
+    /// Topo sort guarantees every `src_idx` is < this effect's own index.
+    incoming: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
 }
 
+/// `delay` is `Some` when this path is shorter than the longest reaching the
+/// same mixing point — pads it for sample-alignment before summing.
+struct IncomingEdge {
+    src_idx: usize,
+    delay: Option<DelayLine>,
+}
+
+struct TerminalEdge {
+    src_idx: usize,
+    delay: Option<DelayLine>,
+}
+
+struct DelayLine {
+    buf: Box<[f32]>,
+    pos: usize,
+}
+
+impl DelayLine {
+    fn new(delay_frames: usize) -> Self {
+        Self {
+            buf: vec![0.0; delay_frames * 2].into_boxed_slice(),
+            pos: 0,
+        }
+    }
+
+    fn process_and_add(&mut self, input: &[f32], dst: &mut [f32]) {
+        let cap = self.buf.len();
+        if cap == 0 {
+            for (d, &v) in dst.iter_mut().zip(input.iter()) {
+                *d += v;
+            }
+            return;
+        }
+        let mut pos = self.pos;
+        for (i, &v) in input.iter().enumerate() {
+            let delayed = self.buf[pos];
+            self.buf[pos] = v;
+            dst[i] += delayed;
+            pos = if pos + 1 == cap { 0 } else { pos + 1 };
+        }
+        self.pos = pos;
+    }
+}
+
 /// Per-output DAG runtime: sources + effects in topological order plus the
-/// indices of terminal nodes whose buffers get summed into the final output.
+/// terminal edges whose buffers get summed into the final output.
 struct OutputGraph {
     /// Reserved for drift-correction; not yet consumed.
     #[allow(dead_code)]
     sample_rate: u32,
     nodes: Vec<DagNode>,
-    terminal_indices: Vec<usize>,
+    terminals: Vec<TerminalEdge>,
 }
 
 impl OutputGraph {
@@ -374,10 +417,15 @@ impl OutputGraph {
                 for s in eff.out_buf.iter_mut() {
                     *s = 0.0;
                 }
-                for &idx in &eff.incoming {
-                    let src = head[idx].out_buf();
-                    for (dst, sv) in eff.out_buf.iter_mut().zip(src.iter()) {
-                        *dst += *sv;
+                for edge in &mut eff.incoming {
+                    let src = head[edge.src_idx].out_buf();
+                    match &mut edge.delay {
+                        Some(d) => d.process_and_add(src, &mut eff.out_buf),
+                        None => {
+                            for (dst, sv) in eff.out_buf.iter_mut().zip(src.iter()) {
+                                *dst += *sv;
+                            }
+                        }
                     }
                 }
                 eff.effect.process(&mut eff.out_buf, DSP_BLOCK_FRAMES);
@@ -386,10 +434,15 @@ impl OutputGraph {
         for s in output.iter_mut() {
             *s = 0.0;
         }
-        for &idx in &self.terminal_indices {
-            let src = self.nodes[idx].out_buf();
-            for (dst, sv) in output.iter_mut().zip(src.iter()) {
-                *dst += *sv;
+        for terminal in &mut self.terminals {
+            let src = self.nodes[terminal.src_idx].out_buf();
+            match &mut terminal.delay {
+                Some(d) => d.process_and_add(src, output),
+                None => {
+                    for (dst, sv) in output.iter_mut().zip(src.iter()) {
+                        *dst += *sv;
+                    }
+                }
             }
         }
     }
@@ -638,6 +691,8 @@ fn build_output_graph(
     let mut controls: Vec<(String, EffectControl)> = Vec::new();
     let mut meters: Vec<MeterHandle> = Vec::new();
     let mut lufs: Vec<LufsHandle> = Vec::new();
+    // Frames of accumulated delay at each node's output.
+    let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
 
     for id in &topo {
         if let Some(_input) = valid.inputs.iter().find(|i| &i.id == id) {
@@ -675,6 +730,7 @@ fn build_output_graph(
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
+            node_latencies.push(0);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
             let build = instantiate_effect(&effect.spec, id, output_sr, registry);
             if let Some(c) = build.control {
@@ -686,28 +742,62 @@ fn build_output_graph(
             if let Some(l) = build.lufs {
                 lufs.push(l);
             }
-            let incoming: Vec<usize> = valid
+            let upstream: Vec<usize> = valid
                 .edges
                 .iter()
                 .filter(|e| &e.to == id && reachable.contains(&e.from))
                 .map(|e| id_to_index[&e.from])
                 .collect();
+            let max_upstream = upstream
+                .iter()
+                .map(|&i| node_latencies[i])
+                .max()
+                .unwrap_or(0);
+            let incoming: Vec<IncomingEdge> = upstream
+                .iter()
+                .map(|&src_idx| {
+                    let pad = max_upstream - node_latencies[src_idx];
+                    IncomingEdge {
+                        src_idx,
+                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    }
+                })
+                .collect();
+            let own = build.effect.latency_frames();
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
                 effect: build.effect,
                 incoming,
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
             }));
+            node_latencies.push(max_upstream + own);
         }
     }
 
-    let terminal_indices: Vec<usize> = match output_id {
-        Some(id) => valid
-            .edges
-            .iter()
-            .filter(|e| e.to == id)
-            .filter_map(|e| id_to_index.get(&e.from).copied())
-            .collect(),
+    let terminals: Vec<TerminalEdge> = match output_id {
+        Some(id) => {
+            let upstream: Vec<usize> = valid
+                .edges
+                .iter()
+                .filter(|e| e.to == id)
+                .filter_map(|e| id_to_index.get(&e.from).copied())
+                .collect();
+            let max_upstream = upstream
+                .iter()
+                .map(|&i| node_latencies[i])
+                .max()
+                .unwrap_or(0);
+            upstream
+                .into_iter()
+                .map(|src_idx| {
+                    let pad = max_upstream - node_latencies[src_idx];
+                    TerminalEdge {
+                        src_idx,
+                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    }
+                })
+                .collect()
+        }
         None => Vec::new(),
     };
 
@@ -715,7 +805,7 @@ fn build_output_graph(
         graph: OutputGraph {
             sample_rate: output_sr,
             nodes,
-            terminal_indices,
+            terminals,
         },
         controls,
         meters,

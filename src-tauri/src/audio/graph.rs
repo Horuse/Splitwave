@@ -36,10 +36,11 @@ pub enum NodeKind {
     Gain,
     Mute,
     ChannelBalance,
-    Limiter,
+    Saturator,
     Eq,
     LevelMeter,
     LufsMeter,
+    Limiter,
 }
 
 impl NodeKind {
@@ -50,10 +51,11 @@ impl NodeKind {
             NodeKind::Gain
             | NodeKind::Mute
             | NodeKind::ChannelBalance
-            | NodeKind::Limiter
+            | NodeKind::Saturator
             | NodeKind::Eq
             | NodeKind::LevelMeter
-            | NodeKind::LufsMeter => NodeCategory::Effect,
+            | NodeKind::LufsMeter
+            | NodeKind::Limiter => NodeCategory::Effect,
         }
     }
 }
@@ -120,7 +122,7 @@ pub struct ChannelBalanceData {
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LimiterData {
+pub struct SaturatorData {
     pub threshold_db: f32,
     pub drive_db: f32,
 }
@@ -140,6 +142,14 @@ pub struct LevelMeterData {}
 #[serde(rename_all = "camelCase", default)]
 pub struct LufsMeterData {}
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiterData {
+    pub ceiling_db: f32,
+    pub lookahead_ms: f32,
+    pub release_ms: f32,
+}
+
 #[derive(Debug, Clone)]
 pub enum InputSpec {
     Microphone { device_id: String },
@@ -158,10 +168,11 @@ pub enum EffectSpec {
     Gain(GainData),
     Mute(MuteData),
     ChannelBalance(ChannelBalanceData),
-    Limiter(LimiterData),
+    Saturator(SaturatorData),
     Eq(EqData),
     LevelMeter(LevelMeterData),
     LufsMeter(LufsMeterData),
+    Limiter(LimiterData),
 }
 
 #[derive(Debug, Clone)]
@@ -441,10 +452,11 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         NodeKind::Gain => EffectSpec::Gain(parse(&n.data, "Gain")?),
         NodeKind::Mute => EffectSpec::Mute(parse(&n.data, "Mute")?),
         NodeKind::ChannelBalance => EffectSpec::ChannelBalance(parse(&n.data, "ChannelBalance")?),
-        NodeKind::Limiter => EffectSpec::Limiter(parse(&n.data, "Limiter")?),
+        NodeKind::Saturator => EffectSpec::Saturator(parse(&n.data, "Saturator")?),
         NodeKind::Eq => EffectSpec::Eq(parse(&n.data, "Eq")?),
         NodeKind::LevelMeter => EffectSpec::LevelMeter(parse(&n.data, "LevelMeter")?),
         NodeKind::LufsMeter => EffectSpec::LufsMeter(parse(&n.data, "LufsMeter")?),
+        NodeKind::Limiter => EffectSpec::Limiter(parse(&n.data, "Limiter")?),
         _ => unreachable!("non-effect kind passed to effect_from_node"),
     })
 }

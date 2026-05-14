@@ -14,11 +14,16 @@ use ebur128::{EbuR128, Mode};
 
 use crate::audio::graph::{
     ChannelBalanceData, EffectSpec, EqData, GainData, LevelMeterData, LimiterData, LufsMeterData,
-    MuteData,
+    MuteData, SaturatorData,
 };
 
 pub trait Effect: Send {
     fn process(&mut self, samples: &mut [f32], frames: usize);
+    /// Frames (not stereo samples) of delay between input and output. Pipeline
+    /// pads parallel paths to align at mixing points.
+    fn latency_frames(&self) -> usize {
+        0
+    }
 }
 
 /// Enum dispatch wrapper so the RT thread doesn't pay a vtable indirection per
@@ -28,10 +33,11 @@ pub enum RuntimeEffect {
     Gain(GainEffect),
     Mute(MuteEffect),
     ChannelBalance(ChannelBalanceEffect),
-    Limiter(LimiterEffect),
+    Saturator(SaturatorEffect),
     Eq(EqEffect),
     LevelMeter(LevelMeterEffect),
     LufsMeter(LufsMeterEffect),
+    Limiter(LimiterEffect),
 }
 
 impl RuntimeEffect {
@@ -41,10 +47,25 @@ impl RuntimeEffect {
             RuntimeEffect::Gain(e) => e.process(samples, frames),
             RuntimeEffect::Mute(e) => e.process(samples, frames),
             RuntimeEffect::ChannelBalance(e) => e.process(samples, frames),
-            RuntimeEffect::Limiter(e) => e.process(samples, frames),
+            RuntimeEffect::Saturator(e) => e.process(samples, frames),
             RuntimeEffect::Eq(e) => e.process(samples, frames),
             RuntimeEffect::LevelMeter(e) => e.process(samples, frames),
             RuntimeEffect::LufsMeter(e) => e.process(samples, frames),
+            RuntimeEffect::Limiter(e) => e.process(samples, frames),
+        }
+    }
+
+    #[inline]
+    pub fn latency_frames(&self) -> usize {
+        match self {
+            RuntimeEffect::Gain(e) => e.latency_frames(),
+            RuntimeEffect::Mute(e) => e.latency_frames(),
+            RuntimeEffect::ChannelBalance(e) => e.latency_frames(),
+            RuntimeEffect::Saturator(e) => e.latency_frames(),
+            RuntimeEffect::Eq(e) => e.latency_frames(),
+            RuntimeEffect::LevelMeter(e) => e.latency_frames(),
+            RuntimeEffect::LufsMeter(e) => e.latency_frames(),
+            RuntimeEffect::Limiter(e) => e.latency_frames(),
         }
     }
 }
@@ -61,13 +82,17 @@ pub enum EffectControl {
         left: Arc<AtomicU32>,
         right: Arc<AtomicU32>,
     },
-    Limiter {
+    Saturator {
         ceiling: Arc<AtomicU32>,
         drive: Arc<AtomicU32>,
     },
     Eq {
         /// One gain atomic per ISO octave band; see EQ_FREQUENCIES_HZ for order.
         gains: [Arc<AtomicU32>; 10],
+    },
+    Limiter {
+        ceiling: Arc<AtomicU32>,
+        release_ms: Arc<AtomicU32>,
     },
 }
 
@@ -94,7 +119,7 @@ impl EffectControl {
                     store_f32(right, db_to_linear(db));
                 }
             }
-            EffectControl::Limiter { ceiling, drive } => {
+            EffectControl::Saturator { ceiling, drive } => {
                 if let Some(db) = num(data, "thresholdDb") {
                     let c = db_to_linear(db).max(1e-6);
                     store_f32(ceiling, c);
@@ -110,6 +135,14 @@ impl EffectControl {
                             store_f32(slot, v as f32);
                         }
                     }
+                }
+            }
+            EffectControl::Limiter { ceiling, release_ms } => {
+                if let Some(db) = num(data, "ceilingDb") {
+                    store_f32(ceiling, db_to_linear(db).max(1e-6));
+                }
+                if let Some(ms) = num(data, "releaseMs") {
+                    store_f32(release_ms, ms.max(0.1));
                 }
             }
         }
@@ -494,19 +527,19 @@ fn amp_to_db(amp: f64) -> f32 {
     }
 }
 
-/// Soft limiter: pre-amp by `drive`, then pass through tanh, then scale to ceiling.
-/// `y = ceiling * tanh(x * drive / ceiling)` — smooth saturation, no hard clipping.
-pub struct LimiterEffect {
+/// Soft saturator: `y = ceiling * tanh(x * drive / ceiling)` — smooth tanh
+/// curve, no hard clipping. Not a real limiter (no look-ahead / true-peak).
+pub struct SaturatorEffect {
     ceiling: Arc<AtomicU32>,
     drive: Arc<AtomicU32>,
 }
 
-impl LimiterEffect {
-    fn new(d: LimiterData) -> (Self, EffectControl) {
+impl SaturatorEffect {
+    fn new(d: SaturatorData) -> (Self, EffectControl) {
         let c = db_to_linear(d.threshold_db).max(1e-6);
         let ceiling = Arc::new(AtomicU32::new(c.to_bits()));
         let drive = Arc::new(AtomicU32::new(db_to_linear(d.drive_db).to_bits()));
-        let control = EffectControl::Limiter {
+        let control = EffectControl::Saturator {
             ceiling: ceiling.clone(),
             drive: drive.clone(),
         };
@@ -514,7 +547,7 @@ impl LimiterEffect {
     }
 }
 
-impl Effect for LimiterEffect {
+impl Effect for SaturatorEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         // No `inv_ceiling` cache — RT could read NEW_c with OLD_inv_c (torn pair).
@@ -525,6 +558,112 @@ impl Effect for LimiterEffect {
         for s in stereo {
             *s = c * fast_tanh(*s * d * inv_c);
         }
+    }
+}
+
+/// Brick-wall limiter: input is delayed by `lookahead_frames`; gain envelope
+/// reacts to the upcoming peak so reduction lands before the peak emerges.
+/// Instant attack, exponential release.
+pub struct LimiterEffect {
+    ceiling: Arc<AtomicU32>,
+    release_ms: Arc<AtomicU32>,
+    sample_rate: u32,
+    lookahead_frames: usize,
+    /// Stereo-interleaved look-ahead delay; both channels share `current_gain`.
+    delay_buf: Box<[f32]>,
+    delay_pos: usize,
+    /// Per-frame max(|L|, |R|) over the same window as `delay_buf`. Peak in
+    /// the window = `peak_buf.iter().max()`.
+    peak_buf: Box<[f32]>,
+    current_gain: f32,
+}
+
+impl LimiterEffect {
+    fn new(d: LimiterData, sample_rate: u32) -> (Self, EffectControl) {
+        let lookahead_frames = ((d.lookahead_ms.max(0.1) * sample_rate as f32 / 1000.0) as usize)
+            .max(1);
+        let ceiling_lin = db_to_linear(d.ceiling_db).max(1e-6);
+        let ceiling = Arc::new(AtomicU32::new(ceiling_lin.to_bits()));
+        let release_ms = Arc::new(AtomicU32::new(d.release_ms.max(0.1).to_bits()));
+        let control = EffectControl::Limiter {
+            ceiling: ceiling.clone(),
+            release_ms: release_ms.clone(),
+        };
+        (
+            Self {
+                ceiling,
+                release_ms,
+                sample_rate,
+                lookahead_frames,
+                delay_buf: vec![0.0; lookahead_frames * 2].into_boxed_slice(),
+                delay_pos: 0,
+                peak_buf: vec![0.0; lookahead_frames].into_boxed_slice(),
+                current_gain: 1.0,
+            },
+            control,
+        )
+    }
+
+    fn from_state(
+        ceiling: Arc<AtomicU32>,
+        release_ms: Arc<AtomicU32>,
+        lookahead_frames: usize,
+        sample_rate: u32,
+    ) -> Self {
+        Self {
+            ceiling,
+            release_ms,
+            sample_rate,
+            lookahead_frames,
+            delay_buf: vec![0.0; lookahead_frames * 2].into_boxed_slice(),
+            delay_pos: 0,
+            peak_buf: vec![0.0; lookahead_frames].into_boxed_slice(),
+            current_gain: 1.0,
+        }
+    }
+}
+
+impl Effect for LimiterEffect {
+    fn process(&mut self, samples: &mut [f32], frames: usize) {
+        let ceiling = load_f32(&self.ceiling).max(1e-6);
+        let release_ms = load_f32(&self.release_ms).max(0.1);
+        let release_coeff =
+            1.0 - (-1.0 / (release_ms * 0.001 * self.sample_rate as f32)).exp();
+
+        let lookahead = self.lookahead_frames;
+        let stereo = &mut samples[..frames * 2];
+        for f in 0..frames {
+            let l_in = stereo[f * 2];
+            let r_in = stereo[f * 2 + 1];
+
+            // Read the emerging (oldest) sample, then overwrite that slot.
+            let l_out = self.delay_buf[self.delay_pos * 2];
+            let r_out = self.delay_buf[self.delay_pos * 2 + 1];
+            self.delay_buf[self.delay_pos * 2] = l_in;
+            self.delay_buf[self.delay_pos * 2 + 1] = r_in;
+            self.peak_buf[self.delay_pos] = l_in.abs().max(r_in.abs());
+            self.delay_pos = if self.delay_pos + 1 == lookahead { 0 } else { self.delay_pos + 1 };
+
+            let mut peak = 0.0_f32;
+            for &p in self.peak_buf.iter() {
+                if p > peak {
+                    peak = p;
+                }
+            }
+            let target = if peak > ceiling { ceiling / peak } else { 1.0 };
+            if target < self.current_gain {
+                self.current_gain = target;
+            } else {
+                self.current_gain += (target - self.current_gain) * release_coeff;
+            }
+
+            stereo[f * 2] = l_out * self.current_gain;
+            stereo[f * 2 + 1] = r_out * self.current_gain;
+        }
+    }
+
+    fn latency_frames(&self) -> usize {
+        self.lookahead_frames
     }
 }
 
@@ -793,9 +932,9 @@ pub fn instantiate_effect(
                 }
             }
         },
-        EffectSpec::Limiter(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::Limiter { ceiling, drive }) => EffectBuild {
-                effect: RuntimeEffect::Limiter(LimiterEffect {
+        EffectSpec::Saturator(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::Saturator { ceiling, drive }) => EffectBuild {
+                effect: RuntimeEffect::Saturator(SaturatorEffect {
                     ceiling: ceiling.clone(),
                     drive: drive.clone(),
                 }),
@@ -804,10 +943,10 @@ pub fn instantiate_effect(
                 lufs: None,
             },
             _ => {
-                let (e, c) = LimiterEffect::new(d);
+                let (e, c) = SaturatorEffect::new(d);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 EffectBuild {
-                    effect: RuntimeEffect::Limiter(e),
+                    effect: RuntimeEffect::Saturator(e),
                     control: Some(c),
                     meter: None,
                     lufs: None,
@@ -870,6 +1009,33 @@ pub fn instantiate_effect(
                     control: None,
                     meter: None,
                     lufs: Some(handle),
+                }
+            }
+        },
+        EffectSpec::Limiter(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::Limiter { ceiling, release_ms }) => {
+                let lookahead_frames =
+                    ((d.lookahead_ms.max(0.1) * sample_rate as f32 / 1000.0) as usize).max(1);
+                EffectBuild {
+                    effect: RuntimeEffect::Limiter(LimiterEffect::from_state(
+                        ceiling.clone(),
+                        release_ms.clone(),
+                        lookahead_frames,
+                        sample_rate,
+                    )),
+                    control: None,
+                    meter: None,
+                    lufs: None,
+                }
+            }
+            _ => {
+                let (e, c) = LimiterEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                EffectBuild {
+                    effect: RuntimeEffect::Limiter(e),
+                    control: Some(c),
+                    meter: None,
+                    lufs: None,
                 }
             }
         },
@@ -947,8 +1113,8 @@ mod tests {
     }
 
     #[test]
-    fn limiter_saturates_above_ceiling() {
-        let (mut e, _) = LimiterEffect::new(LimiterData {
+    fn saturator_clips_above_ceiling() {
+        let (mut e, _) = SaturatorEffect::new(SaturatorData {
             threshold_db: 0.0,
             drive_db: 0.0,
         });

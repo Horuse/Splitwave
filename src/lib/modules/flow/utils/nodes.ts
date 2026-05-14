@@ -14,10 +14,11 @@ import FileRecording from '../ui/output/file_recording.svelte';
 import Gain from '../ui/effect/gain.svelte';
 import Mute from '../ui/effect/mute.svelte';
 import ChannelBalance from '../ui/effect/channel_balance.svelte';
-import Limiter from '../ui/effect/limiter.svelte';
+import Saturator from '../ui/effect/saturator.svelte';
 import Eq from '../ui/effect/eq.svelte';
 import LevelMeter from '../ui/effect/level_meter.svelte';
 import LufsMeter from '../ui/effect/lufs_meter.svelte';
+import Limiter from '../ui/effect/limiter.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-betteraudio-nodekind';
@@ -100,12 +101,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: ChannelBalance,
 		defaultData: { leftGainDb: 0, rightGainDb: 0 }
 	}),
-	limiter: entry<'limiter'>({
-		kind: 'limiter',
+	saturator: entry<'saturator'>({
+		kind: 'saturator',
 		category: 'effect',
-		label: 'Limiter',
-		description: 'Soft (tanh-based) limiter — saturates instead of clipping.',
-		component: Limiter,
+		label: 'Saturator',
+		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
+		component: Saturator,
 		defaultData: { thresholdDb: -0.3, driveDb: 0 }
 	}),
 	eq: entry<'eq'>({
@@ -131,6 +132,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS. Pass-through.',
 		component: LufsMeter,
 		defaultData: { target: -14 }
+	}),
+	limiter: entry<'limiter'>({
+		kind: 'limiter',
+		category: 'effect',
+		label: 'Limiter',
+		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
+		component: Limiter,
+		defaultData: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50 }
 	})
 };
 

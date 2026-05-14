@@ -9,10 +9,11 @@ export type NodeKind =
 	| 'gain'
 	| 'mute'
 	| 'channelBalance'
-	| 'limiter'
+	| 'saturator'
 	| 'eq'
 	| 'levelMeter'
-	| 'lufsMeter';
+	| 'lufsMeter'
+	| 'limiter';
 
 export interface MicrophoneNodeData extends Record<string, unknown> {
 	deviceId: string | null;
@@ -47,7 +48,7 @@ export interface ChannelBalanceNodeData extends Record<string, unknown> {
 	rightGainDb: number;
 }
 
-export interface LimiterNodeData extends Record<string, unknown> {
+export interface SaturatorNodeData extends Record<string, unknown> {
 	thresholdDb: number;
 	driveDb: number;
 }
@@ -66,6 +67,12 @@ export interface LufsMeterNodeData extends Record<string, unknown> {
 	target: number | null;
 }
 
+export interface LimiterNodeData extends Record<string, unknown> {
+	ceilingDb: number;
+	lookaheadMs: number;
+	releaseMs: number;
+}
+
 export type NodeDataMap = {
 	microphone: MicrophoneNodeData;
 	systemAudio: SystemAudioNodeData;
@@ -75,10 +82,11 @@ export type NodeDataMap = {
 	gain: GainNodeData;
 	mute: MuteNodeData;
 	channelBalance: ChannelBalanceNodeData;
-	limiter: LimiterNodeData;
+	saturator: SaturatorNodeData;
 	eq: EqNodeData;
 	levelMeter: LevelMeterNodeData;
 	lufsMeter: LufsMeterNodeData;
+	limiter: LimiterNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

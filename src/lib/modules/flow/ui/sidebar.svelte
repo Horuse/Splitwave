@@ -2,6 +2,7 @@
 	import type { NodeKind } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
+	import { Add } from '$lib/components/icons';
 
 	function onDragStart(event: DragEvent, kind: NodeKind) {
 		if (!event.dataTransfer) return;
@@ -35,11 +36,11 @@
 							<span class="text-[11px] leading-tight text-neutral-900">{node.description}</span>
 						</div>
 						<button
-							class="shrink-0 rounded px-2 py-0.5 text-sm text-neutral-1000 hover:bg-neutral-300"
+							class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300"
 							onclick={() => onClickAdd(kind)}
 							aria-label={`Add ${node.label}`}
 						>
-							+
+							<Add class="h-4 w-4" />
 						</button>
 					</li>
 				{/each}

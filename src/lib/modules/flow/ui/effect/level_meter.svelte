@@ -4,6 +4,7 @@
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
 	let { id }: NodeProps<LevelMeterNodeType> = $props();
@@ -150,7 +151,9 @@
 		rafId = requestAnimationFrame(tick);
 	}
 
+	let unlistenReset: (() => void) | undefined;
 	onMount(async () => {
+		unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
 		unlisten = await listen<MeterTick>('audio://meter', (event) => {
 			const p = event.payload;
 			if (p.nodeId !== id) return;
@@ -164,6 +167,7 @@
 
 	onDestroy(() => {
 		unlisten?.();
+		unlistenReset?.();
 		if (rafId) cancelAnimationFrame(rafId);
 	});
 

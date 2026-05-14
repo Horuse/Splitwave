@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { Checkmark } from '$lib/components/icons';
 
 	let now = $state(Date.now());
 	let timer: ReturnType<typeof setInterval> | undefined;
@@ -23,15 +24,6 @@
 </script>
 
 <div class="flex items-center gap-1 text-[10px] text-neutral-900">
-	<svg viewBox="0 0 12 12" class="h-3 w-3 text-green-600" aria-hidden="true">
-		<path
-			d="M2 6 L5 9 L10 3"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.6"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		/>
-	</svg>
+	<Checkmark class="h-3 w-3 text-green-600" />
 	<span class="font-mono tabular-nums">Saved {format(pipelineStore.lastSavedAt)}</span>
 </div>

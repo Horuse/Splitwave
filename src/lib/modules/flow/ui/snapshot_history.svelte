@@ -3,6 +3,7 @@
 	import { fly } from 'svelte/transition';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { methods as pipelineMethods, type Snapshot } from '$lib/modules/pipeline/methods';
+	import { ChevronDown } from '$lib/components/icons';
 
 	let { pipelineId }: { pipelineId: string } = $props();
 
@@ -63,16 +64,7 @@
 		<span class="rounded bg-neutral-300 px-1 py-px font-mono text-[10px] tabular-nums leading-none text-neutral-1000">
 			{snapshots.length}
 		</span>
-		<svg viewBox="0 0 12 12" class="h-3 w-3 opacity-60" aria-hidden="true">
-			<path
-				d="M2 4 L6 8 L10 4"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="1.5"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-			/>
-		</svg>
+		<ChevronDown class="h-3 w-3 opacity-60" />
 	</button>
 
 	{#if open}

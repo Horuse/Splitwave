@@ -5,6 +5,9 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
+	import { Refresh } from '$lib/components/icons';
+	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { onDestroy, onMount } from 'svelte';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -25,6 +28,12 @@
 			refreshing = false;
 		}
 	}
+
+	let unlistenRefresh: (() => void) | undefined;
+	onMount(() => {
+		unlistenRefresh = onNodeAction(id, 'refresh', () => refresh());
+	});
+	onDestroy(() => unlistenRefresh?.());
 
 	let options = $derived(
 		audioStore.audioApplications.map((a) => ({
@@ -52,16 +61,7 @@
 				disabled={refreshing}
 				onclick={refresh}
 			>
-				<svg viewBox="0 0 16 16" class={['h-3.5 w-3.5', refreshing ? 'animate-spin' : '']} aria-hidden="true">
-					<path
-						d="M13 8a5 5 0 1 1-1.5-3.5M13 2v3h-3"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-				</svg>
+				<Refresh class={['h-3.5 w-3.5', refreshing ? 'animate-spin' : '']} />
 			</button>
 		</div>
 		{#if missing}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import { ArrowLeft, ArrowRight } from '$lib/components/icons';
+	import { ArrowUndo, ArrowRedo } from '$lib/components/icons';
 
 	let canUndo = $derived(pipelineStore.editorActions?.canUndo?.() ?? false);
 	let canRedo = $derived(pipelineStore.editorActions?.canRedo?.() ?? false);
@@ -54,7 +54,7 @@
 		disabled={!canUndo}
 		onclick={onUndo}
 	>
-		<ArrowLeft class="h-4 w-4" />
+		<ArrowUndo class="h-4 w-4" />
 	</button>
 	<button
 		type="button"
@@ -64,6 +64,6 @@
 		disabled={!canRedo}
 		onclick={onRedo}
 	>
-		<ArrowRight class="h-4 w-4" />
+		<ArrowRedo class="h-4 w-4" />
 	</button>
 </div>

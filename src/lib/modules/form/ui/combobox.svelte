@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
+	import { ChevronDown } from '$lib/components/icons';
 
 	interface Option {
 		value: string;
@@ -98,9 +99,7 @@
 				{selected?.label ?? placeholder}
 			</span>
 		</span>
-		<svg viewBox="0 0 12 12" class="h-3 w-3 shrink-0 opacity-60" aria-hidden="true">
-			<path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-		</svg>
+		<ChevronDown class="h-3 w-3 shrink-0 opacity-60" />
 	</button>
 
 	{#if open}

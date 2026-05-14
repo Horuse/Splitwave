@@ -7,6 +7,8 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Rewind, Loop } from '$lib/components/icons';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();
@@ -27,7 +29,11 @@
 	let playing = $state(false);
 
 	let unlisten: UnlistenFn | undefined;
+	let unlistenChoose: (() => void) | undefined;
 	onMount(async () => {
+		unlistenChoose = onNodeAction(id, 'chooseFile', () => {
+			chooseFile().catch(() => {});
+		});
 		unlisten = await listen<ProgressEvent>('audio://audio_file_progress', (e) => {
 			const p = e.payload;
 			if (p.nodeId !== id) return;
@@ -53,7 +59,10 @@
 		}
 	});
 
-	onDestroy(() => unlisten?.());
+	onDestroy(() => {
+		unlisten?.();
+		unlistenChoose?.();
+	});
 
 	async function chooseFile() {
 		const path = await open({
@@ -123,15 +132,7 @@
 				disabled={!audioStore.isRunning || !data.filePath}
 				onclick={rewind}
 			>
-				<svg viewBox="0 0 16 16" class="h-3.5 w-3.5" aria-hidden="true">
-					<path
-						d="M3 3v10M14 4l-7 4 7 4V4Z"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.2"
-						stroke-linejoin="round"
-					/>
-				</svg>
+				<Rewind class="h-3.5 w-3.5" />
 			</button>
 			<button
 				type="button"
@@ -144,12 +145,7 @@
 				title={data.loopEnabled ? 'Loop on' : 'Loop off'}
 				onclick={toggleLoop}
 			>
-				<svg viewBox="0 0 16 16" class="h-3.5 w-3.5" aria-hidden="true">
-					<path
-						d="M4 6V4h8v3l3-3-3-3v2H3v4h1Zm8 4v2H4V9L1 12l3 3v-2h9V9h-1Z"
-						fill="currentColor"
-					/>
-				</svg>
+				<Loop class="h-3.5 w-3.5" />
 			</button>
 		</div>
 

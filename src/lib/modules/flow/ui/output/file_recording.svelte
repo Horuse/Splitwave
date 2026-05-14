@@ -15,6 +15,8 @@
 	} from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import Wrapper from '../node.svelte';
+	import { Folder } from '$lib/components/icons';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
 	let { id, data }: NodeProps<FileRecordingNodeType> = $props();
@@ -33,7 +35,11 @@
 	let recording = $state(false);
 
 	let unlisten: UnlistenFn | undefined;
+	let unlistenChoose: (() => void) | undefined;
 	onMount(async () => {
+		unlistenChoose = onNodeAction(id, 'chooseFile', () => {
+			chooseFile().catch(() => {});
+		});
 		unlisten = await listen<ProgressEvent>('audio://recorder_progress', (e) => {
 			const p = e.payload;
 			if (p.nodeId !== id) return;
@@ -49,7 +55,10 @@
 		}
 	});
 
-	onDestroy(() => unlisten?.());
+	onDestroy(() => {
+		unlisten?.();
+		unlistenChoose?.();
+	});
 
 	function extension(fmt: RecordingFormat): string {
 		if (fmt.kind === 'flac') return 'flac';
@@ -296,15 +305,7 @@
 				disabled={!data.filePath}
 				onclick={revealFolder}
 			>
-				<svg viewBox="0 0 16 16" class="h-3.5 w-3.5" aria-hidden="true">
-					<path
-						d="M1.5 5h4l1.5-1.5h6A1.5 1.5 0 0 1 14.5 5v6A1.5 1.5 0 0 1 13 12.5H3A1.5 1.5 0 0 1 1.5 11V5Z"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.2"
-						stroke-linejoin="round"
-					/>
-				</svg>
+				<Folder class="h-3.5 w-3.5" />
 			</button>
 		</div>
 

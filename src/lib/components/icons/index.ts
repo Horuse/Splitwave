@@ -1,2 +1,17 @@
+export { default as Add } from './add.svelte';
 export { default as ArrowLeft } from './arrow_left.svelte';
 export { default as ArrowRight } from './arrow_right.svelte';
+export { default as ArrowUndo } from './arrow_undo.svelte';
+export { default as ArrowRedo } from './arrow_redo.svelte';
+export { default as Backspace } from './backspace.svelte';
+export { default as Checkmark } from './checkmark.svelte';
+export { default as ChevronDown } from './chevron_down.svelte';
+export { default as ClipboardPaste } from './clipboard_paste.svelte';
+export { default as Copy } from './copy.svelte';
+export { default as Delete } from './delete.svelte';
+export { default as Folder } from './folder.svelte';
+export { default as History } from './history.svelte';
+export { default as KeyCommand } from './key_command.svelte';
+export { default as Loop } from './loop.svelte';
+export { default as Refresh } from './refresh.svelte';
+export { default as Rewind } from './rewind.svelte';

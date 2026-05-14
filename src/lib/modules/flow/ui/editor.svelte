@@ -18,6 +18,7 @@
 	import {
 		DND_MIME,
 		defaultDataFor,
+		emitNodeAction,
 		fromXyEdges,
 		fromXyNodes,
 		nodeTypes,
@@ -26,6 +27,18 @@
 		toXyNodes
 	} from '../utils';
 	import Sidebar from './sidebar.svelte';
+	import {
+		Backspace,
+		Copy,
+		ClipboardPaste,
+		Delete,
+		Folder,
+		KeyCommand,
+		Loop,
+		Refresh,
+		Rewind
+	} from '$lib/components/icons';
+	import type { Component } from 'svelte';
 
 	let { pipeline }: { pipeline: Pipeline } = $props();
 
@@ -34,9 +47,19 @@
 	let nodes = $state.raw<XyNode[]>(untrack(() => toXyNodes(pipeline.nodes)));
 	let edges = $state.raw<XyEdge[]>(untrack(() => toXyEdges(pipeline.edges)));
 
+	type MenuItem = {
+		label: string;
+		icon?: Component;
+		shortcut?: string;
+		danger?: boolean;
+		disabled?: boolean;
+		action: () => void;
+	};
+
 	type ContextMenu =
-		| { kind: 'node'; nodeId: string; x: number; y: number }
-		| { kind: 'edge'; edgeId: string; x: number; y: number };
+		| { kind: 'node'; nodeId: string; x: number; y: number; items: MenuItem[] }
+		| { kind: 'edge'; edgeId: string; x: number; y: number; items: MenuItem[] }
+		| { kind: 'pane'; x: number; y: number; flowX: number; flowY: number; items: MenuItem[] };
 
 	let contextMenu = $state<ContextMenu | null>(null);
 
@@ -54,6 +77,14 @@
 	}
 
 	function addNode(kind: NodeKind, position?: { x: number; y: number }) {
+		addNodeWithData(kind, defaultDataFor(kind), position);
+	}
+
+	function addNodeWithData(
+		kind: NodeKind,
+		data: Record<string, unknown>,
+		position?: { x: number; y: number }
+	) {
 		const fallback = { x: 100 + nodes.length * 40, y: 100 + nodes.length * 40 };
 		nodes = [
 			...nodes,
@@ -61,7 +92,7 @@
 				id: createId(),
 				type: kind,
 				position: position ?? fallback,
-				data: defaultDataFor(kind)
+				data
 			}
 		];
 	}
@@ -75,24 +106,179 @@
 		edges = edges.filter((e) => e.id !== edgeId);
 	}
 
+	function copyNode(node: XyNode) {
+		pipelineStore.clipboard = {
+			kind: node.type as NodeKind,
+			data: JSON.parse(JSON.stringify(node.data))
+		};
+	}
+
+	function pasteAt(position?: { x: number; y: number }) {
+		const c = pipelineStore.clipboard;
+		if (!c) return;
+		addNodeWithData(c.kind, JSON.parse(JSON.stringify(c.data)), position);
+	}
+
+	function patchNodeData(nodeId: string, patch: Record<string, unknown>) {
+		flow.updateNodeData(nodeId, patch);
+	}
+
+	function nodeMenuItems(node: XyNode): MenuItem[] {
+		const items: MenuItem[] = [];
+		const id = node.id;
+		const data = (node.data ?? {}) as Record<string, unknown>;
+		const kind = node.type as NodeKind | undefined;
+
+		switch (kind) {
+			case 'audioFile':
+				items.push({
+					label: 'Choose file...',
+					icon: Folder,
+					action: () => emitNodeAction(id, 'chooseFile')
+				});
+				items.push({
+					label: 'Rewind',
+					icon: Rewind,
+					disabled: !audioStore.isRunning || !data.filePath,
+					action: () => audioMethods.seekAudioFile(id, 0).catch(() => {})
+				});
+				items.push({
+					label: data.loopEnabled ? 'Loop off' : 'Loop on',
+					icon: Loop,
+					action: () => patchNodeData(id, { loopEnabled: !data.loopEnabled })
+				});
+				break;
+			case 'microphone':
+			case 'appAudio':
+			case 'speaker':
+				items.push({
+					label: 'Refresh',
+					icon: Refresh,
+					action: () => emitNodeAction(id, 'refresh')
+				});
+				break;
+			case 'fileRecording':
+				items.push({
+					label: 'Choose file...',
+					icon: Folder,
+					action: () => emitNodeAction(id, 'chooseFile')
+				});
+				break;
+			case 'mute':
+				items.push({
+					label: data.muted ? 'Unmute' : 'Mute',
+					action: () => {
+						const patch = { muted: !data.muted };
+						patchNodeData(id, patch);
+						audioMethods.updateEffect(id, patch).catch(() => {});
+					}
+				});
+				break;
+			case 'levelMeter':
+				items.push({
+					label: 'Reset peaks',
+					action: () => emitNodeAction(id, 'resetPeaks')
+				});
+				break;
+			case 'gain':
+			case 'channelBalance':
+			case 'saturator':
+			case 'eq':
+			case 'limiter':
+			case 'compressor':
+			case 'noiseGate':
+			case 'delay':
+			case 'reverb':
+				items.push({
+					label: data.bypassed ? 'Engage' : 'Bypass',
+					action: () => {
+						const patch = { bypassed: !data.bypassed };
+						patchNodeData(id, patch);
+						audioMethods.updateEffect(id, patch).catch(() => {});
+					}
+				});
+				break;
+		}
+
+		items.push({
+			label: 'Copy',
+			icon: Copy,
+			shortcut: '⌘C',
+			action: () => copyNode(node)
+		});
+		items.push({
+			label: 'Delete',
+			icon: Delete,
+			shortcut: '⌫',
+			danger: true,
+			action: () => deleteNode(id)
+		});
+		return items;
+	}
+
+	function paneMenuItems(flowX: number, flowY: number): MenuItem[] {
+		return [
+			{
+				label: 'Paste',
+				icon: ClipboardPaste,
+				shortcut: '⌘V',
+				disabled: pipelineStore.clipboard === null,
+				action: () => pasteAt({ x: flowX, y: flowY })
+			}
+		];
+	}
+
 	function onNodeContextMenu({ node, event }: { node: XyNode; event: MouseEvent }) {
 		event.preventDefault();
-		contextMenu = { kind: 'node', nodeId: node.id, x: event.clientX, y: event.clientY };
+		contextMenu = {
+			kind: 'node',
+			nodeId: node.id,
+			x: event.clientX,
+			y: event.clientY,
+			items: nodeMenuItems(node)
+		};
 	}
 
 	function onEdgeContextMenu({ edge, event }: { edge: XyEdge; event: MouseEvent }) {
 		event.preventDefault();
-		contextMenu = { kind: 'edge', edgeId: edge.id, x: event.clientX, y: event.clientY };
+		contextMenu = {
+			kind: 'edge',
+			edgeId: edge.id,
+			x: event.clientX,
+			y: event.clientY,
+			items: [
+				{
+					label: 'Delete',
+					icon: Delete,
+					shortcut: '⌫',
+					danger: true,
+					action: () => deleteEdge(edge.id)
+				}
+			]
+		};
+	}
+
+	function onPaneContextMenu({ event }: { event: MouseEvent | TouchEvent }) {
+		if (!(event instanceof MouseEvent)) return;
+		event.preventDefault();
+		const flowPos = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+		contextMenu = {
+			kind: 'pane',
+			x: event.clientX,
+			y: event.clientY,
+			flowX: flowPos.x,
+			flowY: flowPos.y,
+			items: paneMenuItems(flowPos.x, flowPos.y)
+		};
 	}
 
 	function closeContextMenu() {
 		contextMenu = null;
 	}
 
-	function onMenuDelete() {
-		if (!contextMenu) return;
-		if (contextMenu.kind === 'node') deleteNode(contextMenu.nodeId);
-		else deleteEdge(contextMenu.edgeId);
+	function runMenuItem(item: MenuItem) {
+		if (item.disabled) return;
+		item.action();
 		contextMenu = null;
 	}
 
@@ -176,6 +362,7 @@
 
 	pipelineStore.editorActions = {
 		addNode,
+		addNodeWithData,
 		getSnapshot,
 		revertToSnapshot,
 		undo,
@@ -252,13 +439,30 @@
 	// Backspace, so we explicitly accept Delete too and swallow the default
 	// navigation in case the press lands outside the flow.
 	function onWindowKeyDown(e: KeyboardEvent) {
-		if (e.key !== 'Backspace' && e.key !== 'Delete') return;
 		const t = e.target as HTMLElement | null;
 		const tag = t?.tagName?.toLowerCase();
-		if (tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable) {
+		const inField =
+			tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable;
+
+		if (e.key === 'Backspace' || e.key === 'Delete') {
+			if (inField) return;
+			e.preventDefault();
 			return;
 		}
-		e.preventDefault();
+
+		const mod = e.metaKey || e.ctrlKey;
+		if (!mod || inField) return;
+
+		if (e.key === 'c' || e.key === 'C') {
+			const selected = nodes.find((n) => n.selected);
+			if (!selected) return;
+			e.preventDefault();
+			copyNode(selected);
+		} else if (e.key === 'v' || e.key === 'V') {
+			if (!pipelineStore.clipboard) return;
+			e.preventDefault();
+			pasteAt(undefined);
+		}
 	}
 
 	// Auto-stop the pipeline when every AudioFile source has reached EOF and
@@ -336,6 +540,7 @@
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}
 			onedgecontextmenu={onEdgeContextMenu}
+			onpanecontextmenu={onPaneContextMenu}
 			onpaneclick={closeContextMenu}
 			fitView
 		>
@@ -348,7 +553,7 @@
 
 {#if contextMenu}
 	<div
-		class="fixed z-50 min-w-40 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 shadow-lg"
+		class="fixed z-50 min-w-44 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg"
 		style="top: {contextMenu.y}px; left: {contextMenu.x}px"
 		role="menu"
 		onclick={(e) => e.stopPropagation()}
@@ -356,16 +561,43 @@
 		onkeydown={(e) => e.key === 'Escape' && closeContextMenu()}
 		tabindex="-1"
 	>
-		<div class="px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">
-			{contextMenu.kind === 'node' ? 'Node' : 'Edge'}
-		</div>
-		<button
-			class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-500/15 dark:text-red-300"
-			onclick={onMenuDelete}
-			role="menuitem"
-		>
-			Delete
-			<span class="ml-auto text-[10px] text-neutral-900">⌫</span>
-		</button>
+		{#each contextMenu.items as item (item.label)}
+			<button
+				type="button"
+				class={[
+					'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm',
+					item.danger ? 'text-red-700 dark:text-red-300' : 'text-neutral-1100',
+					item.disabled
+						? 'cursor-not-allowed opacity-40'
+						: item.danger
+							? 'hover:bg-red-500/15'
+							: 'hover:bg-neutral-200'
+				]}
+				disabled={item.disabled}
+				onclick={() => runMenuItem(item)}
+				role="menuitem"
+			>
+				{#if item.icon}
+					{@const Ico = item.icon}
+					<Ico class="h-3.5 w-3.5 shrink-0 opacity-70" />
+				{:else}
+					<span class="h-3.5 w-3.5 shrink-0"></span>
+				{/if}
+				<span class="flex-1">{item.label}</span>
+				{#if item.shortcut}
+					<span class="flex items-center gap-0.5 font-mono text-[10px] text-neutral-900">
+						{#each [...item.shortcut] as ch, i (i)}
+							{#if ch === '⌘'}
+								<KeyCommand class="h-3 w-3" />
+							{:else if ch === '⌫'}
+								<Backspace class="h-3 w-3" />
+							{:else}
+								<span>{ch}</span>
+							{/if}
+						{/each}
+					</span>
+				{/if}
+			</button>
+		{/each}
 	</div>
 {/if}

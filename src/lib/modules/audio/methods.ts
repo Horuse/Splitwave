@@ -23,6 +23,10 @@ export const methods = {
 	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
 		invoke('start_pipeline', { graph }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),
+	/** Hot-reconfigure a running pipeline. Errors with `NotRunning` if no
+	 *  pipeline is active — callers should fall back to `startPipeline`. */
+	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> =>
+		invoke('reconcile_pipeline', { graph }),
 	/** No-op when the pipeline isn't running; callers can fire-and-forget. */
 	updateEffect: (nodeId: string, data: Record<string, unknown>): Promise<void> =>
 		invoke('update_effect', { nodeId, data }),

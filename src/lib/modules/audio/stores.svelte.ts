@@ -47,11 +47,21 @@ class AudioStore {
 		});
 	}
 
-	/** Atomically stop + start the pipeline with a fresh graph. Intended for
-	 * the editor's "graph changed while running" auto-apply. */
+	/** Apply a new graph to the running pipeline. Uses `reconcile_pipeline`,
+	 * which diffs the new graph and only touches what changed — input
+	 * streams stay alive across edits when their spec is unchanged.
+	 * Falls back to stop + start if the pipeline isn't running. */
 	async restartPipeline(graph: StartPipelinePayload): Promise<void> {
-		await methods.stopPipeline().catch(() => {});
-		await methods.startPipeline(graph);
+		try {
+			await methods.reconcilePipeline(graph);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (msg.includes('not running')) {
+				await methods.startPipeline(graph);
+			} else {
+				throw e;
+			}
+		}
 	}
 
 	destroy(): void {

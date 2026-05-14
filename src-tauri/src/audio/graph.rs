@@ -80,14 +80,14 @@ pub enum NodeCategory {
     Effect,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneData {
     pub device_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SystemAudioData {
@@ -98,14 +98,14 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct AppAudioData {
     pub bundle_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SpeakerData {
@@ -155,7 +155,7 @@ pub enum OpusApplication {
     LowDelay,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export)]
 pub enum RecordingFormat {
@@ -187,7 +187,7 @@ impl Default for RecordingFormat {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileRecordingData {
@@ -196,21 +196,21 @@ pub struct FileRecordingData {
     pub format: RecordingFormat,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct GainData {
     pub gain_db: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MuteData {
     pub muted: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ChannelBalanceData {
@@ -218,7 +218,7 @@ pub struct ChannelBalanceData {
     pub right_gain_db: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SaturatorData {
@@ -226,7 +226,7 @@ pub struct SaturatorData {
     pub drive_db: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct EqData {
@@ -234,17 +234,17 @@ pub struct EqData {
     pub gains_db: [f32; 10],
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct LevelMeterData {}
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct LufsMeterData {}
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct LimiterData {
@@ -253,7 +253,7 @@ pub struct LimiterData {
     pub release_ms: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CompressorData {
@@ -265,7 +265,7 @@ pub struct CompressorData {
     pub makeup_db: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct NoiseGateData {
@@ -276,7 +276,7 @@ pub struct NoiseGateData {
     pub release_ms: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DelayData {
@@ -285,7 +285,7 @@ pub struct DelayData {
     pub mix: f32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ReverbData {
@@ -295,20 +295,20 @@ pub struct ReverbData {
     pub mix: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSpec {
     Microphone { device_id: String },
     SystemAudio { exclude_current_app: bool },
     AppAudio { bundle_id: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputSpec {
     Speaker { device_id: String },
     FileRecording { file_path: String, format: RecordingFormat },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EffectSpec {
     Gain(GainData),
     Mute(MuteData),
@@ -359,7 +359,7 @@ pub struct ValidEdge {
 /// behaviour), at most one outgoing edge. Inputs may fan out to many
 /// downstream nodes. The engine assembles a per-output sub-graph from these
 /// fields at start time.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValidGraph {
     pub inputs: Vec<ValidInput>,
     pub outputs: Vec<ValidOutput>,

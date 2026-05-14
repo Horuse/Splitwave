@@ -22,6 +22,14 @@ pub enum Command {
     Stop {
         reply: Sender<AppResult<()>>,
     },
+    /// Hot reconfigure: keep the running pipeline, diff against `graph`,
+    /// and only touch what changed. Errors with `NotRunning` if no pipeline
+    /// has been started yet.
+    Reconcile {
+        graph: ValidGraph,
+        app: AppHandle,
+        reply: Sender<AppResult<()>>,
+    },
     /// Live parameter update for an effect node. Silently no-ops when the
     /// pipeline isn't running or the node id isn't an effect.
     UpdateEffect {
@@ -58,6 +66,20 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::NotRunning));
                 } else {
                     let _ = reply.send(Ok(()));
+                }
+            }
+            Command::Reconcile { graph, app, reply } => {
+                match active.as_mut() {
+                    None => {
+                        let _ = reply.send(Err(AppError::NotRunning));
+                    }
+                    Some(p) => {
+                        let r = p.reconcile(&graph, app);
+                        if let Err(e) = &r {
+                            error!(error = %e, "reconcile failed");
+                        }
+                        let _ = reply.send(r);
+                    }
                 }
             }
             Command::UpdateEffect {

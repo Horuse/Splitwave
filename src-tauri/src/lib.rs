@@ -28,6 +28,7 @@ pub fn run() {
             commands::check_screen_recording_permission,
             commands::start_pipeline,
             commands::stop_pipeline,
+            commands::reconcile_pipeline,
             commands::update_effect,
             commands::get_device_volume,
             commands::set_device_volume,

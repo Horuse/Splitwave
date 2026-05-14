@@ -4,6 +4,7 @@ pub mod effects;
 pub mod engine;
 pub mod format;
 pub mod graph;
+pub mod input_bridge;
 #[cfg(target_os = "macos")]
 pub mod macos_hal;
 pub mod permission;

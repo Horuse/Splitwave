@@ -7,11 +7,51 @@ use std::sync::OnceLock;
 
 use serde_json::json;
 use state::AppState;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter};
 
 const PANIC_EVENT: &str = "error://panic";
+const MENU_EVENT: &str = "menu://action";
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let about_action = MenuItemBuilder::with_id("about", "About Splitwave").build(app)?;
+    let check_updates = MenuItemBuilder::with_id("check_updates", "Check for Updates...").build(app)?;
+    let undo_action = MenuItemBuilder::with_id("undo", "Undo")
+        .accelerator("CmdOrCtrl+Z")
+        .build(app)?;
+    let redo_action = MenuItemBuilder::with_id("redo", "Redo")
+        .accelerator("CmdOrCtrl+Shift+Z")
+        .build(app)?;
+
+    let app_submenu = SubmenuBuilder::new(app, "Splitwave")
+        .item(&about_action)
+        .separator()
+        .item(&check_updates)
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    let edit_submenu = SubmenuBuilder::new(app, "Edit")
+        .item(&undo_action)
+        .item(&redo_action)
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    MenuBuilder::new(app)
+        .item(&app_submenu)
+        .item(&edit_submenu)
+        .build()
+}
 
 fn install_panic_hook() {
     let default = std::panic::take_hook();
@@ -44,7 +84,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            let _ = APP_HANDLE.set(app.handle().clone());
+            let handle = app.handle().clone();
+            let _ = APP_HANDLE.set(handle.clone());
+
+            let menu = build_menu(&handle)?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app, event| {
+                let _ = app.emit(MENU_EVENT, event.id().0.as_str());
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

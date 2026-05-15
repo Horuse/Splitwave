@@ -3,6 +3,7 @@
 	import type { Update } from '@tauri-apps/plugin-updater';
 	import { errorStore } from '$lib/modules/error';
 	import { updaterStore } from '$lib/modules/updater';
+	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
 
 	let open = $state(false);
 
@@ -71,75 +72,25 @@
 
 <div class="fixed right-3 bottom-3 z-[200] flex flex-col items-end gap-1">
 	{#if open}
-		<div
-			transition:fly={{ duration: 200, y: 5 }}
-			class="min-w-44 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg"
-		>
-			<div class="px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">
-				Errors
-			</div>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakeRustPanic}
-			>
-				Rust panic
-			</button>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakeJsError}
-			>
-				JS error
-			</button>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakePromiseRejection}
-			>
-				Promise rejection
-			</button>
-
-			<div class="mt-1 px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">
-				Updater
-			</div>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakeUpdateAvailable}
-			>
-				Update available
-			</button>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakeDownloading}
-			>
-				Downloading 30%
-			</button>
-			<button
-				type="button"
-				class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
-				onclick={fakeUpdateError}
-			>
-				Update error
-			</button>
-
-			<div class="mt-1 border-t border-neutral-300">
-				<button
-					type="button"
-					class="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-1000 hover:bg-neutral-200"
-					onclick={clearAll}
-				>
-					Clear all
-				</button>
-			</div>
+		<div transition:fly={{ duration: 200, y: 5 }}>
+			<Menu>
+				<MenuSection label="Errors" />
+				<MenuItem label="Rust panic" onclick={fakeRustPanic} />
+				<MenuItem label="JS error" onclick={fakeJsError} />
+				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
+				<MenuSection label="Updater" />
+				<MenuItem label="Update available" onclick={fakeUpdateAvailable} />
+				<MenuItem label="Downloading 30%" onclick={fakeDownloading} />
+				<MenuItem label="Update error" onclick={fakeUpdateError} />
+				<MenuSeparator />
+				<MenuItem label="Clear all" onclick={clearAll} />
+			</Menu>
 		</div>
 	{/if}
 
 	<button
 		type="button"
-		class="button-header px-3 text-xs"
+		class="button-header size-7 px-3 text-xs"
 		onclick={() => (open = !open)}
 		title="Dev triggers"
 	>

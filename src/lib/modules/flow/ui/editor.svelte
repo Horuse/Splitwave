@@ -38,6 +38,7 @@
 		Refresh,
 		Rewind
 	} from '$lib/components/icons';
+	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
 	let { pipeline }: { pipeline: Pipeline } = $props();
@@ -521,7 +522,7 @@
 	});
 </script>
 
-<svelte:window onclick={closeContextMenu} />
+<svelte:window onmousedown={closeContextMenu} />
 
 <div class="flex h-full w-full">
 	<div
@@ -542,6 +543,9 @@
 			onedgecontextmenu={onEdgeContextMenu}
 			onpanecontextmenu={onPaneContextMenu}
 			onpaneclick={closeContextMenu}
+			onnodedragstart={closeContextMenu}
+			onselectionstart={closeContextMenu}
+			onmovestart={closeContextMenu}
 			fitView
 		>
 			<Background patternClass="fill-neutral-200"/>
@@ -553,51 +557,35 @@
 
 {#if contextMenu}
 	<div
-		class="fixed z-50 min-w-44 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg"
+		class="fixed z-50"
 		style="top: {contextMenu.y}px; left: {contextMenu.x}px"
-		role="menu"
-		onclick={(e) => e.stopPropagation()}
 		oncontextmenu={(e) => e.preventDefault()}
-		onkeydown={(e) => e.key === 'Escape' && closeContextMenu()}
-		tabindex="-1"
+		onmousedown={(e) => e.stopPropagation()}
 	>
-		{#each contextMenu.items as item (item.label)}
-			<button
-				type="button"
-				class={[
-					'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm',
-					item.danger ? 'text-red-700 dark:text-red-300' : 'text-neutral-1100',
-					item.disabled
-						? 'cursor-not-allowed opacity-40'
-						: item.danger
-							? 'hover:bg-red-500/15'
-							: 'hover:bg-neutral-200'
-				]}
-				disabled={item.disabled}
-				onclick={() => runMenuItem(item)}
-				role="menuitem"
-			>
-				{#if item.icon}
-					{@const Ico = item.icon}
-					<Ico class="h-3.5 w-3.5 shrink-0 opacity-70" />
-				{:else}
-					<span class="h-3.5 w-3.5 shrink-0"></span>
-				{/if}
-				<span class="flex-1">{item.label}</span>
-				{#if item.shortcut}
-					<span class="flex items-center gap-0.5 font-mono text-[10px] text-neutral-900">
-						{#each [...item.shortcut] as ch, i (i)}
-							{#if ch === '⌘'}
-								<KeyCommand class="h-3 w-3" />
-							{:else if ch === '⌫'}
-								<Backspace class="h-3 w-3" />
-							{:else}
-								<span>{ch}</span>
-							{/if}
-						{/each}
-					</span>
-				{/if}
-			</button>
-		{/each}
+		<Menu>
+			{#each contextMenu.items as item (item.label)}
+				<OverlayMenuItem
+					label={item.label}
+					icon={item.icon}
+					danger={item.danger}
+					disabled={item.disabled}
+					onclick={() => runMenuItem(item)}
+				>
+					{#snippet shortcut()}
+						{#if item.shortcut}
+							{#each [...item.shortcut] as ch, i (i)}
+								{#if ch === '⌘'}
+									<KeyCommand class="h-3 w-3" />
+								{:else if ch === '⌫'}
+									<Backspace class="h-3 w-3" />
+								{:else}
+									<span>{ch}</span>
+								{/if}
+							{/each}
+						{/if}
+					{/snippet}
+				</OverlayMenuItem>
+			{/each}
+		</Menu>
 	</div>
 {/if}

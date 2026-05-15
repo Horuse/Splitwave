@@ -29,12 +29,11 @@
 </script>
 
 <button
-	class="button-header px-4"
-	class:bg-green-600={!audioStore.isRunning}
-	class:text-white={!audioStore.isRunning}
-	class:bg-red-600={audioStore.isRunning}
-	class:hover:bg-green-700={!audioStore.isRunning}
-	class:hover:bg-red-700={audioStore.isRunning}
+	class={[
+		'button-header px-4',
+		!audioStore.isRunning && 'bg-green-600 text-green-200 hover:bg-green-700',
+		audioStore.isRunning && 'bg-red-600 text-red-200 hover:bg-red-700'
+	]}
 	disabled={busy}
 	onclick={toggle}
 >

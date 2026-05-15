@@ -3,6 +3,7 @@
 	import { errorStore } from '../stores.svelte';
 	import { formatAppInfo, getCachedAppInfo } from '$lib/modules/app_info';
 	import { Copy } from '$lib/components/icons';
+	import { ModalShell } from '$lib/modules/overlay/ui/modal';
 
 	const REPO = 'Horuse/Splitwave';
 
@@ -48,7 +49,6 @@
 		try {
 			await navigator.clipboard.writeText(buildDetails());
 		} catch {
-			// no-op
 		}
 	}
 
@@ -60,7 +60,6 @@
 		try {
 			await openUrl(url);
 		} catch {
-			// no-op
 		}
 	}
 
@@ -68,7 +67,7 @@
 		errorStore.dismiss();
 	}
 
-	function sourceLabel(s: typeof current extends null ? never : NonNullable<typeof current>['source']): string {
+	function sourceLabel(s: NonNullable<typeof current>['source']): string {
 		switch (s) {
 			case 'rustPanic':
 				return 'Rust panic';
@@ -81,59 +80,39 @@
 </script>
 
 {#if current}
-	<div
-		class="fixed inset-0 z-100 flex items-center justify-center bg-theme/1 backdrop-blur-sm  p-6"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="error-title"
+	<ModalShell
+		title="Something went wrong"
+		titleClass="text-md font-semibold text-red-500"
+		onClose={dismiss}
 	>
-		<div class="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-neutral-400 bg-neutral-100 shadow-xl">
-			<header class="flex items-center justify-between border-b border-neutral-300 px-5 py-3">
-				<h2 id="error-title" class="text-md font-semibold text-red-500">
-					Something went wrong
-				</h2>
-				<span class="rounded bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
-					{sourceLabel(current.source)}
-				</span>
-			</header>
+		{#snippet badge()}
+			<span class="rounded bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
+				{sourceLabel(current.source)}
+			</span>
+		{/snippet}
 
-			<div class="flex-1 overflow-y-auto px-5 py-4">
-				<p class="mb-2 text-xs text-neutral-1000">
-					Please report this so we can fix it.
-				</p>
-				<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
-				{#if current.stack}
-					<details class="mt-3">
-						<summary class="cursor-pointer text-[11px] text-neutral-900">Stack trace</summary>
-						<pre class="mt-2 max-h-60 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[10px] leading-tight whitespace-pre-wrap break-words text-neutral-1000">{current.stack}</pre>
-					</details>
-				{/if}
-			</div>
-
-			<footer class="flex items-center justify-end gap-2 border-t border-neutral-300 bg-neutral-200 px-5 py-3">
-				<button
-					type="button"
-					class="button-main primary rounded-lg"
-					onclick={dismiss}
-				>
-					Dismiss
-				</button>
-				<button
-					type="button"
-					class="button-main primary gap-3 rounded-lg"
-					onclick={copyDetails}
-				>
-					<Copy class="size-4" />
-					Copy details
-				</button>
-				<button
-					type="button"
-					class="button-main red rounded-lg"
-					onclick={reportOnGitHub}
-				>
-					Report on GitHub
-				</button>
-			</footer>
+		<div class="px-5 py-4">
+			<p class="mb-2 text-xs text-neutral-1000">Please report this so we can fix it.</p>
+			<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
+			{#if current.stack}
+				<details class="mt-3">
+					<summary class="cursor-pointer text-[11px] text-neutral-900">Stack trace</summary>
+					<pre class="mt-2 max-h-60 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[10px] leading-tight whitespace-pre-wrap break-words text-neutral-1000">{current.stack}</pre>
+				</details>
+			{/if}
 		</div>
-	</div>
+
+		{#snippet footer()}
+			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
+				Dismiss
+			</button>
+			<button type="button" class="button-main primary gap-3 rounded-lg" onclick={copyDetails}>
+				<Copy class="size-4" />
+				Copy details
+			</button>
+			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}>
+				Report on GitHub
+			</button>
+		{/snippet}
+	</ModalShell>
 {/if}

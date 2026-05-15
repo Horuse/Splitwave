@@ -72,7 +72,7 @@
 		{/if}
 	</div>
 
-	<div class={bypassed ? 'opacity-40' : ''}>
+	<div class={[bypassed && 'opacity-40']}>
 		{@render children?.()}
 	</div>
 

@@ -9,9 +9,10 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
 	plugins: [tailwindcss(), sveltekit()],
 
-	// xyflow ships .svelte files; let the Svelte plugin handle them instead of esbuild pre-bundling.
+	// Packages that ship .svelte source -- let the Svelte plugin handle them
+	// instead of esbuild pre-bundling (which has no .svelte loader).
 	optimizeDeps: {
-		exclude: ['@xyflow/svelte']
+		exclude: ['@xyflow/svelte', 'svelte-portal', 'svelte-floating-ui']
 	},
 
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

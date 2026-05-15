@@ -20,7 +20,6 @@ export async function skipVersion(version: string): Promise<void> {
 		await prefs.set(SKIPPED_KEY, version);
 		await prefs.save();
 	} catch {
-		// no-op
 	}
 	updaterStore.state = { phase: 'idle' };
 }
@@ -40,8 +39,6 @@ export async function checkForUpdates(): Promise<void> {
 		}
 		updaterStore.state = { phase: 'available', update };
 	} catch {
-		// Background check -- offline, DNS failure, missing manifest, etc. are
-		// expected and uninteresting. Errors during installUpdate stay visible.
 		updaterStore.state = { phase: 'idle' };
 	}
 }

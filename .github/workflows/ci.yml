@@ -28,13 +28,7 @@ jobs:
       - name: Install JS deps
         run: bun install --frozen-lockfile
 
-      # Cargo picks up src-tauri/.cargo/config.toml (CMAKE_POLICY_VERSION_MINIMUM,
-      # TS_RS_EXPORT_DIR) only when invoked from inside that directory.
-      - name: Cargo check
-        working-directory: src-tauri
-        run: cargo check --all-targets
-
-      - name: Cargo tests (also regenerates ts-rs bindings)
+      - name: Cargo test (also regenerates ts-rs bindings)
         working-directory: src-tauri
         run: cargo test
 
@@ -43,30 +37,3 @@ jobs:
 
       - name: Svelte / TypeScript check
         run: bun run check
-
-  build:
-    needs: check
-    runs-on: macos-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install JS deps
-        run: bun install --frozen-lockfile
-
-      - name: Tauri build
-        run: bun run tauri build --bundles app

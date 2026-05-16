@@ -11,13 +11,16 @@ files in any of six formats.
 ## Features
 
 - **Inputs:** microphones, system audio, per-application audio
-  (ScreenCaptureKit), WAV files
+  (ScreenCaptureKit), WAV files, virtual device loopback
 - **Outputs:** physical speakers/interfaces, file recording in WAV (16/24-bit
-  PCM + 32-float), FLAC, AIFF, Opus, MP3, AAC (M4A)
+  PCM + 32-float), FLAC, AIFF, Opus, MP3, AAC (M4A), virtual devices
 - **Effects:** Gain, Mute, Channel Balance, Saturator, 10-band Graphic EQ,
   Brick-wall Limiter with look-ahead, Compressor (with sidechain), Noise Gate
   (with sidechain), Stereo Delay, Algorithmic Reverb (Freeverb), Level Meter,
   EBU R128 LUFS Meter
+- **Virtual devices:** create named virtual audio devices that appear system-wide.
+  Use them to capture loopback audio from any app or to feed processed audio into
+  apps that accept a microphone input (DAWs, Discord, etc.)
 
 ## Stack
 
@@ -27,7 +30,7 @@ files in any of six formats.
   `ebur128`
 - **macOS-specific:** custom Swift static library for ScreenCaptureKit,
   compiled by `build.rs` via `swiftc`; CoreAudio HAL FFI for device
-  enumeration
+  enumeration; libASPL-based AudioServerPlugin for virtual device driver
 
 ## Development
 
@@ -69,4 +72,7 @@ src-tauri/src/
   audio/        DSP engine, effects, encoders, pipeline DAG
   commands.rs   Tauri command surface
   lib.rs        app entry, plugin wiring, panic hook
+src-tauri/native/virtual_driver/
+  SplitAudioDriver.cpp  AudioServerPlugin implementation (libASPL)
+  Info.plist            CFPlugin manifest
 ```

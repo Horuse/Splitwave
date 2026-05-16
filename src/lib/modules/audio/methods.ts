@@ -6,7 +6,9 @@ import type {
 	AudioStateEvent,
 	NativeDeviceInfo,
 	PermissionState,
-	StartPipelinePayload
+	StartPipelinePayload,
+	VirtualDeviceConfig,
+	VirtualDriverStatus
 } from './types';
 
 const AUDIO_STATE_EVENT = 'audio://state';
@@ -45,5 +47,11 @@ export const methods = {
 	setDeviceVolume: (kind: 'input' | 'output', name: string, scalar: number): Promise<void> =>
 		invoke('set_device_volume', { kind, name, scalar }),
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> =>
-		listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload))
+		listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),
+	virtualDriverStatus: (): Promise<VirtualDriverStatus> =>
+		invoke<VirtualDriverStatus>('virtual_driver_status'),
+	installVirtualDriver: (): Promise<void> => invoke('install_virtual_driver'),
+	uninstallVirtualDriver: (): Promise<void> => invoke('uninstall_virtual_driver'),
+	applyVirtualDevices: (devices: VirtualDeviceConfig[]): Promise<void> =>
+		invoke('apply_virtual_devices', { devices })
 };

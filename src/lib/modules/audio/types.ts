@@ -23,6 +23,15 @@ export interface NativeDeviceInfo {
 
 export type PermissionState = 'allowed' | 'denied' | 'unknown';
 
+export interface VirtualDriverStatus {
+	installed: boolean;
+}
+
+export interface VirtualDeviceConfig {
+	id: string;
+	name: string;
+}
+
 export type AudioStateEvent =
 	| { kind: 'started' }
 	| { kind: 'stopped' }

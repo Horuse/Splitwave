@@ -5,6 +5,7 @@ use std::process::Command;
 fn main() {
     if cfg!(target_os = "macos") {
         compile_swift_static_lib();
+        build_virtual_driver();
     }
     tauri_build::build()
 }
@@ -75,9 +76,101 @@ fn compile_swift_static_lib() {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 
-    // Swift runtime ships with macOS; link dynamically from the system path.
     println!("cargo:rustc-link-search=native=/usr/lib/swift");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+}
+
+fn build_virtual_driver() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let driver_dir = manifest_dir.join("native/virtual_driver");
+    if !driver_dir.exists() {
+        return;
+    }
+
+    println!("cargo:rerun-if-changed={}", driver_dir.join("SplitAudioDriver.cpp").display());
+    println!("cargo:rerun-if-changed={}", driver_dir.join("Info.plist").display());
+
+    let libaspl_dir = driver_dir.join("libASPL");
+    if !libaspl_dir.exists() {
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--depth=1",
+                "https://github.com/gavv/libASPL.git",
+                libaspl_dir.to_str().unwrap(),
+            ])
+            .status()
+            .expect("git clone libASPL");
+        if !status.success() {
+            panic!("failed to clone libASPL — check network and try again");
+        }
+    }
+
+    // Collect libASPL sources (all .cpp — .g.cpp files contain vtable implementations)
+    let libaspl_src = libaspl_dir.join("src");
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(&libaspl_src)
+        .expect("read libASPL/src")
+        .filter_map(|e| {
+            let p = e.ok()?.path();
+            if p.extension().map_or(false, |e| e == "cpp") {
+                Some(p)
+            } else {
+                None
+            }
+        })
+        .collect();
+    sources.push(driver_dir.join("SplitAudioDriver.cpp"));
+
+    let bundle_root = manifest_dir.join("resources/Splitwave.driver");
+    let bundle_macos = bundle_root.join("Contents/MacOS");
+    std::fs::create_dir_all(&bundle_macos).expect("create bundle MacOS dir");
+
+    // Only copy Info.plist if content changed (avoids spurious mtime updates).
+    let plist_src = driver_dir.join("Info.plist");
+    let plist_dst = bundle_root.join("Contents/Info.plist");
+    let plist_bytes = std::fs::read(&plist_src).expect("read Info.plist");
+    if std::fs::read(&plist_dst).ok().as_deref() != Some(&plist_bytes) {
+        std::fs::write(&plist_dst, &plist_bytes).expect("write Info.plist");
+    }
+
+    let dylib_out = bundle_macos.join("Splitwave");
+
+    if dylib_out.exists() && !sources_newer_than(&sources, &dylib_out) {
+        return;
+    }
+
+    let mut cmd = Command::new("clang++");
+    cmd.args([
+        "-std=c++17",
+        "-dynamiclib",
+        "-arch", "arm64",
+        "-arch", "x86_64",
+        "-mmacosx-version-min=13.0",
+        "-O2",
+        "-framework", "CoreAudio",
+        "-framework", "CoreFoundation",
+        "-I", libaspl_dir.join("include").to_str().unwrap(),
+        "-o", dylib_out.to_str().unwrap(),
+    ]);
+    for src in &sources {
+        cmd.arg(src);
+    }
+
+    let status = cmd.status().expect("invoke clang++ for virtual driver");
+    if !status.success() {
+        panic!("virtual driver build failed");
+    }
+}
+
+fn sources_newer_than(sources: &[PathBuf], output: &PathBuf) -> bool {
+    let Ok(out_mtime) = output.metadata().and_then(|m| m.modified()) else {
+        return true;
+    };
+    sources.iter().any(|src| {
+        src.metadata()
+            .and_then(|m| m.modified())
+            .map_or(true, |mtime| mtime > out_mtime)
+    })
 }
 
 fn swift_target_for(cargo_triple: &str) -> String {

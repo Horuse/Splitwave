@@ -9,6 +9,7 @@ use crate::audio::engine::Command;
 use crate::audio::graph::GraphSpec;
 use crate::audio::permission::{self, PermissionState};
 use crate::audio::system_audio::{self, AudioApplication};
+use crate::audio::virtual_device::{self, VirtualDeviceConfig, VirtualDriverStatus};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -194,6 +195,27 @@ pub fn set_audio_file_loop(
     reply_rx
         .recv()
         .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+}
+
+#[tauri::command]
+pub fn virtual_driver_status() -> VirtualDriverStatus {
+    virtual_device::status()
+}
+
+#[tauri::command]
+pub fn install_virtual_driver(app: AppHandle) -> Result<(), String> {
+    virtual_device::install(&app)
+}
+
+#[tauri::command]
+pub fn uninstall_virtual_driver() -> Result<(), String> {
+    virtual_device::uninstall()
+}
+
+#[tauri::command]
+pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
+    info!(count = devices.len(), "applying virtual devices");
+    virtual_device::apply_virtual_devices(devices)
 }
 
 #[tauri::command]

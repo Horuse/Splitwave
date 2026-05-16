@@ -26,9 +26,17 @@
     }
 
     import Header from '$lib/components/layout/header.svelte';
+    import { page } from '$app/state';
 </script>
 
-<Header></Header>
+<Header>
+    {#snippet left()}
+        <div class="flex items-center gap-2">
+            <a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
+            <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+        </div>
+    {/snippet}
+</Header>
 
 <div class="flex flex-col gap-8 p-8">
     <div class="flex items-center justify-between">

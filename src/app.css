@@ -76,6 +76,14 @@
         }
     }
 
+    .button-main.secondary {
+        @apply border-neutral-600 bg-neutral-400 text-theme;
+
+        @variant hover {
+            @apply border-neutral-700 bg-neutral-500;
+        }
+    }
+
     .button-main.red {
         @apply border-red-500/40 bg-red-500/40 text-red-800;
 

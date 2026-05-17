@@ -19,6 +19,7 @@ import Saturator from '../ui/effect/saturator.svelte';
 import Eq from '../ui/effect/eq.svelte';
 import LevelMeter from '../ui/effect/level_meter.svelte';
 import LufsMeter from '../ui/effect/lufs_meter.svelte';
+import Waveform from '../ui/effect/waveform.svelte';
 import Limiter from '../ui/effect/limiter.svelte';
 import Compressor from '../ui/effect/compressor.svelte';
 import NoiseGate from '../ui/effect/noise_gate.svelte';
@@ -148,6 +149,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS. Pass-through.',
 		component: LufsMeter,
 		defaultData: { target: -14 }
+	}),
+	waveform: entry<'waveform'>({
+		kind: 'waveform',
+		category: 'effect',
+		label: 'Waveform',
+		description: 'Live waveform — filled min/max envelope for L and R channels. Pass-through.',
+		component: Waveform,
+		defaultData: {}
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',

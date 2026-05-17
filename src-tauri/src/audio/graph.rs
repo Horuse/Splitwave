@@ -45,6 +45,7 @@ pub enum NodeKind {
     Eq,
     LevelMeter,
     LufsMeter,
+    Waveform,
     Limiter,
     Compressor,
     NoiseGate,
@@ -68,6 +69,7 @@ impl NodeKind {
             | NodeKind::Eq
             | NodeKind::LevelMeter
             | NodeKind::LufsMeter
+            | NodeKind::Waveform
             | NodeKind::Limiter
             | NodeKind::Compressor
             | NodeKind::NoiseGate
@@ -267,6 +269,11 @@ pub struct LevelMeterData {}
 #[ts(export)]
 pub struct LufsMeterData {}
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct WaveformData {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -351,6 +358,7 @@ pub enum EffectSpec {
     Eq(EqData),
     LevelMeter(LevelMeterData),
     LufsMeter(LufsMeterData),
+    Waveform(WaveformData),
     Limiter(LimiterData),
     Compressor(CompressorData),
     NoiseGate(NoiseGateData),
@@ -371,7 +379,7 @@ impl EffectSpec {
             EffectSpec::NoiseGate(d) => d.bypassed,
             EffectSpec::Delay(d) => d.bypassed,
             EffectSpec::Reverb(d) => d.bypassed,
-            EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) => false,
+            EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) | EffectSpec::Waveform(_) => false,
         }
     }
 }
@@ -476,7 +484,7 @@ impl GraphSpec {
         let has_analyzers = self
             .nodes
             .iter()
-            .any(|n| matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter));
+            .any(|n| matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform));
         if !has_outputs && !has_analyzers {
             return Err(AppError::Validation(
                 "no routing — connect an input to an output or a meter".into(),
@@ -490,7 +498,7 @@ impl GraphSpec {
             })
         } else {
             bfs_backward_pred(&self.nodes, &incoming, |n| {
-                matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter)
+                matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform)
             })
         };
         let keep: HashSet<&str> = reachable_from_inputs
@@ -677,6 +685,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         NodeKind::Eq => EffectSpec::Eq(parse(&n.data, "Eq")?),
         NodeKind::LevelMeter => EffectSpec::LevelMeter(parse(&n.data, "LevelMeter")?),
         NodeKind::LufsMeter => EffectSpec::LufsMeter(parse(&n.data, "LufsMeter")?),
+        NodeKind::Waveform => EffectSpec::Waveform(parse(&n.data, "Waveform")?),
         NodeKind::Limiter => EffectSpec::Limiter(parse(&n.data, "Limiter")?),
         NodeKind::Compressor => EffectSpec::Compressor(parse(&n.data, "Compressor")?),
         NodeKind::NoiseGate => EffectSpec::NoiseGate(parse(&n.data, "NoiseGate")?),

@@ -8,6 +8,20 @@ Audio routing for macOS. Build a node graph of inputs, effects, and outputs;
 the engine processes audio in real time with sample-accurate DSP and writes to
 files in any of six formats.
 
+## Installation
+
+Download the latest `.dmg` from [Releases](https://github.com/Horuse/Splitwave/releases/latest),
+open it, and drag Splitwave to Applications.
+
+**macOS will block the app on first launch** ("cannot verify developer") because the
+binary is not notarized. To allow it, run once in Terminal:
+
+```bash
+xattr -cr /Applications/Splitwave.app
+```
+
+Then open Splitwave normally.
+
 ## Features
 
 - **Inputs:** microphones, system audio, per-application audio
@@ -32,19 +46,6 @@ files in any of six formats.
   compiled by `build.rs` via `swiftc`; CoreAudio HAL FFI for device
   enumeration; libASPL-based AudioServerPlugin for virtual device driver
 
-## Installation
-
-Download the latest `.dmg` from [Releases](https://github.com/Horuse/Splitwave/releases/latest),
-open it, and drag Splitwave to Applications.
-
-**macOS will block the app on first launch** ("cannot verify developer") because the
-binary is not notarized. To allow it, run once in Terminal:
-
-```bash
-xattr -cr /Applications/Splitwave.app
-```
-
-Then open Splitwave normally.
 
 ## Development
 
@@ -65,10 +66,10 @@ bun run tauri dev
 ### Useful commands
 
 ```bash
-bun run check                                # svelte-check + tsc
+bun run check                      # svelte-check + tsc
+bun run generate                   # regenerate TypeScript types from Rust (ts-rs)
 cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml   # also regenerates ts-rs bindings
-bun run tauri build --bundles app                # local .app build
+bun run tauri build --bundles app  # local .app build
 ```
 
 ### Project layout

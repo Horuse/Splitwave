@@ -6,11 +6,12 @@ use std::time::Duration;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
-use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle};
+use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 
 const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
 const GR_EVENT: &str = "audio://gr";
+const SCOPE_EVENT: &str = "audio://scope";
 const METER_TICK: Duration = Duration::from_millis(33);
 
 pub(super) struct MeterTickThread {
@@ -32,6 +33,7 @@ pub(super) fn spawn_meter_thread(
     meters: Vec<MeterHandle>,
     lufs: Vec<LufsHandle>,
     gr_handles: Vec<GrHandle>,
+    scopes: Vec<WaveformHandle>,
 ) -> MeterTickThread {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -70,6 +72,12 @@ pub(super) fn spawn_meter_thread(
                 for g in &gr_handles {
                     let gr_lin = f32::from_bits(g.gr_lin.load(std::sync::atomic::Ordering::Relaxed));
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
+                }
+                for s in &scopes {
+                    let interleaved = s.snapshot();
+                    let l: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[0]).collect();
+                    let r: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[1]).collect();
+                    let _ = app.emit(SCOPE_EVENT, json!({ "nodeId": s.node_id, "l": l, "r": r }));
                 }
             }
         })

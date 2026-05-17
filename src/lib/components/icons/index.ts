@@ -1,4 +1,5 @@
 export { default as Add } from './add.svelte';
+export { default as Minus } from './minus.svelte';
 export { default as ArrowLeft } from './arrow_left.svelte';
 export { default as ArrowRight } from './arrow_right.svelte';
 export { default as ArrowUndo } from './arrow_undo.svelte';

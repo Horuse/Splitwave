@@ -11,7 +11,9 @@ export function toXyNodes(nodes: PipelineNode[]): XyNode[] {
 		id: n.id,
 		type: n.kind,
 		position: n.position,
-		data: { ...n.data }
+		data: { ...n.data },
+		...(n.width != null && { width: n.width }),
+		...(n.height != null && { height: n.height })
 	}));
 }
 
@@ -33,7 +35,9 @@ export function fromXyNodes(xyNodes: XyNode[]): PipelineNode[] {
 				id: n.id,
 				kind,
 				position: { x: n.position.x, y: n.position.y },
-				data: { ...(n.data as Record<string, unknown>) } as PipelineNode['data']
+				data: { ...(n.data as Record<string, unknown>) } as PipelineNode['data'],
+				...(n.width != null && { width: n.width }),
+				...(n.height != null && { height: n.height })
 			}
 		];
 	});

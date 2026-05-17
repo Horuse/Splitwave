@@ -45,8 +45,16 @@
 
 	const flow = useSvelteFlow();
 
+	function sanitizeEdges(xyNodes: XyNode[], xyEdges: XyEdge[]): XyEdge[] {
+		const ids = new Set(xyNodes.map((n) => n.id));
+		return xyEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
+	}
+
 	let nodes = $state.raw<XyNode[]>(untrack(() => toXyNodes(pipeline.nodes)));
-	let edges = $state.raw<XyEdge[]>(untrack(() => toXyEdges(pipeline.edges)));
+	let edges = $state.raw<XyEdge[]>(untrack(() => {
+		const n = toXyNodes(pipeline.nodes);
+		return sanitizeEdges(n, toXyEdges(pipeline.edges));
+	}));
 
 	type MenuItem = {
 		label: string;
@@ -295,8 +303,9 @@
 	}
 
 	function revertToSnapshot(p: Pipeline) {
-		nodes = toXyNodes(p.nodes);
-		edges = toXyEdges(p.edges);
+		const n = toXyNodes(p.nodes);
+		nodes = n;
+		edges = sanitizeEdges(n, toXyEdges(p.edges));
 	}
 
 	// Capture on the debounced save tick when enough time has passed --

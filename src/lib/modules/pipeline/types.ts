@@ -9,6 +9,7 @@ import type { GainData } from './generated/GainData';
 import type { LevelMeterData } from './generated/LevelMeterData';
 import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
+import type { WaveformData } from './generated/WaveformData';
 import type { MicrophoneData } from './generated/MicrophoneData';
 import type { MuteData } from './generated/MuteData';
 import type { NoiseGateData } from './generated/NoiseGateData';
@@ -46,6 +47,7 @@ export type SaturatorNodeData = XyData<SaturatorData>;
 export type EqNodeData = XyData<EqData>;
 export type LevelMeterNodeData = XyData<LevelMeterData>;
 export type LimiterNodeData = XyData<LimiterData>;
+export type WaveformNodeData = XyData<WaveformData>;
 export type CompressorNodeData = XyData<CompressorData>;
 export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
@@ -69,6 +71,7 @@ export type NodeDataMap = {
 	eq: EqNodeData;
 	levelMeter: LevelMeterNodeData;
 	lufsMeter: LufsMeterNodeData;
+	waveform: WaveformNodeData;
 	limiter: LimiterNodeData;
 	compressor: CompressorNodeData;
 	noiseGate: NoiseGateNodeData;
@@ -83,6 +86,8 @@ export interface PipelineNode<K extends NodeKind = NodeKind> {
 	kind: K;
 	data: NodeDataMap[K];
 	position: { x: number; y: number };
+	width?: number;
+	height?: number;
 }
 
 export interface PipelineEdge {

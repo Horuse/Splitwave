@@ -10,7 +10,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"tauri": "tauri",
-		"format": "prettier --write \"**/*.{ts,tsx,md,svelte,json}\""
+		"format": "prettier --write \"**/*.{ts,tsx,md,svelte,json}\"",
+		"generate": "cd src-tauri && cargo test"
 	},
 	"license": "MIT",
 	"dependencies": {

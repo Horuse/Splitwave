@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
-	import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
 	import { Add, Minus } from '$lib/components/icons';
 
 	type WaveformNodeType = Node<WaveformNodeData, 'waveform'>;
-	let { id }: NodeProps<WaveformNodeType> = $props();
+	let { id, data }: NodeProps<WaveformNodeType> = $props();
+
+	const flow = useSvelteFlow();
 
 	const FRAMES     = 1024;
 	const MIN_SEGS   = 1;
@@ -23,7 +25,7 @@
 		[-1.0, '-1.0'],
 	];
 
-	let segs = $state(4);
+	let segs = $state(data.segs ?? 4);
 	let W    = $state(240);
 	let CH   = $state(52);
 	let H    = $derived(CH * 2 + 1);
@@ -110,6 +112,7 @@
 
 	function changeSegs(delta: number) {
 		segs = Math.min(MAX_SEGS, Math.max(MIN_SEGS, segs + delta));
+		flow.updateNodeData(id, { segs });
 		rebuildColumns();
 		dirty = true;
 	}
@@ -148,41 +151,15 @@
 		dirty = true;
 	}
 
-	// ─── SVG path building ────────────────────────────────────────────────────
-
 	let svgPathL = $state('');
 	let svgPathR = $state('');
 
-	// Builds a closed envelope polygon: peak forward, trough backward.
-	// Coordinates are in the channel-local space (origin = center of channel).
 	function buildPath(peak: Float32Array, trough: Float32Array, h: number): string {
 		const n = peak.length;
 		if (n === 0) return '';
-
-		const py = (i: number) => -peak[i] * h;
-		const ty = (i: number) => -trough[i] * h;
-
-		// Peak forward (Catmull-Rom → cubic bezier)
-		let d = `M0,${py(0)}`;
-		for (let x = 1; x < n; x++) {
-			const p0 = py(Math.max(x - 2, 0));
-			const p1 = py(x - 1);
-			const p2 = py(x);
-			const p3 = py(Math.min(x + 1, n - 1));
-			const cp1y = p1 + (p2 - p0) / 6;
-			const cp2y = p2 - (p3 - p1) / 6;
-			d += ` C${x - 0.667},${cp1y.toFixed(2)} ${x - 0.333},${cp2y.toFixed(2)} ${x},${p2.toFixed(2)}`;
-		}
-		// Trough backward
-		for (let x = n - 1; x >= 0; x--) {
-			const t0 = ty(Math.min(x + 2, n - 1));
-			const t1 = ty(Math.min(x + 1, n - 1));
-			const t2 = ty(x);
-			const t3 = ty(Math.max(x - 1, 0));
-			const cp1y = t1 + (t2 - t0) / 6;
-			const cp2y = t2 - (t3 - t1) / 6;
-			d += ` C${x + 0.667},${cp1y.toFixed(2)} ${x + 0.333},${cp2y.toFixed(2)} ${x},${t2.toFixed(2)}`;
-		}
+		let d = `M0,${(-peak[0] * h).toFixed(1)}`;
+		for (let x = 1; x < n; x++) d += ` L${x},${(-peak[x] * h).toFixed(1)}`;
+		for (let x = n - 1; x >= 0; x--) d += ` L${x},${(-trough[x] * h).toFixed(1)}`;
 		return d + 'Z';
 	}
 

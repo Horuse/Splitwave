@@ -156,7 +156,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Waveform',
 		description: 'Live waveform — filled min/max envelope for L and R channels. Pass-through.',
 		component: Waveform,
-		defaultData: {}
+		defaultData: { segs: 4 }
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',

@@ -89,12 +89,12 @@ extern "C" {
     fn AudioObjectHasProperty(
         in_object: AudioObjectID,
         in_address: *const AudioObjectPropertyAddress,
-    ) -> bool;
+    ) -> u8;
 
     fn AudioObjectIsPropertySettable(
         in_object: AudioObjectID,
         in_address: *const AudioObjectPropertyAddress,
-        out_is_settable: *mut bool,
+        out_is_settable: *mut u8,
     ) -> OSStatus;
 }
 
@@ -357,7 +357,7 @@ unsafe fn read_volume_for_element(
         scope,
         element,
     };
-    if !AudioObjectHasProperty(device_id, &addr) {
+    if AudioObjectHasProperty(device_id, &addr) == 0 {
         return None;
     }
     let mut v: f32 = 0.0;
@@ -387,11 +387,11 @@ unsafe fn write_volume_for_element(
         scope,
         element,
     };
-    if !AudioObjectHasProperty(device_id, &addr) {
+    if AudioObjectHasProperty(device_id, &addr) == 0 {
         return false;
     }
-    let mut settable = false;
-    if AudioObjectIsPropertySettable(device_id, &addr, &mut settable) != 0 || !settable {
+    let mut settable: u8 = 0;
+    if AudioObjectIsPropertySettable(device_id, &addr, &mut settable) != 0 || settable == 0 {
         return false;
     }
     let v = scalar.clamp(0.0, 1.0);
@@ -417,11 +417,11 @@ unsafe fn write_mute_for_element(
         scope,
         element,
     };
-    if !AudioObjectHasProperty(device_id, &addr) {
+    if AudioObjectHasProperty(device_id, &addr) == 0 {
         return false;
     }
-    let mut settable = false;
-    if AudioObjectIsPropertySettable(device_id, &addr, &mut settable) != 0 || !settable {
+    let mut settable: u8 = 0;
+    if AudioObjectIsPropertySettable(device_id, &addr, &mut settable) != 0 || settable == 0 {
         return false;
     }
     let v: u32 = muted as u32;

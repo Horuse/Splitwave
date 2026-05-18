@@ -62,7 +62,7 @@ pub struct BroadcastRx {
 
 pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
     let (cmd_tx, cmd_rx) = RingBuffer::<BroadcastCmd>::new(CMD_QUEUE_CAPACITY);
-    let (disc_tx, disc_rx) = RingBuffer::<Producer<f32>>::new(BRIDGE_CAPACITY);
+    let (disc_tx, disc_rx) = RingBuffer::<Producer<f32>>::new(CMD_QUEUE_CAPACITY);
     let mut slots = Vec::with_capacity(BRIDGE_CAPACITY);
     let mut used = Vec::with_capacity(BRIDGE_CAPACITY);
     for _ in 0..BRIDGE_CAPACITY {
@@ -140,10 +140,6 @@ impl BroadcastRx {
                 }
                 BroadcastCmd::Remove { slot } => {
                     if let Some(p) = self.slots[slot].take() {
-                        // `push` is fallible only when the discarded
-                        // queue is full -- sized to `BRIDGE_CAPACITY`, so
-                        // it can't overflow under normal use. As a last
-                        // resort the producer drops on RT.
                         let _ = self.discarded_tx.push(p);
                     }
                 }

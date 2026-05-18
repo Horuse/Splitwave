@@ -10,9 +10,10 @@
 
 use std::cell::UnsafeCell;
 use std::ffi::{c_void, CString};
-use std::mem;
+use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tracing::{info, warn};
 
@@ -91,9 +92,7 @@ extern "C" {
 
 pub struct SckCapture {
     handle: *mut c_void,
-    /// Leaked via `mem::forget` on stop timeout — Swift queue may still deref
-    /// the user_data pointer.
-    state: Option<Box<CallbackState>>,
+    state: Arc<CallbackState>,
 }
 
 unsafe impl Send for SckCapture {}
@@ -105,6 +104,7 @@ struct CallbackState {
     bridge: UnsafeCell<BroadcastRx>,
     meter: Option<MeterHandle>,
     first_call_logged: AtomicBool,
+    shutting_down: AtomicBool,
 }
 
 // SAFETY: `bridge` is only touched by `sample_trampoline` on the SCK
@@ -120,7 +120,13 @@ extern "C" fn sample_trampoline(
     if user_data.is_null() || samples.is_null() || frames <= 0 || channels <= 0 {
         return;
     }
-    let state = unsafe { &*(user_data as *const CallbackState) };
+    let arc = unsafe { Arc::from_raw(user_data as *const CallbackState) };
+    let state = Arc::clone(&arc);
+    let _ = ManuallyDrop::new(arc);
+
+    if state.shutting_down.load(Ordering::Acquire) {
+        return;
+    }
     if !state.first_call_logged.swap(true, Ordering::Relaxed) {
         info!(
             label = %state.label,
@@ -153,13 +159,14 @@ impl SckCapture {
             return Err(AppError::Stream("ScreenCaptureKit requires macOS 13.0+".into()));
         }
 
-        let state = Box::new(CallbackState {
+        let state = Arc::new(CallbackState {
             label: format!("app:{bundle_id}"),
             bridge: UnsafeCell::new(bridge),
             meter,
             first_call_logged: AtomicBool::new(false),
+            shutting_down: AtomicBool::new(false),
         });
-        let state_ptr = state.as_ref() as *const CallbackState as *mut c_void;
+        let state_ptr = Arc::into_raw(Arc::clone(&state)) as *mut c_void;
 
         let bundle_cstr = CString::new(bundle_id)
             .map_err(|_| AppError::Validation("bundle id contains nul byte".into()))?;
@@ -177,13 +184,11 @@ impl SckCapture {
         let rc = ResultCode::from_raw(code);
         if rc != ResultCode::Ok {
             unsafe { ba_sck_destroy(handle) };
+            drop(unsafe { Arc::from_raw(state_ptr as *const CallbackState) });
             return Err(rc.into_error(&format!("app audio capture ({bundle_id})")));
         }
 
-        Ok(SckCapture {
-            handle,
-            state: Some(state),
-        })
+        Ok(SckCapture { handle, state })
     }
 
     /// Start capturing system-wide audio. When `exclude_current_app` is true,
@@ -201,13 +206,14 @@ impl SckCapture {
             return Err(AppError::Stream("ScreenCaptureKit requires macOS 13.0+".into()));
         }
 
-        let state = Box::new(CallbackState {
+        let state = Arc::new(CallbackState {
             label: "system".to_string(),
             bridge: UnsafeCell::new(bridge),
             meter,
             first_call_logged: AtomicBool::new(false),
+            shutting_down: AtomicBool::new(false),
         });
-        let state_ptr = state.as_ref() as *const CallbackState as *mut c_void;
+        let state_ptr = Arc::into_raw(Arc::clone(&state)) as *mut c_void;
 
         let code = unsafe {
             ba_sck_start_system(
@@ -222,28 +228,21 @@ impl SckCapture {
         let rc = ResultCode::from_raw(code);
         if rc != ResultCode::Ok {
             unsafe { ba_sck_destroy(handle) };
+            drop(unsafe { Arc::from_raw(state_ptr as *const CallbackState) });
             return Err(rc.into_error("system audio capture"));
         }
 
-        Ok(SckCapture {
-            handle,
-            state: Some(state),
-        })
+        Ok(SckCapture { handle, state })
     }
 }
 
 impl Drop for SckCapture {
     fn drop(&mut self) {
+        self.state.shutting_down.store(true, Ordering::Release);
         let timed_out = unsafe { ba_sck_stop(self.handle) } != 0;
         unsafe { ba_sck_destroy(self.handle) };
-        if let Some(state) = self.state.take() {
-            if timed_out {
-                warn!(
-                    label = %state.label,
-                    "SCK stop timed out — leaking CallbackState to avoid UAF"
-                );
-                mem::forget(state);
-            }
+        if timed_out {
+            warn!(label = %self.state.label, "SCK stop timed out");
         }
     }
 }

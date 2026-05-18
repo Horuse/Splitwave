@@ -9,6 +9,7 @@
 	const info = getCachedAppInfo();
 
 	const links = [
+		{ label: 'Website', url: 'https://splitwave.app/' },
 		{ label: 'GitHub', url: `https://github.com/${REPO}` },
 		{ label: 'Issues', url: `https://github.com/${REPO}/issues` },
 		{ label: 'Discussions', url: `https://github.com/${REPO}/discussions` }
@@ -64,5 +65,9 @@
 			class="underline hover:text-neutral-1000"
 			onclick={() => open(`https://github.com/${REPO}/blob/main/LICENSE`)}
 		>MIT License</button>
+	</p>
+
+	<p class="text-center text-[10px] text-neutral-900">
+		<a href="mailto:support@splitwave.app" class="underline hover:text-neutral-1000">support@splitwave.app</a>
 	</p>
 </div>

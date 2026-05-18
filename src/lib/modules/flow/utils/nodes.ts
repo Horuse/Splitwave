@@ -57,7 +57,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'System Audio',
 		description: 'Capture everything the system is playing (ScreenCaptureKit, macOS 13+).',
 		component: SystemAudio,
-		defaultData: { excludeCurrentApp: true }
+		defaultData: { excludeCurrentApp: true, volume: 1 }
 	}),
 	appAudio: entry<'appAudio'>({
 		kind: 'appAudio',
@@ -65,7 +65,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'App Audio',
 		description: 'Capture audio from a single running application.',
 		component: AppAudio,
-		defaultData: { bundleId: null }
+		defaultData: { bundleId: null, volume: 1 }
 	}),
 	audioFile: entry<'audioFile'>({
 		kind: 'audioFile',
@@ -73,7 +73,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Audio File',
 		description: 'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
 		component: AudioFile,
-		defaultData: { filePath: null, loopEnabled: false }
+		defaultData: { filePath: null, loopEnabled: false, volume: 1 }
 	}),
 	speaker: entry<'speaker'>({
 		kind: 'speaker',

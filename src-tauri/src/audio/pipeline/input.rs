@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -105,6 +107,7 @@ pub(super) fn start_input_stream(
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     meter: MeterHandle,
+    volume: Arc<AtomicU32>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     let app_err = app.clone();
@@ -149,6 +152,7 @@ pub(super) fn start_input_stream(
                 SCK_CHANNELS as u32,
                 bridge,
                 Some(meter),
+                volume,
             )?;
             Ok(InputHandle::Sck(capture))
         }
@@ -164,6 +168,7 @@ pub(super) fn start_input_stream(
                 SCK_CHANNELS as u32,
                 bridge,
                 Some(meter),
+                volume,
             )?;
             Ok(InputHandle::Sck(capture))
         }
@@ -184,6 +189,7 @@ pub(super) fn start_input_stream(
                 bridge,
                 meter,
                 false,
+                volume,
                 app.clone(),
             )?;
             Ok(InputHandle::AudioFile(reader))

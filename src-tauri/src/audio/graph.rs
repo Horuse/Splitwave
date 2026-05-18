@@ -99,9 +99,14 @@ pub struct MicrophoneData {
 pub struct SystemAudioData {
     #[serde(default = "default_true")]
     pub exclude_current_app: bool,
+    #[serde(default = "default_one")]
+    pub volume: f32,
 }
 fn default_true() -> bool {
     true
+}
+fn default_one() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -109,6 +114,8 @@ fn default_true() -> bool {
 #[ts(export)]
 pub struct AppAudioData {
     pub bundle_id: Option<String>,
+    #[serde(default = "default_one")]
+    pub volume: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -118,6 +125,8 @@ pub struct AudioFileData {
     pub file_path: Option<String>,
     #[serde(default)]
     pub loop_enabled: bool,
+    #[serde(default = "default_one")]
+    pub volume: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -390,6 +399,7 @@ impl EffectSpec {
 pub struct ValidInput {
     pub id: String,
     pub spec: InputSpec,
+    pub volume: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -540,42 +550,47 @@ impl GraphSpec {
             if n.kind.category() != NodeCategory::Input || !keep.contains(n.id.as_str()) {
                 continue;
             }
-            let spec = match n.kind {
+            let (spec, volume) = match n.kind {
                 NodeKind::Microphone => {
                     let data: MicrophoneData = parse(&n.data, "Microphone")?;
-                    InputSpec::Microphone {
+                    let spec = InputSpec::Microphone {
                         device_id: data
                             .device_id
                             .ok_or_else(|| miss(&n.id, "Microphone has no device selected"))?,
-                    }
+                    };
+                    (spec, 1.0f32)
                 }
                 NodeKind::SystemAudio => {
                     let data: SystemAudioData = parse(&n.data, "SystemAudio")?;
-                    InputSpec::SystemAudio {
+                    let spec = InputSpec::SystemAudio {
                         exclude_current_app: data.exclude_current_app,
-                    }
+                    };
+                    (spec, data.volume)
                 }
                 NodeKind::AppAudio => {
                     let data: AppAudioData = parse(&n.data, "AppAudio")?;
-                    InputSpec::AppAudio {
+                    let spec = InputSpec::AppAudio {
                         bundle_id: data
                             .bundle_id
                             .ok_or_else(|| miss(&n.id, "App Audio has no application selected"))?,
-                    }
+                    };
+                    (spec, data.volume)
                 }
                 NodeKind::AudioFile => {
                     let data: AudioFileData = parse(&n.data, "AudioFile")?;
-                    InputSpec::AudioFile {
+                    let spec = InputSpec::AudioFile {
                         file_path: data
                             .file_path
                             .ok_or_else(|| miss(&n.id, "Audio File has no file selected"))?,
-                    }
+                    };
+                    (spec, data.volume)
                 }
                 _ => unreachable!(),
             };
             result.push(ValidInput {
                 id: n.id.clone(),
                 spec,
+                volume,
             });
         }
         Ok(result)

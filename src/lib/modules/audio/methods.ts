@@ -41,6 +41,9 @@ export const methods = {
 	/** Live loop toggle for an AudioFile input. No-op when not running. */
 	setAudioFileLoop: (nodeId: string, enabled: boolean): Promise<void> =>
 		invoke('set_audio_file_loop', { nodeId, enabled }),
+	/** Live volume update for an input node (App Audio, System Audio, Audio File). No-op when not running. */
+	setInputVolume: (nodeId: string, scalar: number): Promise<void> =>
+		invoke('set_input_volume', { nodeId, scalar }),
 	/** `null` when the device has no software-settable volume in that scope. */
 	getDeviceVolume: (kind: 'input' | 'output', name: string): Promise<number | null> =>
 		invoke<number | null>('get_device_volume', { kind, name }),

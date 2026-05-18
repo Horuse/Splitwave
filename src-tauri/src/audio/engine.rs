@@ -51,6 +51,12 @@ pub enum Command {
         enabled: bool,
         reply: Sender<AppResult<()>>,
     },
+    /// Live volume update for an input node. Silent no-op when not running.
+    SetInputVolume {
+        node_id: String,
+        scalar: f32,
+        reply: Sender<AppResult<()>>,
+    },
     IsRunning {
         reply: Sender<bool>,
     },
@@ -130,6 +136,16 @@ pub fn run(rx: Receiver<Command>) {
             } => {
                 if let Some(p) = &active {
                     p.set_audio_file_loop(&node_id, enabled);
+                }
+                let _ = reply.send(Ok(()));
+            }
+            Command::SetInputVolume {
+                node_id,
+                scalar,
+                reply,
+            } => {
+                if let Some(p) = &active {
+                    p.set_input_volume(&node_id, scalar);
                 }
                 let _ = reply.send(Ok(()));
             }

@@ -13,7 +13,7 @@
 //!   in the validator.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rtrb::Producer;
@@ -80,6 +80,7 @@ struct InputState {
     bridge_tx: BroadcastTx,
     /// output_id (or `MONITOR_KEY`) -> slot indices in `bridge_tx`.
     bridges_by_output: HashMap<String, Vec<usize>>,
+    volume: Arc<AtomicU32>,
 }
 
 struct SpeakerState {
@@ -195,6 +196,13 @@ impl ActivePipeline {
             if let InputHandle::AudioFile(reader) = &state._handle {
                 reader.loop_enabled().store(enabled, Ordering::SeqCst);
             }
+        }
+    }
+
+    /// Live volume update for an input node. Silent no-op when not running.
+    pub fn set_input_volume(&self, node_id: &str, scalar: f32) {
+        if let Some(state) = self.inputs.get(node_id) {
+            state.volume.store(scalar.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -566,13 +574,17 @@ impl ActivePipeline {
                 let meter = MeterHandle::new(input_id.clone());
                 self.meters.insert(input_id.clone(), meter.clone());
 
+                let init_vol = graph.inputs.iter()
+                    .find(|i| i.id == input_id)
+                    .map_or(1.0f32, |i| i.volume);
+                let volume = Arc::new(AtomicU32::new(init_vol.to_bits()));
                 let (mut bridge_tx, bridge_rx) = broadcast_channel();
                 let mut bridges_by_output: HashMap<String, Vec<usize>> = HashMap::new();
                 for (out_id, prod) in tagged {
                     let slot = bridge_tx.add(prod)?;
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
-                let handle = start_input_stream(&input_id, resolved, bridge_rx, meter, &app)?;
+                let handle = start_input_stream(&input_id, resolved, bridge_rx, meter, volume.clone(), &app)?;
                 self.inputs.insert(
                     input_id,
                     InputState {
@@ -580,6 +592,7 @@ impl ActivePipeline {
                         sample_rate,
                         bridge_tx,
                         bridges_by_output,
+                        volume,
                     },
                 );
             }
@@ -671,6 +684,13 @@ impl ActivePipeline {
                     sig: new_sig,
                     ctrl,
                 });
+            }
+        }
+
+        // Sync volume atomics for all surviving inputs from the new graph spec.
+        for inp in &graph.inputs {
+            if let Some(state) = self.inputs.get(&inp.id) {
+                state.volume.store(inp.volume.to_bits(), Ordering::Relaxed);
             }
         }
 

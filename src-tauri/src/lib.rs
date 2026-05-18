@@ -122,6 +122,7 @@ pub fn run() {
             commands::update_effect,
             commands::seek_audio_file,
             commands::set_audio_file_loop,
+            commands::set_input_volume,
             commands::get_device_volume,
             commands::set_device_volume,
         ])

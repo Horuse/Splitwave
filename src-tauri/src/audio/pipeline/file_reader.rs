@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -79,6 +79,7 @@ pub(super) fn start_audio_file_reader(
     bridge: BroadcastRx,
     meter: MeterHandle,
     initial_loop: bool,
+    volume: Arc<AtomicU32>,
     app: AppHandle,
 ) -> AppResult<AudioFileReader> {
     let stop = Arc::new(AtomicBool::new(false));
@@ -87,6 +88,7 @@ pub(super) fn start_audio_file_reader(
     let seek_to_thread = seek_to.clone();
     let loop_enabled = Arc::new(AtomicBool::new(initial_loop));
     let loop_enabled_thread = loop_enabled.clone();
+    let volume_thread = volume.clone();
 
     let join = thread::Builder::new()
         .name(format!("audio-file:{}", path.display()))
@@ -99,6 +101,7 @@ pub(super) fn start_audio_file_reader(
                 &stop_thread,
                 &seek_to_thread,
                 &loop_enabled_thread,
+                &volume_thread,
                 &app,
             ) {
                 warn!(path = %path.display(), error = %e, "audio file reader failed");
@@ -123,6 +126,7 @@ fn run(
     stop: &AtomicBool,
     seek_to: &AtomicI64,
     loop_enabled: &AtomicBool,
+    volume: &AtomicU32,
     app: &AppHandle,
 ) -> AppResult<()> {
     let mut reader = hound::WavReader::open(path)
@@ -183,7 +187,15 @@ fn run(
             return Ok(());
         }
 
-        let samples = &stereo[..frames_read * 2];
+        let samples = &mut stereo[..frames_read * 2];
+        const ONE_BITS: u32 = 0x3F80_0000;
+        let vol_bits = volume.load(Ordering::Relaxed);
+        if vol_bits != ONE_BITS {
+            let vol = f32::from_bits(vol_bits);
+            for s in samples.iter_mut() {
+                *s *= vol;
+            }
+        }
         update_meter(&meter, samples);
         bridge.broadcast_blocking(samples, stop, BACKOFF_WHEN_FULL);
         frames_played += frames_read as u64;

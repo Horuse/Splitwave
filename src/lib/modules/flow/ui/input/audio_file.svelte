@@ -7,6 +7,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import Slider from '../effect/_slider.svelte';
 	import { Rewind, Loop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 
@@ -110,6 +111,18 @@
 
 	let currentSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 	let totalSec = $derived(sampleRate > 0 ? totalFrames / sampleRate : 0);
+
+	function setVolume(pct: number) {
+		const scalar = Math.max(0, Math.min(1, pct / 100));
+		flow.updateNodeData(id, { volume: scalar });
+		audioMethods.setInputVolume(id, scalar).catch(() => {});
+	}
+
+	function formatPct(p: number): string {
+		return `${Math.round(p)}%`;
+	}
+
+	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
 <Wrapper label="Audio File" accent="input" hasOutput>
@@ -167,5 +180,16 @@
 				{formatTime(currentSec)} / {formatTime(totalSec)}
 			</span>
 		</div>
+		<Slider
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume}
+		/>
 	</div>
 </Wrapper>

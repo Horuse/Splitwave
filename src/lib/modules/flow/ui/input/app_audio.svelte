@@ -2,8 +2,10 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
+	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -45,6 +47,18 @@
 	let missing = $derived(
 		!!data.bundleId && !audioStore.audioApplications.some((a) => a.bundleId === data.bundleId)
 	);
+
+	function setVolume(pct: number) {
+		const scalar = Math.max(0, Math.min(1, pct / 100));
+		flow.updateNodeData(id, { volume: scalar });
+		audioMethods.setInputVolume(id, scalar).catch(() => {});
+	}
+
+	function formatPct(p: number): string {
+		return `${Math.round(p)}%`;
+	}
+
+	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
 <Wrapper label="App Audio" accent="input" hasOutput>
@@ -70,5 +84,16 @@
 		{#if data.bundleId && !missing}
 			<InputMeter nodeId={id} />
 		{/if}
+		<Slider
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume}
+		/>
 	</div>
 </Wrapper>

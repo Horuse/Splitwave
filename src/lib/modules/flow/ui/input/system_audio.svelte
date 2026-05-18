@@ -7,6 +7,7 @@
 	import type { PermissionState } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
+	import Slider from '../effect/_slider.svelte';
 
 	type SystemAudioNodeType = Node<SystemAudioNodeData, 'systemAudio'>;
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
@@ -38,9 +39,21 @@
 		try {
 			await openUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
 		} catch {
-			// fall through silently — not all hosts support deep links
+			// fall through silently -- not all hosts support deep links
 		}
 	}
+
+	function setVolume(pct: number) {
+		const scalar = Math.max(0, Math.min(1, pct / 100));
+		flow.updateNodeData(id, { volume: scalar });
+		audioMethods.setInputVolume(id, scalar).catch(() => {});
+	}
+
+	function formatPct(p: number): string {
+		return `${Math.round(p)}%`;
+	}
+
+	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
 <Wrapper label="System Audio" accent="input" hasOutput>
@@ -101,5 +114,16 @@
 			Exclude this app (avoid feedback)
 		</label>
 		<InputMeter nodeId={id} />
+		<Slider
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume}
+		/>
 	</div>
 </Wrapper>

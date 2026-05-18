@@ -14,6 +14,7 @@
 		WavBitDepth
 	} from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
 	import { Folder } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -73,10 +74,21 @@
 	});
 
 	$effect(() => {
-		if (audioStore.chooseFileNodeId === id) {
-			audioStore.chooseFileNodeId = null;
-			chooseFile().catch(() => {});
-		}
+		if (audioStore.chooseFileNodeId !== id) return;
+		audioStore.chooseFileNodeId = null;
+		const retryId = audioStore.pendingRetryPipelineId;
+		audioStore.pendingRetryPipelineId = null;
+		chooseFile().then((picked) => {
+			if (!picked || retryId === null) return;
+			const snapshot = pipelineStore.editorActions?.getSnapshot();
+			if (!snapshot) return;
+			const nodes = snapshot.nodes.map((n) =>
+				n.id === id ? { ...n, data: { ...n.data, allowOverwrite: true } } : n
+			);
+			audioStore
+				.activatePipeline(retryId, { nodes, edges: snapshot.edges })
+				.catch((e) => { audioStore.lastError = e instanceof Error ? e.message : String(e); });
+		}).catch(() => {});
 	});
 
 	onDestroy(() => {
@@ -93,13 +105,15 @@
 		return 'wav';
 	}
 
-	async function chooseFile() {
+	async function chooseFile(): Promise<boolean> {
 		const ext = extension(data.format);
 		const path = await save({
 			title: 'Save recording',
 			filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
 		});
-		if (path) flow.updateNodeData(id, { filePath: path, allowOverwrite: true });
+		if (!path) return false;
+		flow.updateNodeData(id, { filePath: path });
+		return true;
 	}
 
 	function replaceExtension(path: string, newExt: string): string {

@@ -15,6 +15,7 @@ class AudioStore {
 	startedAt = $state<number | null>(null);
 	lastError = $state<string | null>(null);
 	chooseFileNodeId = $state<string | null>(null);
+	pendingRetryPipelineId = $state<string | null>(null);
 
 	private unlisten: UnlistenFn | undefined;
 
@@ -67,7 +68,7 @@ class AudioStore {
 		try {
 			await methods.startPipeline(graph);
 		} catch (e) {
-			if (this.routeStartError(e)) return;
+			if (this.routeStartError(e, pipelineId)) return;
 			throw e;
 		}
 		this.runningPipelineId = pipelineId;
@@ -99,11 +100,12 @@ class AudioStore {
 		}
 	}
 
-	private routeStartError(e: unknown): boolean {
+	private routeStartError(e: unknown, pipelineId?: string): boolean {
 		const msg = e instanceof Error ? e.message : String(e);
 		const m = /choose-file \(node ([^)]+)\)/.exec(msg);
 		if (!m) return false;
 		this.chooseFileNodeId = m[1];
+		this.pendingRetryPipelineId = pipelineId ?? null;
 		return true;
 	}
 

@@ -90,12 +90,13 @@ fn build_virtual_driver() {
     println!("cargo:rerun-if-changed={}", driver_dir.join("SplitAudioDriver.cpp").display());
     println!("cargo:rerun-if-changed={}", driver_dir.join("Info.plist").display());
 
+    const LIBASPL_COMMIT: &str = "633e0f70203edd87d320fc5a3cae901e1363aac5";
+
     let libaspl_dir = driver_dir.join("libASPL");
     if !libaspl_dir.exists() {
         let status = Command::new("git")
             .args([
                 "clone",
-                "--depth=1",
                 "https://github.com/gavv/libASPL.git",
                 libaspl_dir.to_str().unwrap(),
             ])
@@ -104,6 +105,17 @@ fn build_virtual_driver() {
         if !status.success() {
             panic!("failed to clone libASPL — check network and try again");
         }
+    }
+
+    let status = Command::new("git")
+        .args(["-C", libaspl_dir.to_str().unwrap(), "checkout", LIBASPL_COMMIT])
+        .status()
+        .expect("git checkout libASPL pin");
+    if !status.success() {
+        panic!(
+            "failed to pin libASPL to {LIBASPL_COMMIT} — \
+             delete native/virtual_driver/libASPL and rebuild"
+        );
     }
 
     // Collect libASPL sources (all .cpp — .g.cpp files contain vtable implementations)

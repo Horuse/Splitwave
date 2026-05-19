@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl, WorkerPacing};
-use super::{native_config, STATE_EVENT};
+use super::native_config;
 
 /// Fallback sample rate for the file recorder when no input is connected to
 /// it. With at least one input the recorder uses the highest connected input
@@ -127,10 +127,11 @@ impl Drop for RecorderWorker {
 }
 
 pub(super) fn start_speaker_stream(
+    node_id: &str,
     spec: SpeakerResolved,
     graph: OutputGraph,
     app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
     use cpal::traits::DeviceTrait;
     let device_name = spec
         .device
@@ -166,6 +167,8 @@ pub(super) fn start_speaker_stream(
         }
     }
 
+    let dead = Arc::new(AtomicBool::new(false));
+
     // cpal consumes the closures on each attempt, so ring + closures are
     // recreated per iteration.
     let mut producer_holder: Option<Producer<f32>> = None;
@@ -176,11 +179,11 @@ pub(super) fn start_speaker_stream(
             streams::bulk_pop(&mut consumer, stereo_out);
         };
         let app_err = app.clone();
-        let err_cb = move |e: cpal::StreamError| {
-            let _ = app_err.emit(
-                STATE_EVENT,
-                json!({ "kind": "error", "message": format!("output: {e}") }),
-            );
+        let dead_cb = dead.clone();
+        let node_id_cb = node_id.to_string();
+        let err_cb = move |_e: cpal::StreamError| {
+            dead_cb.store(true, Ordering::Relaxed);
+            let _ = app_err.emit("audio://speaker_error", json!({ "nodeId": node_id_cb }));
         };
         match streams::build_output_stream(
             &spec.device,
@@ -234,6 +237,7 @@ pub(super) fn start_speaker_stream(
             },
         },
         ctrl,
+        dead,
     ))
 }
 

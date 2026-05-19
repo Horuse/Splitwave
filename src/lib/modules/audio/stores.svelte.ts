@@ -17,7 +17,10 @@ class AudioStore {
 	chooseFileNodeId = $state<string | null>(null);
 	pendingRetryPipelineId = $state<string | null>(null);
 
+	private lastGraph: StartPipelinePayload | null = null;
+	private speakerRecovering = false;
 	private unlisten: UnlistenFn | undefined;
+	private unlistenSpeakerError: UnlistenFn | undefined;
 
 	async refreshInputDevices(): Promise<void> {
 		this.inputDevices = await methods.listInputDevices();
@@ -62,9 +65,28 @@ class AudioStore {
 				this.lastError = e.message;
 			}
 		});
+		methods.onSpeakerError(() => {
+			if (this.speakerRecovering || !this.lastGraph || !this.isRunning) return;
+			this.speakerRecovering = true;
+			methods
+				.reconcilePipeline(this.lastGraph)
+				.catch((e: unknown) => {
+					const msg = e instanceof Error ? e.message : String(e);
+					if (!msg.includes('not running')) {
+						this.isRunning = false;
+						this.runningPipelineId = null;
+						this.startedAt = null;
+						this.lastError = msg;
+					}
+				})
+				.finally(() => {
+					this.speakerRecovering = false;
+				});
+		}).then((fn) => { this.unlistenSpeakerError = fn; }).catch(() => {});
 	}
 
 	async activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+		this.lastGraph = graph;
 		try {
 			await methods.startPipeline(graph);
 		} catch (e) {
@@ -79,6 +101,7 @@ class AudioStore {
 	 * streams stay alive across edits when their spec is unchanged.
 	 * Falls back to stop + start if the pipeline isn't running. */
 	async restartPipeline(graph: StartPipelinePayload): Promise<void> {
+		this.lastGraph = graph;
 		let reconcileErr: unknown;
 		try {
 			await methods.reconcilePipeline(graph);
@@ -112,6 +135,8 @@ class AudioStore {
 	destroy(): void {
 		this.unlisten?.();
 		this.unlisten = undefined;
+		this.unlistenSpeakerError?.();
+		this.unlistenSpeakerError = undefined;
 	}
 }
 

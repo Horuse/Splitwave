@@ -55,6 +55,8 @@ export const methods = {
 		invoke('set_device_volume', { kind, name, scalar }),
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> =>
 		listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),
+	onSpeakerError: (cb: () => void): Promise<UnlistenFn> =>
+		listen('audio://speaker_error', () => cb()),
 	virtualDriverStatus: (): Promise<VirtualDriverStatus> =>
 		invoke<VirtualDriverStatus>('virtual_driver_status'),
 	installVirtualDriver: (): Promise<void> => invoke('install_virtual_driver'),

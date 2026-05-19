@@ -90,6 +90,7 @@ struct SpeakerState {
     sample_rate: u32,
     sig: OutputSig,
     ctrl: WorkerCtrl,
+    dead: Arc<AtomicBool>,
 }
 
 struct RecorderState {
@@ -387,6 +388,9 @@ impl ActivePipeline {
             return self.monitor.as_ref().map(|m| &m.sig);
         }
         if let Some(s) = self.speakers.get(id) {
+            if s.dead.load(Ordering::Relaxed) {
+                return None;
+            }
             return Some(&s.sig);
         }
         if let Some(r) = self.recorders.get(id) {
@@ -692,7 +696,7 @@ impl ActivePipeline {
                         self.speakers.remove(&out.id);
                     }
                     let sample_rate = spec.sample_rate;
-                    let (handle, ctrl) = start_speaker_stream(spec, og, &app)?;
+                    let (handle, ctrl, dead) = start_speaker_stream(&out.id, spec, og, &app)?;
                     self.speakers.insert(
                         out.id.clone(),
                         SpeakerState {
@@ -700,6 +704,7 @@ impl ActivePipeline {
                             sample_rate,
                             sig: new_sig,
                             ctrl,
+                            dead,
                         },
                     );
                 }

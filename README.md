@@ -19,6 +19,8 @@ xattr -cr /Applications/Splitwave.app
 
 Then open Splitwave normally.
 
+**After each update, Screen Recording permission resets** (macOS revokes it when the binary changes and the app is unsigned). To re-grant it: open System Settings → Privacy & Security → Screen Recording, click **−** to remove Splitwave, then click **+** and add it back.
+
 ## Features
 
 - **Inputs:** microphones, system audio, per-application audio

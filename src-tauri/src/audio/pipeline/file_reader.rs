@@ -1,23 +1,27 @@
-use std::path::PathBuf;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use hound::SampleFormat as WavSampleFormat;
 use serde_json::json;
+use symphonia::core::codecs::audio::{AudioDecoderOptions, AudioDecoder};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::units::Time;
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
-const CHUNK_FRAMES: usize = 1024;
 const BACKOFF_WHEN_FULL: Duration = Duration::from_micros(200);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const PROGRESS_EVENT: &str = "audio://audio_file_progress";
-
-/// Sentinel for `seek_to` -- non-negative values are frame indices.
 const SEEK_NONE: i64 = -1;
 
 pub(super) struct AudioFileReader {
@@ -46,30 +50,36 @@ impl Drop for AudioFileReader {
     }
 }
 
-pub(super) struct WavInfo {
+pub(super) struct AudioFileInfo {
     pub sample_rate: u32,
-    #[allow(dead_code)]
-    pub channels: u16,
     #[allow(dead_code)]
     pub total_frames: u64,
 }
 
-pub(super) fn probe_wav(path: &PathBuf) -> AppResult<WavInfo> {
-    let reader = hound::WavReader::open(path)
-        .map_err(|e| AppError::Stream(format!("open wav {}: {e}", path.display())))?;
-    let spec = reader.spec();
-    if spec.channels == 0 {
-        return Err(AppError::Validation(format!(
-            "wav {} has zero channels",
-            path.display()
-        )));
+pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
+    let file = File::open(path)
+        .map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
     }
-    let total_frames = reader.duration() as u64;
-    Ok(WavInfo {
-        sample_rate: spec.sample_rate,
-        channels: spec.channels,
-        total_frames,
-    })
+    let format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or_else(|| AppError::Stream(format!("no audio track in {}", path.display())))?;
+    let audio = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or_else(|| AppError::Stream("no audio codec params".into()))?;
+    let sample_rate = audio
+        .sample_rate
+        .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
+    let total_frames = track.num_frames.unwrap_or(0);
+    Ok(AudioFileInfo { sample_rate, total_frames })
 }
 
 pub(super) fn start_audio_file_reader(
@@ -106,17 +116,66 @@ pub(super) fn start_audio_file_reader(
         })
         .map_err(|e| AppError::Stream(format!("spawn audio file reader: {e}")))?;
 
-    Ok(AudioFileReader {
-        stop,
-        join: Some(join),
-        seek_to,
-        loop_enabled,
-    })
+    Ok(AudioFileReader { stop, join: Some(join), seek_to, loop_enabled })
+}
+
+struct OpenedDecoder {
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn AudioDecoder>,
+    track_id: u32,
+    sample_rate: u32,
+    total_frames: u64,
+}
+
+fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
+    let file = File::open(path)
+        .map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
+
+    let (track_id, sample_rate, total_frames, audio_params) = {
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or_else(|| AppError::Stream("no audio track".into()))?;
+        let audio = track
+            .codec_params
+            .as_ref()
+            .and_then(|p| p.audio())
+            .ok_or_else(|| AppError::Stream("no audio codec params".into()))?;
+        let sample_rate = audio
+            .sample_rate
+            .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
+        let total_frames = track.num_frames.unwrap_or(0);
+        let audio_params = audio.clone();
+        (track.id, sample_rate, total_frames, audio_params)
+    };
+
+    let decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
+        .map_err(|e| AppError::Stream(format!("unsupported codec: {e}")))?;
+
+    Ok(OpenedDecoder { format, decoder, track_id, sample_rate, total_frames })
+}
+
+fn do_seek(od: &mut OpenedDecoder, target_frame: u64) {
+    let secs_f64 = target_frame as f64 / od.sample_rate as f64;
+    let time = Time::try_from_secs_f64(secs_f64).unwrap_or(Time::ZERO);
+    match od.format.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: None }) {
+        Ok(_) => {}
+        Err(e) => warn!("seek failed: {e}"),
+    }
+    od.decoder.reset();
 }
 
 fn run(
     node_id: String,
-    path: &PathBuf,
+    path: &Path,
     mut bridge: BroadcastRx,
     stop: &AtomicBool,
     seek_to: &AtomicI64,
@@ -124,50 +183,44 @@ fn run(
     paused: &AtomicBool,
     app: &AppHandle,
 ) -> AppResult<()> {
-    let mut reader = hound::WavReader::open(path)
-        .map_err(|e| AppError::Stream(format!("reopen wav {}: {e}", path.display())))?;
-    let spec = reader.spec();
-    let src_channels = spec.channels as usize;
-    let bits = spec.bits_per_sample;
-    let int_max = (1i64 << (bits - 1)) as f32;
-    let total_frames = reader.duration() as u64;
-    let sample_rate = spec.sample_rate;
+    let mut od = open_decoder(path)?;
 
     info!(
         path = %path.display(),
-        sample_rate,
-        channels = src_channels,
-        bits,
-        format = ?spec.sample_format,
-        total_frames,
+        sample_rate = od.sample_rate,
+        total_frames = od.total_frames,
         "audio file reader started"
     );
 
     let mut frames_played: u64 = 0;
     let mut last_progress = Instant::now();
-    emit_progress(app, &node_id, frames_played, total_frames, sample_rate, false, false);
+    emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, false, false);
 
-    let mut stereo = vec![0.0_f32; CHUNK_FRAMES * 2];
+    let mut interleaved: Vec<f32> = Vec::new();
+    let mut stereo: Vec<f32> = vec![0.0f32; 4096];
     let mut last_paused_progress = Instant::now();
     let mut last_l = 0.0f32;
     let mut last_r = 0.0f32;
+
     loop {
         if stop.load(Ordering::SeqCst) {
-            emit_progress(app, &node_id, frames_played, total_frames, sample_rate, true, false);
+            emit_progress(
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, true, false,
+            );
             return Ok(());
         }
 
         if paused.load(Ordering::SeqCst) {
-            // Drain any pending seek while paused so the scrubber works.
-            let pending_seek = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
-            if pending_seek >= 0 {
-                let target = (pending_seek as u64).min(total_frames);
-                if reader.seek(target as u32).is_ok() {
-                    frames_played = target;
-                }
+            let pending = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
+            if pending >= 0 {
+                let target = clamp_frame(pending as u64, od.total_frames);
+                do_seek(&mut od, target);
+                frames_played = target;
             }
             if last_paused_progress.elapsed() >= PROGRESS_INTERVAL {
-                emit_progress(app, &node_id, frames_played, total_frames, sample_rate, false, true);
+                emit_progress(
+                    app, &node_id, frames_played, od.total_frames, od.sample_rate, false, true,
+                );
                 last_paused_progress = Instant::now();
             }
             thread::sleep(Duration::from_millis(10));
@@ -175,30 +228,26 @@ fn run(
         }
         last_paused_progress = Instant::now();
 
-        let pending_seek = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
-        if pending_seek >= 0 {
-            let target = (pending_seek as u64).min(total_frames);
-            if let Err(e) = reader.seek(target as u32) {
-                warn!(path = %path.display(), target, error = %e, "wav seek failed");
-            } else {
-                frames_played = target;
-                emit_progress(app, &node_id, frames_played, total_frames, sample_rate, false, false);
-                last_progress = Instant::now();
-            }
+        let pending = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
+        if pending >= 0 {
+            let target = clamp_frame(pending as u64, od.total_frames);
+            do_seek(&mut od, target);
+            frames_played = target;
+            emit_progress(
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, false, false,
+            );
+            last_progress = Instant::now();
         }
 
-        let frames_read = read_chunk(&mut reader, src_channels, bits, int_max, &mut stereo)?;
-        if frames_read == 0 {
+        let frames_decoded = decode_next(&mut od, &mut interleaved, &mut stereo)?;
+
+        if frames_decoded == 0 {
             if loop_enabled.load(Ordering::SeqCst) {
-                if let Err(e) = reader.seek(0) {
-                    warn!(path = %path.display(), error = %e, "wav loop seek failed");
-                    emit_progress(app, &node_id, frames_played, total_frames, sample_rate, true, false);
-                    return Ok(());
-                }
+                do_seek(&mut od, 0);
                 frames_played = 0;
                 continue;
             }
-            // Fade out last sample to avoid hard click at end of file.
+            // Fade out to avoid a hard click at end of file.
             const FADE_FRAMES: usize = 128;
             let mut fade_buf = [0.0f32; FADE_FRAMES * 2];
             for f in 0..FADE_FRAMES {
@@ -207,27 +256,92 @@ fn run(
                 fade_buf[f * 2 + 1] = last_r * t;
             }
             bridge.broadcast_blocking(&fade_buf, stop, paused, BACKOFF_WHEN_FULL);
-            // Self-pause at position 0 so the thread stays alive for Play/seek.
             info!(path = %path.display(), "audio file reached end");
             paused.store(true, Ordering::SeqCst);
-            let _ = reader.seek(0);
+            do_seek(&mut od, 0);
             frames_played = 0;
-            emit_progress(app, &node_id, 0, total_frames, sample_rate, false, true);
+            emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, false, true);
             last_progress = Instant::now();
             continue;
         }
 
-        let samples = &mut stereo[..frames_read * 2];
+        let samples = &stereo[..frames_decoded * 2];
         bridge.broadcast_blocking(samples, stop, paused, BACKOFF_WHEN_FULL);
-        frames_played += frames_read as u64;
-        last_l = stereo[(frames_read - 1) * 2];
-        last_r = stereo[(frames_read - 1) * 2 + 1];
+        frames_played += frames_decoded as u64;
+        last_l = stereo[(frames_decoded - 1) * 2];
+        last_r = stereo[(frames_decoded - 1) * 2 + 1];
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
-            emit_progress(app, &node_id, frames_played, total_frames, sample_rate, false, false);
+            emit_progress(
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, false, false,
+            );
             last_progress = Instant::now();
         }
     }
+}
+
+fn decode_next(
+    od: &mut OpenedDecoder,
+    interleaved: &mut Vec<f32>,
+    stereo: &mut Vec<f32>,
+) -> AppResult<usize> {
+    loop {
+        let packet = match od.format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(0),
+            Err(SymphoniaError::ResetRequired) => {
+                od.decoder.reset();
+                continue;
+            }
+            Err(e) => return Err(AppError::Stream(format!("read packet: {e}"))),
+        };
+
+        if packet.track_id != od.track_id {
+            continue;
+        }
+
+        let audio_buf = match od.decoder.decode(&packet) {
+            Ok(buf) => buf,
+            Err(SymphoniaError::DecodeError(msg)) => {
+                warn!("decode error (skipped): {msg}");
+                continue;
+            }
+            Err(SymphoniaError::IoError(_)) => continue,
+            Err(e) => return Err(AppError::Stream(format!("decode: {e}"))),
+        };
+
+        let frames = audio_buf.frames();
+        if frames == 0 {
+            continue;
+        }
+
+        let channels = audio_buf.spec().channels().count().max(1);
+        let n_samples = audio_buf.samples_interleaved();
+
+        interleaved.resize(n_samples, 0.0f32);
+        audio_buf.copy_to_slice_interleaved(interleaved.as_mut_slice());
+
+        if stereo.len() < frames * 2 {
+            stereo.resize(frames * 2, 0.0);
+        }
+
+        for f in 0..frames {
+            let base = f * channels;
+            let (l, r) = if channels == 1 {
+                (interleaved[base], interleaved[base])
+            } else {
+                (interleaved[base], interleaved[base + 1])
+            };
+            stereo[f * 2] = l;
+            stereo[f * 2 + 1] = r;
+        }
+
+        return Ok(frames);
+    }
+}
+
+fn clamp_frame(frame: u64, total: u64) -> u64 {
+    if total == 0 { frame } else { frame.min(total) }
 }
 
 fn emit_progress(
@@ -250,49 +364,4 @@ fn emit_progress(
             "paused": paused,
         }),
     );
-}
-
-/// Mono is duplicated, >2 channels keeps the first two.
-fn read_chunk(
-    reader: &mut hound::WavReader<std::io::BufReader<std::fs::File>>,
-    src_channels: usize,
-    bits: u16,
-    int_max: f32,
-    stereo: &mut [f32],
-) -> AppResult<usize> {
-    let want_samples = CHUNK_FRAMES * src_channels;
-    let mut raw = Vec::with_capacity(want_samples);
-
-    match reader.spec().sample_format {
-        WavSampleFormat::Int => {
-            for sample in reader.samples::<i32>().take(want_samples) {
-                let v = sample.map_err(|e| AppError::Stream(format!("wav read: {e}")))?;
-                raw.push(v as f32 / int_max);
-            }
-        }
-        WavSampleFormat::Float => {
-            // f32 wav already in [-1, 1].
-            let _ = bits;
-            for sample in reader.samples::<f32>().take(want_samples) {
-                let v = sample.map_err(|e| AppError::Stream(format!("wav read: {e}")))?;
-                raw.push(v);
-            }
-        }
-    }
-
-    if raw.is_empty() {
-        return Ok(0);
-    }
-
-    let frames = raw.len() / src_channels;
-    for f in 0..frames {
-        let base = f * src_channels;
-        let (l, r) = match src_channels {
-            1 => (raw[base], raw[base]),
-            _ => (raw[base], raw[base + 1]),
-        };
-        stereo[f * 2] = l;
-        stereo[f * 2 + 1] = r;
-    }
-    Ok(frames)
 }

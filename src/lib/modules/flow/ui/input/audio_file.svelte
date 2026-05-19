@@ -74,7 +74,7 @@
 			title: 'Pick audio file',
 			multiple: false,
 			directory: false,
-			filters: [{ name: 'WAV', extensions: ['wav'] }]
+			filters: [{ name: 'Audio', extensions: ['wav', 'flac', 'aif', 'aiff', 'mp3', 'm4a', 'aac', 'opus', 'ogg'] }]
 		});
 		if (typeof path === 'string') {
 			flow.updateNodeData(id, { filePath: path });

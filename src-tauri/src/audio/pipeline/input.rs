@@ -14,7 +14,7 @@ use crate::audio::streams;
 use crate::error::AppError;
 use crate::error::AppResult;
 
-use super::file_reader::{probe_wav, start_audio_file_reader, AudioFileReader};
+use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 use super::STATE_EVENT;
 
 /// ScreenCaptureKit always delivers interleaved stereo by configuration.
@@ -92,7 +92,7 @@ pub(super) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
         }),
         InputSpec::AudioFile { file_path } => {
             let path = PathBuf::from(file_path);
-            let info = probe_wav(&path)?;
+            let info = probe_audio_file(&path)?;
             Ok(ResolvedInput::AudioFile {
                 sample_rate: info.sample_rate,
                 path,

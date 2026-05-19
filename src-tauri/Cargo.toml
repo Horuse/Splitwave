@@ -47,6 +47,7 @@ hound = "3.5"
 opus = "0.3"
 ogg = "0.9"
 mp3lame-encoder = "0.2"
+symphonia = { version = "0.6", features = ["all"] }
 base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -136,23 +136,11 @@ fn unique_named(names: Vec<String>, kind: DeviceKind) -> Vec<DeviceInfo> {
         .collect()
 }
 
-/// Prefer the system-default for the scope when its name matches the request:
-/// CoreAudio returns the AudioDeviceID currently bound to the active route,
-/// which is the only reliable handle for AUHAL to bind to Bluetooth devices
-/// (AirPods expose multiple sibling IDs under the same name and `host.devices()`
-/// may pick a non-bindable one). Falls back to enumeration for inactive routes
-/// because cpal's `default_*_device` doesn't surface those.
-pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
+// `host.devices()` returns is_default=false -> cpal uses HalOutput bound to a
+// specific AudioDeviceID. `default_*_device` returns is_default=true -> cpal
+// uses DefaultOutput which silently follows the system default when it changes.
+pub fn find(_kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     let host = cpal::default_host();
-    let default = match kind {
-        DeviceKind::Input => host.default_input_device(),
-        DeviceKind::Output => host.default_output_device(),
-    };
-    if let Some(d) = default {
-        if d.name().map(|n| n == id).unwrap_or(false) {
-            return Ok(d);
-        }
-    }
     host.devices()
         .map_err(|e| AppError::Host(e.to_string()))?
         .find(|d| d.name().map(|n| n == id).unwrap_or(false))

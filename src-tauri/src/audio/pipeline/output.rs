@@ -20,18 +20,13 @@ use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl, WorkerPacing};
 use super::native_config;
 
-/// Fallback sample rate for the file recorder when no input is connected to
-/// it. With at least one input the recorder uses the highest connected input
-/// rate to avoid lossy downsampling.
+// No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
 
-/// Output-side ring for the speaker pipeline. DSP worker pushes mixed stereo;
-/// the cpal callback drains. 32k samples = 16k stereo frames ~ 340 ms @ 48 k --
-/// massive headroom for cpal/scheduler jitter, costs ~128 KB.
+// 32k f32 samples = ~340 ms @ 48 kHz stereo; absorbs cpal/scheduler jitter.
 const SPEAKER_RING_CAPACITY: usize = 32_768;
 
-/// macOS Bluetooth often fails first AUHAL bind with DeviceNotAvailable even
-/// when active; 3x300ms covers settling.
+// Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
 const SPEAKER_RETRY_DELAY: Duration = Duration::from_millis(300);
 
@@ -90,9 +85,7 @@ fn is_device_not_available(e: &AppError) -> bool {
     matches!(e, AppError::Stream(s) if s.contains("no longer available"))
 }
 
-/// Bundles the cpal stream with the DSP worker that feeds its ring. `Drop`
-/// stops cpal first (so the callback can't read stale memory mid-shutdown),
-/// then signals the worker and joins. Field order matters.
+// Field order: stream drops before worker so the cpal callback stops before the ring is freed.
 pub(super) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
@@ -169,8 +162,6 @@ pub(super) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    // cpal consumes the closures on each attempt, so ring + closures are
-    // recreated per iteration.
     let mut producer_holder: Option<Producer<f32>> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {

@@ -56,8 +56,7 @@ pub struct ActivePipeline {
     inputs: HashMap<String, InputState>,
     speakers: HashMap<String, SpeakerState>,
     recorders: HashMap<String, RecorderState>,
-    /// Only populated when the graph has no outputs but at least one
-    /// analyzer. Keeps source rings drained.
+    /// Populated when there are no real outputs OR when monitor nodes are present.
     monitor: Option<MonitorState>,
 
     /// Persistent across reconciles so fan-out effects keep their atomics
@@ -127,11 +126,7 @@ impl ActivePipeline {
         }
     }
 
-    /// Apply a new graph by diffing against the previous one. Outputs
-    /// whose `OutputSig` is unchanged stay untouched; outputs with the
-    /// same `output_spec` but a changed sub-graph hot-swap their
-    /// `OutputGraph` through the worker's command channel -- no cpal
-    /// restart, no recorder file split. Spec changes drop and rebuild.
+    /// Diff `graph` against the running pipeline; only touch what changed.
     pub fn reconcile(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
         for state in self.inputs.values_mut() {
             state.bridge_tx.drain_discarded();
@@ -143,10 +138,7 @@ impl ActivePipeline {
             return Err(e);
         }
 
-        // The non-surviving workers joined above; their Consumers are gone,
-        // so the matching Producers we Remove'd from input broadcasts have
-        // had a chance to land in the discarded queue. Drain before we
-        // start adding fresh ones.
+        // Dropped Consumers land in the discarded queue; drain before adding fresh Producers.
         for state in self.inputs.values_mut() {
             state.bridge_tx.drain_discarded();
         }
@@ -164,10 +156,6 @@ impl ActivePipeline {
         }
     }
 
-    /// Apply a parameter patch from the frontend to the runtime effect.
-    /// Silently no-ops when the node id isn't an effect in this pipeline --
-    /// the frontend pushes updates for every node-data change and we don't
-    /// want non-effect updates (mic device, file path) to surface as errors.
     pub fn update_effect(&self, node_id: &str, data: &serde_json::Value) {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
@@ -218,9 +206,6 @@ impl ActivePipeline {
         }
     }
 
-    /// Stop and drop everything -- inputs, outputs, effects, meters. Used by
-    /// `Drop` and by `reconcile` on the failure path so a half-applied
-    /// pipeline doesn't keep running.
     fn teardown(&mut self) {
         self.tear_down_outputs();
         self.inputs.clear();
@@ -229,11 +214,7 @@ impl ActivePipeline {
         self.scopes.clear();
     }
 
-    /// Drop outputs (speakers, recorders, monitor) and effect state, but
-    /// leave input streams running. Signals every recorder worker before
-    /// joining any one of them, so file outputs cover the same wall-clock
-    /// window instead of later recorders staying open while earlier ones
-    /// finalize sequentially.
+    // Signal all recorders before joining any so they cover the same wall-clock window.
     fn tear_down_outputs(&mut self) {
         self.speakers.clear();
         for r in self.recorders.values() {
@@ -257,21 +238,10 @@ impl ActivePipeline {
         self.effect_registry = EffectRegistry::new();
     }
 
-    /// Compute survivor set against `new_graph` and tear down everything
-    /// else so `apply_full` only builds the deltas.
-    ///
-    /// Each currently-running output is classified into one of three
-    /// categories:
-    /// - **Full** -- `OutputSig` matches exactly; worker keeps running with
-    ///   its existing `OutputGraph`, bridges untouched.
-    /// - **GraphSwap** -- `output_spec` matches but the sub-graph differs;
-    ///   worker stays alive (cpal stream / recorder file continuous),
-    ///   bridges are removed here and `apply_full` will build a fresh
-    ///   `OutputGraph` and ship it via `ctrl.send_graph`. May fall back to
-    ///   `Drop` in `apply_full` if the recomputed sample rate doesn't
-    ///   match the running worker.
-    /// - **Drop** -- output went away or its `output_spec` changed; worker
-    ///   and its bridges are torn down here.
+    /// Classify each running output as Full (sig unchanged), GraphSwap (spec
+    /// same, sub-graph differs -- hot-swap via ctrl.send_graph), or Drop
+    /// (spec changed or removed). Tear down Drop outputs; Full survivors are
+    /// untouched; GraphSwap outputs keep their cpal stream / recorder file open.
     fn prepare_for_reconcile(&mut self, new_graph: &ValidGraph) -> AppResult<()> {
         let monitor_mode = monitor_mode(new_graph);
 

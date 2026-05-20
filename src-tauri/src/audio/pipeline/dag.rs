@@ -10,7 +10,7 @@ use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
-use crate::audio::graph::{EdgeKind, ValidGraph};
+use crate::audio::graph::{EdgeKind, EffectSpec, ValidGraph};
 use crate::audio::resample::StereoResampler;
 use crate::error::{AppError, AppResult};
 
@@ -114,6 +114,19 @@ impl DagNode {
         match self {
             DagNode::Source(s) => &s.out_buf,
             DagNode::Effect(e) => &e.out_buf,
+        }
+    }
+
+    /// Unknown or absent handles fall back to the node's main `out_buf`.
+    fn out_buf_for_handle(&self, handle: Option<&str>) -> &[f32] {
+        match (self, handle) {
+            (DagNode::Effect(e), Some(h)) => e
+                .handle_bufs
+                .iter()
+                .find(|(id, _)| id == h)
+                .map(|(_, buf)| buf.as_slice())
+                .unwrap_or(&e.out_buf),
+            _ => self.out_buf(),
         }
     }
 }
@@ -281,17 +294,20 @@ struct EffectState {
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
+    handle_bufs: Vec<(String, Vec<f32>)>,
 }
 
 /// `delay` is `Some` when this path is shorter than the longest reaching the
 /// same mixing point -- pads it for sample-alignment before summing.
 struct IncomingEdge {
     src_idx: usize,
+    source_handle: Option<String>,
     delay: Option<DelayLine>,
 }
 
 struct TerminalEdge {
     src_idx: usize,
+    source_handle: Option<String>,
     delay: Option<DelayLine>,
 }
 
@@ -369,7 +385,7 @@ impl OutputGraph {
                     *s = 0.0;
                 }
                 for edge in &mut eff.incoming {
-                    let src = head[edge.src_idx].out_buf();
+                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     match &mut edge.delay {
                         Some(d) => d.process_and_add(src, &mut eff.out_buf),
                         None => {
@@ -384,7 +400,8 @@ impl OutputGraph {
                         *s = 0.0;
                     }
                     for edge in &mut eff.sidechain {
-                        let src = head[edge.src_idx].out_buf();
+                        let src =
+                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, sc_buf),
                             None => {
@@ -400,13 +417,16 @@ impl OutputGraph {
                     eff.effect
                         .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
                 }
+                eff.effect
+                    .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
             }
         }
         for s in output.iter_mut() {
             *s = 0.0;
         }
         for terminal in &mut self.terminals {
-            let src = self.nodes[terminal.src_idx].out_buf();
+            let src =
+                self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
             match &mut terminal.delay {
                 Some(d) => d.process_and_add(src, output),
                 None => {
@@ -577,38 +597,65 @@ pub(super) fn build_output_graph(
                 scopes.push(s);
             }
             let bypass = build.bypass;
-            let mut main_upstream: Vec<usize> = Vec::new();
-            let mut side_upstream: Vec<usize> = Vec::new();
+            let mut main_upstream: Vec<(usize, Option<String>)> = Vec::new();
+            let mut side_upstream: Vec<(usize, Option<String>)> = Vec::new();
             for e in &valid.edges {
                 if &e.to == id && reachable.contains(&e.from) {
                     let idx = id_to_index[&e.from];
+                    let entry = (idx, e.source_handle.clone());
                     match e.kind {
-                        EdgeKind::Main => main_upstream.push(idx),
-                        EdgeKind::Sidechain => side_upstream.push(idx),
+                        EdgeKind::Main => main_upstream.push(entry),
+                        EdgeKind::Sidechain => side_upstream.push(entry),
                     }
                 }
             }
             let max_upstream = main_upstream
                 .iter()
                 .chain(side_upstream.iter())
-                .map(|&i| node_latencies[i])
+                .map(|(i, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
-            let make_edge = |src_idx: usize| {
+            let make_edge = |src_idx: usize, source_handle: Option<String>| {
                 let pad = max_upstream - node_latencies[src_idx];
                 IncomingEdge {
                     src_idx,
+                    source_handle,
                     delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
                 }
             };
-            let incoming: Vec<IncomingEdge> = main_upstream.iter().copied().map(make_edge).collect();
-            let sidechain: Vec<IncomingEdge> =
-                side_upstream.iter().copied().map(make_edge).collect();
+            let incoming: Vec<IncomingEdge> = main_upstream
+                .into_iter()
+                .map(|(i, h)| make_edge(i, h))
+                .collect();
+            let sidechain: Vec<IncomingEdge> = side_upstream
+                .into_iter()
+                .map(|(i, h)| make_edge(i, h))
+                .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
             } else {
                 Some(vec![0.0; DSP_BLOCK_FRAMES * 2])
             };
+            // Built from the edges actually drawn off this node's `peer:<id>`
+            // handles, so a stale handle simply yields silence.
+            let handle_bufs: Vec<(String, Vec<f32>)> =
+                if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+                    let mut handles: Vec<String> = valid
+                        .edges
+                        .iter()
+                        .filter(|e| &e.from == id)
+                        .filter_map(|e| e.source_handle.clone())
+                        .filter(|h| h.starts_with("peer:"))
+                        .collect();
+                    handles.sort();
+                    handles.dedup();
+                    handles
+                        .into_iter()
+                        .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
             let own = build.effect.latency_frames();
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
@@ -618,6 +665,7 @@ pub(super) fn build_output_graph(
                 sidechain,
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 sidechain_buf,
+                handle_bufs,
             }));
             node_latencies.push(max_upstream + own);
         }
@@ -625,23 +673,29 @@ pub(super) fn build_output_graph(
 
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<usize> = valid
+            let upstream: Vec<(usize, Option<String>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
-                .filter_map(|e| id_to_index.get(&e.from).copied())
+                .filter_map(|e| {
+                    id_to_index
+                        .get(&e.from)
+                        .copied()
+                        .map(|idx| (idx, e.source_handle.clone()))
+                })
                 .collect();
             let max_upstream = upstream
                 .iter()
-                .map(|&i| node_latencies[i])
+                .map(|(i, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
             upstream
                 .into_iter()
-                .map(|src_idx| {
+                .map(|(src_idx, source_handle)| {
                     let pad = max_upstream - node_latencies[src_idx];
                     TerminalEdge {
                         src_idx,
+                        source_handle,
                         delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
                     }
                 })

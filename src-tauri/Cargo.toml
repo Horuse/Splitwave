@@ -49,6 +49,13 @@ ogg = "0.9"
 mp3lame-encoder = "0.2"
 symphonia = { version = "0.6", features = ["all"] }
 base64 = "0.22"
+flate2 = "1"
+bytes = "1"
+cuid2 = "0.1"
+webrtc = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }

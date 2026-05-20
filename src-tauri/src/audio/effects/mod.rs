@@ -14,6 +14,7 @@ use crate::audio::graph::EffectSpec;
 
 pub mod biquad;
 pub mod channel_balance;
+pub mod webrtc_bridge;
 pub mod compressor;
 pub mod delay;
 pub mod eq;
@@ -43,6 +44,7 @@ use saturator::SaturatorEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
 pub use lufs_meter::{LufsHandle, LufsMeterEffect};
 pub use waveform::{WaveformEffect, WaveformHandle};
+pub use webrtc_bridge::WebRtcBridgeEffect;
 
 /// Shared atom for a dynamic-gain effect (compressor / noise gate / limiter).
 /// The audio thread writes the block's minimum gain each block; the meter tick
@@ -79,6 +81,7 @@ pub enum RuntimeEffect {
     NoiseGate(NoiseGateEffect),
     Delay(DelayEffect),
     Reverb(ReverbEffect),
+    WebRtcBridge(WebRtcBridgeEffect),
 }
 
 impl RuntimeEffect {
@@ -98,6 +101,7 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseGate(e) => e.latency_frames(),
             RuntimeEffect::Delay(e) => e.latency_frames(),
             RuntimeEffect::Reverb(e) => e.latency_frames(),
+            RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
         }
     }
 
@@ -118,10 +122,18 @@ impl RuntimeEffect {
             RuntimeEffect::Eq(e) => e.process(main, frames),
             RuntimeEffect::LevelMeter(e) => e.process(main, frames),
             RuntimeEffect::LufsMeter(e) => e.process(main, frames),
+            RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
             RuntimeEffect::Waveform(e) => e.process(main, frames),
             RuntimeEffect::Limiter(e) => e.process(main, frames),
             RuntimeEffect::Delay(e) => e.process(main, frames),
             RuntimeEffect::Reverb(e) => e.process(main, frames),
+        }
+    }
+
+    #[inline]
+    pub fn populate_handle_bufs(&self, handle_bufs: &mut [(String, Vec<f32>)], frames: usize) {
+        if let RuntimeEffect::WebRtcBridge(e) = self {
+            e.populate_handle_bufs(handle_bufs, frames);
         }
     }
 }
@@ -553,5 +565,21 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::Reverb(e), Some(c), None, None, None, None)
             }
         },
+        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application } => {
+            use rtrb::RingBuffer;
+            use crate::audio::webrtc_node;
+            // Ring capacity: ~1 sec of stereo audio at 48 kHz
+            const SEND_RING: usize = 96_000;
+            let (send_producer, send_consumer) = RingBuffer::<f32>::new(SEND_RING);
+            let peer_snapshots = webrtc_node::get_or_create(nid.as_str(), opus_bitrate, opus_application)
+                .set_send_consumer(send_consumer);
+            mk(
+                RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
+                    send_producer,
+                    peer_snapshots,
+                }),
+                None, None, None, None, None,
+            )
+        }
     }
 }

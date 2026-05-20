@@ -6,10 +6,11 @@ use tracing::info;
 
 use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
 use crate::audio::engine::Command;
-use crate::audio::graph::GraphSpec;
+use crate::audio::graph::{GraphSpec, OpusApplication};
 use crate::audio::permission::{self, PermissionState};
 use crate::audio::system_audio::{self, AudioApplication};
 use crate::audio::virtual_device::{self, VirtualDeviceConfig, VirtualDriverStatus};
+use crate::audio::{signaling, webrtc_node};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -268,6 +269,139 @@ pub fn uninstall_virtual_driver() -> Result<(), String> {
 pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
     info!(count = devices.len(), "applying virtual devices");
     virtual_device::apply_virtual_devices(devices)
+}
+
+#[tauri::command]
+pub async fn webrtc_create_offer(
+    node_id: String,
+    opus_bitrate: u32,
+    opus_application: OpusApplication,
+) -> AppResult<serde_json::Value> {
+    let (peer_id, offer_code) =
+        webrtc_node::create_offer(node_id, opus_bitrate, opus_application).await?;
+    Ok(serde_json::json!({ "peerId": peer_id, "offerCode": offer_code }))
+}
+
+#[tauri::command]
+pub async fn webrtc_accept_offer(
+    node_id: String,
+    offer_code: String,
+    opus_bitrate: u32,
+    opus_application: OpusApplication,
+) -> AppResult<serde_json::Value> {
+    let (peer_id, answer_code) =
+        webrtc_node::accept_offer(node_id, offer_code, opus_bitrate, opus_application).await?;
+    Ok(serde_json::json!({ "peerId": peer_id, "answerCode": answer_code }))
+}
+
+#[tauri::command]
+pub async fn webrtc_complete_handshake(node_id: String, answer_code: String) -> AppResult<()> {
+    webrtc_node::complete_handshake(node_id, answer_code).await
+}
+
+#[tauri::command]
+pub async fn webrtc_disconnect_peer(node_id: String, peer_id: String) -> AppResult<()> {
+    webrtc_node::disconnect_peer(node_id, peer_id).await
+}
+
+#[tauri::command]
+pub fn webrtc_set_peer_muted(node_id: String, peer_id: String, muted: bool) {
+    webrtc_node::set_peer_muted(&node_id, &peer_id, muted);
+}
+
+#[tauri::command]
+pub fn webrtc_peer_pings(node_id: String) -> std::collections::HashMap<String, u32> {
+    webrtc_node::peer_pings(&node_id)
+}
+
+#[tauri::command]
+pub async fn webrtc_session_state(node_id: String) -> webrtc_node::WebRtcSessionState {
+    webrtc_node::session_state(&node_id).await
+}
+
+/// Creates a WebRTC offer and connects to the signaling room as host.
+/// Returns the 6-char room code immediately; the actual peer connection
+/// completes asynchronously, signalled via `audio://webrtc_connected`.
+#[tauri::command]
+pub async fn webrtc_create_room(
+    node_id: String,
+    opus_bitrate: u32,
+    opus_application: OpusApplication,
+    app: AppHandle,
+) -> AppResult<String> {
+    let code = signaling::random_room_code();
+    let (peer_id, offer_sdp) =
+        webrtc_node::create_offer(node_id.clone(), opus_bitrate, opus_application).await?;
+    webrtc_node::mark_room(
+        &node_id,
+        opus_bitrate,
+        opus_application,
+        "hosting",
+        Some(code.clone()),
+    );
+
+    let code_clone = code.clone();
+    tokio::spawn(async move {
+        match signaling::host_exchange(&code_clone, &peer_id, &offer_sdp).await {
+            Ok((_guest_peer_id, answer_sdp)) => {
+                // complete_handshake updates display_id to guest_peer_id;
+                // webrtc_connected is emitted from DataChannel on_open.
+                if let Err(e) =
+                    webrtc_node::complete_handshake(node_id.clone(), answer_sdp).await
+                {
+                    tracing::error!("webrtc complete_handshake: {e}");
+                    let _ = app.emit(
+                        "audio://webrtc_error",
+                        serde_json::json!({ "nodeId": node_id, "error": e.to_string() }),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("signaling host_exchange: {e}");
+                let _ = app.emit(
+                    "audio://webrtc_error",
+                    serde_json::json!({ "nodeId": node_id, "error": e.to_string() }),
+                );
+            }
+        }
+    });
+
+    Ok(code)
+}
+
+/// Guest side: connects to a signaling room, receives the host's offer,
+/// completes the WebRTC handshake, and sends the answer back.
+/// Runs fully in background; result arrives via `audio://webrtc_connected`
+/// or `audio://webrtc_error`.
+#[tauri::command]
+pub async fn webrtc_join_room(
+    node_id: String,
+    room_code: String,
+    opus_bitrate: u32,
+    opus_application: OpusApplication,
+    app: AppHandle,
+) -> AppResult<()> {
+    webrtc_node::mark_room(&node_id, opus_bitrate, opus_application, "joining", None);
+    let node_id_clone = node_id.clone();
+    tokio::spawn(async move {
+        let result = signaling::guest_exchange(&room_code, |_host_peer_id, offer_sdp| {
+            let nid = node_id_clone.clone();
+            async move {
+                webrtc_node::accept_offer(nid, offer_sdp, opus_bitrate, opus_application).await
+            }
+        })
+        .await;
+
+        if let Err(e) = result {
+            tracing::error!("signaling guest_exchange: {e}");
+            let _ = app.emit(
+                "audio://webrtc_error",
+                serde_json::json!({ "nodeId": node_id_clone, "error": e.to_string() }),
+            );
+        }
+    });
+
+    Ok(())
 }
 
 #[tauri::command]

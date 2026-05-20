@@ -15,4 +15,7 @@ pub mod resample;
 pub mod sck_capture;
 pub mod streams;
 pub mod system_audio;
+pub mod signaling;
+pub mod webrtc_codec;
+pub mod webrtc_node;
 pub mod virtual_device;

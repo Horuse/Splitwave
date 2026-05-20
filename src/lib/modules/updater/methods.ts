@@ -32,14 +32,17 @@ export async function checkForUpdates(silent = false): Promise<void> {
 			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'up_to_date' };
 			return;
 		}
-		const skipped = await getSkippedVersion();
-		if (skipped === update.version) {
-			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'up_to_date' };
+		// Skipped version is honored only on the silent startup check;
+		// a manual menu check always surfaces the update.
+		if (silent && (await getSkippedVersion()) === update.version) {
+			updaterStore.state = { phase: 'idle' };
 			return;
 		}
 		updaterStore.state = { phase: 'available', update };
-	} catch {
-		updaterStore.state = { phase: 'idle' };
+	} catch (e) {
+		updaterStore.state = silent
+			? { phase: 'idle' }
+			: { phase: 'error', message: e instanceof Error ? e.message : String(e) };
 	}
 }
 

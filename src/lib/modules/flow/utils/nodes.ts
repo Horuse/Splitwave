@@ -137,25 +137,25 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	levelMeter: entry<'levelMeter'>({
 		kind: 'levelMeter',
-		category: 'effect',
+		category: 'monitor',
 		label: 'Level Meter',
-		description: 'Live L/R peak + RMS meter. Pass-through — drop it anywhere in a chain to watch the signal.',
+		description: 'Live L/R peak + RMS meter. Works standalone or anywhere in a chain.',
 		component: LevelMeter,
 		defaultData: {}
 	}),
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
-		category: 'effect',
+		category: 'monitor',
 		label: 'LUFS Meter',
-		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS. Pass-through.',
+		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS.',
 		component: LufsMeter,
 		defaultData: { target: -14 }
 	}),
 	waveform: entry<'waveform'>({
 		kind: 'waveform',
-		category: 'effect',
+		category: 'monitor',
 		label: 'Waveform',
-		description: 'Live waveform — filled min/max envelope for L and R channels. Pass-through.',
+		description: 'Live waveform — filled min/max envelope for L and R channels.',
 		component: Waveform,
 		defaultData: { segs: 4 }
 	}),
@@ -222,11 +222,12 @@ export const nodeTypes: NodeTypes = Object.fromEntries(
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'effect', 'output'];
+export const categoryOrder: NodeCategory[] = ['input', 'effect', 'monitor', 'output'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
 	effect: 'Effects',
+	monitor: 'Monitors',
 	output: 'Outputs'
 };
 

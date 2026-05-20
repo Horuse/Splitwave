@@ -22,7 +22,7 @@ use tracing::{info, warn};
 
 use crate::audio::device::DeviceKind;
 use crate::audio::effects::{EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle};
-use crate::audio::graph::{InputSpec, OutputSpec, RecordingFormat, ValidGraph};
+use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx};
 use crate::error::{AppError, AppResult};
 
@@ -273,7 +273,7 @@ impl ActivePipeline {
     /// - **Drop** -- output went away or its `output_spec` changed; worker
     ///   and its bridges are torn down here.
     fn prepare_for_reconcile(&mut self, new_graph: &ValidGraph) -> AppResult<()> {
-        let monitor_mode = new_graph.outputs.is_empty();
+        let monitor_mode = monitor_mode(new_graph);
 
         let mut new_sigs: HashMap<String, OutputSig> = HashMap::new();
         for out in &new_graph.outputs {
@@ -412,6 +412,15 @@ impl Drop for ActivePipeline {
     }
 }
 
+fn monitor_mode(graph: &ValidGraph) -> bool {
+    if graph.outputs.is_empty() {
+        return true;
+    }
+    graph.effects.iter().any(|e| {
+        matches!(e.spec, EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) | EffectSpec::Waveform(_))
+    })
+}
+
 pub fn build(graph: &ValidGraph, app: AppHandle) -> AppResult<ActivePipeline> {
     let mut p = ActivePipeline::new();
     p.reconcile(graph, app)?;
@@ -423,7 +432,7 @@ impl ActivePipeline {
     /// reused; the rest are built fresh. On error `self` is in a half-built
     /// state -- the caller is responsible for calling `teardown`.
     fn apply_full(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
-        let monitor_mode = graph.outputs.is_empty();
+        let monitor_mode = monitor_mode(graph);
 
         let mut input_native_sr: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();

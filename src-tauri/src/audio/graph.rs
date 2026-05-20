@@ -494,28 +494,22 @@ impl GraphSpec {
 
         check_acyclic(&self.nodes, &outgoing)?;
 
-        // Monitor mode: no output but ≥1 analyzer (LevelMeter, LufsMeter) acts as terminal.
         let has_outputs = self.nodes.iter().any(|n| n.kind.category() == NodeCategory::Output);
-        let has_analyzers = self
+        let has_monitors = self
             .nodes
             .iter()
             .any(|n| matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform));
-        if !has_outputs && !has_analyzers {
+        if !has_outputs && !has_monitors {
             return Err(AppError::Validation(
                 "no routing — connect an input to an output or a meter".into(),
             ));
         }
 
         let reachable_from_inputs = bfs_forward(&self.nodes, &outgoing, NodeCategory::Input);
-        let reachable_from_terminals: HashSet<&str> = if has_outputs {
-            bfs_backward_pred(&self.nodes, &incoming, |n| {
-                n.kind.category() == NodeCategory::Output
-            })
-        } else {
-            bfs_backward_pred(&self.nodes, &incoming, |n| {
-                matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform)
-            })
-        };
+        let reachable_from_terminals: HashSet<&str> = bfs_backward_pred(&self.nodes, &incoming, |n| {
+            n.kind.category() == NodeCategory::Output
+                || matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform)
+        });
         let keep: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)
             .copied()

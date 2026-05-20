@@ -17,6 +17,7 @@ import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
 import type { SystemAudioData } from './generated/SystemAudioData';
+import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData';
 
 export type { AiffBitDepth } from './generated/AiffBitDepth';
 export type { FlacBitDepth } from './generated/FlacBitDepth';
@@ -52,6 +53,7 @@ export type CompressorNodeData = XyData<CompressorData>;
 export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
 export type ReverbNodeData = XyData<ReverbData>;
+export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -77,6 +79,7 @@ export type NodeDataMap = {
 	noiseGate: NoiseGateNodeData;
 	delay: DelayNodeData;
 	reverb: ReverbNodeData;
+	webRtcCollaborator: WebRtcCollaboratorNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];
@@ -93,6 +96,7 @@ export interface PipelineNode<K extends NodeKind = NodeKind> {
 export interface PipelineEdge {
 	id: string;
 	source: string;
+	sourceHandle?: string;
 	target: string;
 	targetHandle?: string;
 }

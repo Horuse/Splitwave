@@ -25,6 +25,7 @@ import Compressor from '../ui/effect/compressor.svelte';
 import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
+import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -213,6 +214,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
 		component: Reverb,
 		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33, bypassed: false }
+	}),
+	webRtcCollaborator: entry<'webRtcCollaborator'>({
+		kind: 'webRtcCollaborator',
+		category: 'effect',
+		label: 'WebRTC',
+		description: 'Collaborative recording over WebRTC — share audio with remote peers via manual SDP exchange.',
+		component: WebRtcCollaborator,
+		defaultData: { opusBitrate: 96000, opusApplication: 'voip' }
 	})
 };
 

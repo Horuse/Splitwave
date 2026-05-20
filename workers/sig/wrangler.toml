@@ -1,0 +1,16 @@
+name = "splitwave-sig"
+main = "index.ts"
+compatibility_date = "2026-05-16"
+compatibility_flags = ["nodejs_compat"]
+
+[[routes]]
+pattern = "sig.splitwave.app/*"
+zone_name = "splitwave.app"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "SignalingRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalingRoom"]

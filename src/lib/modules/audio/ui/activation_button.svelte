@@ -10,20 +10,19 @@
 	async function toggle() {
 		if (busy) return;
 		busy = true;
-		audioStore.lastError = null;
 		try {
 			if (audioStore.isRunning) {
 				await methods.stopPipeline();
 			} else {
 				const snapshot = pipelineStore.editorActions?.getSnapshot();
 				if (!snapshot) {
-					audioStore.lastError = 'No pipeline loaded';
+					audioStore.reportError('No pipeline loaded');
 					return;
 				}
 				await audioStore.activatePipeline(pipelineId, { nodes: snapshot.nodes, edges: snapshot.edges });
 			}
 		} catch (e) {
-			audioStore.lastError = e instanceof Error ? e.message : String(e);
+			audioStore.reportError(e);
 		} finally {
 			busy = false;
 		}

@@ -12,7 +12,7 @@
 
 <header
 	data-tauri-drag-region
-	class="flex h-10 w-full flex-row gap-8 pl-20 items-center border-b border-theme/5 bg-background px-1.5"
+	class="flex h-10 z-500 w-full flex-row gap-8 pl-20 items-center border-b border-theme/5 bg-background px-1.5"
 >
 	{@render left?.()}
 

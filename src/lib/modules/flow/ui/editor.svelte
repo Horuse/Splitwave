@@ -437,7 +437,7 @@
 						edges: fromXyEdges(edges)
 					});
 				} catch (e) {
-					audioStore.lastError = e instanceof Error ? e.message : String(e);
+					audioStore.reportError(e);
 				}
 			});
 		}, 400);

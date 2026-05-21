@@ -1,4 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import toast from 'svelte-french-toast';
 import { methods } from './methods';
 import type {
 	AudioApplication,
@@ -13,7 +14,6 @@ class AudioStore {
 	isRunning = $state(false);
 	runningPipelineId = $state<string | null>(null);
 	startedAt = $state<number | null>(null);
-	lastError = $state<string | null>(null);
 	chooseFileNodeId = $state<string | null>(null);
 	pendingRetryPipelineId = $state<string | null>(null);
 
@@ -53,7 +53,6 @@ class AudioStore {
 			if (e.kind === 'started') {
 				this.isRunning = true;
 				this.startedAt = Date.now();
-				this.lastError = null;
 			} else if (e.kind === 'stopped') {
 				this.isRunning = false;
 				this.runningPipelineId = null;
@@ -62,7 +61,7 @@ class AudioStore {
 				this.isRunning = false;
 				this.runningPipelineId = null;
 				this.startedAt = null;
-				this.lastError = e.message;
+				this.reportError(e.message);
 			}
 		});
 		methods.onSpeakerError(() => {
@@ -76,7 +75,7 @@ class AudioStore {
 						this.isRunning = false;
 						this.runningPipelineId = null;
 						this.startedAt = null;
-						this.lastError = msg;
+						this.reportError(msg);
 					}
 				})
 				.finally(() => {
@@ -130,6 +129,10 @@ class AudioStore {
 		this.chooseFileNodeId = m[1];
 		this.pendingRetryPipelineId = pipelineId ?? null;
 		return true;
+	}
+
+	reportError(e: unknown): void {
+		toast.error(e instanceof Error ? e.message : String(e));
 	}
 
 	destroy(): void {

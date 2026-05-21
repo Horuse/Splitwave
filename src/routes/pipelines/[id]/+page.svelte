@@ -8,6 +8,7 @@
 	import Header from '$lib/components/layout/header.svelte';
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
+	import { Toaster } from 'svelte-french-toast';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
@@ -45,6 +46,11 @@
 	}
 </script>
 
+<Toaster position="bottom-end" containerClassName="mr-72" toastOptions={{
+	duration: 5000,
+	className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!',
+}} />
+
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-3">
@@ -57,9 +63,6 @@
 
 	{#snippet right()}
 		<div class="flex items-center gap-3">
-			{#if audioStore.lastError}
-				<span class="text-xs text-red-600">{audioStore.lastError}</span>
-			{/if}
 			{#if audioStore.isRunning}
 				<RunningTimer />
 			{/if}

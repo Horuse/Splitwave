@@ -29,6 +29,7 @@
 		"prettier-plugin-svelte": "^3.5.2",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"svelte-floating-ui": "^1.6.2",
+		"svelte-french-toast": "^1.2.0",
 		"svelte-portal": "^2.2.1",
 		"tailwindcss": "^4.3.0"
 	},

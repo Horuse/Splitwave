@@ -38,7 +38,6 @@
         event.preventDefault();
         if (busy) return;
         busy = id;
-        audioStore.lastError = null;
         try {
             if (audioStore.isRunning) {
                 await audioMethods.stopPipeline();
@@ -48,7 +47,7 @@
                 await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
             }
         } catch (e) {
-            audioStore.lastError = e instanceof Error ? e.message : String(e);
+            audioStore.reportError(e);
         } finally {
             busy = null;
         }

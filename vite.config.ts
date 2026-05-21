@@ -12,7 +12,7 @@ export default defineConfig(async () => ({
 	// Packages that ship .svelte source -- let the Svelte plugin handle them
 	// instead of esbuild pre-bundling (which has no .svelte loader).
 	optimizeDeps: {
-		exclude: ['@xyflow/svelte', 'svelte-portal', 'svelte-floating-ui']
+		exclude: ['@xyflow/svelte', 'svelte-portal', 'svelte-floating-ui', 'svelte-french-toast']
 	},
 
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

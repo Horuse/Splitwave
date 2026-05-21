@@ -87,7 +87,7 @@
 			);
 			audioStore
 				.activatePipeline(retryId, { nodes, edges: snapshot.edges })
-				.catch((e) => { audioStore.lastError = e instanceof Error ? e.message : String(e); });
+				.catch((e) => audioStore.reportError(e));
 		}).catch(() => {});
 	});
 

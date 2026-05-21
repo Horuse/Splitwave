@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onDestroy, onMount } from 'svelte';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+	import { Toaster } from 'svelte-french-toast';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { installErrorHandlers } from '$lib/modules/error';

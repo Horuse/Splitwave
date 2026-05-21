@@ -524,6 +524,7 @@ impl ActivePipeline {
             let built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
+                matches!(out.spec, OutputSpec::Speaker { .. }),
                 graph,
                 &input_native_sr,
                 &mut my_pairs,
@@ -570,6 +571,7 @@ impl ActivePipeline {
                 let built = build_output_graph(
                     None,
                     monitor_sr,
+                    false,
                     graph,
                     &input_native_sr,
                     &mut my_pairs,

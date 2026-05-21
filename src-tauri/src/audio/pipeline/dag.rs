@@ -32,6 +32,9 @@ pub(super) const DSP_BLOCK_FRAMES: usize = 1024;
 /// ring buffer.
 const STALL_THRESHOLD: Duration = Duration::from_millis(150);
 
+const SOURCE_BACKLOG_HIGH_BLOCKS: usize = 4;
+const SOURCE_BACKLOG_LOW_BLOCKS: usize = 2;
+
 /// Fixed-capacity FIFO; allocates once. Overrun clamps and counts drops --
 /// wrapping the write head past the read head would corrupt subsequent pops.
 struct StagingRing {
@@ -127,6 +130,7 @@ struct SourceState {
     chunk_tmp: Vec<f32>,
     out_buf: Vec<f32>,
     input_samples_per_block: usize,
+    realtime: bool,
     /// >STALL_THRESHOLD since last pop => zero-fill and stop waiting on this source.
     last_pop_at: Instant,
     first_data_logged: bool,
@@ -190,6 +194,18 @@ impl SourceState {
                 self.out_pending.clear();
                 self.out_buf.fill(0.0);
                 return;
+            }
+        }
+        // Drop input backlog past HIGH down to LOW so latency stays bounded.
+        if self.realtime {
+            let have = self.consumer.slots();
+            let high = self.input_samples_per_block * SOURCE_BACKLOG_HIGH_BLOCKS;
+            if have > high {
+                let low = self.input_samples_per_block * SOURCE_BACKLOG_LOW_BLOCKS;
+                let drop = (have - low) & !1;
+                if let Ok(chunk) = self.consumer.read_chunk(drop) {
+                    chunk.commit_all();
+                }
             }
         }
         let need = self.out_buf.len();
@@ -442,6 +458,7 @@ pub(super) struct BuiltOutputGraph {
 pub(super) fn build_output_graph(
     output_id: Option<&str>,
     output_sr: u32,
+    realtime: bool,
     valid: &ValidGraph,
     input_native_sr: &HashMap<String, u32>,
     producer_pairs: &mut Vec<(String, Producer<f32>)>,
@@ -542,6 +559,7 @@ pub(super) fn build_output_graph(
                 chunk_tmp: Vec::with_capacity(out_max * 2),
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 input_samples_per_block,
+                realtime,
                 last_pop_at: Instant::now(),
                 first_data_logged: false,
                 volume: input_volumes

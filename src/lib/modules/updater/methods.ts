@@ -32,8 +32,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
 			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'up_to_date' };
 			return;
 		}
-		// Skipped version is honored only on the silent startup check;
-		// a manual menu check always surfaces the update.
+		// Manual menu check always surfaces the update; only the silent startup check honors a skip.
 		if (silent && (await getSkippedVersion()) === update.version) {
 			updaterStore.state = { phase: 'idle' };
 			return;

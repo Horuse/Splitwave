@@ -139,11 +139,32 @@ fn unique_named(names: Vec<String>, kind: DeviceKind) -> Vec<DeviceInfo> {
 // `host.devices()` returns is_default=false -> cpal uses HalOutput bound to a
 // specific AudioDeviceID. `default_*_device` returns is_default=true -> cpal
 // uses DefaultOutput which silently follows the system default when it changes.
-pub fn find(_kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
+pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     let host = cpal::default_host();
-    host.devices()
+    let matches: Vec<cpal::Device> = host
+        .devices()
         .map_err(|e| AppError::Host(e.to_string()))?
-        .find(|d| d.name().map(|n| n == id).unwrap_or(false))
+        .filter(|d| d.name().map(|n| n == id).unwrap_or(false))
+        .collect();
+    if matches.len() < 2 {
+        return matches
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::Device(format!("device not found: {id}")));
+    }
+    // Bluetooth headsets expose same-named input- and output-scope devices; pick the one valid in the requested scope.
+    let in_scope = |d: &cpal::Device| {
+        match kind {
+            DeviceKind::Input => d.supported_input_configs().map(|mut c| c.next().is_some()),
+            DeviceKind::Output => d.supported_output_configs().map(|mut c| c.next().is_some()),
+        }
+        .unwrap_or(false)
+    };
+    matches
+        .iter()
+        .find(|d| in_scope(d))
+        .or(matches.first())
+        .cloned()
         .ok_or_else(|| AppError::Device(format!("device not found: {id}")))
 }
 

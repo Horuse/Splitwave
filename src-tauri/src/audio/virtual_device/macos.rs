@@ -6,6 +6,11 @@ use std::process::Command;
 use tauri::{AppHandle, Manager};
 use tracing::{error, info};
 
+use super::{VirtualDeviceConfig, VirtualDriverStatus};
+
+const DRIVER_NAME: &str = "Splitwave.driver";
+const HAL_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
+
 // Reject paths that would escape single-quote shell quoting or the enclosing AppleScript string.
 fn shell_safe(path: &Path) -> Result<&str, String> {
     let s = path.to_str().ok_or("path is not valid UTF-8")?;
@@ -43,12 +48,6 @@ fn write_temp_plist(content: &str) -> Result<TempPlist, String> {
     { let mut f = f; f.write_all(content.as_bytes()) }
         .map_err(|e| format!("write temp plist: {e}"))?;
     Ok(guard)
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct VirtualDeviceConfig {
-    pub id: String,
-    pub name: String,
 }
 
 fn xml_escape(s: &str) -> String {
@@ -102,15 +101,6 @@ end run"#;
 
     info!(count = devices.len(), "virtual devices applied");
     Ok(())
-}
-
-const DRIVER_NAME: &str = "Splitwave.driver";
-const HAL_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VirtualDriverStatus {
-    pub installed: bool,
 }
 
 pub fn status() -> VirtualDriverStatus {

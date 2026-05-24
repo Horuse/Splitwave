@@ -40,6 +40,46 @@
     button {
         @apply cursor-pointer;
     }
+
+    input[type='range'] {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 16px;
+        background: transparent;
+        cursor: pointer;
+    }
+    input[type='range']::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 2px;
+        background: rgb(0 0 0 / 0.35);
+    }
+    input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--color-theme);
+        margin-top: -6px;
+        border: none;
+    }
+    input[type='range']::-moz-range-track {
+        height: 4px;
+        border-radius: 2px;
+        background: rgb(0 0 0 / 0.35);
+        border: none;
+    }
+    input[type='range']::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--color-theme);
+        border: none;
+    }
+    input[type='range']:disabled {
+        @apply opacity-50 cursor-not-allowed;
+    }
 }
 
 @layer components {

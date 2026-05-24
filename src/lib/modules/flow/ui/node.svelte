@@ -1,6 +1,9 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { getContext, type Snippet } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
+	import { PREVIEW_CTX } from '../utils';
+
+	const isPreview = getContext(PREVIEW_CTX) === true;
 
 	export interface InputHandleConfig {
 		id: string;
@@ -76,24 +79,26 @@
 		{@render children?.()}
 	</div>
 
-	{#if inputs && inputs.length > 0}
-		{#each inputs as h (h.id)}
-			<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
-				{#if h.label}
-					<span class={labelClasses(h.position)}>{h.label}</span>
+	{#if !isPreview}
+		{#if inputs && inputs.length > 0}
+			{#each inputs as h (h.id)}
+				<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
+					{#if h.label}
+						<span class={labelClasses(h.position)}>{h.label}</span>
+					{/if}
+				</Handle>
+			{/each}
+		{:else if hasInput}
+			<Handle type="target" class="handle" position={Position.Left} />
+		{/if}
+		{#if hasOutput}
+			<Handle type="source" class="handle" position={Position.Right}>
+				{#if outputLabel}
+					<span class="pointer-events-none absolute right-full mr-0.5 top-1/2 -translate-y-1/2 px-1 font-mono text-[9px] leading-none text-neutral-700 [writing-mode:vertical-rl]">
+						{outputLabel}
+					</span>
 				{/if}
 			</Handle>
-		{/each}
-	{:else if hasInput}
-		<Handle type="target" class="handle" position={Position.Left} />
-	{/if}
-	{#if hasOutput}
-		<Handle type="source" class="handle" position={Position.Right}>
-			{#if outputLabel}
-				<span class="pointer-events-none absolute right-full mr-0.5 top-1/2 -translate-y-1/2 px-1 font-mono text-[9px] leading-none text-neutral-700 [writing-mode:vertical-rl]">
-					{outputLabel}
-				</span>
-			{/if}
-		</Handle>
+		{/if}
 	{/if}
 </div>

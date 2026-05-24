@@ -1,9 +1,13 @@
 <script lang="ts">
+	import { getContext } from 'svelte';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
 	import { useSvelteFlow, Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
 	import { Add, Minus } from '$lib/components/icons';
+	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+
+	const isPreview = getContext(PREVIEW_CTX) === true;
 
 	type WaveformNodeType = Node<WaveformNodeData, 'waveform'>;
 	let { id, data }: NodeProps<WaveformNodeType> = $props();
@@ -190,8 +194,15 @@
 	});
 </script>
 
-<div class="w-full h-full flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm">
-	<NodeResizer minWidth={160} maxWidth={1200} minHeight={80} maxHeight={1200}  />
+<div
+	class={[
+		'flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm',
+		isPreview ? 'w-80 h-40' : 'w-full h-full'
+	]}
+>
+	{#if !isPreview}
+		<NodeResizer minWidth={160} maxWidth={1200} minHeight={80} maxHeight={1200} />
+	{/if}
 
 	<div class="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
 		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">Waveform</span>
@@ -284,6 +295,8 @@
 		</svg>
 	</div>
 
-	<Handle type="target" position={Position.Left} class="handle" />
-	<Handle type="source" position={Position.Right} class="handle" />
+	{#if !isPreview}
+		<Handle type="target" position={Position.Left} class="handle" />
+		<Handle type="source" position={Position.Right} class="handle" />
+	{/if}
 </div>

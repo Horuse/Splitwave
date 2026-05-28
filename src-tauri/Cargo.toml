@@ -53,6 +53,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+pipewire = "0.9"
+freedesktop-desktop-entry = "0.8"
+freedesktop-icons = "0.4"
+resvg = "0.47"
+dirs = "5"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 embed_plist = "1.2"
 objc2 = "0.6"

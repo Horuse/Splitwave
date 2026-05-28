@@ -840,33 +840,24 @@ pub(super) fn native_config(
     device: &cpal::Device,
     name: &str,
 ) -> AppResult<NativeConfig> {
-    // On Linux/Windows cpal's `supported_*_configs` is reliable for any device
-    // the OS exposes -- no inactive-route quirk like macOS. Pick the range with
-    // the highest max sample rate; force f32 sample format.
-    let configs: Vec<cpal::SupportedStreamConfigRange> = match kind {
-        DeviceKind::Input => device
-            .supported_input_configs()
-            .map_err(|e| AppError::Device(format!("query input configs for {name:?}: {e}")))?
-            .collect(),
-        DeviceKind::Output => device
-            .supported_output_configs()
-            .map_err(|e| AppError::Device(format!("query output configs for {name:?}: {e}")))?
-            .collect(),
-    };
-    let best = configs
-        .into_iter()
-        .max_by_key(|c| c.max_sample_rate().0)
-        .ok_or_else(|| AppError::Device(format!("device {name:?} exposes no configs")))?
-        .with_max_sample_rate();
+    use cpal::traits::DeviceTrait;
+    // ALSA's `default` PCM advertises a plug-converter range (up to 384 kHz /
+    // 32 ch); picking the max would build a stream the hardware cannot honour.
+    // `default_*_config` returns what PipeWire/Pulse will actually negotiate.
+    let cfg = match kind {
+        DeviceKind::Input => device.default_input_config(),
+        DeviceKind::Output => device.default_output_config(),
+    }
+    .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
     Ok(NativeConfig {
         config: cpal::StreamConfig {
-            channels: best.channels(),
-            sample_rate: best.sample_rate(),
+            channels: cfg.channels(),
+            sample_rate: cfg.sample_rate(),
             buffer_size: cpal::BufferSize::Default,
         },
         sample_format: cpal::SampleFormat::F32,
-        sample_rate: best.sample_rate().0,
-        channels: best.channels(),
+        sample_rate: cfg.sample_rate().0,
+        channels: cfg.channels(),
     })
 }
 

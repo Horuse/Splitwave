@@ -51,24 +51,17 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
 #[cfg(not(target_os = "macos"))]
 pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> {
     let device = find(kind, name)?;
-    let configs: Vec<cpal::SupportedStreamConfigRange> = match kind {
-        DeviceKind::Input => device
-            .supported_input_configs()
-            .map_err(|e| AppError::Device(e.to_string()))?
-            .collect(),
-        DeviceKind::Output => device
-            .supported_output_configs()
-            .map_err(|e| AppError::Device(e.to_string()))?
-            .collect(),
-    };
-    let best = configs
-        .into_iter()
-        .max_by_key(|c| c.max_sample_rate().0)
-        .ok_or_else(|| AppError::Device("device exposes no configs".into()))?
-        .with_max_sample_rate();
+    // ALSA's `default` PCM advertises absurd ranges (up to 384 kHz / 32 ch) via
+    // its plug-converter chain. `default_*_config` returns what PipeWire/Pulse
+    // will actually negotiate.
+    let cfg = match kind {
+        DeviceKind::Input => device.default_input_config(),
+        DeviceKind::Output => device.default_output_config(),
+    }
+    .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
     Ok(NativeDeviceInfo {
-        sample_rate: best.sample_rate().0,
-        channels: best.channels(),
+        sample_rate: cfg.sample_rate().0,
+        channels: cfg.channels(),
         sample_format: "f32",
     })
 }

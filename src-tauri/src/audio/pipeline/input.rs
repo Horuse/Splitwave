@@ -10,8 +10,6 @@ use crate::audio::device::{self, DeviceKind};
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
-#[cfg(not(target_os = "macos"))]
-use crate::error::AppError;
 use crate::error::AppResult;
 
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
@@ -29,8 +27,7 @@ const SCK_SR: u32 = 48_000;
 #[allow(dead_code)]
 pub(super) enum InputHandle {
     Cpal(cpal::Stream),
-    #[cfg(target_os = "macos")]
-    Sck(crate::audio::sck_capture::SckCapture),
+    Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
 }
 
@@ -144,13 +141,13 @@ pub(super) fn start_input_stream(
                 sample_rate,
                 exclude_current_app, "starting system-audio capture (ScreenCaptureKit)"
             );
-            let capture = crate::audio::sck_capture::SckCapture::start_system(
+            let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
                 sample_rate,
                 SCK_CHANNELS as u32,
                 bridge,
             )?;
-            Ok(InputHandle::Sck(capture))
+            Ok(InputHandle::Capture(capture))
         }
         #[cfg(target_os = "macos")]
         ResolvedInput::AppAudio {
@@ -158,20 +155,33 @@ pub(super) fn start_input_stream(
             bundle_id,
         } => {
             info!(sample_rate, %bundle_id, "starting app-audio capture (ScreenCaptureKit)");
-            let capture = crate::audio::sck_capture::SckCapture::start_app(
+            let capture = crate::audio::capture::Capture::start_app(
                 &bundle_id,
                 sample_rate,
                 SCK_CHANNELS as u32,
                 bridge,
             )?;
-            Ok(InputHandle::Sck(capture))
+            Ok(InputHandle::Capture(capture))
         }
         #[cfg(not(target_os = "macos"))]
-        ResolvedInput::SystemAudio { .. } | ResolvedInput::AppAudio { .. } => {
-            drop(bridge);
-            Err(AppError::Stream(
-                "System/App Audio capture is only supported on macOS".into(),
-            ))
+        ResolvedInput::SystemAudio { .. } => {
+            info!("starting system-audio capture (PipeWire sink monitor)");
+            let mut bridge = bridge;
+            let capture = crate::audio::capture::Capture::start_system(move |samples| {
+                bridge.apply_commands();
+                bridge.broadcast(samples);
+            })?;
+            Ok(InputHandle::Capture(capture))
+        }
+        #[cfg(not(target_os = "macos"))]
+        ResolvedInput::AppAudio { bundle_id, .. } => {
+            info!(%bundle_id, "starting app-audio capture (PipeWire tap)");
+            let mut bridge = bridge;
+            let capture = crate::audio::capture::Capture::start_app(&bundle_id, move |samples| {
+                bridge.apply_commands();
+                bridge.broadcast(samples);
+            })?;
+            Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
             // Loop is a runtime atomic, not in InputSpec; frontend syncs it

@@ -4,6 +4,7 @@ pub mod effects;
 pub mod engine;
 pub mod format;
 pub mod graph;
+pub mod capture;
 pub mod input_bridge;
 #[cfg(target_os = "macos")]
 pub mod macos_hal;
@@ -11,8 +12,6 @@ pub mod permission;
 pub mod encoders;
 pub mod pipeline;
 pub mod resample;
-#[cfg(target_os = "macos")]
-pub mod sck_capture;
 pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;

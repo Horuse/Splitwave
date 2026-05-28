@@ -54,7 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-pipewire = "0.9"
+pipewire = { version = "0.9", features = ["v0_3_44"] }
 freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 resvg = "0.47"

@@ -16,3 +16,4 @@ pub mod sck_capture;
 pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;
+pub mod volume;

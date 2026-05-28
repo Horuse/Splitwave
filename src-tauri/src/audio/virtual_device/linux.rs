@@ -2,9 +2,7 @@ use tauri::AppHandle;
 
 use super::{VirtualDeviceConfig, VirtualDriverStatus};
 
-// Linux virtual devices via PipeWire config snippets are planned;
-// until that lands, report not installed and reject mutating calls.
-
+// Not wired up yet. PipeWire null-sinks come later.
 pub fn status() -> VirtualDriverStatus {
     VirtualDriverStatus { installed: false }
 }

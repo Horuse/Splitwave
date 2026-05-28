@@ -105,33 +105,17 @@ pub fn update_effect(
 
 #[tauri::command]
 pub fn get_device_volume(kind: DeviceKind, name: String) -> Option<f32> {
-    #[cfg(target_os = "macos")]
-    {
-        return crate::audio::macos_hal::device_volume(kind, &name);
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (kind, name);
-        None
-    }
+    crate::audio::volume::device_volume(kind, &name)
 }
 
 #[tauri::command]
 pub fn set_device_volume(kind: DeviceKind, name: String, scalar: f32) -> AppResult<()> {
-    #[cfg(target_os = "macos")]
-    {
-        if crate::audio::macos_hal::set_device_volume(kind, &name, scalar) {
-            Ok(())
-        } else {
-            Err(AppError::Device(format!(
-                "device {name:?} has no settable {kind:?} volume"
-            )))
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (kind, name, scalar);
-        Err(AppError::Device("device volume control is macOS-only".into()))
+    if crate::audio::volume::set_device_volume(kind, &name, scalar) {
+        Ok(())
+    } else {
+        Err(AppError::Device(format!(
+            "device {name:?} has no settable {kind:?} volume"
+        )))
     }
 }
 

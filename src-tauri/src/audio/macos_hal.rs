@@ -6,7 +6,7 @@
 //! workflows need the full device list, so we go straight to the HAL and use
 //! cpal only for the stream once the user selects a device.
 //!
-//! The FFI surface is intentionally tiny — no `coreaudio-sys` dependency.
+//! The FFI surface is intentionally tiny  no `coreaudio-sys` dependency.
 
 use std::ffi::c_void;
 use std::mem;

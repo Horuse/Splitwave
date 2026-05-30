@@ -10,6 +10,10 @@ on:
             - 'linux-*'
     workflow_dispatch:
 
+permissions:
+    contents: read
+    packages: read
+
 jobs:
     build:
         # ubuntu-22.04 = oldest base shipping WebKitGTK 4.1, so glibc stays 2.35

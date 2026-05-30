@@ -49,22 +49,36 @@ jobs:
                     libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
                     libpipewire-0.3-dev clang libclang-dev \
                     libasound2-dev libopus-dev \
-                    desktop-file-utils xdg-utils patchelf
+                    desktop-file-utils xdg-utils patchelf rpm
 
             - name: Install JS deps
               run: bun install --frozen-lockfile
 
-            - name: Build AppImage + deb
+            - name: Build AppImage + deb + rpm
               uses: tauri-apps/tauri-action@v0
               with:
                   projectPath: src-tauri
-                  args: '--bundles appimage,deb -c {"bundle":{"createUpdaterArtifacts":false}}'
+                  args: '--bundles appimage,deb,rpm -c {"bundle":{"createUpdaterArtifacts":false}}'
 
-            - name: Upload artifact
+            # Separate artifacts so each downloads on its own -- grabbing the
+            # small deb/rpm doesn't pull the heavy AppImage.
+            - name: Upload AppImage
               uses: actions/upload-artifact@v4
               with:
-                  name: splitwave-linux-x86_64
-                  path: |
-                      src-tauri/target/release/bundle/appimage/*.AppImage
-                      src-tauri/target/release/bundle/deb/*.deb
+                  name: Splitwave-AppImage-x86_64
+                  path: src-tauri/target/release/bundle/appimage/*.AppImage
+                  if-no-files-found: error
+
+            - name: Upload deb
+              uses: actions/upload-artifact@v4
+              with:
+                  name: Splitwave-deb-x86_64
+                  path: src-tauri/target/release/bundle/deb/*.deb
+                  if-no-files-found: error
+
+            - name: Upload rpm
+              uses: actions/upload-artifact@v4
+              with:
+                  name: Splitwave-rpm-x86_64
+                  path: src-tauri/target/release/bundle/rpm/*.rpm
                   if-no-files-found: error

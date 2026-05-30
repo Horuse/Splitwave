@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
 use crate::audio::clock::{ClockSource, SystemClockTicker};
+#[cfg(target_os = "macos")]
 use crate::audio::device::{self, DeviceKind};
 use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
@@ -18,6 +19,7 @@ use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl, WorkerPacing};
+#[cfg(target_os = "macos")]
 use super::native_config;
 
 // No live inputs -> fall back to 48 kHz for the recorder.
@@ -27,14 +29,23 @@ const RECORDER_DEFAULT_SR: u32 = 48_000;
 const SPEAKER_RING_CAPACITY: usize = 32_768;
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
+#[cfg(target_os = "macos")]
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
+#[cfg(target_os = "macos")]
 const SPEAKER_RETRY_DELAY: Duration = Duration::from_millis(300);
 
+#[cfg(target_os = "macos")]
 pub(super) struct SpeakerResolved {
     pub device: cpal::Device,
     pub config: cpal::StreamConfig,
     pub sample_format: cpal::SampleFormat,
     pub out_channels: usize,
+    pub sample_rate: u32,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) struct SpeakerResolved {
+    pub node_id: String,
     pub sample_rate: u32,
 }
 
@@ -61,6 +72,7 @@ pub(super) fn resolve_output(
     file_sr_hint: Option<u32>,
 ) -> AppResult<ResolvedOutput> {
     match &out.spec {
+        #[cfg(target_os = "macos")]
         OutputSpec::Speaker { device_id } => {
             let device = device::find(DeviceKind::Output, device_id)?;
             let native = native_config(DeviceKind::Output, &device, device_id)?;
@@ -72,6 +84,11 @@ pub(super) fn resolve_output(
                 sample_rate: native.sample_rate,
             }))
         }
+        #[cfg(not(target_os = "macos"))]
+        OutputSpec::Speaker { device_id } => Ok(ResolvedOutput::Speaker(SpeakerResolved {
+            node_id: device_id.clone(),
+            sample_rate: 48_000,
+        })),
         OutputSpec::FileRecording { file_path, format } => Ok(ResolvedOutput::File {
             path: PathBuf::from(file_path),
             sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
@@ -81,13 +98,18 @@ pub(super) fn resolve_output(
 }
 
 // Substring match on cpal's stable Display -- AppError flattens the variant.
+#[cfg(target_os = "macos")]
 fn is_device_not_available(e: &AppError) -> bool {
     matches!(e, AppError::Stream(s) if s.contains("no longer available"))
 }
 
-// Field order: stream drops before worker so the cpal callback stops before the ring is freed.
+// Field order: the stream drops before the worker so the audio callback stops
+// before the ring is freed.
 pub(super) struct SpeakerHandle {
+    #[cfg(target_os = "macos")]
     _stream: cpal::Stream,
+    #[cfg(not(target_os = "macos"))]
+    _playback: crate::audio::playback::Playback,
     _worker: SpeakerWorker,
 }
 
@@ -119,6 +141,7 @@ impl Drop for RecorderWorker {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn start_speaker_stream(
     node_id: &str,
     spec: SpeakerResolved,
@@ -139,7 +162,6 @@ pub(super) fn start_speaker_stream(
     );
 
     // AirPods A2DP/HFP switch can race resolve_output; verify state fresh.
-    #[cfg(target_os = "macos")]
     {
         let fresh = crate::audio::macos_hal::find_output_device(&device_name);
         match fresh {
@@ -200,17 +222,55 @@ pub(super) fn start_speaker_stream(
             Err(e) => return Err(e),
         }
     }
-    let mut producer = producer_holder.expect("loop sets producer on success or returns Err");
+    let producer = producer_holder.expect("loop sets producer on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
+    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    Ok((
+        SpeakerHandle { _stream: stream, _worker: worker_handle },
+        ctrl,
+        dead,
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn start_speaker_stream(
+    _node_id: &str,
+    spec: SpeakerResolved,
+    graph: OutputGraph,
+    _app: &AppHandle,
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+    info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
+    let dead = Arc::new(AtomicBool::new(false));
+
+    let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
+    let fill = move |out: &mut [f32]| {
+        streams::bulk_pop(&mut consumer, out);
+        out.len()
+    };
+    let playback = crate::audio::playback::Playback::start(&spec.node_id, fill)?;
+
+    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    Ok((
+        SpeakerHandle { _playback: playback, _worker: worker_handle },
+        ctrl,
+        dead,
+    ))
+}
+
+fn spawn_speaker_worker(
+    mut producer: Producer<f32>,
+    sample_rate: u32,
+    graph: OutputGraph,
+) -> AppResult<(SpeakerWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
     let clock: Box<dyn ClockSource> =
-        Box::new(SystemClockTicker::new(spec.sample_rate, DSP_BLOCK_FRAMES));
+        Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
     let pacing = WorkerPacing::Clock(clock);
     let join = thread::Builder::new()
-        .name(format!("speaker:{}", spec.sample_rate))
+        .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             worker.run(stop_thread, pacing, |block| {
                 streams::bulk_push(&mut producer, block);
@@ -218,18 +278,7 @@ pub(super) fn start_speaker_stream(
             });
         })
         .map_err(|e| AppError::Stream(format!("spawn speaker worker: {e}")))?;
-
-    Ok((
-        SpeakerHandle {
-            _stream: stream,
-            _worker: SpeakerWorker {
-                stop,
-                join: Some(join),
-            },
-        },
-        ctrl,
-        dead,
-    ))
+    Ok((SpeakerWorker { stop, join: Some(join) }, ctrl))
 }
 
 // Drives analyzers when there's no real output; sink discards the mix.

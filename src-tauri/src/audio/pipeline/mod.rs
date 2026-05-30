@@ -20,6 +20,7 @@ use rtrb::Producer;
 use tauri::AppHandle;
 use tracing::{info, warn};
 
+#[cfg(target_os = "macos")]
 use crate::audio::device::DeviceKind;
 use crate::audio::effects::{EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
@@ -44,6 +45,7 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
+#[cfg(target_os = "macos")]
 pub(super) const STATE_EVENT: &str = "audio://state";
 
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
@@ -793,6 +795,7 @@ impl ActivePipeline {
 // Sample format is always `f32` -- the universal macOS audio type and the
 // internal pipeline format.
 
+#[cfg(target_os = "macos")]
 pub(super) struct NativeConfig {
     pub config: cpal::StreamConfig,
     pub sample_format: cpal::SampleFormat,
@@ -834,30 +837,4 @@ pub(super) fn native_config(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(super) fn native_config(
-    kind: DeviceKind,
-    device: &cpal::Device,
-    name: &str,
-) -> AppResult<NativeConfig> {
-    use cpal::traits::DeviceTrait;
-    // ALSA's `default` PCM advertises a plug-converter range (up to 384 kHz /
-    // 32 ch); picking the max would build a stream the hardware cannot honour.
-    // `default_*_config` returns what PipeWire/Pulse will actually negotiate.
-    let cfg = match kind {
-        DeviceKind::Input => device.default_input_config(),
-        DeviceKind::Output => device.default_output_config(),
-    }
-    .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
-    Ok(NativeConfig {
-        config: cpal::StreamConfig {
-            channels: cfg.channels(),
-            sample_rate: cfg.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        },
-        sample_format: cpal::SampleFormat::F32,
-        sample_rate: cfg.sample_rate().0,
-        channels: cfg.channels(),
-    })
-}
 

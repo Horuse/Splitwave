@@ -29,10 +29,12 @@ impl Drop for Capture {
 }
 
 impl Capture {
+    // Monitor of the default sink (whole-system audio).
     pub fn start_system(callback: impl FnMut(&[f32]) + Send + 'static) -> AppResult<Self> {
         spawn(None, true, Box::new(callback))
     }
 
+    // Tap a specific app's output stream, found by binary/name.
     pub fn start_app(
         binary: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
@@ -40,18 +42,34 @@ impl Capture {
         let serial = resolve_serial(binary)?.ok_or_else(|| {
             AppError::Stream(format!("no audio stream found for {binary:?}"))
         })?;
-        spawn(Some(serial), false, Box::new(callback))
+        spawn(Some(serial.to_string()), false, Box::new(callback))
+    }
+
+    // Capture a real source node (microphone) by node.name.
+    pub fn start_source(
+        node_name: &str,
+        callback: impl FnMut(&[f32]) + Send + 'static,
+    ) -> AppResult<Self> {
+        spawn(Some(node_name.to_string()), false, Box::new(callback))
+    }
+
+    // Capture the monitor of a specific sink by its node.name.
+    pub fn start_sink_monitor(
+        sink_node_name: &str,
+        callback: impl FnMut(&[f32]) + Send + 'static,
+    ) -> AppResult<Self> {
+        spawn(Some(sink_node_name.to_string()), true, Box::new(callback))
     }
 }
 
 fn spawn(
-    target_serial: Option<u32>,
+    target: Option<String>,
     capture_sink: bool,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
     let thread = std::thread::spawn(move || {
-        if let Err(e) = run(receiver, target_serial, capture_sink, callback) {
+        if let Err(e) = run(receiver, target, capture_sink, callback) {
             tracing::error!("pipewire capture: {e:?}");
         }
     });
@@ -60,7 +78,7 @@ fn spawn(
 
 fn run(
     receiver: pw::channel::Receiver<Terminate>,
-    target_serial: Option<u32>,
+    target: Option<String>,
     capture_sink: bool,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> Result<(), pw::Error> {
@@ -81,8 +99,8 @@ fn run(
     if capture_sink {
         props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
     }
-    if let Some(serial) = target_serial {
-        props.insert(*pw::keys::TARGET_OBJECT, serial.to_string());
+    if let Some(target) = target {
+        props.insert(*pw::keys::TARGET_OBJECT, target);
     }
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-capture", props)?;

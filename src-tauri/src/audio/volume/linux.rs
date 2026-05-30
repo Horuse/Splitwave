@@ -1,22 +1,35 @@
 use std::process::Command;
 
 use crate::audio::device::DeviceKind;
+use crate::audio::pw_enum;
 
-// wpctl only understands @DEFAULT_*@ or numeric node IDs, so we can only touch
-// the default route. Named devices have no handle here, so we skip them.
-fn target(kind: DeviceKind, name: &str) -> Option<&'static str> {
+// wpctl takes @DEFAULT_*@ or a numeric node id. Default routes use the alias;
+// named devices resolve through the registry to their current node id.
+fn target(kind: DeviceKind, name: &str) -> Option<String> {
     match name {
-        "default" | "pipewire" | "sysdefault" => Some(match kind {
-            DeviceKind::Input => "@DEFAULT_AUDIO_SOURCE@",
-            DeviceKind::Output => "@DEFAULT_AUDIO_SINK@",
-        }),
-        _ => None,
+        "default" | "pipewire" | "sysdefault" => Some(
+            match kind {
+                DeviceKind::Input => "@DEFAULT_AUDIO_SOURCE@",
+                DeviceKind::Output => "@DEFAULT_AUDIO_SINK@",
+            }
+            .to_string(),
+        ),
+        _ => resolve_id(kind, name).map(|id| id.to_string()),
     }
+}
+
+fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
+    let class = match kind {
+        DeviceKind::Input => "Audio/Source",
+        DeviceKind::Output => "Audio/Sink",
+    };
+    let nodes = pw_enum::nodes_by_class(class).ok()?;
+    nodes.into_iter().find(|n| n.name == name).map(|n| n.id)
 }
 
 pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
     let id = target(kind, name)?;
-    let out = Command::new("wpctl").args(["get-volume", id]).output().ok()?;
+    let out = Command::new("wpctl").args(["get-volume", &id]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -33,12 +46,12 @@ pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
         return false;
     };
     if scalar <= 0.0 {
-        return run(&["set-mute", id, "1"]);
+        return run(&["set-mute", &id, "1"]);
     }
-    if !run(&["set-mute", id, "0"]) {
+    if !run(&["set-mute", &id, "0"]) {
         return false;
     }
-    run(&["set-volume", id, &format!("{scalar:.4}")])
+    run(&["set-volume", &id, &format!("{scalar:.4}")])
 }
 
 fn run(args: &[&str]) -> bool {

@@ -2,6 +2,7 @@ pub mod clock;
 pub mod device;
 pub mod effects;
 pub mod engine;
+#[cfg(target_os = "macos")]
 pub mod format;
 pub mod graph;
 pub mod capture;
@@ -10,6 +11,10 @@ pub mod input_bridge;
 pub mod macos_hal;
 pub mod permission;
 pub mod encoders;
+#[cfg(not(target_os = "macos"))]
+pub mod playback;
+#[cfg(not(target_os = "macos"))]
+pub mod pw_enum;
 pub mod pipeline;
 pub mod resample;
 pub mod streams;

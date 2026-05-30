@@ -11,9 +11,9 @@ pub mod input_bridge;
 pub mod macos_hal;
 pub mod permission;
 pub mod encoders;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub mod playback;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub mod pw_enum;
 pub mod pipeline;
 pub mod resample;

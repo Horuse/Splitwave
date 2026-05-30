@@ -27,9 +27,9 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{device_info, find, list_inputs, list_outputs};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub use linux::{device_info, list_inputs, list_outputs};
 
 #[cfg(test)]

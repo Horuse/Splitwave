@@ -14,9 +14,9 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{list_audio_applications, load_app_icons};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub use linux::{list_audio_applications, load_app_icons};
 
 #[cfg(test)]

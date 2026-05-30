@@ -15,7 +15,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{apply_virtual_devices, install, status, uninstall};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub use linux::{apply_virtual_devices, install, status, uninstall};

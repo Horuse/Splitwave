@@ -7,82 +7,20 @@
 //!
 //! Each cpal input is broadcast to N subscriber producer rings (one per output
 //! that uses this input). On any ring full, that ring drops the current frame
-//! rather than blocking — non-RT safe operations are disallowed in the callback.
+//! rather than blocking -- non-RT safe operations are disallowed in the callback.
 
-use rtrb::Producer;
-
-#[cfg(target_os = "macos")]
 use cpal::traits::{DeviceTrait, StreamTrait};
-#[cfg(target_os = "macos")]
 use cpal::{Sample, SampleFormat, StreamConfig};
-#[cfg(target_os = "macos")]
 use tracing::error;
 
-#[cfg(target_os = "macos")]
 use crate::audio::effects::{update_meter, MeterHandle};
-#[cfg(target_os = "macos")]
 use crate::audio::format::{convert_to_stereo, write_stereo_to_output};
-#[cfg(target_os = "macos")]
 use crate::audio::input_bridge::BroadcastRx;
-#[cfg(target_os = "macos")]
 use crate::error::{AppError, AppResult};
-
-/// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
-/// read (consumer faster than producer) is zero-filled — that's the device
-/// playing silence, not glitching.
-pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) {
-    let want = dst.len();
-    if want == 0 {
-        return;
-    }
-    let avail = cons.slots();
-    let to_read = want.min(avail);
-    if to_read > 0 {
-        if let Ok(chunk) = cons.read_chunk(to_read) {
-            let (first, second) = chunk.as_slices();
-            let n1 = first.len();
-            dst[..n1].copy_from_slice(first);
-            let n2 = second.len();
-            if n2 > 0 {
-                dst[n1..n1 + n2].copy_from_slice(second);
-            }
-            chunk.commit_all();
-        }
-    }
-    for s in &mut dst[to_read..] {
-        *s = 0.0;
-    }
-}
-
-/// Bulk push via one `write_chunk` reservation — one atomic-CAS per block
-/// instead of one per sample. On overflow only the head fits and the rest is
-/// dropped (consumer is behind anyway; staying RT-safe beats blocking).
-pub fn bulk_push(prod: &mut Producer<f32>, samples: &[f32]) {
-    let want = samples.len();
-    if want == 0 {
-        return;
-    }
-    let avail = prod.slots();
-    let to_write = want.min(avail);
-    if to_write == 0 {
-        return;
-    }
-    if let Ok(mut chunk) = prod.write_chunk(to_write) {
-        let (first, second) = chunk.as_mut_slices();
-        let n1 = first.len();
-        first.copy_from_slice(&samples[..n1]);
-        let n2 = second.len();
-        if n2 > 0 {
-            second.copy_from_slice(&samples[n1..n1 + n2]);
-        }
-        chunk.commit_all();
-    }
-}
 
 /// Build and start an input stream. `bridge` carries broadcast subscribers
 /// at runtime; the callback drains pending add/remove commands at the top
 /// of each block before broadcasting the converted-to-stereo f32 frames.
-#[cfg(target_os = "macos")]
 pub fn build_input_stream(
     device: &cpal::Device,
     config: &StreamConfig,
@@ -107,7 +45,6 @@ pub fn build_input_stream(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn build_input_typed<T>(
     device: &cpal::Device,
     config: &StreamConfig,
@@ -151,7 +88,6 @@ where
 }
 
 /// Build and start an output stream that pulls f32 stereo from `fill`.
-#[cfg(target_os = "macos")]
 pub fn build_output_stream<F>(
     device: &cpal::Device,
     config: &StreamConfig,
@@ -178,7 +114,6 @@ where
     }
 }
 
-#[cfg(target_os = "macos")]
 fn build_output_typed<T, F>(
     device: &cpal::Device,
     config: &StreamConfig,

@@ -3,7 +3,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::SckCapture as Capture;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub use linux::Capture;

@@ -60,6 +60,26 @@ jobs:
                   projectPath: src-tauri
                   args: '--bundles appimage,deb,rpm -c {"bundle":{"createUpdaterArtifacts":false}}'
 
+            - name: Strip bundled Wayland libs from AppImage
+              # linuxdeploy bundles libwayland-* (they're not on the AppImage
+              # excludelist). On hosts with newer Mesa they shadow the system
+              # libs and break WebKit's EGL init (EGL_BAD_PARAMETER / blank
+              # window). Remove them so the app links the host's Wayland libs.
+              run: |
+                  set -euxo pipefail
+                  export APPIMAGE_EXTRACT_AND_RUN=1
+                  app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+                  "$app" --appimage-extract
+                  rm -fv squashfs-root/usr/lib/libwayland-client.so* \
+                         squashfs-root/usr/lib/libwayland-egl.so* \
+                         squashfs-root/usr/lib/libwayland-cursor.so*
+                  curl -fsSL -o /tmp/appimagetool \
+                    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+                  chmod +x /tmp/appimagetool
+                  rm -f "$app"
+                  ARCH=x86_64 /tmp/appimagetool squashfs-root "$app"
+                  rm -rf squashfs-root
+
             # Separate artifacts so each downloads on its own -- grabbing the
             # small deb/rpm doesn't pull the heavy AppImage.
             - name: Upload AppImage

@@ -60,11 +60,16 @@ jobs:
                   projectPath: src-tauri
                   args: '--bundles appimage,deb,rpm -c {"bundle":{"createUpdaterArtifacts":false}}'
 
-            - name: Strip bundled Wayland libs from AppImage
-              # linuxdeploy bundles libwayland-* (they're not on the AppImage
-              # excludelist). On hosts with newer Mesa they shadow the system
-              # libs and break WebKit's EGL init (EGL_BAD_PARAMETER / blank
-              # window). Remove them so the app links the host's Wayland libs.
+            - name: Strip bundled host libs from AppImage
+              # linuxdeploy bundles host-integration libs that aren't on the
+              # AppImage excludelist. They then shadow the system copies and
+              # break against the host's plugin ecosystem:
+              #   - libwayland-* -> WebKit EGL init fails (EGL_BAD_PARAMETER /
+              #     blank window) against newer Mesa
+              #   - libpipewire/libspa -> can't load SPA plugins (support.system),
+              #     "pipewire: Creation failed", since the spa-0.2/ plugin dir
+              #     is not bundled
+              # Remove them so the app links the host's copies + their plugins.
               run: |
                   set -euxo pipefail
                   export APPIMAGE_EXTRACT_AND_RUN=1
@@ -72,7 +77,9 @@ jobs:
                   "$app" --appimage-extract
                   rm -fv squashfs-root/usr/lib/libwayland-client.so* \
                          squashfs-root/usr/lib/libwayland-egl.so* \
-                         squashfs-root/usr/lib/libwayland-cursor.so*
+                         squashfs-root/usr/lib/libwayland-cursor.so* \
+                         squashfs-root/usr/lib/libpipewire-0.3.so* \
+                         squashfs-root/usr/lib/libspa-0.2.so*
                   curl -fsSL -o /tmp/appimagetool \
                     https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
                   chmod +x /tmp/appimagetool

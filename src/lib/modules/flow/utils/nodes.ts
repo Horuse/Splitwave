@@ -57,7 +57,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'systemAudio',
 		category: 'input',
 		label: 'System Audio',
-		description: 'Capture everything the system is playing (ScreenCaptureKit, macOS 13+).',
+		description: 'Capture everything the system is playing.',
 		component: SystemAudio,
 		defaultData: { excludeCurrentApp: true, volume: 1 }
 	}),

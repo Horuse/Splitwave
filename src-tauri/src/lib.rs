@@ -8,14 +8,17 @@ use std::sync::OnceLock;
 use serde_json::json;
 use tracing::info;
 use state::AppState;
+#[cfg(target_os = "macos")]
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter};
 
 const PANIC_EVENT: &str = "error://panic";
+#[cfg(target_os = "macos")]
 const MENU_EVENT: &str = "menu://action";
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let about_action = MenuItemBuilder::with_id("about", "About Splitwave").build(app)?;
     let check_updates = MenuItemBuilder::with_id("check_updates", "Check for Updates...").build(app)?;
@@ -89,11 +92,17 @@ pub fn run() {
             let handle = app.handle().clone();
             let _ = APP_HANDLE.set(handle.clone());
 
-            let menu = build_menu(&handle)?;
-            app.set_menu(menu)?;
-            app.on_menu_event(|app, event| {
-                let _ = app.emit(MENU_EVENT, event.id().0.as_str());
-            });
+            // Native menu only on macOS (top menu bar). On Linux GTK renders it
+            // as an in-window bar that clashes with the custom titlebar, so the
+            // menu actions live in the in-app header instead.
+            #[cfg(target_os = "macos")]
+            {
+                let menu = build_menu(&handle)?;
+                app.set_menu(menu)?;
+                app.on_menu_event(|app, event| {
+                    let _ = app.emit(MENU_EVENT, event.id().0.as_str());
+                });
+            }
 
             Ok(())
         })

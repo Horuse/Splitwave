@@ -3,6 +3,8 @@ use std::process::Command;
 
 use tauri::AppHandle;
 
+use crate::audio::pw_enum::nodes_by_class;
+
 use super::{VirtualDeviceConfig, VirtualDriverStatus};
 
 const CONF_NAME: &str = "50-splitwave-sinks.conf";
@@ -13,15 +15,17 @@ fn conf_path() -> Option<PathBuf> {
 }
 
 // node.name is the stable handle, node.description is the label shown in
-// system settings. Quotes would break both the .conf and the pactl arg, so
+// system settings. Quotes would break both the .conf and the pw-cli props, so
 // drop them from the label.
 fn clean_label(name: &str) -> String {
     name.replace(['"', '\''], "")
 }
 
 pub fn status() -> VirtualDriverStatus {
-    let ok = Command::new("pactl")
-        .arg("info")
+    // Native PipeWire (no PulseAudio/pactl dependency). Success means a session
+    // is reachable, which is all we need to create null-sinks.
+    let ok = Command::new("pw-cli")
+        .args(["info", "0"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -81,19 +85,20 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
     out
 }
 
+// Create the sink in the running session so it shows up immediately. The .conf
+// only takes effect on the next PipeWire start; object.linger keeps the node
+// alive after pw-cli disconnects.
 fn create_runtime_sink(id: &str, label: &str) -> Result<(), String> {
-    let out = Command::new("pactl")
-        .args([
-            "load-module",
-            "module-null-sink",
-            &format!("sink_name={NODE_PREFIX}.{id}"),
-            &format!("sink_properties=\"node.description='{label}'\""),
-        ])
+    let props = format!(
+        "{{ factory.name=support.null-audio-sink node.name={NODE_PREFIX}.{id} node.description=\"{label}\" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }}"
+    );
+    let out = Command::new("pw-cli")
+        .args(["create-node", "adapter", props.as_str()])
         .output()
-        .map_err(|e| format!("pactl load-module: {e}"))?;
+        .map_err(|e| format!("pw-cli create-node: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "pactl load-module failed: {}",
+            "pw-cli create-node failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
@@ -101,18 +106,14 @@ fn create_runtime_sink(id: &str, label: &str) -> Result<(), String> {
 }
 
 fn unload_runtime_sinks() {
-    let Ok(out) = Command::new("pactl").args(["list", "short", "modules"]).output() else {
+    let prefix = format!("{NODE_PREFIX}.");
+    let Ok(nodes) = nodes_by_class("Audio/Sink") else {
         return;
     };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let prefix = format!("sink_name={NODE_PREFIX}.");
-    for line in text.lines() {
-        let mut cols = line.split('\t');
-        let (Some(id), Some(kind), Some(args)) = (cols.next(), cols.next(), cols.next()) else {
-            continue;
-        };
-        if kind == "module-null-sink" && args.contains(&prefix) {
-            let _ = Command::new("pactl").args(["unload-module", id]).status();
+    for n in nodes {
+        if n.name.starts_with(&prefix) {
+            let id = n.id.to_string();
+            let _ = Command::new("pw-cli").args(["destroy", id.as_str()]).status();
         }
     }
 }

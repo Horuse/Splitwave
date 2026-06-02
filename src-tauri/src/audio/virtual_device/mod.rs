@@ -19,3 +19,8 @@ pub use macos::{apply_virtual_devices, install, status, uninstall};
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{apply_virtual_devices, install, status, uninstall};
+
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{apply_virtual_devices, install, status, uninstall};

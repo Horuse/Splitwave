@@ -26,6 +26,7 @@ pub(in crate::audio::pipeline) struct NativeConfig {
     pub channels: u16,
 }
 
+#[cfg(target_os = "macos")]
 pub(in crate::audio::pipeline) fn native_config(
     kind: DeviceKind,
     _device: &cpal::Device,
@@ -55,6 +56,36 @@ pub(in crate::audio::pipeline) fn native_config(
         },
         sample_format: cpal::SampleFormat::F32,
         sample_rate: hal.sample_rate,
+        channels,
+    })
+}
+
+// WASAPI exposes a usable default config for every endpoint (unlike CoreAudio's
+// routing quirk), so we read it straight from cpal and let the stream builders
+// convert the device-native sample format to/from the f32 pipeline.
+#[cfg(target_os = "windows")]
+pub(in crate::audio::pipeline) fn native_config(
+    kind: DeviceKind,
+    device: &cpal::Device,
+    name: &str,
+) -> AppResult<NativeConfig> {
+    use cpal::traits::DeviceTrait;
+    let supported = match kind {
+        DeviceKind::Input => device.default_input_config(),
+        DeviceKind::Output => device.default_output_config(),
+    }
+    .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
+
+    let sample_rate = supported.sample_rate().0;
+    let channels = supported.channels();
+    Ok(NativeConfig {
+        config: cpal::StreamConfig {
+            channels,
+            sample_rate: cpal::SampleRate(sample_rate),
+            buffer_size: cpal::BufferSize::Default,
+        },
+        sample_format: supported.sample_format(),
+        sample_rate,
         channels,
     })
 }

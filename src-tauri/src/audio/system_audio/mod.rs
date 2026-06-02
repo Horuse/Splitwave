@@ -19,6 +19,11 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{list_audio_applications, load_app_icons};
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{list_audio_applications, load_app_icons};
+
 #[cfg(test)]
 mod tests {
     use super::*;

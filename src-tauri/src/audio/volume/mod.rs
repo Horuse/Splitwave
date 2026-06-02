@@ -7,3 +7,8 @@ pub use macos::{device_volume, set_device_volume};
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{device_volume, set_device_volume};
+
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{device_volume, set_device_volume};

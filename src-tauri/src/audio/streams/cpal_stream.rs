@@ -1,4 +1,5 @@
-//! Build cpal input/output streams with runtime sample-format dispatch.
+//! Build cpal input/output streams (CoreAudio on macOS, WASAPI on Windows)
+//! with runtime sample-format dispatch.
 //!
 //! Internally the pipeline carries `f32` interleaved stereo. Input streams convert
 //! the device-native sample format (`i8/i16/i32/u8/u16/u32/f32/f64`) to f32 stereo

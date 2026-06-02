@@ -32,6 +32,11 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{device_info, list_inputs, list_outputs};
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{device_info, find, list_inputs, list_outputs};
+
 #[cfg(test)]
 mod tests {
     use super::*;

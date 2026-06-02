@@ -1,16 +1,16 @@
-//! Cross-platform SPSC ring helpers plus the cpal stream builders (macOS).
+//! Cross-platform SPSC ring helpers plus the cpal stream builders.
 //!
 //! `bulk_pop` / `bulk_push` move whole blocks between the pipeline and the
-//! audio callback on every platform. The cpal `build_*_stream` builders are
-//! macOS-only; Linux opens its mic via `capture/linux.rs` and its speaker via
-//! `playback.rs`, so it needs no builders here.
+//! audio callback on every platform. The cpal `build_*_stream` builders back
+//! macOS (CoreAudio) and Windows (WASAPI); Linux opens its mic via
+//! `capture/linux.rs` and its speaker via `playback.rs`, so it skips them.
 
 use rtrb::Producer;
 
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-pub use macos::{build_input_stream, build_output_stream};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod cpal_stream;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use cpal_stream::{build_input_stream, build_output_stream};
 
 /// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
 /// read (consumer faster than producer) is zero-filled -- that's the device

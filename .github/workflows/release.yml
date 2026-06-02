@@ -6,18 +6,16 @@ on:
             - 'v*'
 
 jobs:
-    release:
+    macos:
         permissions:
             contents: write
         strategy:
             fail-fast: false
             matrix:
                 include:
-                    - platform: macos-latest
-                      args: --target aarch64-apple-darwin --bundles dmg,app
-                    - platform: macos-latest
-                      args: --target x86_64-apple-darwin --bundles dmg,app
-        runs-on: ${{ matrix.platform }}
+                    - args: --target aarch64-apple-darwin --bundles dmg,app
+                    - args: --target x86_64-apple-darwin --bundles dmg,app
+        runs-on: macos-latest
         env:
             CMAKE_POLICY_VERSION_MINIMUM: '3.5'
         steps:
@@ -55,3 +53,80 @@ jobs:
                   releaseDraft: true
                   prerelease: false
                   args: ${{ matrix.args }}
+
+    linux:
+        # Runs after macOS so the draft release already exists to upload into.
+        needs: macos
+        permissions:
+            contents: write
+        # ubuntu-22.04 = oldest base shipping WebKitGTK 4.1, so glibc stays 2.35
+        # for broad AppImage compatibility.
+        runs-on: ubuntu-22.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Setup Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache cargo build
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri
+
+            - name: Install Linux system deps
+              # 22.04 ships libpipewire 0.3.48, too old for the libspa crate; the
+              # upstream PPA backports a current libpipewire on the same glibc base.
+              run: |
+                  sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends \
+                    libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+                    libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
+                    libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
+                    libpipewire-0.3-dev clang libclang-dev \
+                    libasound2-dev libopus-dev \
+                    desktop-file-utils xdg-utils patchelf rpm
+
+            - name: Install JS deps
+              run: bun install --frozen-lockfile
+
+            - name: Build AppImage + deb + rpm
+              run: bun run tauri build --bundles appimage,deb,rpm -c '{"bundle":{"createUpdaterArtifacts":false}}'
+
+            - name: Strip bundled host libs from AppImage
+              # linuxdeploy bundles libwayland-* / libpipewire / libspa (not on the
+              # AppImage excludelist). On hosts with newer Mesa they shadow the
+              # system libs and break WebKit EGL init / PipeWire plugin loading.
+              # Remove them so the app links the host's copies + their plugins.
+              run: |
+                  set -euxo pipefail
+                  export APPIMAGE_EXTRACT_AND_RUN=1
+                  app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+                  "$app" --appimage-extract
+                  rm -fv squashfs-root/usr/lib/libwayland-client.so* \
+                         squashfs-root/usr/lib/libwayland-egl.so* \
+                         squashfs-root/usr/lib/libwayland-cursor.so* \
+                         squashfs-root/usr/lib/libpipewire-0.3.so* \
+                         squashfs-root/usr/lib/libspa-0.2.so*
+                  curl -fsSL -o /tmp/appimagetool \
+                    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+                  chmod +x /tmp/appimagetool
+                  rm -f "$app"
+                  ARCH=x86_64 /tmp/appimagetool squashfs-root "$app"
+                  rm -rf squashfs-root
+
+            - name: Upload to release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ github.ref_name }}
+                  draft: true
+                  files: |
+                      src-tauri/target/release/bundle/appimage/*.AppImage
+                      src-tauri/target/release/bundle/deb/*.deb
+                      src-tauri/target/release/bundle/rpm/*.rpm

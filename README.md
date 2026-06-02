@@ -1,4 +1,5 @@
 [![Downloads](https://img.shields.io/github/downloads/Horuse/Splitwave/total.svg)](https://github.com/Horuse/Splitwave/releases/latest)
+[![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#support)
 # Splitwave
 Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
 
@@ -161,3 +162,10 @@ src-tauri/native/virtual_driver/
   SplitAudioDriver.cpp  AudioServerPlugin implementation (libASPL, macOS)
   Info.plist            CFPlugin manifest
 ```
+
+## Support
+If you find this app useful, consider supporting it:
+
+- Tether USDT (TRC20): `TLhTvnn8CtVuQZruLXmRurGhR9GWd7DrWZ`
+- TON: (TON) `UQCpokpaZfwmVTjKDj0LrAbEPO-65c81-MiuBQOa7lTXbMGR`
+- Bitcoin (BTC): `bc1q6tusr5rht7dgmw8gqzkx7rwdg4q8932lwn2rsy`

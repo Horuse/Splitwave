@@ -39,8 +39,8 @@
 		}
 	}
 
-	// Linux has no native menu, so its Cmd/Ctrl+Z accelerators are gone -- wire
-	// undo/redo here. Skip while typing so text-field undo still works.
+	// Linux and Windows have no native menu, so their Cmd/Ctrl+Z accelerators are
+	// gone -- wire undo/redo here. Skip while typing so text-field undo still works.
 	function onKeydown(e: KeyboardEvent) {
 		if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
 		const t = e.target as HTMLElement | null;
@@ -59,7 +59,8 @@
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => { unlistenMenu = fn; })
 			.catch(() => {});
-		if (platform() === 'linux') window.addEventListener('keydown', onKeydown);
+		const os = platform();
+		if (os === 'linux' || os === 'windows') window.addEventListener('keydown', onKeydown);
 	});
 
 	onDestroy(() => {

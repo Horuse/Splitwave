@@ -15,7 +15,6 @@ use super::super::native::native_config;
 use super::super::STATE_EVENT;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
 
-// WASAPI loopback delivers interleaved stereo by configuration, matching SCK.
 const LOOPBACK_CHANNELS: usize = 2;
 
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
@@ -32,7 +31,7 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             })
         }
         InputSpec::SystemAudio { exclude_current_app } => Ok(ResolvedInput::SystemAudio {
-            sample_rate: SCK_SR,
+            sample_rate: crate::audio::capture::loopback_mix_rate().unwrap_or(SCK_SR),
             exclude_current_app: *exclude_current_app,
         }),
         InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {

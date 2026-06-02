@@ -4498,6 +4498,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+ "windows 0.61.3",
 ]
 
 [[package]]

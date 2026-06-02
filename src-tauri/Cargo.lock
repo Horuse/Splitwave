@@ -4480,6 +4480,7 @@ dependencies = [
  "ogg",
  "opus",
  "pipewire",
+ "png 0.17.16",
  "resvg",
  "rtrb",
  "rubato",

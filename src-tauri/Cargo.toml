@@ -60,6 +60,27 @@ freedesktop-icons = "0.4"
 resvg = "0.47"
 dirs = "5"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.61"
+png = "0.17"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_Storage_FileSystem",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 embed_plist = "1.2"
 objc2 = "0.6"

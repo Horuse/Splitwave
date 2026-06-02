@@ -1,6 +1,6 @@
 [![Downloads](https://img.shields.io/github/downloads/Horuse/Splitwave/total.svg)](https://github.com/Horuse/Splitwave/releases/latest)
 # Splitwave
-Splitwave is a node-based audio router for macOS and Linux. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
+Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
 
 ![Splitwave preview](./preview.png)
 
@@ -32,6 +32,29 @@ Download the build for your system from [Releases](https://github.com/Horuse/Spl
 - **`.deb`** (Debian/Ubuntu) — `sudo apt install ./Splitwave_*.deb`
 - **`.rpm`** (Fedora/RHEL/openSUSE) — `sudo rpm -i Splitwave-*.rpm`
 
+### Windows
+
+Requires Windows 10 version 2004 or newer (for per-app capture) and the
+[WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+(preinstalled on current Windows 10/11). Download the `.exe` installer from
+[Releases](https://github.com/Horuse/Splitwave/releases/latest) and run it.
+
+Virtual audio devices are not available on Windows.
+
+## Platform support
+
+| Feature | macOS | Linux | Windows |
+| --- | :---: | :---: | :---: |
+| Mic / speaker device I/O | ✅ | ✅ | ✅ |
+| System audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ WASAPI loopback |
+| Per-app audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ Process Loopback (Win10 2004+) |
+| App icons in the picker | ✅ | ✅ | ✅ |
+| Device volume control | ✅ | ✅ | ✅ |
+| Recording: WAV / FLAC / AIFF / MP3 / Opus | ✅ | ✅ | ✅ |
+| Recording: AAC (M4A) | ✅ | ❌ | ❌ |
+| Virtual audio devices | ✅ AudioServerPlugin | ✅ PipeWire null-sinks | ❌ (no user-mode driver model) |
+| Effects, metering, file playback | ✅ | ✅ | ✅ |
+
 ## Features
 
 - **Inputs:** microphones, system audio, per-application audio, WAV files,
@@ -46,9 +69,10 @@ Download the build for your system from [Releases](https://github.com/Horuse/Spl
   Use them to capture loopback audio from any app or to feed processed audio into
   apps that accept a microphone input (DAWs, Discord, etc.)
 
-System and per-app capture use **ScreenCaptureKit** on macOS and **PipeWire** on
-Linux; virtual devices are AudioServerPlugin drivers on macOS and PipeWire
-null-sinks on Linux.
+System and per-app capture use **ScreenCaptureKit** on macOS, **PipeWire** on
+Linux, and **WASAPI loopback** / the **Process Loopback API** on Windows. Virtual
+devices are AudioServerPlugin drivers on macOS and PipeWire null-sinks on Linux;
+Windows has no user-mode virtual-device model, so they are unavailable there.
 
 ## Stack
 
@@ -60,6 +84,9 @@ null-sinks on Linux.
   libASPL-based AudioServerPlugin for the virtual device driver
 - **Linux:** `pipewire` for device I/O, system/app capture, and virtual
   null-sinks; `freedesktop-desktop-entry` / `freedesktop-icons` for app icons
+- **Windows:** `cpal` (WASAPI) device I/O; the `windows` crate for WASAPI
+  loopback + Process Loopback capture, `IAudioEndpointVolume`, audio-session
+  enumeration, and exe icon extraction (`png` for encoding)
 
 
 ## Development
@@ -70,6 +97,8 @@ null-sinks on Linux.
 
 - macOS 13+ with Xcode Command Line Tools (`xcode-select --install`) -- gives
   you `swiftc` and the SDKs Tauri needs.
+- [CMake](https://cmake.org) (`brew install cmake`) -- builds the bundled Opus
+  encoder.
 
 **Linux:**
 
@@ -78,7 +107,15 @@ null-sinks on Linux.
   `libsoup-3.0-dev libpipewire-0.3-dev clang libclang-dev libasound2-dev`
   `libopus-dev`
 
-**Both:**
+**Windows:**
+
+- [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/)
+  with the **Desktop development with C++** workload (MSVC + Windows SDK),
+  [CMake](https://cmake.org) (for the bundled Opus encoder), and the WebView2
+  runtime. `winget install Rustlang.Rustup Microsoft.VisualStudio.2022.BuildTools Kitware.CMake Oven-sh.Bun`
+  covers most of it.
+
+**All platforms:**
 
 - [Rust](https://rustup.rs) (stable toolchain)
 - [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
@@ -98,6 +135,7 @@ bun run generate                       # regenerate TypeScript types from Rust (
 cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri build --bundles app      # local .app build (macOS)
 bun run tauri build --bundles appimage # local AppImage build (Linux)
+bun run tauri build --bundles nsis     # local installer build (Windows)
 ```
 
 ### Project layout
@@ -112,11 +150,11 @@ src/lib/modules/
   updater/      auto-update modal + skip-version persistence
   app_info/     OS / app version cache
 src-tauri/src/audio/
-  capture/      system + per-app capture (macos.rs SCK / linux.rs PipeWire)
-  device/       device enumeration (macos.rs CoreAudio / linux.rs PipeWire)
-  volume/       device volume (macos.rs / linux.rs)
-  virtual_device/  null-sink / driver management per OS
-  streams/      cpal stream builders (macOS)
+  capture/      system + per-app capture (macos.rs SCK / linux.rs PipeWire / windows.rs WASAPI)
+  device/       device enumeration (macos.rs CoreAudio / linux.rs PipeWire / windows.rs cpal)
+  volume/       device volume (macos.rs / linux.rs / windows.rs)
+  virtual_device/  null-sink / driver management per OS (unsupported on Windows)
+  streams/      cpal stream builders (macOS + Windows)
   playback.rs   PipeWire speaker output (Linux)
   pipeline/     DSP engine, effects, encoders, pipeline DAG (input/, output/ per OS)
 src-tauri/native/virtual_driver/

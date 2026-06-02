@@ -29,7 +29,7 @@ mod dag;
 mod file_reader;
 mod input;
 mod meter;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native;
 mod output;
 mod sig;
@@ -45,7 +45,7 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) const STATE_EVENT: &str = "audio://state";
 
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker

@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    if cfg!(target_os = "macos") {
+    // Gate on the build TARGET, not the host: `cfg!(target_os = ...)` in a build
+    // script reflects the host, which breaks cross-compilation.
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "macos" {
         compile_swift_static_lib();
         build_virtual_driver();
     }

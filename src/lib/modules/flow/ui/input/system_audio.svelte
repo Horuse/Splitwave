@@ -10,7 +10,9 @@
 	import Slider from '../effect/_slider.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	const isLinux = platform() === 'linux';
+	// Screen-recording permission and self-exclusion are macOS/ScreenCaptureKit
+	// only; Linux (PipeWire) and Windows (WASAPI loopback) need neither.
+	const isMac = platform() === 'macos';
 
 	type SystemAudioNodeType = Node<SystemAudioNodeData, 'systemAudio'>;
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
@@ -37,7 +39,7 @@
 	}
 
 	onMount(() => {
-		if (!isLinux) refreshPermission();
+		if (isMac) refreshPermission();
 	});
 
 	async function openPrivacySettings() {
@@ -63,14 +65,7 @@
 
 <Wrapper label="System Audio" accent="input" hasOutput>
 	<div class="flex w-64 flex-col gap-3">
-		<p class="text-[11px] text-neutral-900">
-			{#if isLinux}
-				Captures all system output (PipeWire monitor).
-			{:else}
-				Captures all system output via ScreenCaptureKit (macOS 13+).
-			{/if}
-		</p>
-		{#if !isLinux && permission !== 'allowed'}
+		{#if isMac && permission !== 'allowed'}
 			<div class={[
 				'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
 				permission === 'denied' && 'border-red-300 bg-red-50 text-red-700',
@@ -113,7 +108,7 @@
 				{/if}
 			</div>
 		{/if}
-		{#if !isLinux}
+		{#if isMac}
 			<label class="nodrag nopan flex items-center gap-2 text-xs text-neutral-1000">
 				<input
 					type="checkbox"

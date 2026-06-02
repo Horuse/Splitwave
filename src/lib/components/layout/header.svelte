@@ -16,11 +16,11 @@
 
 	let { left, right }: Props = $props();
 
-	// macOS keeps its native menu + overlay traffic lights. On Linux the window
-	// is decoration-less, so the header carries the window controls and the
-	// menu actions that used to live in the native menu bar.
-	const isLinux = platform() === 'linux';
-	const win = isLinux ? getCurrentWindow() : null;
+	// macOS keeps its native menu + overlay traffic lights. Linux and Windows run
+	// decoration-less, so the header carries the window controls and the menu
+	// actions that would otherwise live in the native menu bar.
+	const customTitlebar = platform() === 'linux' || platform() === 'windows';
+	const win = customTitlebar ? getCurrentWindow() : null;
 
 	let menuOpen = $state(false);
 
@@ -46,7 +46,7 @@
 	data-tauri-drag-region
 	class={[
 		'flex h-10 z-500 w-full flex-row gap-8 items-center border-b border-theme/5 bg-background px-1.5',
-		isLinux ? 'pl-3' : 'pl-20'
+		customTitlebar ? 'pl-3' : 'pl-20'
 	]}
 >
 	{@render left?.()}
@@ -64,7 +64,7 @@
 			>
 		</button>
 
-		{#if isLinux}
+		{#if customTitlebar}
 			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
 				{#snippet trigger()}
 					<button type="button" class="button-header size-7" aria-label="Menu">

@@ -10,9 +10,6 @@
 	import { Refresh } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
-	import { platform } from '@tauri-apps/plugin-os';
-
-	const isLinux = platform() === 'linux';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -66,13 +63,6 @@
 
 <Wrapper label="App Audio" accent="input" hasOutput>
 	<div class="flex w-64 flex-col gap-3">
-		<p class="text-[11px] text-neutral-900">
-			{#if isLinux}
-				Capture audio from an app. Only apps currently playing sound are listed.
-			{:else}
-				Capture audio from a specific running app (ScreenCaptureKit, macOS 13+).
-			{/if}
-		</p>
 		<div class="flex items-center gap-1">
 			<Combobox {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
 			<button

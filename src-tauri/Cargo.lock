@@ -4480,6 +4480,7 @@ dependencies = [
  "ogg",
  "opus",
  "pipewire",
+ "png 0.17.16",
  "resvg",
  "rtrb",
  "rubato",
@@ -4498,6 +4499,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

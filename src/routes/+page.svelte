@@ -30,6 +30,9 @@
     import { audioStore } from '$lib/modules/audio/stores.svelte';
     import { methods as audioMethods } from '$lib/modules/audio/methods';
     import { RunningTimer } from '$lib/modules/audio/ui';
+    import { platform } from '@tauri-apps/plugin-os';
+
+    const isWindows = platform() === 'windows';
 
     let busy = $state<string | null>(null);
 
@@ -58,7 +61,9 @@
     {#snippet left()}
         <div class="flex items-center gap-2">
             <a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
-            <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+            {#if !isWindows}
+                <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+            {/if}
         </div>
     {/snippet}
 </Header>

@@ -2,7 +2,7 @@ pub mod clock;
 pub mod device;
 pub mod effects;
 pub mod engine;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub mod format;
 pub mod graph;
 pub mod capture;

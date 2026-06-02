@@ -17,6 +17,10 @@ use macos as platform;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as platform;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as platform;
 
 pub(super) use platform::{resolve_input, start_input_stream};
 
@@ -28,14 +32,14 @@ pub(super) const SCK_SR: u32 = 48_000;
 /// down the capture, or signals + joins the file reader thread.
 #[allow(dead_code)]
 pub(super) enum InputHandle {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     Cpal(cpal::Stream),
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
 }
 
 pub(super) enum ResolvedInput {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     Cpal {
         device: cpal::Device,
         config: cpal::StreamConfig,
@@ -67,7 +71,7 @@ pub(super) enum ResolvedInput {
 impl ResolvedInput {
     pub(super) fn sample_rate(&self) -> u32 {
         match self {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { sample_rate, .. } => *sample_rate,
             #[cfg(target_os = "linux")]
             ResolvedInput::PwSource { sample_rate, .. } => *sample_rate,

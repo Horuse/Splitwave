@@ -8,6 +8,8 @@
 	import { platform } from '@tauri-apps/plugin-os';
 
 	const isLinux = platform() === 'linux';
+	// Virtual devices need a kernel driver on Windows; unsupported there.
+	const isWindows = platform() === 'windows';
 
 	const store = new LazyStore('virtual-devices.json');
 	const STORE_KEY = 'devices';
@@ -91,7 +93,9 @@
 	{#snippet left()}
 		<div class="flex items-center gap-2">
 			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
-			<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+			{#if !isWindows}
+				<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+			{/if}
 		</div>
 	{/snippet}
 </Header>
@@ -108,7 +112,11 @@
 		</p>
 	</div>
 
-	{#if !isLinux}
+	{#if isWindows}
+		<p class="text-sm text-theme">Virtual devices are not supported on Windows.</p>
+	{/if}
+
+	{#if !isLinux && !isWindows}
 		<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
 			<div class="flex-1">
 				<div class="font-medium">Audio Server Plugin</div>

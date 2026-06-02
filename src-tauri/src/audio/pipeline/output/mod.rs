@@ -26,6 +26,10 @@ use macos as platform;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as platform;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as platform;
 
 pub(super) use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
 

@@ -8,6 +8,9 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
+	import { platform } from '@tauri-apps/plugin-os';
+
+	const isLinux = platform() === 'linux';
 
 	type SystemAudioNodeType = Node<SystemAudioNodeData, 'systemAudio'>;
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
@@ -33,7 +36,9 @@
 		}
 	}
 
-	onMount(refreshPermission);
+	onMount(() => {
+		if (!isLinux) refreshPermission();
+	});
 
 	async function openPrivacySettings() {
 		try {
@@ -59,9 +64,13 @@
 <Wrapper label="System Audio" accent="input" hasOutput>
 	<div class="flex w-64 flex-col gap-3">
 		<p class="text-[11px] text-neutral-900">
-			Captures all system output via ScreenCaptureKit (macOS 13+).
+			{#if isLinux}
+				Captures all system output (PipeWire monitor).
+			{:else}
+				Captures all system output via ScreenCaptureKit (macOS 13+).
+			{/if}
 		</p>
-		{#if permission !== 'allowed'}
+		{#if !isLinux && permission !== 'allowed'}
 			<div class={[
 				'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
 				permission === 'denied' && 'border-red-300 bg-red-50 text-red-700',
@@ -104,15 +113,17 @@
 				{/if}
 			</div>
 		{/if}
-		<label class="nodrag nopan flex items-center gap-2 text-xs text-neutral-1000">
-			<input
-				type="checkbox"
-				class="nodrag nopan rounded"
-				checked={data.excludeCurrentApp ?? true}
-				onchange={onToggle}
-			/>
-			Exclude this app (avoid feedback)
-		</label>
+		{#if !isLinux}
+			<label class="nodrag nopan flex items-center gap-2 text-xs text-neutral-1000">
+				<input
+					type="checkbox"
+					class="nodrag nopan rounded"
+					checked={data.excludeCurrentApp ?? true}
+					onchange={onToggle}
+				/>
+				Exclude this app (avoid feedback)
+			</label>
+		{/if}
 		<InputMeter nodeId={id} />
 		<Slider
 			label="Volume"

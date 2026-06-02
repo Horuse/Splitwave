@@ -5,6 +5,9 @@
 	import type { VirtualDeviceConfig, VirtualDriverStatus } from '$lib/modules/audio/types';
 	import Header from '$lib/components/layout/header.svelte';
 	import { page } from '$app/state';
+	import { platform } from '@tauri-apps/plugin-os';
+
+	const isLinux = platform() === 'linux';
 
 	const store = new LazyStore('virtual-devices.json');
 	const STORE_KEY = 'devices';
@@ -105,28 +108,30 @@
 		</p>
 	</div>
 
-	<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
-		<div class="flex-1">
-			<div class="font-medium">Audio Server Plugin</div>
-			<div class="text-xs text-neutral-900">
-				{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to
-				appear in system audio
+	{#if !isLinux}
+		<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
+			<div class="flex-1">
+				<div class="font-medium">Audio Server Plugin</div>
+				<div class="text-xs text-neutral-900">
+					{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to
+					appear in system audio
+				</div>
 			</div>
+			{#if status?.installed}
+				<button class="button-main red py-1.5" onclick={uninstall}>Uninstall</button>
+			{:else}
+				<button
+					class="button-main secondary py-1.5"
+					onclick={install}
+					disabled={installing}
+				>
+					{installing ? 'Installing...' : 'Install'}
+				</button>
+			{/if}
 		</div>
-		{#if status?.installed}
-			<button class="button-main red py-1.5" onclick={uninstall}>Uninstall</button>
-		{:else}
-			<button
-				class="button-main secondary py-1.5"
-				onclick={install}
-				disabled={installing}
-			>
-				{installing ? 'Installing...' : 'Install'}
-			</button>
-		{/if}
-	</div>
+	{/if}
 
-	{#if status?.installed}
+	{#if isLinux || status?.installed}
 		<div class="flex flex-col gap-4">
 			<div class="flex items-center justify-between">
 				<h2 class="text-lg font-medium">Devices</h2>
@@ -163,7 +168,11 @@
 		{#if dirty}
 			<div class="warning-block">
 				<strong>Changes not applied</strong>
-				Press Apply to update the system audio devices. macOS will briefly interrupt audio playback.
+				{#if isLinux}
+					Press Apply to update the system audio devices.
+				{:else}
+					Press Apply to update the system audio devices. macOS will briefly interrupt audio playback.
+				{/if}
 			</div>
 		{/if}
 

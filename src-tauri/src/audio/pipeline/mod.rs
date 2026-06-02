@@ -20,7 +20,6 @@ use rtrb::Producer;
 use tauri::AppHandle;
 use tracing::{info, warn};
 
-use crate::audio::device::DeviceKind;
 use crate::audio::effects::{EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx};
@@ -30,6 +29,8 @@ mod dag;
 mod file_reader;
 mod input;
 mod meter;
+#[cfg(target_os = "macos")]
+mod native;
 mod output;
 mod sig;
 mod worker;
@@ -44,6 +45,7 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
+#[cfg(target_os = "macos")]
 pub(super) const STATE_EVENT: &str = "audio://state";
 
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
@@ -416,8 +418,9 @@ impl ActivePipeline {
             }
         }
 
-        // Bluetooth devices used as both Mic and Speaker get forced into HFP
-        // (16/24 kHz mono), conflicting with the A2DP profile we resolved.
+        // A Bluetooth device used as both Mic and Speaker gets forced into the
+        // HFP profile (16/24 kHz mono), conflicting with the A2DP config we
+        // resolved -- the OS picks one profile for the whole device.
         {
             let mic_devices: HashSet<&str> = graph
                 .inputs
@@ -432,7 +435,7 @@ impl ActivePipeline {
                     if mic_devices.contains(device_id.as_str()) {
                         warn!(
                             device = %device_id,
-                            "speaker device is also used as microphone -- macOS will force HFP profile"
+                            "speaker device is also used as microphone -- the OS may force a reduced Bluetooth (HFP) profile"
                         );
                     }
                 }
@@ -775,98 +778,4 @@ impl ActivePipeline {
     }
 }
 
-// ---------- native config resolution ----------
-//
-// We never ask cpal "what is this device's default/supported config?":
-//   - `default_*_config` reads the *currently active* CoreAudio stream format,
-//     which is absent for non-default routes (built-in speakers while AirPods
-//     are connected) -> "Invalid property value".
-//   - `supported_*_configs` reads `kAudioStreamPropertyAvailableVirtualFormats`,
-//     which is also empty for those same non-default routes.
-//
-// AUHAL (cpal's underlying output unit on macOS) does NOT need to be told the
-// device's "current" format up front -- it accepts whatever StreamConfig we
-// hand it and asks CoreAudio to convert. So we read the device's nominal
-// sample rate and channel count *directly* from CoreAudio HAL (which works
-// regardless of routing state) and feed those into `build_*_stream`.
-//
-// Sample format is always `f32` -- the universal macOS audio type and the
-// internal pipeline format.
-
-pub(super) struct NativeConfig {
-    pub config: cpal::StreamConfig,
-    pub sample_format: cpal::SampleFormat,
-    pub sample_rate: u32,
-    pub channels: u16,
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn native_config(
-    kind: DeviceKind,
-    _device: &cpal::Device,
-    name: &str,
-) -> AppResult<NativeConfig> {
-    use crate::audio::macos_hal;
-    let hal = match kind {
-        DeviceKind::Input => macos_hal::find_input_device(name),
-        DeviceKind::Output => macos_hal::find_output_device(name),
-    }
-    .ok_or_else(|| {
-        AppError::Device(format!(
-            "{kind:?} device {name:?} disappeared between enumeration and open"
-        ))
-    })?;
-
-    let channels: u16 = hal
-        .channels
-        .try_into()
-        .map_err(|_| AppError::Device(format!("device {name:?} has {} channels (too many)", hal.channels)))?;
-
-    Ok(NativeConfig {
-        config: cpal::StreamConfig {
-            channels,
-            sample_rate: cpal::SampleRate(hal.sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        },
-        sample_format: cpal::SampleFormat::F32,
-        sample_rate: hal.sample_rate,
-        channels,
-    })
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn native_config(
-    kind: DeviceKind,
-    device: &cpal::Device,
-    name: &str,
-) -> AppResult<NativeConfig> {
-    // On Linux/Windows cpal's `supported_*_configs` is reliable for any device
-    // the OS exposes -- no inactive-route quirk like macOS. Pick the range with
-    // the highest max sample rate; force f32 sample format.
-    let configs: Vec<cpal::SupportedStreamConfigRange> = match kind {
-        DeviceKind::Input => device
-            .supported_input_configs()
-            .map_err(|e| AppError::Device(format!("query input configs for {name:?}: {e}")))?
-            .collect(),
-        DeviceKind::Output => device
-            .supported_output_configs()
-            .map_err(|e| AppError::Device(format!("query output configs for {name:?}: {e}")))?
-            .collect(),
-    };
-    let best = configs
-        .into_iter()
-        .max_by_key(|c| c.max_sample_rate().0)
-        .ok_or_else(|| AppError::Device(format!("device {name:?} exposes no configs")))?
-        .with_max_sample_rate();
-    Ok(NativeConfig {
-        config: cpal::StreamConfig {
-            channels: best.channels(),
-            sample_rate: best.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
-        },
-        sample_format: cpal::SampleFormat::F32,
-        sample_rate: best.sample_rate().0,
-        channels: best.channels(),
-    })
-}
 

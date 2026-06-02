@@ -29,6 +29,7 @@ export function getCachedAppInfo(): AppInfo | null {
 }
 
 export function formatAppInfo(info: AppInfo): string {
-	const osLabel = info.platform === 'macos' ? 'macOS' : info.platform;
+	const osLabel =
+		info.platform === 'macos' ? 'macOS' : info.platform === 'linux' ? 'Linux' : info.platform;
 	return `${osLabel} ${info.osVersion} (${info.arch})`;
 }

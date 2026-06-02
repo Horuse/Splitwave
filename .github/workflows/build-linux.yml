@@ -1,0 +1,111 @@
+name: Build Linux
+
+# Runs only on a `linux-*` tag (e.g. `git tag linux-1 && git push origin linux-1`)
+# or a manual dispatch -- never on every commit, and separate from the `v*`
+# release tags so it won't trigger the macOS Release workflow. Produces a
+# downloadable artifact (no GitHub release).
+on:
+    push:
+        tags:
+            - 'linux-*'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    packages: read
+
+jobs:
+    build:
+        # ubuntu-22.04 = oldest base shipping WebKitGTK 4.1, so glibc stays 2.35
+        # for broad AppImage compatibility (newer bases raise the glibc floor).
+        runs-on: ubuntu-22.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Setup Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache cargo build
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri
+
+            - name: Install Linux system deps
+              # 22.04 ships libpipewire 0.3.48, too old for the libspa crate
+              # (spa_video_info_raw.flags). The upstream PPA backports a current
+              # libpipewire while keeping the glibc 2.35 base.
+              run: |
+                  sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends \
+                    libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+                    libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
+                    libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
+                    libpipewire-0.3-dev clang libclang-dev \
+                    libasound2-dev libopus-dev \
+                    desktop-file-utils xdg-utils patchelf rpm
+
+            - name: Install JS deps
+              run: bun install --frozen-lockfile
+
+            - name: Build AppImage + deb + rpm
+              uses: tauri-apps/tauri-action@v0
+              with:
+                  projectPath: src-tauri
+                  args: '--bundles appimage,deb,rpm -c {"bundle":{"createUpdaterArtifacts":false}}'
+
+            - name: Strip bundled host libs from AppImage
+              # linuxdeploy bundles host-integration libs that aren't on the
+              # AppImage excludelist. They then shadow the system copies and
+              # break against the host's plugin ecosystem:
+              #   - libwayland-* -> WebKit EGL init fails (EGL_BAD_PARAMETER /
+              #     blank window) against newer Mesa
+              #   - libpipewire/libspa -> can't load SPA plugins (support.system),
+              #     "pipewire: Creation failed", since the spa-0.2/ plugin dir
+              #     is not bundled
+              # Remove them so the app links the host's copies + their plugins.
+              run: |
+                  set -euxo pipefail
+                  export APPIMAGE_EXTRACT_AND_RUN=1
+                  app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+                  "$app" --appimage-extract
+                  rm -fv squashfs-root/usr/lib/libwayland-client.so* \
+                         squashfs-root/usr/lib/libwayland-egl.so* \
+                         squashfs-root/usr/lib/libwayland-cursor.so* \
+                         squashfs-root/usr/lib/libpipewire-0.3.so* \
+                         squashfs-root/usr/lib/libspa-0.2.so*
+                  curl -fsSL -o /tmp/appimagetool \
+                    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+                  chmod +x /tmp/appimagetool
+                  rm -f "$app"
+                  ARCH=x86_64 /tmp/appimagetool squashfs-root "$app"
+                  rm -rf squashfs-root
+
+            # Separate artifacts so each downloads on its own -- grabbing the
+            # small deb/rpm doesn't pull the heavy AppImage.
+            - name: Upload AppImage
+              uses: actions/upload-artifact@v4
+              with:
+                  name: Splitwave-AppImage-x86_64
+                  path: src-tauri/target/release/bundle/appimage/*.AppImage
+                  if-no-files-found: error
+
+            - name: Upload deb
+              uses: actions/upload-artifact@v4
+              with:
+                  name: Splitwave-deb-x86_64
+                  path: src-tauri/target/release/bundle/deb/*.deb
+                  if-no-files-found: error
+
+            - name: Upload rpm
+              uses: actions/upload-artifact@v4
+              with:
+                  name: Splitwave-rpm-x86_64
+                  path: src-tauri/target/release/bundle/rpm/*.rpm
+                  if-no-files-found: error

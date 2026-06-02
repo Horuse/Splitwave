@@ -38,7 +38,7 @@
 	</div>
 
 	<p class="max-w-md text-center text-sm text-neutral-1000">
-		Audio routing for macOS. Build a node graph of inputs, effects, and outputs;
+		Audio routing for macOS and Linux. Build a node graph of inputs, effects, and outputs;
 		the engine processes audio in real time and writes to files in any of six formats.
 	</p>
 

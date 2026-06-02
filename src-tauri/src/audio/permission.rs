@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub enum PermissionState {
     Allowed,
     Denied,
@@ -24,7 +25,7 @@ pub fn screen_recording() -> PermissionState {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub fn screen_recording() -> PermissionState {
     PermissionState::Unknown
 }

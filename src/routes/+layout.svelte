@@ -14,6 +14,7 @@
 	import { ModalRender } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { AboutModal } from '$lib/modules/about/ui';
+	import { platform } from '@tauri-apps/plugin-os';
 
 	const isDev = import.meta.env.DEV;
 
@@ -38,6 +39,17 @@
 		}
 	}
 
+	// Linux has no native menu, so its Cmd/Ctrl+Z accelerators are gone -- wire
+	// undo/redo here. Skip while typing so text-field undo still works.
+	function onKeydown(e: KeyboardEvent) {
+		if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+		const t = e.target as HTMLElement | null;
+		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		e.preventDefault();
+		if (e.shiftKey) pipelineStore.editorActions?.redo();
+		else pipelineStore.editorActions?.undo();
+	}
+
 	onMount(() => {
 		installErrorHandlers().catch(() => {});
 		loadAppInfo().catch(() => {});
@@ -47,10 +59,12 @@
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => { unlistenMenu = fn; })
 			.catch(() => {});
+		if (platform() === 'linux') window.addEventListener('keydown', onKeydown);
 	});
 
 	onDestroy(() => {
 		unlistenMenu?.();
+		window.removeEventListener('keydown', onKeydown);
 		audioStore.destroy();
 	});
 </script>

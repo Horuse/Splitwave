@@ -60,7 +60,7 @@ pub fn build_encoder(
 			{
 				Ok(Box::new(AacRecorder::create(path, sample_rate, bitrate)?))
 			}
-			#[cfg(not(target_os = "macos"))]
+			#[cfg(target_os = "linux")]
 			{
 				let _ = (path, sample_rate, bitrate);
 				Err(crate::error::AppError::Stream(

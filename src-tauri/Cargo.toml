@@ -27,6 +27,31 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 
+# DeepFilterNet inference (tract) is far heavier than the FFT crates above. At
+# -O0 a single block's inference blows the DSP block deadline, the worker
+# stalls, and the voice gets glitchy. Optimise the tract stack + deep_filter in
+# dev so the NoiseSuppressor keeps real time.
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-nnef]
+opt-level = 3
+[profile.dev.package.tract-onnx]
+opt-level = 3
+[profile.dev.package.tract-onnx-opl]
+opt-level = 3
+[profile.dev.package.tract-hir]
+opt-level = 3
+[profile.dev.package.tract-pulse]
+opt-level = 3
+[profile.dev.package.tract-pulse-opl]
+opt-level = 3
+[profile.dev.package.deep_filter]
+opt-level = 3
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
@@ -52,6 +77,8 @@ base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.9", features = ["v0_3_44"] }

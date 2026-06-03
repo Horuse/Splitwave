@@ -13,6 +13,7 @@ import type { WaveformData } from './generated/WaveformData';
 import type { MicrophoneData } from './generated/MicrophoneData';
 import type { MuteData } from './generated/MuteData';
 import type { NoiseGateData } from './generated/NoiseGateData';
+import type { NoiseSuppressorData } from './generated/NoiseSuppressorData';
 import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
@@ -52,6 +53,7 @@ export type CompressorNodeData = XyData<CompressorData>;
 export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
 export type ReverbNodeData = XyData<ReverbData>;
+export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -77,6 +79,7 @@ export type NodeDataMap = {
 	noiseGate: NoiseGateNodeData;
 	delay: DelayNodeData;
 	reverb: ReverbNodeData;
+	noiseSuppressor: NoiseSuppressorNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

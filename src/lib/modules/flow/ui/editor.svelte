@@ -198,6 +198,7 @@
 			case 'noiseGate':
 			case 'delay':
 			case 'reverb':
+			case 'noiseSuppressor':
 				items.push({
 					label: data.bypassed ? 'Engage' : 'Bypass',
 					action: () => {

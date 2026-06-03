@@ -25,6 +25,7 @@ import Compressor from '../ui/effect/compressor.svelte';
 import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
+import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -215,6 +216,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
 		component: Reverb,
 		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33, bypassed: false }
+	}),
+	noiseSuppressor: entry<'noiseSuppressor'>({
+		kind: 'noiseSuppressor',
+		category: 'effect',
+		label: 'Noise Suppressor',
+		description: 'DeepFilterNet deep-learning speech denoise. Runs at 48 kHz only; off-rate signals pass through.',
+		component: NoiseSuppressor,
+		defaultData: { attenuationLimitDb: 100, bypassed: false }
 	})
 };
 

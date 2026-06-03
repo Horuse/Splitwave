@@ -23,6 +23,7 @@ pub mod limiter;
 pub mod lufs_meter;
 pub mod mute;
 pub mod noise_gate;
+pub mod noise_suppressor;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
@@ -38,6 +39,7 @@ use gain::GainEffect;
 use limiter::LimiterEffect;
 use mute::MuteEffect;
 use noise_gate::NoiseGateEffect;
+use noise_suppressor::NoiseSuppressorEffect;
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
@@ -79,6 +81,7 @@ pub enum RuntimeEffect {
     NoiseGate(NoiseGateEffect),
     Delay(DelayEffect),
     Reverb(ReverbEffect),
+    NoiseSuppressor(NoiseSuppressorEffect),
 }
 
 impl RuntimeEffect {
@@ -98,6 +101,7 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseGate(e) => e.latency_frames(),
             RuntimeEffect::Delay(e) => e.latency_frames(),
             RuntimeEffect::Reverb(e) => e.latency_frames(),
+            RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
         }
     }
 
@@ -122,6 +126,7 @@ impl RuntimeEffect {
             RuntimeEffect::Limiter(e) => e.process(main, frames),
             RuntimeEffect::Delay(e) => e.process(main, frames),
             RuntimeEffect::Reverb(e) => e.process(main, frames),
+            RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
         }
     }
 }
@@ -175,6 +180,9 @@ pub enum EffectControl {
         damping: Arc<AtomicU32>,
         width: Arc<AtomicU32>,
         mix: Arc<AtomicU32>,
+    },
+    NoiseSuppressor {
+        attenuation_limit_db: Arc<AtomicU32>,
     },
 }
 
@@ -265,6 +273,11 @@ impl EffectControl {
                 if let Some(v) = num(data, "damping") { store_f32(damping, v.clamp(0.0, 1.0)); }
                 if let Some(v) = num(data, "width") { store_f32(width, v.clamp(0.0, 1.0)); }
                 if let Some(v) = num(data, "mix") { store_f32(mix, v.clamp(0.0, 1.0)); }
+            }
+            EffectControl::NoiseSuppressor { attenuation_limit_db } => {
+                if let Some(v) = num(data, "attenuationLimitDb") {
+                    store_f32(attenuation_limit_db, v.max(0.0));
+                }
             }
         }
     }
@@ -551,6 +564,20 @@ pub fn instantiate_effect(
                 let (e, c) = ReverbEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Reverb(e), Some(c), None, None, None, None)
+            }
+        },
+        EffectSpec::NoiseSuppressor(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::NoiseSuppressor { attenuation_limit_db }) => mk(
+                RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
+                    attenuation_limit_db.clone(),
+                    sample_rate,
+                )),
+                None, None, None, None, None,
+            ),
+            _ => {
+                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }
         },
     }

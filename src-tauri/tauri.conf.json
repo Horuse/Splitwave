@@ -10,15 +10,6 @@
 		"frontendDist": "../build"
 	},
 	"app": {
-		"windows": [
-			{
-				"title": "Splitwave",
-				"width": 1200,
-				"height": 800,
-				"dragDropEnabled": false,
-				"decorations": false
-			}
-		],
 		"security": {
 			"csp": null
 		}

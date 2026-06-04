@@ -8,18 +8,50 @@ use ndarray::Array2;
 use crate::audio::graph::NoiseSuppressorData;
 use crate::audio::resample::StereoResampler;
 
-use super::util::{load_f32, store_f32};
+use super::util::load_f32;
 use super::{Effect, EffectControl};
 
 const MODEL_SR: u32 = 48_000;
-const CHANNELS: usize = 2;
+// DfTract is mono-only here (df_states hardcoded to len 1); stereo corrupts the
+// signal proportionally to attenuation. Downmix in, fan mono back out to L/R.
+const CHANNELS: usize = 1;
 const DOWN_CHUNK: usize = 512;
 const CAP: usize = 8192;
 
+#[derive(Clone)]
+pub struct NoiseSuppressorControls {
+    pub atten_lim_db: Arc<AtomicU32>,
+    pub pf_beta: Arc<AtomicU32>,
+    pub min_thresh_db: Arc<AtomicU32>,
+    pub max_erb_thresh_db: Arc<AtomicU32>,
+    pub max_df_thresh_db: Arc<AtomicU32>,
+}
+
 pub struct NoiseSuppressorEffect {
-    atten_lim_db: Arc<AtomicU32>,
+    ctl: NoiseSuppressorControls,
     state: Option<ModelState>,
-    last_atten: f32,
+    last: Params,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Params {
+    atten: f32,
+    pf_beta: f32,
+    min_thresh: f32,
+    max_erb: f32,
+    max_df: f32,
+}
+
+impl Params {
+    fn load(c: &NoiseSuppressorControls) -> Self {
+        Self {
+            atten: load_f32(&c.atten_lim_db),
+            pf_beta: load_f32(&c.pf_beta),
+            min_thresh: load_f32(&c.min_thresh_db),
+            max_erb: load_f32(&c.max_erb_thresh_db),
+            max_df: load_f32(&c.max_df_thresh_db),
+        }
+    }
 }
 
 // DfTract holds Rc, so it is !Send. Its graph is only ever moved by exclusive
@@ -68,8 +100,7 @@ struct ModelState {
     model: SendModel,
     hop: usize,
     latency: usize,
-    in_l: VecDeque<f32>,
-    in_r: VecDeque<f32>,
+    in_mono: VecDeque<f32>,
     noisy: Array2<f32>,
     enh: Array2<f32>,
     resample: Option<Resample>,
@@ -80,28 +111,36 @@ struct ModelState {
 
 impl NoiseSuppressorEffect {
     pub fn new(d: NoiseSuppressorData, sample_rate: u32) -> (Self, EffectControl) {
-        let atten_lim_db = Arc::new(AtomicU32::new(d.attenuation_limit_db.to_bits()));
-        store_f32(&atten_lim_db, d.attenuation_limit_db);
-        let control = EffectControl::NoiseSuppressor {
-            attenuation_limit_db: atten_lim_db.clone(),
+        let ctl = NoiseSuppressorControls {
+            atten_lim_db: Arc::new(AtomicU32::new(d.attenuation_limit_db.to_bits())),
+            pf_beta: Arc::new(AtomicU32::new(d.post_filter_beta.max(0.0).to_bits())),
+            min_thresh_db: Arc::new(AtomicU32::new(d.min_thresh_db.to_bits())),
+            max_erb_thresh_db: Arc::new(AtomicU32::new(d.max_erb_thresh_db.to_bits())),
+            max_df_thresh_db: Arc::new(AtomicU32::new(d.max_df_thresh_db.to_bits())),
         };
-        (Self::from_state(atten_lim_db, sample_rate), control)
+        let control = EffectControl::NoiseSuppressor { controls: ctl.clone() };
+        (Self::from_state(ctl, sample_rate), control)
     }
 
-    pub fn from_state(atten_lim_db: Arc<AtomicU32>, sample_rate: u32) -> Self {
-        let initial = load_f32(&atten_lim_db);
+    pub fn from_state(ctl: NoiseSuppressorControls, sample_rate: u32) -> Self {
+        let initial = Params::load(&ctl);
         Self {
-            atten_lim_db,
+            ctl,
             state: ModelState::build(initial, sample_rate),
-            last_atten: initial,
+            last: initial,
         }
     }
 }
 
 impl ModelState {
-    fn build(initial_atten_db: f32, output_sr: u32) -> Option<Self> {
+    fn build(p: Params, output_sr: u32) -> Option<Self> {
         let mut rp = RuntimeParams::default_with_ch(CHANNELS);
-        rp.atten_lim_db = initial_atten_db;
+        rp.atten_lim_db = p.atten;
+        rp.post_filter_beta = p.pf_beta;
+        rp.post_filter = p.pf_beta > 0.0;
+        rp.min_db_thresh = p.min_thresh;
+        rp.max_db_erb_thresh = p.max_erb;
+        rp.max_db_df_thresh = p.max_df;
         let model = match DfTract::new(DfParams::default(), &rp) {
             Ok(m) => m,
             Err(e) => {
@@ -143,8 +182,7 @@ impl ModelState {
             model: SendModel(model),
             hop,
             latency: prime + lookahead,
-            in_l: VecDeque::with_capacity(CAP),
-            in_r: VecDeque::with_capacity(CAP),
+            in_mono: VecDeque::with_capacity(CAP),
             noisy: Array2::zeros((CHANNELS, hop)),
             enh: Array2::zeros((CHANNELS, hop)),
             resample,
@@ -164,10 +202,18 @@ impl Effect for NoiseSuppressorEffect {
             return;
         };
 
-        let target = load_f32(&self.atten_lim_db);
-        if target != self.last_atten {
-            s.model.0.set_atten_lim(target);
-            self.last_atten = target;
+        let now = Params::load(&self.ctl);
+        if now != self.last {
+            if now.atten != self.last.atten {
+                s.model.0.set_atten_lim(now.atten);
+            }
+            if now.pf_beta != self.last.pf_beta {
+                s.model.0.set_pf_beta(now.pf_beta);
+            }
+            s.model.0.min_db_thresh = now.min_thresh;
+            s.model.0.max_db_erb_thresh = now.max_erb;
+            s.model.0.max_db_df_thresh = now.max_df;
+            self.last = now;
         }
 
         let stereo = &mut samples[..frames * 2];
@@ -180,18 +226,17 @@ impl Effect for NoiseSuppressorEffect {
 
         s.enh48.clear();
         for f in s.mid48.chunks_exact(2) {
-            s.in_l.push_back(f[0]);
-            s.in_r.push_back(f[1]);
+            s.in_mono.push_back(0.5 * (f[0] + f[1]));
         }
-        while s.in_l.len() >= s.hop {
+        while s.in_mono.len() >= s.hop {
             for i in 0..s.hop {
-                s.noisy[[0, i]] = s.in_l.pop_front().unwrap();
-                s.noisy[[1, i]] = s.in_r.pop_front().unwrap();
+                s.noisy[[0, i]] = s.in_mono.pop_front().unwrap();
             }
             let _ = s.model.0.process(s.noisy.view(), s.enh.view_mut());
             for i in 0..s.hop {
-                s.enh48.push(s.enh[[0, i]]);
-                s.enh48.push(s.enh[[1, i]]);
+                let m = s.enh[[0, i]];
+                s.enh48.push(m);
+                s.enh48.push(m);
             }
         }
 

@@ -3,7 +3,7 @@
 # Splitwave
 Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
 
-![Splitwave preview](./preview.png)
+![Splitwave preview](./preview.webp)
 
 
 ## Installation

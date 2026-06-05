@@ -52,7 +52,7 @@
 		<div class="border-b border-neutral-300 bg-neutral-100 px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">
 			Auto-saved snapshots
 		</div>
-		<ul class="nodrag nopan nowheel max-h-72 overflow-y-auto">
+		<ul class="nodrag nopan nowheel max-h-72 scrollbar overflow-y-auto">
 			{#if snapshots.length === 0}
 				<li class="px-3 py-3 text-xs text-neutral-900 italic">
 					No snapshots yet. Edit the graph to create one.

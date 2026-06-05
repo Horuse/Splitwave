@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { PermissionState } from '$lib/modules/audio/types';
+	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
@@ -12,7 +13,9 @@
 
 	// Screen-recording permission and self-exclusion are macOS/ScreenCaptureKit
 	// only; Linux (PipeWire) and Windows (WASAPI loopback) need neither.
-	const isMac = platform() === 'macos';
+	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const isMac = isPreview || platform() === 'macos';
 
 	type SystemAudioNodeType = Node<SystemAudioNodeData, 'systemAudio'>;
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
@@ -39,7 +42,7 @@
 	}
 
 	onMount(() => {
-		if (isMac) refreshPermission();
+		if (isMac && !isPreview) refreshPermission();
 	});
 
 	async function openPrivacySettings() {

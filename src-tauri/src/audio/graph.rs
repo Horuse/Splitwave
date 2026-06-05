@@ -355,8 +355,26 @@ pub struct ReverbData {
 #[ts(export)]
 pub struct NoiseSuppressorData {
     pub attenuation_limit_db: f32,
+    // Runtime knobs mirroring the upstream DeepFilterNet LADSPA plugin.
+    #[serde(default)]
+    pub post_filter_beta: f32,
+    #[serde(default = "default_min_thresh_db")]
+    pub min_thresh_db: f32,
+    #[serde(default = "default_max_erb_thresh_db")]
+    pub max_erb_thresh_db: f32,
+    #[serde(default = "default_max_df_thresh_db")]
+    pub max_df_thresh_db: f32,
     #[serde(default)]
     pub bypassed: bool,
+}
+fn default_min_thresh_db() -> f32 {
+    -10.0
+}
+fn default_max_erb_thresh_db() -> f32 {
+    30.0
+}
+fn default_max_df_thresh_db() -> f32 {
+    20.0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -16,7 +16,7 @@
 </script>
 
 <aside
-	class="flex w-72 flex-col  gap-5 overflow-y-auto border-l border-neutral-100 bg-background p-4"
+	class="flex w-72 flex-col scrollbar gap-5 overflow-y-auto border-l border-neutral-100 bg-background p-4"
 >
 	{#each categoryOrder as category (category)}
 		<section class="flex flex-col gap-2">

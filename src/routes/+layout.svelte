@@ -59,8 +59,13 @@
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => { unlistenMenu = fn; })
 			.catch(() => {});
-		const os = platform();
-		if (os === 'linux' || os === 'windows') window.addEventListener('keydown', onKeydown);
+		// plugin-os reads a Tauri-injected global; absent in plain-browser preview.
+		try {
+			const os = platform();
+			if (os === 'linux' || os === 'windows') window.addEventListener('keydown', onKeydown);
+		} catch {
+			// no OS plugin (preview) -- native menus/accelerators are irrelevant here
+		}
 	});
 
 	onDestroy(() => {

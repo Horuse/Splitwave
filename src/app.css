@@ -160,6 +160,23 @@
     .input-base {
         @apply focus:outline-none px-2.5 bg-neutral-100 hover:bg-neutral-200 hover:text-theme transition-all text-neutral-800 rounded-lg h-6.5 flex justify-center items-center;
     }
+
+    .scrollbar {
+        &::-webkit-scrollbar-thumb {
+            background-color: var(--color-neutral-400);
+            border-radius: 20px;
+        }
+        &::-webkit-scrollbar-corner {
+            background-color: var(--color-neutral-500);
+        }
+        scrollbar-width: auto;
+        scrollbar-color: var(--color-neutral-50) var(--color-neutral-100);
+        &::-webkit-scrollbar {
+            display: block;
+            width: 9px;
+            height: 9px;
+        }
+    }
 }
 
 .svelte-flow {

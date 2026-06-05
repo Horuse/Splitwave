@@ -39,7 +39,7 @@ use gain::GainEffect;
 use limiter::LimiterEffect;
 use mute::MuteEffect;
 use noise_gate::NoiseGateEffect;
-use noise_suppressor::NoiseSuppressorEffect;
+use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
@@ -182,7 +182,7 @@ pub enum EffectControl {
         mix: Arc<AtomicU32>,
     },
     NoiseSuppressor {
-        attenuation_limit_db: Arc<AtomicU32>,
+        controls: NoiseSuppressorControls,
     },
 }
 
@@ -274,9 +274,21 @@ impl EffectControl {
                 if let Some(v) = num(data, "width") { store_f32(width, v.clamp(0.0, 1.0)); }
                 if let Some(v) = num(data, "mix") { store_f32(mix, v.clamp(0.0, 1.0)); }
             }
-            EffectControl::NoiseSuppressor { attenuation_limit_db } => {
+            EffectControl::NoiseSuppressor { controls } => {
                 if let Some(v) = num(data, "attenuationLimitDb") {
-                    store_f32(attenuation_limit_db, v.max(0.0));
+                    store_f32(&controls.atten_lim_db, v.max(0.0));
+                }
+                if let Some(v) = num(data, "postFilterBeta") {
+                    store_f32(&controls.pf_beta, v.max(0.0));
+                }
+                if let Some(v) = num(data, "minThreshDb") {
+                    store_f32(&controls.min_thresh_db, v);
+                }
+                if let Some(v) = num(data, "maxErbThreshDb") {
+                    store_f32(&controls.max_erb_thresh_db, v);
+                }
+                if let Some(v) = num(data, "maxDfThreshDb") {
+                    store_f32(&controls.max_df_thresh_db, v);
                 }
             }
         }
@@ -567,9 +579,9 @@ pub fn instantiate_effect(
             }
         },
         EffectSpec::NoiseSuppressor(d) => match registry.controls.get(node_id) {
-            Some(EffectControl::NoiseSuppressor { attenuation_limit_db }) => mk(
+            Some(EffectControl::NoiseSuppressor { controls }) => mk(
                 RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
-                    attenuation_limit_db.clone(),
+                    controls.clone(),
                     sample_rate,
                 )),
                 None, None, None, None, None,

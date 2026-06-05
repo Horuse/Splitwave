@@ -10,7 +10,7 @@ use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
-use crate::audio::graph::{EdgeKind, ValidGraph};
+use crate::audio::graph::{EdgeKind, InputSpec, ValidGraph};
 use crate::audio::resample::StereoResampler;
 use crate::error::{AppError, AppResult};
 
@@ -529,7 +529,10 @@ pub(super) fn build_output_graph(
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
 
     for id in &topo {
-        if let Some(_input) = valid.inputs.iter().find(|i| &i.id == id) {
+        if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
+            // File sources are paced by backpressure; dropping backlog plays fast.
+            let source_realtime =
+                realtime && !matches!(input.spec, InputSpec::AudioFile { .. });
             let input_sr = *input_native_sr
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
@@ -559,7 +562,7 @@ pub(super) fn build_output_graph(
                 chunk_tmp: Vec::with_capacity(out_max * 2),
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 input_samples_per_block,
-                realtime,
+                realtime: source_realtime,
                 last_pop_at: Instant::now(),
                 first_data_logged: false,
                 volume: input_volumes

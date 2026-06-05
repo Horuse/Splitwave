@@ -223,7 +223,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Noise Suppressor',
 		description: 'DeepFilterNet deep-learning speech denoise. Runs at 48 kHz only; off-rate signals pass through.',
 		component: NoiseSuppressor,
-		defaultData: { attenuationLimitDb: 100, bypassed: false }
+		defaultData: {
+			attenuationLimitDb: 100,
+			postFilterBeta: 0,
+			minThreshDb: -10,
+			maxErbThreshDb: 30,
+			maxDfThreshDb: 20,
+			bypassed: false
+		}
 	})
 };
 

@@ -23,6 +23,14 @@
 	function dbFmt(v: number): string {
 		return v >= 100 ? 'full' : `${Math.round(v)} dB`;
 	}
+
+	function pfFmt(v: number): string {
+		return v <= 0 ? 'off' : v.toFixed(3);
+	}
+
+	function threshFmt(v: number): string {
+		return `${Math.round(v)} dB`;
+	}
 </script>
 
 <Wrapper
@@ -47,6 +55,50 @@
 			defaultValue={100}
 			ticks={[25, 50, 75]}
 			onChange={(v) => patch('attenuationLimitDb', v)}
+		/>
+		<Slider
+			label="Post-filter"
+			value={data.postFilterBeta ?? 0}
+			min={0}
+			max={0.05}
+			step={0.005}
+			format={pfFmt}
+			defaultValue={0}
+			ticks={[0.01, 0.02, 0.03, 0.04]}
+			onChange={(v) => patch('postFilterBeta', v)}
+		/>
+		<Slider
+			label="Min thresh"
+			value={data.minThreshDb ?? -10}
+			min={-15}
+			max={35}
+			step={1}
+			format={threshFmt}
+			defaultValue={-10}
+			ticks={[0, 15, 25]}
+			onChange={(v) => patch('minThreshDb', v)}
+		/>
+		<Slider
+			label="Max ERB thresh"
+			value={data.maxErbThreshDb ?? 30}
+			min={-15}
+			max={35}
+			step={1}
+			format={threshFmt}
+			defaultValue={30}
+			ticks={[0, 15, 25]}
+			onChange={(v) => patch('maxErbThreshDb', v)}
+		/>
+		<Slider
+			label="Max DF thresh"
+			value={data.maxDfThreshDb ?? 20}
+			min={-15}
+			max={35}
+			step={1}
+			format={threshFmt}
+			defaultValue={20}
+			ticks={[0, 15, 25]}
+			onChange={(v) => patch('maxDfThreshDb', v)}
 		/>
 	</div>
 </Wrapper>

@@ -68,7 +68,7 @@
     {/snippet}
 </Header>
 
-<div class="flex flex-col gap-8 p-8 h-[calc(100vh-40px)] overflow-y-auto">
+<div class="flex flex-col gap-8 scrollbar p-8 h-[calc(100vh-40px)] overflow-y-auto">
     <div class="flex items-center justify-between">
         <h1 class="text-2xl font-semibold">Pipelines</h1>
 

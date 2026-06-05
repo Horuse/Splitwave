@@ -2,6 +2,7 @@
 	import { updaterStore } from '../stores.svelte';
 	import { installUpdate, skipVersion } from '../methods';
 	import { ModalShell } from '$lib/modules/overlay/ui';
+	import CopyButton from '$lib/components/copy_button.svelte';
 
 	let s = $derived(updaterStore.state);
 
@@ -12,6 +13,12 @@
 		if (s.phase === 'installing') return 'Installing update';
 		return 'Update failed';
 	});
+
+	let titleClass = $derived(
+		s.phase === 'error'
+			? 'text-md font-semibold text-red-500'
+			: 'text-md font-semibold text-emerald-700'
+	);
 
 	function progressPct(): number {
 		if (s.phase !== 'downloading' || !s.total || s.total === 0) return 0;
@@ -31,7 +38,7 @@
 {#if s.phase === 'up_to_date' || s.phase === 'available' || s.phase === 'downloading' || s.phase === 'installing' || s.phase === 'error'}
 	<ModalShell
 		{title}
-		titleClass="text-md font-semibold text-emerald-700"
+		{titleClass}
 		canClose={s.phase !== 'installing'}
 		onClose={dismiss}
 	>
@@ -63,7 +70,8 @@
 			{:else if s.phase === 'installing'}
 				<p class="text-xs text-neutral-1000">Finalizing. The app will restart in a moment.</p>
 			{:else if s.phase === 'error'}
-				<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-red-700">{s.message}</pre>
+				<p class="mb-2 text-xs text-neutral-1000">Couldn't check for updates.</p>
+				<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{s.message}</pre>
 			{/if}
 		</div>
 
@@ -86,6 +94,11 @@
 				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
 					Dismiss
 				</button>
+				<CopyButton
+					text={s.message}
+					label="Copy error"
+					class="button-main red gap-3 rounded-lg"
+				/>
 			{/if}
 		{/snippet}
 	</ModalShell>

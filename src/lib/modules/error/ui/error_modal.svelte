@@ -2,8 +2,8 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { errorStore } from '../stores.svelte';
 	import { formatAppInfo, getCachedAppInfo } from '$lib/modules/app_info';
-	import { Copy } from '$lib/components/icons';
 	import { ModalShell } from '$lib/modules/overlay/ui/modal';
+	import CopyButton from '$lib/components/copy_button.svelte';
 
 	const REPO = 'Horuse/Splitwave';
 
@@ -43,13 +43,6 @@
 			''
 		);
 		return lines.join('\n');
-	}
-
-	async function copyDetails() {
-		try {
-			await navigator.clipboard.writeText(buildDetails());
-		} catch {
-		}
 	}
 
 	async function reportOnGitHub() {
@@ -106,10 +99,11 @@
 			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
 				Dismiss
 			</button>
-			<button type="button" class="button-main primary gap-3 rounded-lg" onclick={copyDetails}>
-				<Copy class="size-4" />
-				Copy details
-			</button>
+			<CopyButton
+				text={buildDetails}
+				label="Copy details"
+				class="button-main primary gap-3 rounded-lg"
+			/>
 			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}>
 				Report on GitHub
 			</button>

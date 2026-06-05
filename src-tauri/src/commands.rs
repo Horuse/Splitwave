@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
 use crate::audio::engine::Command;
@@ -270,4 +270,32 @@ pub fn stop_pipeline(state: State<'_, AppState>, app: AppHandle) -> AppResult<()
         let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
     }
     result
+}
+
+// Updater errors serialize Display-only, hiding reqwest's cause; unwind source()+Debug.
+#[tauri::command]
+pub async fn diagnose_update_error(app: AppHandle) -> String {
+    use tauri_plugin_updater::UpdaterExt;
+    let report = match app.updater() {
+        Ok(updater) => match updater.check().await {
+            Ok(Some(u)) => format!("check succeeded; update {} is available", u.version),
+            Ok(None) => "check succeeded; no update available".to_string(),
+            Err(e) => format_error_chain(&e),
+        },
+        Err(e) => format_error_chain(&e),
+    };
+    error!(diagnostic = %report, "update check diagnostic");
+    report
+}
+
+fn format_error_chain<E: std::error::Error>(err: &E) -> String {
+    let mut out = format!("{err}\ndebug: {err:?}");
+    let mut src = std::error::Error::source(err);
+    let mut depth = 0;
+    while let Some(s) = src {
+        out.push_str(&format!("\ncaused by [{depth}]: {s}\n  debug: {s:?}"));
+        src = s.source();
+        depth += 1;
+    }
+    out
 }

@@ -1,6 +1,7 @@
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { LazyStore } from '@tauri-apps/plugin-store';
+import { invoke } from '@tauri-apps/api/core';
 import { updaterStore } from './stores.svelte';
 
 const PREFS_FILE = 'updater_prefs.json';
@@ -39,9 +40,18 @@ export async function checkForUpdates(silent = false): Promise<void> {
 		}
 		updaterStore.state = { phase: 'available', update };
 	} catch (e) {
-		updaterStore.state = silent
-			? { phase: 'idle' }
-			: { phase: 'error', message: e instanceof Error ? e.message : String(e) };
+		const message = await diagnoseError(e);
+		updaterStore.state = silent ? { phase: 'idle' } : { phase: 'error', message };
+	}
+}
+
+async function diagnoseError(e: unknown): Promise<string> {
+	const base = e instanceof Error ? e.message : String(e);
+	try {
+		const detail = await invoke<string>('diagnose_update_error');
+		return detail ? `${base}\n\n${detail}` : base;
+	} catch {
+		return base;
 	}
 }
 

@@ -135,6 +135,7 @@ pub fn run() {
             commands::set_input_volume,
             commands::get_device_volume,
             commands::set_device_volume,
+            commands::diagnose_update_error,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

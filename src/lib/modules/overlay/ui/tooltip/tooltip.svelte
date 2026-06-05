@@ -61,7 +61,7 @@
 		use:portal={'#overlays'}
 		use:floatingContent
 		transition:fade={{ duration: 100 }}
-		class="z-[200] pointer-events-none rounded-md border border-neutral-400 bg-neutral-1100 px-2 py-1 font-mono text-[10px] text-neutral-100 shadow-md"
+		class="z-[200] pointer-events-none rounded-md border border-neutral-700 bg-neutral-500 px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
 		role="tooltip"
 	>
 		{#if content}

@@ -8,8 +8,9 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
-	import { Loop, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
+	import { Autoplay, Loop, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { Tooltip } from '$lib/modules/overlay/ui';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();
@@ -177,15 +178,18 @@
 			<button class="button-main primary rounded-lg nodrag nopan flex-1 py-1 text-xs" onclick={chooseFile}>
 				Choose file...
 			</button>
-			<label class="nodrag nopan flex cursor-pointer select-none items-center gap-1 text-xs text-neutral-700">
-				<input
-					type="checkbox"
-					class="accent-neutral-900"
-					checked={data.autoStart ?? true}
-					onchange={toggleAutoStart}
-				/>
-				Auto play
-			</label>
+			<Tooltip text="Start playback automatically when the pipeline runs">
+				<button
+					type="button"
+					class={[
+						'nodrag nopan button-main primary size-7 p-0 rounded-lg',
+						(data.autoStart ?? true) && 'active'
+					]}
+					onclick={toggleAutoStart}
+				>
+					<Autoplay class="size-3.5" />
+				</button>
+			</Tooltip>
 		</div>
 
 		<input
@@ -201,57 +205,62 @@
 		<div class="flex items-center justify-between font-mono text-[11px]">
 			<span class="tabular-nums text-neutral-900">{formatTime(currentSec)}</span>
 			<div class="flex items-center justify-center gap-1">
-				<button
-					type="button"
-					class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
-					title="Stop"
-					disabled={!canControl}
-					onclick={stop}
-				>
-					<Stop class="size-3" />
-				</button>
-				<button
-					type="button"
-					class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
-					title="Back 5s"
-					disabled={!canControl}
-					onclick={skipBack}
-				>
-					<SkipBack5 class="size-3" />
-				</button>
-				<button
-					type="button"
-					class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
-					title={playing ? 'Pause' : 'Play'}
-					disabled={!canControl}
-					onclick={togglePlayPause}
-				>
-					{#if playing}
-						<Pause class="size-3" />
-					{:else}
-						<Play class="size-3" />
-					{/if}
-				</button>
-				<button
-					type="button"
-					class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
-					title="Forward 5s"
-					disabled={!canControl}
-					onclick={skipForward}
-				>
-					<SkipForward5 class="size-3" />
-				</button>
-				<button
-					type="button"
-					class={[
-					'nodrag nopan button-main primary size-6 p-0 rounded-lg',
-					data.loopEnabled && 'active'
-				]}
-					title={data.loopEnabled ? 'Loop on' : 'Loop off'}
-					onclick={toggleLoop}
-				>
-					<Loop class="size-3" />
-				</button>
+				<Tooltip text="Stop and rewind to start">
+					<button
+						type="button"
+						class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
+						disabled={!canControl}
+						onclick={stop}
+					>
+						<Stop class="size-3" />
+					</button>
+				</Tooltip>
+				<Tooltip text="Skip back 5 seconds">
+					<button
+						type="button"
+						class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
+						disabled={!canControl}
+						onclick={skipBack}
+					>
+						<SkipBack5 class="size-3" />
+					</button>
+				</Tooltip>
+				<Tooltip text={playing ? 'Pause playback' : 'Play'}>
+					<button
+						type="button"
+						class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
+						disabled={!canControl}
+						onclick={togglePlayPause}
+					>
+						{#if playing}
+							<Pause class="size-3" />
+						{:else}
+							<Play class="size-3" />
+						{/if}
+					</button>
+				</Tooltip>
+				<Tooltip text="Skip forward 5 seconds">
+					<button
+						type="button"
+						class="nodrag nopan button-main primary size-6 p-0 rounded-lg"
+						disabled={!canControl}
+						onclick={skipForward}
+					>
+						<SkipForward5 class="size-3" />
+					</button>
+				</Tooltip>
+				<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
+					<button
+						type="button"
+						class={[
+						'nodrag nopan button-main primary size-6 p-0 rounded-lg',
+						data.loopEnabled && 'active'
+					]}
+						onclick={toggleLoop}
+					>
+						<Loop class="size-3" />
+					</button>
+				</Tooltip>
 			</div>
 			<span class="tabular-nums text-neutral-900">{formatTime(totalSec)}</span>
 		</div>

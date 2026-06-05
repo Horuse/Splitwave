@@ -4,6 +4,7 @@ export { default as ArrowLeft } from './arrow_left.svelte';
 export { default as ArrowRight } from './arrow_right.svelte';
 export { default as ArrowUndo } from './arrow_undo.svelte';
 export { default as ArrowRedo } from './arrow_redo.svelte';
+export { default as Autoplay } from './autoplay.svelte';
 export { default as Backspace } from './backspace.svelte';
 export { default as Checkmark } from './checkmark.svelte';
 export { default as ChevronDown } from './chevron_down.svelte';

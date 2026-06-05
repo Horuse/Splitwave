@@ -70,7 +70,7 @@
 	}
 
 	function formatDb(db: number): string {
-		return isFinite(db) ? db.toFixed(1) : '−∞';
+		return isFinite(db) && db > DB_FLOOR ? db.toFixed(1) : '−∞';
 	}
 
 	function maxBgClass(maxL: number, maxR: number): string {
@@ -111,20 +111,22 @@
 		const tRmsL = ampToDb(targetRmsL);
 		const tRmsR = ampToDb(targetRmsR);
 
+		// Floor the fall at DB_FLOOR; target is -Infinity on silence, so without
+		// this the readout drifts to absurd values (-1840 dB) over time.
 		const nextPeakL = tPeakL > displayPeakL
-			? tPeakL : Math.max(tPeakL, displayPeakL - PEAK_FALL_DB_PER_SEC * dt);
+			? tPeakL : Math.max(tPeakL, DB_FLOOR, displayPeakL - PEAK_FALL_DB_PER_SEC * dt);
 		if (nextPeakL !== displayPeakL) displayPeakL = nextPeakL;
 
 		const nextPeakR = tPeakR > displayPeakR
-			? tPeakR : Math.max(tPeakR, displayPeakR - PEAK_FALL_DB_PER_SEC * dt);
+			? tPeakR : Math.max(tPeakR, DB_FLOOR, displayPeakR - PEAK_FALL_DB_PER_SEC * dt);
 		if (nextPeakR !== displayPeakR) displayPeakR = nextPeakR;
 
 		const nextRmsL = tRmsL > displayRmsL
-			? tRmsL : Math.max(tRmsL, displayRmsL - PEAK_FALL_DB_PER_SEC * dt);
+			? tRmsL : Math.max(tRmsL, DB_FLOOR, displayRmsL - PEAK_FALL_DB_PER_SEC * dt);
 		if (nextRmsL !== displayRmsL) displayRmsL = nextRmsL;
 
 		const nextRmsR = tRmsR > displayRmsR
-			? tRmsR : Math.max(tRmsR, displayRmsR - PEAK_FALL_DB_PER_SEC * dt);
+			? tRmsR : Math.max(tRmsR, DB_FLOOR, displayRmsR - PEAK_FALL_DB_PER_SEC * dt);
 		if (nextRmsR !== displayRmsR) displayRmsR = nextRmsR;
 
 		if (tPeakL > holdPeakL) {
@@ -283,7 +285,7 @@
 			{#each [{ db: displayPeakL, label: 'L' }, { db: displayPeakR, label: 'R' }] as ch, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i === 0 ? 'border-r border-neutral-300' : ''}">
 					<span class="text-[7px] text-neutral-400 leading-none">{ch.label}</span>
-					<span class="font-mono tabular-nums text-[8px] leading-tight {!isFinite(ch.db) ? 'text-neutral-400' : ch.db >= -1 ? 'text-red-500' : ch.db >= -6 ? 'text-amber-500' : 'text-neutral-700'}">
+					<span class="font-mono tabular-nums text-[8px] leading-tight {!isFinite(ch.db) || ch.db <= DB_FLOOR ? 'text-neutral-400' : ch.db >= -1 ? 'text-red-500' : ch.db >= -6 ? 'text-amber-500' : 'text-neutral-700'}">
 						{formatDb(ch.db)}
 					</span>
 				</div>

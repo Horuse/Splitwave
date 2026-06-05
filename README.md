@@ -163,6 +163,11 @@ src-tauri/native/virtual_driver/
   Info.plist            CFPlugin manifest
 ```
 
+## License
+
+Splitwave is licensed under [MIT](LICENSE).  
+Third-party component notices (LGPL, MPL-2.0, etc.) are in [NOTICE](NOTICE).
+
 ## Support
 If you find this app useful, consider supporting it:
 

@@ -1,8 +1,7 @@
 [package]
 name = "splitwave"
-version = "0.3.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.4.0"
+description = "Audio routing app for macOS, Linux and Windows. Build a node graph of inputs, effects, and outputs"
 edition = "2021"
 
 [lib]

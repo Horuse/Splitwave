@@ -170,8 +170,63 @@
     }
 
 
+    .btn-green {
+        @apply inline-flex items-center gap-1.5 rounded-xl border px-5 py-1.5 text-sm font-semibold transition-all duration-300;
+        @apply hover:scale-[1.05];
+        @apply bg-green-500/20 border-green-500/30 text-green-800;
+
+        @variant hover {
+            @apply bg-green-500/30 border-green-500/40 text-green-900
+        }
+
+        @variant dark {
+            @apply bg-green-500/30 border-green-500/40 text-green-300;
+
+            @variant hover {
+                @apply bg-green-500/40 border-green-500/50 text-green-200
+            }
+        }
+    }
+
+    .btn-alert {
+        @apply inline-flex items-center gap-1.5 rounded-xl border px-5 py-1.5 text-sm font-semibold transition-all duration-300;
+        @apply hover:scale-[1.05];
+        @apply bg-red-500/20 border-red-500/30 text-red-800;
+
+        @variant hover {
+            @apply bg-red-500/30 border-red-500/40 text-red-900
+        }
+
+        @variant dark {
+            @apply bg-red-500/30 border-red-500/40 text-red-300;
+
+            @variant hover {
+                @apply bg-red-500/40 border-red-500/50 text-red-200
+            }
+        }
+    }
+
+    .btn-warning {
+        @apply inline-flex items-center gap-1.5 rounded-xl border px-5 py-1.5 text-sm font-semibold transition-all duration-300;
+        @apply hover:scale-[1.05];
+        @apply bg-amber-500/20 border-amber-500/30 text-amber-800;
+
+        @variant hover {
+            @apply bg-amber-500/30 border-amber-500/40 text-amber-900
+        }
+
+        @variant dark {
+            @apply bg-amber-500/30 border-amber-500/40 text-amber-300;
+
+            @variant hover {
+                @apply bg-amber-500/40 border-amber-500/50 text-amber-200
+            }
+        }
+    }
+
+
     .warning-block {
-        @apply text-xs flex flex-col dark:border-amber-500/20 border-amber-600/50 border-dashed border gap-2 bg-amber-500/10 p-4 rounded-xl text-amber-600;
+        @apply text-xs flex flex-col dark:border-amber-500/20 border-amber-600/50 border-dashed border gap-2 bg-amber-500/20 dark:bg-amber-500/10 p-4 rounded-2xl text-amber-600;
     }
 
     .input-base {

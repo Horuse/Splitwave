@@ -110,15 +110,25 @@ fn build_virtual_driver() {
         }
     }
 
-    let status = Command::new("git")
-        .args(["-C", libaspl_dir.to_str().unwrap(), "checkout", LIBASPL_COMMIT])
-        .status()
-        .expect("git checkout libASPL pin");
-    if !status.success() {
-        panic!(
-            "failed to pin libASPL to {LIBASPL_COMMIT} — \
-             delete native/virtual_driver/libASPL and rebuild"
-        );
+    // Only checkout when not already pinned -- a checkout every build touches
+    // .git/index.lock, which the Tauri dev watcher sees as a change and loops.
+    let head = Command::new("git")
+        .args(["-C", libaspl_dir.to_str().unwrap(), "rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if head.as_deref() != Some(LIBASPL_COMMIT) {
+        let status = Command::new("git")
+            .args(["-C", libaspl_dir.to_str().unwrap(), "checkout", LIBASPL_COMMIT])
+            .status()
+            .expect("git checkout libASPL pin");
+        if !status.success() {
+            panic!(
+                "failed to pin libASPL to {LIBASPL_COMMIT} — \
+                 delete native/virtual_driver/libASPL and rebuild"
+            );
+        }
     }
 
     // Collect libASPL sources (all .cpp — .g.cpp files contain vtable implementations)

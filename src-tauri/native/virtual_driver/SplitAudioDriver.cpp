@@ -6,17 +6,18 @@
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <atomic>
+#include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
 
-// Per-device loopback ring buffer.
 struct DeviceRing {
     static constexpr uint32_t kFrames = 16384;
     uint32_t channels;
     uint32_t nSamples;
     std::vector<float> buf;
-    std::atomic<uint32_t> writeHead{0};
+    std::atomic<int64_t> lastOutFrame{0};
 
     explicit DeviceRing(uint32_t ch)
         : channels(ch), nSamples(kFrames * ch), buf(kFrames * ch, 0.0f) {}
@@ -30,35 +31,40 @@ public:
 
     void OnWriteMixedOutput(
         const std::shared_ptr<aspl::Stream>&,
-        Float64, Float64,
+        Float64, Float64 timestamp,
         const void* buff, UInt32 bytes) override
     {
         const float* src = static_cast<const float*>(buff);
         const uint32_t n = bytes / sizeof(float);
-        uint32_t pos = ring_.writeHead.load(std::memory_order_relaxed);
+        const int64_t frame = llround(timestamp);
+        const uint64_t base = (uint64_t)frame * ring_.channels;
         for (uint32_t i = 0; i < n; ++i) {
-            ring_.buf[(pos + i) % ring_.nSamples] = src[i];
+            ring_.buf[(base + i) % ring_.nSamples] = src[i];
         }
-        ring_.writeHead.store((pos + n) % ring_.nSamples, std::memory_order_release);
+        ring_.lastOutFrame.store(frame + n / ring_.channels, std::memory_order_release);
     }
 
     void OnReadClientInput(
         const std::shared_ptr<aspl::Client>&,
         const std::shared_ptr<aspl::Stream>&,
-        Float64, Float64,
+        Float64, Float64 timestamp,
         void* buff, UInt32 bytes) override
     {
         float* dst = static_cast<float*>(buff);
         const uint32_t n = bytes / sizeof(float);
-        const uint32_t w = ring_.writeHead.load(std::memory_order_acquire);
-        const uint32_t r = (w + ring_.nSamples - n) % ring_.nSamples;
+        const int64_t frame = llround(timestamp);
+        const int64_t frames = n / ring_.channels;
+        if (ring_.lastOutFrame.load(std::memory_order_acquire) - frames < frame) {
+            memset(dst, 0, bytes);
+            return;
+        }
+        const uint64_t base = (uint64_t)frame * ring_.channels;
         for (uint32_t i = 0; i < n; ++i) {
-            dst[i] = ring_.buf[(r + i) % ring_.nSamples];
+            dst[i] = ring_.buf[(base + i) % ring_.nSamples];
         }
     }
 };
 
-// Config read from Contents/Resources/devices.plist at startup.
 struct DeviceConfig { std::string id; std::string name; };
 
 static std::string CFStr(CFStringRef s) {
@@ -110,9 +116,23 @@ static std::vector<DeviceConfig> ReadConfig() {
     return out;
 }
 
-// Keep rings + handlers alive for the lifetime of the driver.
 static std::vector<std::unique_ptr<DeviceRing>>      gRings;
 static std::vector<std::shared_ptr<SplitIOHandler>>  gHandlers;
+
+// libASPL streams default to 16-bit int; our IO is float.
+static AudioStreamBasicDescription FloatFormat(UInt32 channels) {
+    AudioStreamBasicDescription f = {};
+    f.mSampleRate       = 48000;
+    f.mFormatID         = kAudioFormatLinearPCM;
+    f.mFormatFlags      = kAudioFormatFlagIsFloat | kAudioFormatFlagsNativeEndian |
+                          kAudioFormatFlagIsPacked;
+    f.mBitsPerChannel   = 32;
+    f.mChannelsPerFrame = channels;
+    f.mBytesPerFrame    = channels * sizeof(float);
+    f.mFramesPerPacket  = 1;
+    f.mBytesPerPacket   = channels * sizeof(float);
+    return f;
+}
 
 static std::shared_ptr<aspl::Driver> CreateDriver() {
     auto context = std::make_shared<aspl::Context>();
@@ -134,8 +154,16 @@ static std::shared_ptr<aspl::Driver> CreateDriver() {
         auto device = std::make_shared<aspl::Device>(context, params);
         device->SetIOHandler(handler);
         device->SetControlHandler(handler);
-        device->AddStreamWithControlsAsync(aspl::Direction::Output);
-        device->AddStreamWithControlsAsync(aspl::Direction::Input);
+
+        aspl::StreamParameters outStream;
+        outStream.Direction = aspl::Direction::Output;
+        outStream.Format = FloatFormat(params.ChannelCount);
+        device->AddStreamWithControlsAsync(outStream);
+
+        aspl::StreamParameters inStream;
+        inStream.Direction = aspl::Direction::Input;
+        inStream.Format = FloatFormat(params.ChannelCount);
+        device->AddStreamWithControlsAsync(inStream);
 
         plugin->AddDevice(device);
         gHandlers.push_back(handler);

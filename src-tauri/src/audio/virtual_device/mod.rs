@@ -4,10 +4,16 @@ pub struct VirtualDeviceConfig {
     pub name: String,
 }
 
+// Bump with any driver bundle change; keep in sync with Info.plist CFBundleVersion.
+pub const DRIVER_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VirtualDriverStatus {
     pub installed: bool,
+    pub installed_version: Option<u32>,
+    pub current_version: u32,
+    pub needs_update: bool,
 }
 
 #[cfg(target_os = "macos")]

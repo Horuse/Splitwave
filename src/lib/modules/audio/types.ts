@@ -25,6 +25,9 @@ export type PermissionState = 'allowed' | 'denied' | 'unknown';
 
 export interface VirtualDriverStatus {
 	installed: boolean;
+	installedVersion: number | null;
+	currentVersion: number;
+	needsUpdate: boolean;
 }
 
 export interface VirtualDeviceConfig {

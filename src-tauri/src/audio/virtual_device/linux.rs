@@ -29,7 +29,12 @@ pub fn status() -> VirtualDriverStatus {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    VirtualDriverStatus { installed: ok }
+    VirtualDriverStatus {
+        installed: ok,
+        installed_version: None,
+        current_version: super::DRIVER_VERSION,
+        needs_update: false,
+    }
 }
 
 pub fn install(_app: &AppHandle) -> Result<(), String> {

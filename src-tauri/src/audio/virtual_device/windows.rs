@@ -4,7 +4,12 @@ use super::{VirtualDeviceConfig, VirtualDriverStatus};
 
 // installed:false hides the virtual-device UI on the frontend.
 pub fn status() -> VirtualDriverStatus {
-    VirtualDriverStatus { installed: false }
+    VirtualDriverStatus {
+        installed: false,
+        installed_version: None,
+        current_version: super::DRIVER_VERSION,
+        needs_update: false,
+    }
 }
 
 pub fn install(_app: &AppHandle) -> Result<(), String> {

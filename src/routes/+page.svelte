@@ -29,7 +29,7 @@
     import { page } from '$app/state';
     import { audioStore } from '$lib/modules/audio/stores.svelte';
     import { methods as audioMethods } from '$lib/modules/audio/methods';
-    import { RunningTimer } from '$lib/modules/audio/ui';
+    import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
     import { platform } from '@tauri-apps/plugin-os';
 
     const isWindows = platform() === 'windows';
@@ -69,6 +69,10 @@
 </Header>
 
 <div class="flex flex-col gap-8 p-8 h-[calc(100vh-40px)] overflow-y-auto">
+    {#if !isWindows}
+        <DriverUpdateBanner />
+    {/if}
+
     <div class="flex items-center justify-between">
         <h1 class="text-2xl font-semibold">Pipelines</h1>
 
@@ -100,10 +104,10 @@
                             {p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
                         </div>
                     </a>
-                    <div class="flex items-center gap-2 mx-4">
+                    <div class="flex items-center py-3.5 h-full gap-2 mx-4">
                         <button
                             class={[
-                                'button-main primary px-4',
+                                'btn-green py-2',
                                 !audioStore.isRunning && 'green',
                                 audioStore.isRunning && audioStore.runningPipelineId === p.id && 'red'
                             ]}
@@ -119,7 +123,7 @@
                             {/if}
                         </button>
                         <button
-                                class="button-main red py-1.5"
+                                class="btn-alert py-2"
                                 onclick={(e) => remove(p.id, p.name, e)}
                                 aria-label="Delete pipeline"
                         >

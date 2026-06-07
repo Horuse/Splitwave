@@ -4,6 +4,7 @@
 	import { methods } from '$lib/modules/audio/methods';
 	import type { VirtualDeviceConfig, VirtualDriverStatus } from '$lib/modules/audio/types';
 	import Header from '$lib/components/layout/header.svelte';
+	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import { page } from '$app/state';
 	import { platform } from '@tauri-apps/plugin-os';
 
@@ -71,6 +72,8 @@
 		try {
 			await methods.installVirtualDriver();
 			status = await methods.virtualDriverStatus();
+			// fresh bundle has no devices.plist; Apply rewrites it
+			if (devices.length > 0) dirty = true;
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -126,10 +129,10 @@
 				</div>
 			</div>
 			{#if status?.installed}
-				<button class="button-main red py-1.5" onclick={uninstall}>Uninstall</button>
+				<button class="btn-alert h-full py-1.5" onclick={uninstall}>Uninstall</button>
 			{:else}
 				<button
-					class="button-main secondary py-1.5"
+					class="btn-alert h-full py-1.5"
 					onclick={install}
 					disabled={installing}
 				>
@@ -137,6 +140,13 @@
 				</button>
 			{/if}
 		</div>
+
+		<DriverUpdateBanner
+			onUpdated={(s) => {
+				status = s;
+				if (devices.length > 0) dirty = true;
+			}}
+		/>
 	{/if}
 
 	{#if isLinux || status?.installed}
@@ -161,7 +171,7 @@
 								>{d.id.slice(0, 8)}</span
 							>
 							<button
-								class="button-main red py-1"
+								class="btn-alert py-2"
 								onclick={() => removeDevice(d.id)}
 								aria-label="Remove device"
 							>

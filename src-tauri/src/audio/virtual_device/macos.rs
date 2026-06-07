@@ -104,9 +104,33 @@ end run"#;
 }
 
 pub fn status() -> VirtualDriverStatus {
-    let installed = Path::new(HAL_DIR).join(DRIVER_NAME).exists();
-    info!(installed, "virtual driver status");
-    VirtualDriverStatus { installed }
+    let dst = Path::new(HAL_DIR).join(DRIVER_NAME);
+    let installed = dst.exists();
+    let installed_version = if installed { read_bundle_version(&dst) } else { None };
+    // unknown version on an installed bundle = pre-versioning, treat as stale
+    let needs_update =
+        installed && installed_version.map_or(true, |v| v < super::DRIVER_VERSION);
+    info!(installed, ?installed_version, needs_update, "virtual driver status");
+    VirtualDriverStatus {
+        installed,
+        installed_version,
+        current_version: super::DRIVER_VERSION,
+        needs_update,
+    }
+}
+
+fn read_bundle_version(bundle: &Path) -> Option<u32> {
+    let info = bundle.join("Contents/Info");
+    let out = Command::new("defaults")
+        .arg("read")
+        .arg(&info)
+        .arg("CFBundleVersion")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok()
 }
 
 pub fn install(app: &AppHandle) -> Result<(), String> {

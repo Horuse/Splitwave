@@ -34,6 +34,32 @@
 
 	let ghost = $state<number | null>(null);
 
+	let editing = $state(false);
+	let draft = $state('');
+
+	function startEdit(e: FocusEvent) {
+		editing = true;
+		draft = String(value);
+		(e.currentTarget as HTMLInputElement).select();
+	}
+
+	function commitEdit() {
+		editing = false;
+		const next = Number(draft);
+		if (!Number.isNaN(next)) onChange(clamp(next));
+	}
+
+	function onEditKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			(e.currentTarget as HTMLInputElement).blur();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			editing = false;
+			(e.currentTarget as HTMLInputElement).blur();
+		}
+	}
+
 	let pendingValue: number | null = null;
 	let pendingRaf: number | undefined;
 
@@ -122,7 +148,16 @@
 <label class="flex flex-col gap-0.5 text-[11px] text-neutral-1000">
 	<span class="flex items-baseline justify-between">
 		<span>{label}</span>
-		<span class="font-mono tabular-nums {valueClass}">{display(value)}</span>
+		<input
+			type="text"
+			inputmode="decimal"
+			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:outline-none focus:ring-1 focus:ring-amber-500 {valueClass}"
+			value={editing ? draft : display(value)}
+			oninput={(e) => (draft = e.currentTarget.value)}
+			onfocus={startEdit}
+			onblur={commitEdit}
+			onkeydown={onEditKeyDown}
+		/>
 	</span>
 	<div class="relative pt-1 pb-2">
 		<input

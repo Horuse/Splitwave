@@ -131,7 +131,8 @@
 
 	function clientYToGain(yClient: number, rect: DOMRect): number {
 		const pct = (yClient - rect.top) / rect.height;
-		return GAIN_MAX - Math.max(0, Math.min(1, pct)) * (GAIN_MAX - GAIN_MIN);
+		const g = GAIN_MAX - Math.max(0, Math.min(1, pct)) * (GAIN_MAX - GAIN_MIN);
+		return Math.round(g * 10) / 10;
 	}
 
 	function onFaderPointerDown(i: number, e: PointerEvent) {
@@ -159,6 +160,30 @@
 		e.preventDefault();
 		const step = e.shiftKey ? 0.1 : 1;
 		setBand(i, (data.gainsDb[i] ?? 0) + (e.deltaY > 0 ? -step : step));
+	}
+
+	let editingBand = $state<number | null>(null);
+	let draft = $state('');
+
+	function startEdit(i: number, e: FocusEvent) {
+		editingBand = i;
+		draft = String(data.gainsDb[i] ?? 0);
+		(e.currentTarget as HTMLInputElement).select();
+	}
+	function commitEdit(i: number) {
+		editingBand = null;
+		const next = Number(draft);
+		if (!Number.isNaN(next)) setBand(i, next);
+	}
+	function onEditKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			(e.currentTarget as HTMLInputElement).blur();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			editingBand = null;
+			(e.currentTarget as HTMLInputElement).blur();
+		}
 	}
 
 	function formatFreq(hz: number): string {
@@ -216,7 +241,16 @@
 			{#each FREQUENCIES as freq, i (freq)}
 				{@const gain = data.gainsDb[i] ?? 0}
 				<div class="flex flex-1 flex-col items-center gap-0.5">
-					<span class="font-mono text-[8px] text-neutral-1000 tabular-nums">{formatGain(gain)}</span>
+					<input
+						type="text"
+						inputmode="decimal"
+						class="nodrag nopan w-full rounded-sm bg-transparent text-center font-mono text-[8px] text-neutral-1000 tabular-nums focus:bg-neutral-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+						value={editingBand === i ? draft : formatGain(gain)}
+						oninput={(e) => (draft = e.currentTarget.value)}
+						onfocus={(e) => startEdit(i, e)}
+						onblur={() => commitEdit(i)}
+						onkeydown={onEditKeyDown}
+					/>
 					<div
 						bind:this={faderEls[i]}
 						class="nodrag nopan nowheel relative h-24 w-full cursor-ns-resize rounded-sm border border-neutral-400 bg-neutral-200/60"

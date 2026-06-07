@@ -1,6 +1,6 @@
 [package]
 name = "splitwave"
-version = "0.4.0"
+version = "0.5.0"
 description = "Audio routing app for macOS, Linux and Windows. Build a node graph of inputs, effects, and outputs"
 edition = "2021"
 

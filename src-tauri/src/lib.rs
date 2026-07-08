@@ -18,6 +18,10 @@ const MENU_EVENT: &str = "menu://action";
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
+pub fn app_handle() -> Option<&'static AppHandle> {
+    APP_HANDLE.get()
+}
+
 #[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let about_action = MenuItemBuilder::with_id("about", "About Splitwave").build(app)?;
@@ -136,6 +140,16 @@ pub fn run() {
             commands::get_device_volume,
             commands::set_device_volume,
             commands::diagnose_update_error,
+            commands::webrtc_create_offer,
+            commands::webrtc_accept_offer,
+            commands::webrtc_complete_handshake,
+            commands::webrtc_disconnect_peer,
+            commands::webrtc_set_peer_muted,
+            commands::webrtc_create_room,
+            commands::webrtc_join_room,
+            commands::webrtc_leave_room,
+            commands::webrtc_peer_pings,
+            commands::webrtc_session_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

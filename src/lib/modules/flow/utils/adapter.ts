@@ -21,6 +21,7 @@ export function toXyEdges(edges: PipelineEdge[]): XyEdge[] {
 	return edges.map((e) => ({
 		id: e.id,
 		source: e.source,
+		sourceHandle: e.sourceHandle,
 		target: e.target,
 		targetHandle: e.targetHandle
 	}));
@@ -47,6 +48,7 @@ export function fromXyEdges(xyEdges: XyEdge[]): PipelineEdge[] {
 	return xyEdges.map((e) => ({
 		id: e.id,
 		source: e.source,
+		sourceHandle: e.sourceHandle ?? undefined,
 		target: e.target,
 		targetHandle: e.targetHandle ?? undefined
 	}));

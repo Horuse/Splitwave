@@ -26,6 +26,7 @@ import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
+import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -231,6 +232,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 			maxDfThreshDb: 20,
 			bypassed: false
 		}
+	}),
+	webRtcCollaborator: entry<'webRtcCollaborator'>({
+		kind: 'webRtcCollaborator',
+		category: 'effect',
+		label: 'WebRTC',
+		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
+		component: WebRtcCollaborator,
+		defaultData: { opusBitrate: 96000, opusApplication: 'voip' }
 	})
 };
 

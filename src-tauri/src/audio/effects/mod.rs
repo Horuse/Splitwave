@@ -27,6 +27,7 @@ pub mod noise_suppressor;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
+pub mod webrtc_bridge;
 mod util;
 
 use util::{db_to_linear, num, store_f32};
@@ -42,6 +43,7 @@ use noise_gate::NoiseGateEffect;
 use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
+use webrtc_bridge::WebRtcBridgeEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
 pub use lufs_meter::{LufsHandle, LufsMeterEffect};
 pub use waveform::{WaveformEffect, WaveformHandle};
@@ -82,6 +84,7 @@ pub enum RuntimeEffect {
     Delay(DelayEffect),
     Reverb(ReverbEffect),
     NoiseSuppressor(NoiseSuppressorEffect),
+    WebRtcBridge(WebRtcBridgeEffect),
 }
 
 impl RuntimeEffect {
@@ -102,6 +105,7 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.latency_frames(),
             RuntimeEffect::Reverb(e) => e.latency_frames(),
             RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
+            RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
         }
     }
 
@@ -127,6 +131,15 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.process(main, frames),
             RuntimeEffect::Reverb(e) => e.process(main, frames),
             RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
+            RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
+        }
+    }
+
+    /// Fills per-peer output handle buffers; only the WebRTC bridge has any.
+    #[inline]
+    pub fn populate_handle_bufs(&self, handle_bufs: &mut [(String, Vec<f32>)], frames: usize) {
+        if let RuntimeEffect::WebRtcBridge(e) = self {
+            e.populate_handle_bufs(handle_bufs, frames);
         }
     }
 }
@@ -592,5 +605,21 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }
         },
+        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application } => {
+            use crate::audio::webrtc;
+            use rtrb::RingBuffer;
+            // ~1 s of stereo audio at the graph rate; the encode task drains it.
+            const SEND_RING: usize = 96_000;
+            let (send_producer, send_consumer) = RingBuffer::<f32>::new(SEND_RING);
+            let peer_snapshots = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application)
+                .set_send_consumer(send_consumer, sample_rate);
+            mk(
+                RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
+                    send_producer,
+                    peer_snapshots,
+                }),
+                None, None, None, None, None,
+            )
+        }
     }
 }

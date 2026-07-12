@@ -629,11 +629,12 @@ pub fn instantiate_effect(
             }
             let session = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application);
             session.set_send_consumers(send_consumers, sample_rate);
-            let peer_snapshots = session.register_bridge(sample_rate);
+            let receiver =
+                crate::audio::stream_recv::ChannelReceiver::new(session.register_bridge(sample_rate));
             mk(
                 RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
                     send_producers,
-                    peer_snapshots,
+                    receiver,
                 }),
                 None, None, None, None, None,
             )

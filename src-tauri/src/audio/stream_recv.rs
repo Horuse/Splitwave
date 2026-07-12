@@ -93,6 +93,60 @@ impl PlaybackTap {
     }
 }
 
+/// RT-side reader over a channel tap map, shared by every node that emits
+/// received audio (WebRTC bridge, direct-IP receiver). Naming of channels is
+/// left to the caller; this only owns the jitter pop + summing.
+pub struct ChannelReceiver {
+    taps: TapMap,
+}
+
+impl ChannelReceiver {
+    pub fn new(taps: TapMap) -> Self {
+        Self { taps }
+    }
+
+    /// Pop one block from every tap into its `scratch` and sum into `mix`. Call
+    /// once per block before any `channel`/`prefix_mix` reads (they reuse the
+    /// popped scratch).
+    pub fn mix_block(&self, mix: &mut [f32]) {
+        mix.fill(0.0);
+        if let Ok(mut taps) = self.taps.try_lock() {
+            for tap in taps.values_mut() {
+                let n = tap.fill_block(mix.len());
+                for (d, &v) in mix[..n].iter_mut().zip(tap.scratch[..n].iter()) {
+                    *d += v;
+                }
+            }
+        }
+    }
+
+    /// Copy one channel's already-popped scratch into `out`.
+    pub fn channel(&self, key: &str, out: &mut [f32]) {
+        out.fill(0.0);
+        if let Ok(taps) = self.taps.try_lock() {
+            if let Some(tap) = taps.get(key) {
+                let n = tap.valid.min(out.len());
+                out[..n].copy_from_slice(&tap.scratch[..n]);
+            }
+        }
+    }
+
+    /// Sum every channel whose key starts with `prefix` into `out`.
+    pub fn prefix_mix(&self, prefix: &str, out: &mut [f32]) {
+        out.fill(0.0);
+        if let Ok(taps) = self.taps.try_lock() {
+            for (key, tap) in taps.iter() {
+                if key.starts_with(prefix) {
+                    let n = tap.valid.min(out.len());
+                    for (d, &v) in out[..n].iter_mut().zip(tap.scratch[..n].iter()) {
+                        *d += v;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Per-target-rate resample state; one per distinct consumer sample rate.
 struct RateState {
     resampler: Option<StereoResampler>,

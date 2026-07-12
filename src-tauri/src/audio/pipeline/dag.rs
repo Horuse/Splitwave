@@ -366,14 +366,16 @@ impl DelayLine {
 /// Per-output DAG runtime: sources + effects in topological order plus the
 /// terminal edges whose buffers get summed into the final output.
 pub(super) struct OutputGraph {
-    /// Reserved for drift-correction; not yet consumed.
-    #[allow(dead_code)]
     sample_rate: u32,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
 }
 
 impl OutputGraph {
+    pub(super) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// True if every source has enough buffered input to produce one full
     /// output block without underrun. Availability-paced workers use this to
     /// gate block production.

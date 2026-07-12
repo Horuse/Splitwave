@@ -132,8 +132,13 @@ pub(super) fn start_monitor_worker(
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    // Live monitors are paced by wall-clock like a speaker, not by source
+    // availability (that's for file rendering, which may outrun real time). This
+    // keeps meters/scopes at real time and, crucially, consumes network-sourced
+    // audio (WebRTC) at the rate it arrives instead of draining its jitter buffer.
+    let ticker = SystemClockTicker::new(graph.sample_rate(), DSP_BLOCK_FRAMES);
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::OnAvailability;
+    let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("monitor".into())
         .spawn(move || {

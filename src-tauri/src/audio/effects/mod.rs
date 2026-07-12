@@ -627,8 +627,9 @@ pub fn instantiate_effect(
                 send_producers.push(p);
                 send_consumers.push(c);
             }
-            let peer_snapshots = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application)
-                .set_send_consumers(send_consumers, sample_rate);
+            let session = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application);
+            session.set_send_consumers(send_consumers, sample_rate);
+            let peer_snapshots = session.register_bridge();
             mk(
                 RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
                     send_producers,

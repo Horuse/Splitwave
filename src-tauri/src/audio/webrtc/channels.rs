@@ -166,8 +166,8 @@ pub fn wire_peer_events(
                 _ => return,
             };
             let remote_id = display_id.lock().unwrap().clone();
-            // Drop the peer and its playback taps. Only if the map still holds
-            // this pc: a retry may have reused the connection_id with a new one.
+            // Drop the peer. Only if the map still holds this pc: a retry may
+            // have reused the connection_id with a new one.
             {
                 let mut peers = session.peers.lock().await;
                 let is_current = peers
@@ -178,11 +178,7 @@ pub fn wire_peer_events(
                     peers.remove(&connection_id);
                 }
             }
-            session
-                .peer_snapshots
-                .lock()
-                .unwrap()
-                .retain(|_, tap| tap.peer != remote_id);
+            session.drop_peer_channels(&remote_id);
             info!(node = %node_id, peer = %remote_id, ?state, "peer state changed");
             if let Some(app) = crate::app_handle() {
                 let _ = app.emit(event, json!({ "nodeId": node_id, "peerId": remote_id }));

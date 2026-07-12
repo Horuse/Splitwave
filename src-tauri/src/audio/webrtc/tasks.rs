@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, RingBuffer};
 use tracing::warn;
 
 use webrtc::data_channel::RTCDataChannel;
@@ -12,10 +12,8 @@ use crate::audio::graph::OpusApplication;
 use crate::audio::resample::StereoResampler;
 use crate::audio::streams::bulk_push;
 
-use super::session::{PeerChannel, WebRtcSession};
-use super::{
-    PlaybackTap, OPUS_FRAME_SAMPLES, OPUS_SR, PLAYBACK_RING, RECV_RING, RESAMPLE_CHUNK,
-};
+use super::session::{ChannelBroadcast, PeerChannel, WebRtcSession};
+use super::{OPUS_FRAME_SAMPLES, OPUS_SR, RECV_RING, RESAMPLE_CHUNK};
 
 /// Per-channel Opus encode state. One instance per local send channel.
 struct ChannelEnc {
@@ -221,23 +219,19 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
                 }
             };
             let (recv_prod, recv_cons) = RingBuffer::<f32>::new(RECV_RING);
-            let (pb_prod, pb_cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
             let c = Arc::new(PeerChannel {
                 decoder: std::sync::Mutex::new(decoder),
                 recv_producer: std::sync::Mutex::new(Some(recv_prod)),
             });
             chans.insert(channel, c.clone());
-            (c, Some((recv_cons, pb_prod, pb_cons)))
+            (c, Some(recv_cons))
         }
     };
 
-    if let Some((recv_cons, pb_prod, pb_cons)) = wiring {
-        spawn_peer_snapshot_task(recv_cons, pb_prod, session.output_sr.clone());
+    if let Some(recv_cons) = wiring {
         let display = peer.display_id.lock().unwrap().clone();
-        session.peer_snapshots.lock().unwrap().insert(
-            format!("{display}:{channel}"),
-            PlaybackTap::new(pb_cons, display, channel),
-        );
+        let broadcast = session.attach_channel(display, channel);
+        spawn_peer_snapshot_task(recv_cons, broadcast, session.output_sr.clone());
     }
 
     let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
@@ -258,12 +252,12 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     }
 }
 
-// Drains the peer channel's 48 kHz receive ring, resamples it down to the graph
-// rate, and pushes it into the output-rate playback ring the RT bridge drains.
-// The ring itself is the jitter buffer, so no audio is dropped between ticks.
+// Drains the peer channel's 48 kHz receive ring, resamples it to the graph rate,
+// and fans it out into every live output bridge's playback ring (the broadcast).
+// Each ring is that bridge's jitter buffer, so no audio is dropped between ticks.
 pub fn spawn_peer_snapshot_task(
     mut consumer: Consumer<f32>,
-    mut producer: Producer<f32>,
+    broadcast: ChannelBroadcast,
     output_sr: Arc<std::sync::atomic::AtomicU32>,
 ) {
     tauri::async_runtime::spawn(async move {
@@ -276,7 +270,7 @@ pub fn spawn_peer_snapshot_task(
         loop {
             interval.tick().await;
             // The peer/channel was dropped (disconnect or room cancelled) -- exit.
-            if consumer.is_abandoned() || producer.is_abandoned() {
+            if consumer.is_abandoned() {
                 return;
             }
 
@@ -322,7 +316,11 @@ pub fn spawn_peer_snapshot_task(
             }
 
             if !out_acc.is_empty() {
-                bulk_push(&mut producer, &out_acc);
+                let mut producers = broadcast.lock().unwrap();
+                producers.retain(|p| !p.is_abandoned());
+                for prod in producers.iter_mut() {
+                    bulk_push(prod, &out_acc);
+                }
             }
         }
     });

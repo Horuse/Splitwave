@@ -5,6 +5,7 @@
 	import type { OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { PasswordInput } from '$lib/modules/form/ui';
+	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
@@ -28,7 +29,7 @@
 	let busy = $state(false);
 	let error = $state('');
 	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
-	let pings = $state<Record<string, number>>({});
+	let stats = $state<Record<string, { pingMs: number; loss: number }>>({});
 	let copied = $state(false);
 
 	function removePeerEdges(peerId: string) {
@@ -161,7 +162,7 @@
 		password = '';
 		joinPassword = '';
 		peers = [];
-		pings = {};
+		stats = {};
 		error = '';
 		busy = false;
 	}
@@ -184,7 +185,7 @@
 		if (pingInterval) return;
 		pingInterval = setInterval(async () => {
 			if (peers.length === 0) return;
-			pings = await audioMethods.webrtcPeerPings(id).catch(() => ({}));
+			stats = await audioMethods.webrtcPeerStats(id).catch(() => ({}));
 		}, 2000);
 	}
 
@@ -421,9 +422,15 @@
 					<span class="truncate font-mono text-[9px] text-neutral-700">
 						{peer.name || peer.peerId.slice(0, 10)}
 					</span>
-					<span class="shrink-0 font-mono text-[9px] tabular-nums text-neutral-400">
-						{pings[peer.peerId] ? `${pings[peer.peerId]}ms` : '--'}
-					</span>
+					<div class="flex shrink-0 items-center gap-1">
+						<SignalBars
+							loss={stats[peer.peerId]?.loss ?? null}
+							ping={stats[peer.peerId]?.pingMs ?? null}
+						/>
+						<span class="font-mono text-[9px] tabular-nums text-neutral-400">
+							{stats[peer.peerId]?.pingMs ? `${stats[peer.peerId].pingMs}ms` : '--'}
+						</span>
+					</div>
 					<div class="flex gap-1">
 						<button
 							class={[

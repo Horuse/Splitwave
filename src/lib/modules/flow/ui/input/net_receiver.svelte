@@ -1,12 +1,41 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
+	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import SignalBars from '$lib/components/signal_bars.svelte';
+	import { formatRate } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
 	let { id, data }: NodeProps<NetReceiverNodeType> = $props();
 
 	const flow = useSvelteFlow();
+
+	let loss = $state<number | null>(null);
+	let rate = $state(0); // bytes/sec
+	let prevBytes = 0;
+	let prevAt = 0;
+
+	const POLL_MS = 1000;
+	const interval = setInterval(async () => {
+		const s = await audioMethods.netReceiverStats(id).catch(() => null);
+		const now = performance.now();
+		if (!s) {
+			loss = null;
+			rate = 0;
+			prevBytes = 0;
+			prevAt = now;
+			return;
+		}
+		loss = s.loss;
+		if (prevAt > 0 && s.bytes >= prevBytes) {
+			rate = ((s.bytes - prevBytes) * 1000) / (now - prevAt);
+		}
+		prevBytes = s.bytes;
+		prevAt = now;
+	}, POLL_MS);
+	onDestroy(() => clearInterval(interval));
 
 	const MAX_CHANNELS = 10;
 	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
@@ -69,6 +98,17 @@
 					+
 				</button>
 			</div>
+		</div>
+
+		<!-- quality + throughput -->
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-1">
+				<SignalBars {loss} />
+				<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+					{loss == null ? '--' : `${(loss * 100).toFixed(1)}%`}
+				</span>
+			</div>
+			<span class="font-mono text-[9px] tabular-nums text-neutral-500">{formatRate(rate)}</span>
 		</div>
 
 		<hr class="border-neutral-300" />

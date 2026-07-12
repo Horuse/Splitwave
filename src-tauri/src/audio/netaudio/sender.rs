@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -32,6 +33,19 @@ pub struct NetSender {
     config: Config,
     send_consumers: Arc<Mutex<Vec<Consumer<f32>>>>,
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    bytes: Arc<AtomicU64>,
+    packets: Arc<AtomicU64>,
+}
+
+/// `(bytes, packets)` sent since this sender bound its socket.
+pub fn stats(node_id: &str) -> Option<(u64, u64)> {
+    let reg = registry().lock().unwrap();
+    reg.get(node_id).map(|s| {
+        (
+            s.bytes.load(Ordering::Relaxed),
+            s.packets.load(Ordering::Relaxed),
+        )
+    })
 }
 
 static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<NetSender>>>> = OnceLock::new();
@@ -62,6 +76,8 @@ pub fn get_or_create(
         config,
         send_consumers: Arc::new(Mutex::new(Vec::new())),
         task: Mutex::new(None),
+        bytes: Arc::new(AtomicU64::new(0)),
+        packets: Arc::new(AtomicU64::new(0)),
     });
     sender.clone().spawn_send();
     reg.insert(node_id.to_string(), sender.clone());
@@ -155,8 +171,12 @@ impl NetSender {
                 });
             }
             for p in &packets {
-                if let Err(e) = socket.send_to(p, target).await {
-                    warn!(%target, error = %e, "net sender send failed");
+                match socket.send_to(p, target).await {
+                    Ok(_) => {
+                        self.bytes.fetch_add(p.len() as u64, Ordering::Relaxed);
+                        self.packets.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => warn!(%target, error = %e, "net sender send failed"),
                 }
             }
         }

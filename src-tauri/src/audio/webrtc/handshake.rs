@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -54,6 +54,8 @@ pub async fn create_offer(
         channels: Mutex::new(HashMap::new()),
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
+        packets: Arc::new(AtomicU64::new(0)),
+        lost: Arc::new(AtomicU64::new(0)),
         remote_name: Arc::new(Mutex::new(String::new())),
         remote_channels: Arc::new(AtomicU32::new(0)),
         display_id: display_id.clone(),
@@ -244,6 +246,8 @@ pub async fn accept_offer(
         channels: Mutex::new(HashMap::new()),
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
+        packets: Arc::new(AtomicU64::new(0)),
+        lost: Arc::new(AtomicU64::new(0)),
         remote_name: Arc::new(Mutex::new(String::new())),
         remote_channels: Arc::new(AtomicU32::new(0)),
         display_id: display_id.clone(),

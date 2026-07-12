@@ -139,6 +139,21 @@ export const methods = {
 	/** Returns RTT ping in ms per display peer ID. 0 = no ping yet. */
 	webrtcPeerPings: (nodeId: string): Promise<Record<string, number>> =>
 		invoke<Record<string, number>>('webrtc_peer_pings', { nodeId }),
+	/** Per-peer receive quality: RTT ping (ms) and packet-loss ratio (0..1). */
+	webrtcPeerStats: (
+		nodeId: string
+	): Promise<Record<string, { pingMs: number; loss: number }>> =>
+		invoke('webrtc_peer_stats', { nodeId }),
+	/** Direct-IP receive stats, or null when the node isn't running. */
+	netReceiverStats: (
+		nodeId: string
+	): Promise<{ bytes: number; packets: number; loss: number } | null> =>
+		invoke('net_receiver_stats', { nodeId }),
+	/** Direct-IP send stats, or null when the node isn't running. */
+	netSenderStats: (
+		nodeId: string
+	): Promise<{ bytes: number; packets: number } | null> =>
+		invoke('net_sender_stats', { nodeId }),
 	/** Current room phase/code and connected peers, for restoring node UI on remount. */
 	webrtcSessionState: (
 		nodeId: string

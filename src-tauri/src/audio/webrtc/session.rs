@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rtrb::{Consumer, Producer};
@@ -49,6 +49,10 @@ pub struct PeerState {
     pub channels: Mutex<HashMap<u8, Arc<PeerChannel>>>,
     pub muted: Arc<AtomicBool>,
     pub ping_ms: Arc<AtomicU32>,
+    // Received audio packets and gaps inferred from per-channel seq numbers, for
+    // a receive-side loss ratio in the UI.
+    pub packets: Arc<AtomicU64>,
+    pub lost: Arc<AtomicU64>,
     // Remote participant name and input count from the peer's ctrl meta.
     pub remote_name: Arc<Mutex<String>>,
     pub remote_channels: Arc<AtomicU32>,
@@ -61,6 +65,8 @@ pub struct PeerState {
 pub struct PeerChannel {
     pub decoder: Mutex<opus::Decoder>,
     pub recv_producer: Mutex<Option<Producer<f32>>>,
+    // Last seq seen on this channel, to count gaps as loss.
+    pub last_seq: Mutex<Option<u16>>,
 }
 
 impl WebRtcSession {

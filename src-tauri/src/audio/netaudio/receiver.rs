@@ -3,6 +3,7 @@
 //! decoded to 48 kHz and fanned out to every output subgraph via `FanoutRegistry`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rtrb::{Producer, RingBuffer};
@@ -26,6 +27,21 @@ pub struct NetReceiver {
     fanout: FanoutRegistry,
     channels: Mutex<HashMap<u8, Arc<ChannelState>>>,
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    bytes: AtomicU64,
+    packets: AtomicU64,
+    lost: AtomicU64,
+}
+
+/// `(bytes, packets, lost)` since this receiver bound its socket.
+pub fn stats(node_id: &str) -> Option<(u64, u64, u64)> {
+    let reg = registry().lock().unwrap();
+    reg.get(node_id).map(|r| {
+        (
+            r.bytes.load(Ordering::Relaxed),
+            r.packets.load(Ordering::Relaxed),
+            r.lost.load(Ordering::Relaxed),
+        )
+    })
 }
 
 static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<NetReceiver>>>> = OnceLock::new();
@@ -50,6 +66,9 @@ pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {
         fanout: FanoutRegistry::default(),
         channels: Mutex::new(HashMap::new()),
         task: Mutex::new(None),
+        bytes: AtomicU64::new(0),
+        packets: AtomicU64::new(0),
+        lost: AtomicU64::new(0),
     });
     receiver.clone().spawn_recv();
     reg.insert(node_id.to_string(), receiver.clone());
@@ -85,12 +104,21 @@ impl NetReceiver {
         info!(port = self.port, "net receiver listening");
         let mut buf = vec![0u8; 2048];
         let mut pcm: Vec<f32> = Vec::new();
+        let mut last_seq: HashMap<u8, u16> = HashMap::new();
         loop {
             let n = match socket.recv_from(&mut buf).await {
                 Ok((n, _)) => n,
                 Err(_) => continue,
             };
             let Some(pkt) = packet::parse(&buf[..n]) else { continue };
+            self.bytes.fetch_add(n as u64, Ordering::Relaxed);
+            self.packets.fetch_add(1, Ordering::Relaxed);
+            if let Some(prev) = last_seq.insert(pkt.channel, pkt.seq) {
+                let gap = pkt.seq.wrapping_sub(prev).wrapping_sub(1);
+                if gap > 0 && (gap as u32) < 1000 {
+                    self.lost.fetch_add(gap as u64, Ordering::Relaxed);
+                }
+            }
             let channel = self.channel(pkt.channel);
             pcm.clear();
             channel.decoder.lock().unwrap().decode(pkt.format, pkt.payload, &mut pcm);

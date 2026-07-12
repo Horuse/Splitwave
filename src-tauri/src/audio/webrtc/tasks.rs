@@ -92,13 +92,15 @@ impl ChannelEnc {
         }
     }
 
-    /// Encode the frame at `off` and prefix it with the channel index.
-    fn encode_frame(&mut self, channel: u8, off: usize) -> Option<Bytes> {
+    /// Encode the frame at `off`, prefixed with `[channel, seq_be]` for the
+    /// receiver's per-channel loss accounting.
+    fn encode_frame(&mut self, channel: u8, seq: u16, off: usize) -> Option<Bytes> {
         let enc = self.encoder.as_mut()?;
         match enc.encode_float(&self.out_acc[off..off + OPUS_FRAME_SAMPLES], &mut self.opus_buf) {
             Ok(n) => {
                 self.send_buf.clear();
                 self.send_buf.push(channel);
+                self.send_buf.extend_from_slice(&seq.to_be_bytes());
                 self.send_buf.extend_from_slice(&self.opus_buf[..n]);
                 Some(Bytes::copy_from_slice(&self.send_buf))
             }
@@ -120,6 +122,7 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
 
     tauri::async_runtime::spawn(async move {
         let mut encs: Vec<ChannelEnc> = Vec::new();
+        let mut seqs: Vec<u16> = Vec::new();
         let mut interval = tokio::time::interval(Duration::from_millis(20));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -133,8 +136,10 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
                 let mut cons = session.send_consumers.lock().unwrap();
                 while encs.len() < cons.len() {
                     encs.push(ChannelEnc::new(bitrate, application));
+                    seqs.push(0);
                 }
                 encs.truncate(cons.len());
+                seqs.truncate(cons.len());
                 for (i, c) in cons.iter_mut().enumerate() {
                     let take = c.slots();
                     if take > 0 {
@@ -156,8 +161,9 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
                 let mut frames: Vec<Bytes> = Vec::new();
                 let mut off = 0;
                 while enc.out_acc.len() - off >= OPUS_FRAME_SAMPLES {
-                    if let Some(b) = enc.encode_frame(i as u8, off) {
+                    if let Some(b) = enc.encode_frame(i as u8, seqs[i], off) {
                         frames.push(b);
+                        seqs[i] = seqs[i].wrapping_add(1);
                     }
                     off += OPUS_FRAME_SAMPLES;
                 }
@@ -192,15 +198,16 @@ async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
     }
 }
 
-/// A received Opus packet is `[channel_byte, ...opus]`. Receive state for a
-/// channel is created on its first packet, so peers need not agree on how many
-/// channels each sends.
+/// A received Opus packet is `[channel_byte, seq_be, ...opus]`. Receive state
+/// for a channel is created on its first packet, so peers need not agree on how
+/// many channels each sends.
 pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id: &str) {
-    if data.len() < 2 {
+    if data.len() < 4 {
         return;
     }
     let channel = data[0];
-    let payload = data.slice(1..);
+    let seq = u16::from_be_bytes([data[1], data[2]]);
+    let payload = data.slice(3..);
 
     let peer = {
         let peers = session.peers.lock().await;
@@ -227,11 +234,26 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
             let c = Arc::new(PeerChannel {
                 decoder: std::sync::Mutex::new(decoder),
                 recv_producer: std::sync::Mutex::new(Some(recv_prod)),
+                last_seq: std::sync::Mutex::new(None),
             });
             chans.insert(channel, c.clone());
             (c, Some(recv_cons))
         }
     };
+
+    // Count gaps between consecutive seq numbers as loss (guard against
+    // reorder / wrap producing an absurd jump).
+    {
+        let mut last = ch.last_seq.lock().unwrap();
+        if let Some(prev) = *last {
+            let gap = seq.wrapping_sub(prev).wrapping_sub(1);
+            if gap > 0 && (gap as u32) < 1000 {
+                peer.lost.fetch_add(gap as u64, Ordering::Relaxed);
+            }
+        }
+        *last = Some(seq);
+    }
+    peer.packets.fetch_add(1, Ordering::Relaxed);
 
     if let Some(recv_cons) = wiring {
         let display = peer.display_id.lock().unwrap().clone();

@@ -10,7 +10,7 @@ mod tasks;
 
 pub use handshake::{accept_offer, complete_handshake, create_offer};
 pub use registry::{
-    disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, session_state,
+    disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, peer_stats, session_state,
     set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,
 };
 

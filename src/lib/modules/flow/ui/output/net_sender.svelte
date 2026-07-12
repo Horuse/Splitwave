@@ -1,12 +1,36 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
+	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { formatRate } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
 	let { id, data }: NodeProps<NetSenderNodeType> = $props();
 
 	const flow = useSvelteFlow();
+
+	let rate = $state(0); // bytes/sec
+	let prevBytes = 0;
+	let prevAt = 0;
+
+	const interval = setInterval(async () => {
+		const s = await audioMethods.netSenderStats(id).catch(() => null);
+		const now = performance.now();
+		if (!s) {
+			rate = 0;
+			prevBytes = 0;
+			prevAt = now;
+			return;
+		}
+		if (prevAt > 0 && s.bytes >= prevBytes) {
+			rate = ((s.bytes - prevBytes) * 1000) / (now - prevAt);
+		}
+		prevBytes = s.bytes;
+		prevAt = now;
+	}, 1000);
+	onDestroy(() => clearInterval(interval));
 
 	const MAX_CHANNELS = 10;
 	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
@@ -125,6 +149,12 @@
 				<span class="font-mono text-[9px] text-neutral-500">{ch.label}</span>
 			</div>
 		{/each}
+
+		<!-- throughput -->
+		<div class="flex items-center justify-between">
+			<span class="font-mono text-[9px] text-neutral-500">Sending</span>
+			<span class="font-mono text-[9px] tabular-nums text-neutral-500">{formatRate(rate)}</span>
+		</div>
 
 		<hr class="border-neutral-300" />
 

@@ -67,6 +67,14 @@ pub async fn leave_room(node_id: &str) {
     *session.room_code.lock().unwrap() = None;
     let peers: Vec<Arc<PeerState>> =
         session.peers.lock().await.drain().map(|(_, p)| p).collect();
+    for peer in &peers {
+        // Tell peers we're leaving so they react immediately instead of waiting
+        // out the ICE disconnect timeout.
+        let ctrl = peer.ctrl_dc.lock().unwrap().clone();
+        if let Some(dc) = ctrl {
+            let _ = dc.send_text("B".to_string()).await;
+        }
+    }
     for peer in peers {
         let _ = peer.pc.close().await;
     }

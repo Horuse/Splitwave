@@ -66,7 +66,16 @@ pub async fn wire_ctrl_channel(
         Box::pin(async move {
             if !msg.is_string { return; }
             let Ok(text) = String::from_utf8(msg.data.to_vec()) else { return };
-            if let Some(ts_str) = text.strip_prefix('P') {
+            if text == "B" {
+                // Peer is leaving; surface it now rather than on ICE timeout.
+                let peer = display_id.lock().unwrap().clone();
+                if let Some(app) = crate::app_handle() {
+                    let _ = app.emit(
+                        "audio://webrtc_disconnected",
+                        json!({ "nodeId": node_id, "peerId": peer }),
+                    );
+                }
+            } else if let Some(ts_str) = text.strip_prefix('P') {
                 let _ = dc.send_text(format!("Q{ts_str}")).await;
             } else if let Some(ts_str) = text.strip_prefix('Q') {
                 if let Ok(ts) = ts_str.parse::<u64>() {

@@ -5,6 +5,8 @@
 	import type { OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { PasswordInput } from '$lib/modules/form/ui';
+	import { modalManager } from '$lib/modules/overlay/modal';
+	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
@@ -128,6 +130,27 @@
 		}
 	}
 
+	async function confirmAction(message: string, confirmLabel: string): Promise<boolean> {
+		const ok = await modalManager.open('', ConfirmModal, {
+			message,
+			confirmLabel,
+			danger: true,
+			canClose: true
+		});
+		return ok === true;
+	}
+
+	async function destroy() {
+		if (!(await confirmAction('Destroy this room? All participants will be disconnected.', 'Destroy')))
+			return;
+		await cancel();
+	}
+
+	async function leave() {
+		if (!(await confirmAction('Leave this room?', 'Leave'))) return;
+		await cancel();
+	}
+
 	async function cancel() {
 		await audioMethods.webrtcLeaveRoom(id).catch(() => {});
 		for (const p of peers) removePeerEdges(p.peerId);
@@ -181,6 +204,12 @@
 			if (e.nodeId !== id) return;
 			peers = peers.filter((p) => p.peerId !== e.peerId);
 			removePeerEdges(e.peerId);
+			// A guest whose host is gone returns to idle.
+			if (phase === 'joining' && peers.length === 0) {
+				stopPingPolling();
+				phase = 'idle';
+				error = 'Host left the room';
+			}
 		}),
 		audioMethods.onWebrtcError((e) => {
 			if (e.nodeId !== id) return;
@@ -310,7 +339,7 @@
 		{#if phase === 'idle'}
 			<PasswordInput bind:value={password} placeholder="Password (optional)" />
 			<button
-				class="h-6 rounded border border-neutral-400 bg-neutral-100 font-mono text-[10px] text-neutral-800 hover:bg-neutral-200 disabled:opacity-50"
+				class="nodrag nopan button-main primary h-6 rounded-md px-2 font-mono text-[10px]"
 				disabled={busy}
 				onclick={createRoom}
 			>
@@ -327,7 +356,7 @@
 			<div class="flex gap-1">
 				<PasswordInput bind:value={joinPassword} placeholder="Password" />
 				<button
-					class="h-6 rounded border border-neutral-400 bg-neutral-100 px-2 font-mono text-[10px] text-neutral-800 hover:bg-neutral-200 disabled:opacity-50"
+					class="nodrag nopan button-main primary h-6 rounded-md px-3 font-mono text-[10px]"
 					disabled={busy || joinInput.trim().length < 6}
 					onclick={joinRoom}
 				>
@@ -338,28 +367,39 @@
 			<div class="flex items-center justify-between">
 				<span class="font-mono text-[9px] text-neutral-500">Room code</span>
 				<button
-					class="h-4 rounded border border-neutral-300 bg-neutral-100 px-1.5 font-mono text-[9px] text-neutral-700 hover:bg-neutral-200"
+					class="nodrag nopan button-main secondary h-4 rounded px-1.5 font-mono text-[9px]"
 					onclick={() => copy(roomCode)}>{copied ? 'copied!' : 'copy'}</button
 				>
 			</div>
 			<div class="flex items-center justify-between rounded border border-neutral-300 bg-neutral-50 px-2 py-1">
 				<span class="font-mono text-base font-bold tracking-widest text-neutral-900">{roomCode}</span>
 			</div>
-			<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
+			{#if peers.length === 0}
+				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
+			{/if}
 			<button
-				class="h-6 rounded border border-red-300 bg-red-50 font-mono text-[10px] text-red-700 hover:bg-red-100"
-				onclick={cancel}
+				class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
+				onclick={destroy}
 			>
-				Cancel
+				Destroy
 			</button>
 		{:else if phase === 'joining'}
-			<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-			<button
-				class="h-6 rounded border border-red-300 bg-red-50 font-mono text-[10px] text-red-700 hover:bg-red-100"
-				onclick={cancel}
-			>
-				Cancel
-			</button>
+			{#if peers.length === 0}
+				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
+				<button
+					class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
+					onclick={cancel}
+				>
+					Cancel
+				</button>
+			{:else}
+				<button
+					class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
+					onclick={leave}
+				>
+					Leave
+				</button>
+			{/if}
 		{/if}
 
 		{#if error}
@@ -387,17 +427,15 @@
 					<div class="flex gap-1">
 						<button
 							class={[
-								'h-4 rounded border px-1 font-mono text-[9px]',
-								peer.muted
-									? 'border-amber-400 bg-amber-100 text-amber-800'
-									: 'border-neutral-300 bg-neutral-100 text-neutral-700'
+								'nodrag nopan button-main h-4 rounded px-1 font-mono text-[9px]',
+								peer.muted ? 'secondary' : 'green'
 							]}
 							onclick={() => toggleMute(peer.peerId, peer.muted)}
 						>
 							{peer.muted ? 'M' : 'ON'}
 						</button>
 						<button
-							class="h-4 rounded border border-red-300 bg-red-50 px-1 font-mono text-[9px] text-red-700 hover:bg-red-100"
+							class="nodrag nopan button-main red h-4 rounded px-1 font-mono text-[9px]"
 							onclick={() => disconnect(peer.peerId)}
 						>
 							x

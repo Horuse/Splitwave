@@ -14,7 +14,7 @@
 	const MAX_CHANNELS = 10;
 	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
 	let inputs = $derived(
-		Array.from({ length: channelCount }, (_, i) => ({ id: `ch${i + 1}`, label: `${i + 1} ch` }))
+		Array.from({ length: channelCount }, (_, i) => ({ id: `ch${i + 1}`, label: `in ${i + 1}` }))
 	);
 
 	let roomCode = $state('');
@@ -39,8 +39,17 @@
 		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
 	}
 
+	function pushIdentity(name: string, channels: number) {
+		audioMethods
+			.webrtcSetIdentity(id, name, channels, data.opusBitrate, data.opusApplication)
+			.catch(() => {});
+	}
+
 	function addChannel() {
-		if (channelCount < MAX_CHANNELS) flow.updateNodeData(id, { channels: channelCount + 1 });
+		if (channelCount >= MAX_CHANNELS) return;
+		const next = channelCount + 1;
+		flow.updateNodeData(id, { channels: next });
+		pushIdentity(data.name ?? '', next);
 	}
 
 	function removeChannel() {
@@ -51,14 +60,14 @@
 			.filter((e) => e.target === id && e.targetHandle === handle)
 			.map((e) => ({ id: e.id }));
 		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		flow.updateNodeData(id, { channels: channelCount - 1 });
+		const next = channelCount - 1;
+		flow.updateNodeData(id, { channels: next });
+		pushIdentity(data.name ?? '', next);
 	}
 
 	function setName(name: string) {
 		flow.updateNodeData(id, { name });
-		audioMethods
-			.webrtcSetIdentity(id, name, data.opusBitrate, data.opusApplication)
-			.catch(() => {});
+		pushIdentity(name, channelCount);
 	}
 
 	const BITRATES: { bps: number; label: string }[] = [
@@ -174,15 +183,8 @@
 		}),
 		audioMethods.onWebrtcMeta((e) => {
 			if (e.nodeId !== id) return;
-			peers = peers.map((p) => (p.peerId === e.peerId ? { ...p, name: e.name } : p));
-		}),
-		audioMethods.onWebrtcChannel((e) => {
-			if (e.nodeId !== id) return;
-			peers = peers.map((p) =>
-				p.peerId === e.peerId && !p.channels.includes(e.channel)
-					? { ...p, channels: [...p.channels, e.channel].sort((a, b) => a - b) }
-					: p
-			);
+			const channels = Array.from({ length: e.channels }, (_, i) => i);
+			peers = peers.map((p) => (p.peerId === e.peerId ? { ...p, name: e.name, channels } : p));
 		})
 	]);
 
@@ -193,6 +195,7 @@
 
 	// The WebRTC session outlives this component, so restore UI state on remount.
 	onMount(async () => {
+		pushIdentity(data.name ?? '', channelCount);
 		const state = await audioMethods.webrtcSessionState(id).catch(() => null);
 		if (!state || state.phase === 'idle') return;
 		phase = state.phase;
@@ -220,9 +223,9 @@
 			/>
 		</div>
 
-		<!-- channels -->
+		<!-- inputs -->
 		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Channels</span>
+			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
 			<div class="flex items-center gap-1">
 				<button
 					type="button"
@@ -394,7 +397,7 @@
 				<!-- per-channel outputs for this peer -->
 				{#each peer.channels as c (c)}
 					<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
-						<span class="shrink-0 font-mono text-[9px] text-neutral-400">ch {c + 1}</span>
+						<span class="shrink-0 font-mono text-[9px] text-neutral-400">in {c + 1}</span>
 						<Handle
 							type="source"
 							id={`peer:${peer.peerId}:${c}`}

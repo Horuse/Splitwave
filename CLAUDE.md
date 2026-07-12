@@ -7,6 +7,8 @@ ScreenCaptureKit bridge on macOS.
 - One deterministic path per decision. Surface failures, no silent fallback.
 - Comments only for non-obvious WHY (hidden constraint, invariant, workaround).
   Naming handles WHAT. Terse, one line. Section dividers only in files >500 lines.
+- Comments describe the code as it stands, never the edit or our conversation.
+  No "now / instead of / previously / was", no narrating a change to the reviewer.
 
 ## RT audio path — forbidden
 Inside cpal / SCK callbacks and `DspWorker::run`:

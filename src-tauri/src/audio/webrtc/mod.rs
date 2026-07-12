@@ -14,8 +14,8 @@ mod tasks;
 
 pub use handshake::{accept_offer, complete_handshake, create_offer};
 pub use registry::{
-    broadcast_name, disconnect_peer, get_or_create, leave_room, mark_room, peer_pings,
-    session_state, set_local_name, set_peer_muted, set_signaling_task, WebRtcSessionState,
+    disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, session_state,
+    set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,
 };
 
 // Opus operates only at 48 kHz; the DSP graph runs at the output device rate
@@ -32,6 +32,9 @@ pub const PLAYBACK_SCRATCH: usize = 2048;
 // Buffer this many samples (~40 ms stereo @ 48k) before playback starts, and
 // re-buffer after a full drain, so network jitter doesn't stutter the output.
 pub const PLAYBACK_PRIME: usize = 4096;
+// Above this backlog (~120 ms) sender/receiver drift has piled up, so skip
+// ahead to PLAYBACK_PRIME to keep end-to-end latency bounded.
+pub const PLAYBACK_MAX: usize = 12_288;
 
 pub type PeerSnapshotMap = Arc<Mutex<HashMap<String, PlaybackTap>>>;
 
@@ -66,7 +69,7 @@ impl PlaybackTap {
     /// callers must read only `..valid`.
     pub fn fill_block(&mut self, block_len: usize) -> usize {
         let need = block_len.min(self.scratch.len());
-        let avail = self.consumer.slots();
+        let mut avail = self.consumer.slots();
         if !self.primed {
             if avail < PLAYBACK_PRIME {
                 self.valid = 0;
@@ -78,6 +81,14 @@ impl PlaybackTap {
             self.primed = false;
             self.valid = 0;
             return 0;
+        }
+        // Drop drift backlog (even sample count so channels stay aligned).
+        if avail > PLAYBACK_MAX {
+            let drop = (avail - PLAYBACK_PRIME) & !1;
+            if let Ok(chunk) = self.consumer.read_chunk(drop) {
+                chunk.commit_all();
+            }
+            avail = self.consumer.slots();
         }
         let n = need.min(avail);
         if let Ok(chunk) = self.consumer.read_chunk(n) {

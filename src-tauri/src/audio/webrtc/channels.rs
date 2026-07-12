@@ -13,14 +13,19 @@ use webrtc::peer_connection::RTCPeerConnection;
 use super::session::WebRtcSession;
 use super::tasks::{decode_and_write, spawn_encode_task};
 
-// Ctrl DataChannel messages: "P{ts}" ping, "Q{ts}" pong, "M{name}" identity.
+// Ctrl DataChannel messages: "P{ts}" ping, "Q{ts}" pong, "M{json}" identity
+// ({"n":name,"c":inputCount}) resent every tick so late listeners and renames
+// converge without a one-shot race.
+#[allow(clippy::too_many_arguments)]
 pub async fn wire_ctrl_channel(
     dc: Arc<RTCDataChannel>,
     node_id: String,
     ping_ms: Arc<AtomicU32>,
     remote_name: Arc<Mutex<String>>,
+    remote_channels: Arc<AtomicU32>,
     display_id: Arc<Mutex<String>>,
     local_name: Arc<Mutex<String>>,
+    local_channels: Arc<AtomicU32>,
 ) {
     let dc_open = dc.clone();
     let dc_msg = dc.clone();
@@ -28,15 +33,16 @@ pub async fn wire_ctrl_channel(
     dc.on_open(Box::new(move || {
         let dc = dc_open.clone();
         let local_name = local_name.clone();
+        let local_channels = local_channels.clone();
         Box::pin(async move {
-            // Announce our name once the channel is up.
-            let name = local_name.lock().unwrap().clone();
-            let _ = dc.send_text(format!("M{name}")).await;
-
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(2));
                 loop {
                     interval.tick().await;
+                    let name = local_name.lock().unwrap().clone();
+                    let chans = local_channels.load(Ordering::Relaxed);
+                    let meta = json!({ "n": name, "c": chans }).to_string();
+                    let _ = dc.send_text(format!("M{meta}")).await;
                     let ts = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -54,6 +60,7 @@ pub async fn wire_ctrl_channel(
         let dc = dc_msg.clone();
         let ping_ms = ping_ms.clone();
         let remote_name = remote_name.clone();
+        let remote_channels = remote_channels.clone();
         let display_id = display_id.clone();
         let node_id = node_id.clone();
         Box::pin(async move {
@@ -69,13 +76,22 @@ pub async fn wire_ctrl_channel(
                         .as_millis() as u64;
                     ping_ms.store(now.saturating_sub(ts) as u32, Ordering::Relaxed);
                 }
-            } else if let Some(name) = text.strip_prefix('M') {
-                *remote_name.lock().unwrap() = name.to_string();
+            } else if let Some(meta) = text.strip_prefix('M') {
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(meta) else { return };
+                let name = v.get("n").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let chans = v.get("c").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                let changed = {
+                    let mut cur = remote_name.lock().unwrap();
+                    let name_changed = *cur != name;
+                    *cur = name.clone();
+                    name_changed || remote_channels.swap(chans, Ordering::Relaxed) != chans
+                };
+                if !changed { return; }
                 let peer = display_id.lock().unwrap().clone();
                 if let Some(app) = crate::app_handle() {
                     let _ = app.emit(
                         "audio://webrtc_meta",
-                        json!({ "nodeId": node_id, "peerId": peer, "name": name }),
+                        json!({ "nodeId": node_id, "peerId": peer, "name": name, "channels": chans }),
                     );
                 }
             }

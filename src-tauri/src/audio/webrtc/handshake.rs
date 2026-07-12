@@ -55,6 +55,7 @@ pub async fn create_offer(
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
         remote_name: Arc::new(Mutex::new(String::new())),
+        remote_channels: Arc::new(AtomicU32::new(0)),
         display_id: display_id.clone(),
     });
 
@@ -64,8 +65,10 @@ pub async fn create_offer(
         node_id.clone(),
         peer.ping_ms.clone(),
         peer.remote_name.clone(),
+        peer.remote_channels.clone(),
         display_id.clone(),
         session.local_name.clone(),
+        session.local_channels.clone(),
     )
     .await;
     session.peers.lock().await.insert(connection_id.clone(), peer);
@@ -165,16 +168,18 @@ pub async fn accept_offer(
                     "ctrl" => {
                         let arcs = session.peers.lock().await.get(&connection_id).map(|p| {
                             *p.ctrl_dc.lock().unwrap() = Some(dc.clone());
-                            (p.ping_ms.clone(), p.remote_name.clone())
+                            (p.ping_ms.clone(), p.remote_name.clone(), p.remote_channels.clone())
                         });
-                        if let Some((ping_ms, remote_name)) = arcs {
+                        if let Some((ping_ms, remote_name, remote_channels)) = arcs {
                             wire_ctrl_channel(
                                 dc,
                                 node_id,
                                 ping_ms,
                                 remote_name,
+                                remote_channels,
                                 display_id,
                                 session.local_name.clone(),
+                                session.local_channels.clone(),
                             )
                             .await;
                         }
@@ -240,6 +245,7 @@ pub async fn accept_offer(
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
         remote_name: Arc::new(Mutex::new(String::new())),
+        remote_channels: Arc::new(AtomicU32::new(0)),
         display_id: display_id.clone(),
     });
     session.peers.lock().await.insert(connection_id.clone(), peer);

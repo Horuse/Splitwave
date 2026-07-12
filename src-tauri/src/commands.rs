@@ -344,18 +344,18 @@ pub fn webrtc_peer_pings(node_id: String) -> std::collections::HashMap<String, u
     webrtc::peer_pings(&node_id)
 }
 
-/// Sets the local participant name, shared with peers over the ctrl channel.
-/// Re-broadcasts to any already-connected peers so a rename propagates live.
+/// Stores the local participant name and input count; peers receive them via
+/// the ctrl channel's periodic meta message.
 #[tauri::command]
-pub async fn webrtc_set_identity(
+pub fn webrtc_set_identity(
     node_id: String,
     name: String,
+    channels: u32,
     opus_bitrate: u32,
     opus_application: OpusApplication,
 ) {
     webrtc::get_or_create(&node_id, opus_bitrate, opus_application);
-    webrtc::set_local_name(&node_id, name.clone());
-    webrtc::broadcast_name(&node_id, &name).await;
+    webrtc::set_identity(&node_id, name, channels);
 }
 
 #[tauri::command]

@@ -73,27 +73,12 @@ pub async fn leave_room(node_id: &str) {
     session.peer_snapshots.lock().unwrap().clear();
 }
 
-pub fn set_local_name(node_id: &str, name: String) {
+/// Stores the local name and input count; the ctrl channel's periodic meta
+/// message carries them to peers.
+pub fn set_identity(node_id: &str, name: String, channels: u32) {
     if let Some(session) = get(node_id) {
         *session.local_name.lock().unwrap() = name;
-    }
-}
-
-/// Pushes the current local name to every connected peer's ctrl channel so a
-/// rename after connecting propagates live.
-pub async fn broadcast_name(node_id: &str, name: &str) {
-    let Some(session) = get(node_id) else { return };
-    let dcs: Vec<std::sync::Arc<webrtc::data_channel::RTCDataChannel>> = {
-        session
-            .peers
-            .lock()
-            .await
-            .values()
-            .filter_map(|p| p.ctrl_dc.lock().unwrap().clone())
-            .collect()
-    };
-    for dc in dcs {
-        let _ = dc.send_text(format!("M{name}")).await;
+        session.local_channels.store(channels.clamp(1, 10), Ordering::Relaxed);
     }
 }
 
@@ -103,7 +88,7 @@ pub struct WebRtcPeerInfo {
     pub peer_id: String,
     pub muted: bool,
     pub name: String,
-    /// Channel indices this peer has been heard sending on.
+    /// This peer's declared input indices (0..count).
     pub channels: Vec<u8>,
 }
 
@@ -129,29 +114,18 @@ pub async fn session_state(node_id: &str) -> WebRtcSessionState {
     };
     let phase = session.phase.lock().unwrap().to_string();
     let room_code = session.room_code.lock().unwrap().clone();
-    // Channel indices heard per peer, gathered from the live playback taps.
-    let mut chans_by_peer: HashMap<String, Vec<u8>> = HashMap::new();
-    if let Ok(taps) = session.peer_snapshots.lock() {
-        for tap in taps.values() {
-            chans_by_peer.entry(tap.peer.clone()).or_default().push(tap.channel);
-        }
-    }
-    for v in chans_by_peer.values_mut() {
-        v.sort_unstable();
-    }
     let peers = session
         .peers
         .lock()
         .await
         .values()
         .map(|p| {
-            let display = p.display_id.lock().unwrap().clone();
-            let channels = chans_by_peer.get(&display).cloned().unwrap_or_default();
+            let count = p.remote_channels.load(Ordering::Relaxed);
             WebRtcPeerInfo {
-                peer_id: display,
+                peer_id: p.display_id.lock().unwrap().clone(),
                 muted: p.muted.load(Ordering::Relaxed),
                 name: p.remote_name.lock().unwrap().clone(),
-                channels,
+                channels: (0..count as u8).collect(),
             }
         })
         .collect();

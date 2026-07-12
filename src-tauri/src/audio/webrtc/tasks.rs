@@ -4,8 +4,6 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use rtrb::{Consumer, Producer, RingBuffer};
-use serde_json::json;
-use tauri::Emitter;
 use tracing::warn;
 
 use webrtc::data_channel::RTCDataChannel;
@@ -123,6 +121,7 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     tauri::async_runtime::spawn(async move {
         let mut encs: Vec<ChannelEnc> = Vec::new();
         let mut interval = tokio::time::interval(Duration::from_millis(20));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             interval.tick().await;
@@ -237,14 +236,8 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         let display = peer.display_id.lock().unwrap().clone();
         session.peer_snapshots.lock().unwrap().insert(
             format!("{display}:{channel}"),
-            PlaybackTap::new(pb_cons, display.clone(), channel),
+            PlaybackTap::new(pb_cons, display, channel),
         );
-        if let Some(app) = crate::app_handle() {
-            let _ = app.emit(
-                "audio://webrtc_channel",
-                json!({ "nodeId": session.node_id, "peerId": display, "channel": channel }),
-            );
-        }
     }
 
     let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
@@ -279,6 +272,7 @@ pub fn spawn_peer_snapshot_task(
         let mut in_acc: Vec<f32> = Vec::new();
         let mut out_acc: Vec<f32> = Vec::new();
         let mut interval = tokio::time::interval(Duration::from_millis(20));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
             // The peer/channel was dropped (disconnect or room cancelled) -- exit.

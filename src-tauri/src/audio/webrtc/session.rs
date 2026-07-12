@@ -11,6 +11,7 @@ use crate::audio::graph::OpusApplication;
 use super::{PeerSnapshotMap, OPUS_SR};
 
 pub struct WebRtcSession {
+    #[allow(dead_code)]
     pub node_id: String,
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
@@ -19,8 +20,9 @@ pub struct WebRtcSession {
     pub send_consumers: Mutex<Vec<Consumer<f32>>>,
     pub peer_snapshots: PeerSnapshotMap,
     pub peers: tokio::sync::Mutex<HashMap<String, Arc<PeerState>>>,
-    // Local participant name, shared with peers over the ctrl channel.
+    // Local participant name and input count, shared over the ctrl channel.
     pub local_name: Arc<Mutex<String>>,
+    pub local_channels: Arc<AtomicU32>,
     // DSP graph rate the bridge feeds/reads at; the async paths resample it to
     // 48 kHz for Opus. Defaults to 48 kHz until the bridge is instantiated.
     pub output_sr: Arc<AtomicU32>,
@@ -44,8 +46,9 @@ pub struct PeerState {
     pub channels: Mutex<HashMap<u8, Arc<PeerChannel>>>,
     pub muted: Arc<AtomicBool>,
     pub ping_ms: Arc<AtomicU32>,
-    // Remote participant name from the peer's ctrl meta message.
+    // Remote participant name and input count from the peer's ctrl meta.
     pub remote_name: Arc<Mutex<String>>,
+    pub remote_channels: Arc<AtomicU32>,
     // The peer ID to show in the UI — the *remote* side's identity.
     // Host: starts as connection_id, updated to guestPeerId after complete_handshake.
     // Guest: set to connection_id (= host's ID) at creation.
@@ -67,6 +70,7 @@ impl WebRtcSession {
             peer_snapshots: Arc::new(Mutex::new(HashMap::new())),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
+            local_channels: Arc::new(AtomicU32::new(1)),
             output_sr: Arc::new(AtomicU32::new(OPUS_SR)),
             encoder_started: AtomicBool::new(false),
             phase: Mutex::new("idle"),

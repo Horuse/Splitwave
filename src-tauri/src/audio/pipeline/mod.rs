@@ -39,8 +39,8 @@ use dag::{build_output_graph, inputs_feeding_output, OutputGraph};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, MeterTickThread};
 use output::{
-    resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
-    RecorderWorker, ResolvedOutput, SpeakerHandle,
+    resolve_output, start_monitor_worker, start_net_sender_worker, start_recorder_worker,
+    start_speaker_stream, RecorderWorker, ResolvedOutput, SpeakerHandle,
 };
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
@@ -58,6 +58,7 @@ pub struct ActivePipeline {
     inputs: HashMap<String, InputState>,
     speakers: HashMap<String, SpeakerState>,
     recorders: HashMap<String, RecorderState>,
+    net_senders: HashMap<String, NetSenderState>,
     /// Populated when there are no real outputs OR when monitor nodes are present.
     monitor: Option<MonitorState>,
 
@@ -102,6 +103,14 @@ struct RecorderState {
     ctrl: WorkerCtrl,
 }
 
+struct NetSenderState {
+    worker: RecorderWorker,
+    #[allow(dead_code)]
+    sample_rate: u32,
+    sig: OutputSig,
+    ctrl: WorkerCtrl,
+}
+
 struct MonitorState {
     worker: RecorderWorker,
     sig: OutputSig,
@@ -116,6 +125,7 @@ impl ActivePipeline {
             inputs: HashMap::new(),
             speakers: HashMap::new(),
             recorders: HashMap::new(),
+            net_senders: HashMap::new(),
             monitor: None,
             effect_registry: EffectRegistry::new(),
             effect_controls: HashMap::new(),
@@ -222,10 +232,14 @@ impl ActivePipeline {
         for r in self.recorders.values() {
             r.worker.stop.store(true, Ordering::SeqCst);
         }
+        for s in self.net_senders.values() {
+            s.worker.stop.store(true, Ordering::SeqCst);
+        }
         if let Some(m) = &self.monitor {
             m.worker.stop.store(true, Ordering::SeqCst);
         }
         self.recorders.clear();
+        self.net_senders.clear();
         self.monitor = None;
         self.meter_thread = None;
         self.effect_controls.clear();
@@ -277,6 +291,7 @@ impl ActivePipeline {
         let mut all_old: Vec<String> = Vec::new();
         all_old.extend(self.speakers.keys().cloned());
         all_old.extend(self.recorders.keys().cloned());
+        all_old.extend(self.net_senders.keys().cloned());
         if self.monitor.is_some() {
             all_old.push(MONITOR_KEY.to_string());
         }
@@ -305,6 +320,9 @@ impl ActivePipeline {
                     drop(m);
                 }
             } else if let Some(state) = self.recorders.remove(id) {
+                state.worker.stop.store(true, Ordering::SeqCst);
+                drop(state);
+            } else if let Some(state) = self.net_senders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 drop(state);
             } else {
@@ -367,6 +385,9 @@ impl ActivePipeline {
         }
         if let Some(r) = self.recorders.get(id) {
             return Some(&r.sig);
+        }
+        if let Some(s) = self.net_senders.get(id) {
+            return Some(&s.sig);
         }
         None
     }
@@ -532,7 +553,7 @@ impl ActivePipeline {
             let built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
-                matches!(out.spec, OutputSpec::Speaker { .. }),
+                !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
                 &input_native_sr,
                 &mut my_pairs,
@@ -725,6 +746,24 @@ impl ActivePipeline {
                     self.recorders.insert(
                         out.id.clone(),
                         RecorderState {
+                            worker,
+                            sample_rate,
+                            sig: new_sig,
+                            ctrl,
+                        },
+                    );
+                }
+                ResolvedOutput::NetSender => {
+                    let sample_rate = og.sample_rate();
+                    if let Some(state) = self.net_senders.get_mut(&out.id) {
+                        state.ctrl.send_graph(og)?;
+                        state.sig = new_sig;
+                        continue;
+                    }
+                    let (worker, ctrl) = start_net_sender_worker(og)?;
+                    self.net_senders.insert(
+                        out.id.clone(),
+                        NetSenderState {
                             worker,
                             sample_rate,
                             sig: new_sig,

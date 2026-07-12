@@ -47,9 +47,9 @@
 			/>
 		</div>
 
-		<!-- channels -->
+		<!-- inputs -->
 		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Channels</span>
+			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
 			<div class="flex items-center gap-1">
 				<button
 					type="button"
@@ -75,14 +75,14 @@
 
 		<!-- mix output (default handle) -->
 		<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
-			<span class="truncate font-mono text-[9px] text-neutral-500">all channels</span>
+			<span class="truncate font-mono text-[9px] text-neutral-500">all inputs</span>
 			<span class="shrink-0 font-mono text-[9px] text-neutral-400">mix</span>
 			<Handle type="source" position={Position.Right} class="handle" />
 		</div>
-		<!-- per-channel outputs -->
+		<!-- per-input outputs -->
 		{#each Array(channelCount) as _, c (c)}
 			<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
-				<span class="shrink-0 font-mono text-[9px] text-neutral-400">ch {c + 1}</span>
+				<span class="shrink-0 font-mono text-[9px] text-neutral-400">in {c + 1}</span>
 				<Handle type="source" id={String(c)} position={Position.Right} class="handle" />
 			</div>
 		{/each}

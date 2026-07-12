@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 
 use serde::Deserialize;
 use ts_rs::TS;
@@ -57,6 +58,7 @@ pub enum NodeKind {
     AudioFile,
     WebRtcCollaborator,
     NetReceiver,
+    NetSender,
 }
 
 impl NodeKind {
@@ -67,7 +69,9 @@ impl NodeKind {
             | NodeKind::AppAudio
             | NodeKind::NetReceiver
             | NodeKind::AudioFile => NodeCategory::Input,
-            NodeKind::Speaker | NodeKind::FileRecording => NodeCategory::Output,
+            NodeKind::Speaker | NodeKind::FileRecording | NodeKind::NetSender => {
+                NodeCategory::Output
+            }
             NodeKind::Gain
             | NodeKind::Mute
             | NodeKind::ChannelBalance
@@ -392,6 +396,28 @@ pub struct NetReceiverData {
     pub channels: u32,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum NetCodec {
+    PcmF32,
+    PcmI16,
+    Opus,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NetSenderData {
+    pub target_ip: String,
+    pub port: u16,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+    pub codec: NetCodec,
+    pub opus_bitrate: u32,
+    pub opus_application: OpusApplication,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -418,6 +444,14 @@ pub enum InputSpec {
 pub enum OutputSpec {
     Speaker { device_id: String },
     FileRecording { file_path: String, format: RecordingFormat },
+    NetSender {
+        node_id: String,
+        target: SocketAddr,
+        channels: u32,
+        codec: NetCodec,
+        opus_bitrate: u32,
+        opus_application: OpusApplication,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -714,6 +748,22 @@ impl GraphSpec {
                     OutputSpec::FileRecording {
                         file_path,
                         format: data.format,
+                    }
+                }
+                NodeKind::NetSender => {
+                    let data: NetSenderData = parse(&n.data, "NetSender")?;
+                    let ip: IpAddr = data
+                        .target_ip
+                        .trim()
+                        .parse()
+                        .map_err(|_| miss(&n.id, "Net Sender has an invalid target IP"))?;
+                    OutputSpec::NetSender {
+                        node_id: n.id.clone(),
+                        target: SocketAddr::new(ip, data.port),
+                        channels: data.channels.clamp(1, 10),
+                        codec: data.codec,
+                        opus_bitrate: data.opus_bitrate,
+                        opus_application: data.opus_application,
                     }
                 }
                 _ => unreachable!(),

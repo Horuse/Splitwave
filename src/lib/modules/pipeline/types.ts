@@ -12,6 +12,7 @@ import type { LufsMeterData } from './generated/LufsMeterData';
 import type { WaveformData } from './generated/WaveformData';
 import type { MicrophoneData } from './generated/MicrophoneData';
 import type { NetReceiverData } from './generated/NetReceiverData';
+import type { NetSenderData } from './generated/NetSenderData';
 import type { MuteData } from './generated/MuteData';
 import type { NoiseGateData } from './generated/NoiseGateData';
 import type { NoiseSuppressorData } from './generated/NoiseSuppressorData';
@@ -24,6 +25,7 @@ import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData'
 export type { AiffBitDepth } from './generated/AiffBitDepth';
 export type { FlacBitDepth } from './generated/FlacBitDepth';
 export type { FlacCompression } from './generated/FlacCompression';
+export type { NetCodec } from './generated/NetCodec';
 export type { NodeKind } from './generated/NodeKind';
 export type { OpusApplication } from './generated/OpusApplication';
 export type { RecordingFormat } from './generated/RecordingFormat';
@@ -60,6 +62,7 @@ export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
 // engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
 export type NetReceiverNodeData = XyData<NetReceiverData>;
+export type NetSenderNodeData = XyData<NetSenderData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -88,6 +91,7 @@ export type NodeDataMap = {
 	noiseSuppressor: NoiseSuppressorNodeData;
 	webRtcCollaborator: WebRtcCollaboratorNodeData;
 	netReceiver: NetReceiverNodeData;
+	netSender: NetSenderNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

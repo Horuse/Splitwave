@@ -46,6 +46,9 @@ pub(super) enum ResolvedOutput {
         sample_rate: u32,
         format: RecordingFormat,
     },
+    // The DAG produces at 48 kHz; the sender's send rings are wired inside
+    // `build_output_graph`, so nothing device-specific to resolve here.
+    NetSender,
 }
 
 impl ResolvedOutput {
@@ -53,6 +56,7 @@ impl ResolvedOutput {
         match self {
             ResolvedOutput::Speaker(s) => s.sample_rate,
             ResolvedOutput::File { sample_rate, .. } => *sample_rate,
+            ResolvedOutput::NetSender => crate::audio::netaudio::SR,
         }
     }
 }
@@ -70,6 +74,7 @@ pub(super) fn resolve_output(
             sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
             format: *format,
         }),
+        OutputSpec::NetSender { .. } => Ok(ResolvedOutput::NetSender),
     }
 }
 
@@ -145,6 +150,32 @@ pub(super) fn start_monitor_worker(
             worker.run(stop_thread, pacing, |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn monitor worker: {e}")))?;
+    Ok((
+        RecorderWorker {
+            stop,
+            join: Some(join),
+        },
+        ctrl,
+    ))
+}
+
+// Clock-paced worker for a NetSender output. The Consumer node pushes each
+// channel into its send ring inside `process_block`; the sink is a no-op since
+// the background UDP task does the transmitting.
+pub(super) fn start_net_sender_worker(
+    graph: OutputGraph,
+) -> AppResult<(RecorderWorker, WorkerCtrl)> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    let ticker = SystemClockTicker::new(graph.sample_rate(), DSP_BLOCK_FRAMES);
+    let (worker, ctrl) = dsp_worker(graph);
+    let pacing = WorkerPacing::Clock(Box::new(ticker));
+    let join = thread::Builder::new()
+        .name("netsender".into())
+        .spawn(move || {
+            worker.run(stop_thread, pacing, |_block| Ok(()));
+        })
+        .map_err(|e| AppError::Stream(format!("spawn net sender worker: {e}")))?;
     Ok((
         RecorderWorker {
             stop,

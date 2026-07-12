@@ -10,9 +10,11 @@ use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
-use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, ValidGraph};
+use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
+use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::StereoResampler;
 use crate::audio::stream_recv::ChannelReceiver;
+use crate::audio::streams::bulk_push;
 use crate::error::{AppError, AppResult};
 
 /// Ring buffer length (in stereo f32 samples) per bridge. Sized for ~500 ms
@@ -113,6 +115,7 @@ enum DagNode {
     Source(SourceState),
     Effect(EffectState),
     Producer(ProducerState),
+    Consumer(ConsumerState),
 }
 
 impl DagNode {
@@ -121,6 +124,8 @@ impl DagNode {
             DagNode::Source(s) => &s.out_buf,
             DagNode::Effect(e) => &e.out_buf,
             DagNode::Producer(p) => &p.out_buf,
+            // Terminal sink; validation forbids outgoing edges, so never read.
+            DagNode::Consumer(_) => &[],
         }
     }
 
@@ -129,7 +134,7 @@ impl DagNode {
         let (handle_bufs, out_buf) = match self {
             DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
             DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
-            DagNode::Source(_) => return self.out_buf(),
+            DagNode::Source(_) | DagNode::Consumer(_) => return self.out_buf(),
         };
         match handle {
             Some(h) => handle_bufs
@@ -342,6 +347,15 @@ impl ProducerState {
     }
 }
 
+/// A terminal sink that consumes per-channel inputs (summed by target handle
+/// into `channel_bufs`, keyed "ch1".."chN") and pushes each channel into its
+/// send ring for a background transmitter (direct-IP NetSender).
+struct ConsumerState {
+    incoming: Vec<IncomingEdge>,
+    channel_bufs: Vec<(String, Vec<f32>)>,
+    send_producers: Vec<Producer<f32>>,
+}
+
 /// `delay` is `Some` when this path is shorter than the longest reaching the
 /// same mixing point -- pads it for sample-alignment before summing.
 struct IncomingEdge {
@@ -423,13 +437,44 @@ impl OutputGraph {
             match node {
                 DagNode::Source(s) => s.fill_block(),
                 DagNode::Producer(p) => p.process(),
-                DagNode::Effect(_) => {}
+                DagNode::Effect(_) | DagNode::Consumer(_) => {}
             }
         }
         // `split_at_mut` gives mutable access to effect `i` while keeping
         // immutable access to its upstreams (all at indices < i by topo sort).
         for i in 0..self.nodes.len() {
             let (head, tail) = self.nodes.split_at_mut(i);
+            if let DagNode::Consumer(cons) = &mut tail[0] {
+                for (_, buf) in cons.channel_bufs.iter_mut() {
+                    for s in buf.iter_mut() {
+                        *s = 0.0;
+                    }
+                }
+                for edge in &mut cons.incoming {
+                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                    let Some((_, buf)) = cons
+                        .channel_bufs
+                        .iter_mut()
+                        .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                    else {
+                        continue;
+                    };
+                    match &mut edge.delay {
+                        Some(d) => d.process_and_add(src, buf),
+                        None => {
+                            for (dst, sv) in buf.iter_mut().zip(src.iter()) {
+                                *dst += *sv;
+                            }
+                        }
+                    }
+                }
+                for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
+                    if let Some(prod) = cons.send_producers.get_mut(i) {
+                        bulk_push(prod, buf);
+                    }
+                }
+                continue;
+            }
             if let DagNode::Effect(eff) = &mut tail[0] {
                 // WebRTC bridge: sum each incoming edge into its channel input
                 // buffer by target handle, then push to the send rings.
@@ -798,6 +843,91 @@ pub(super) fn build_output_graph(
             }));
             node_latencies.push(max_upstream + own);
         }
+    }
+
+    // A NetSender output is a terminal Consumer node inside the DAG (not a
+    // summed output terminal): it sums per-channel inputs and pushes them into
+    // send rings drained by the background UDP transmitter.
+    let net_sender = output_id
+        .and_then(|oid| valid.outputs.iter().find(|o| o.id == oid))
+        .and_then(|o| match &o.spec {
+            OutputSpec::NetSender { .. } => Some(o.spec.clone()),
+            _ => None,
+        });
+    if let Some(OutputSpec::NetSender {
+        node_id,
+        target,
+        channels,
+        codec,
+        opus_bitrate,
+        opus_application,
+    }) = net_sender
+    {
+        let oid = output_id.unwrap();
+        let mut up: Vec<(usize, Option<String>, Option<String>)> = Vec::new();
+        for e in &valid.edges {
+            if e.to == oid && reachable.contains(&e.from) {
+                let idx = id_to_index[&e.from];
+                up.push((idx, e.source_handle.clone(), e.target_handle.clone()));
+            }
+        }
+        let max_up = up.iter().map(|(i, _, _)| node_latencies[*i]).max().unwrap_or(0);
+        let incoming: Vec<IncomingEdge> = up
+            .into_iter()
+            .map(|(idx, source_handle, target_handle)| {
+                let pad = max_up - node_latencies[idx];
+                IncomingEdge {
+                    src_idx: idx,
+                    source_handle,
+                    target_handle,
+                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                }
+            })
+            .collect();
+
+        let n = channels.clamp(1, 10) as usize;
+        let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
+        let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
+        let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);
+        for c in 1..=n {
+            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]));
+            let (prod, cons) = RingBuffer::<f32>::new(crate::audio::netaudio::SEND_RING);
+            send_producers.push(prod);
+            send_consumers.push(cons);
+        }
+        let format = match codec {
+            NetCodec::PcmF32 => Format::PcmF32,
+            NetCodec::PcmI16 => Format::PcmI16,
+            NetCodec::Opus => Format::Opus,
+        };
+        let sender = crate::audio::netaudio::sender::get_or_create(
+            &node_id,
+            target,
+            format,
+            opus_bitrate,
+            opus_application,
+        );
+        sender.set_send_consumers(send_consumers);
+
+        nodes.push(DagNode::Consumer(ConsumerState {
+            incoming,
+            channel_bufs,
+            send_producers,
+        }));
+
+        return Ok(BuiltOutputGraph {
+            graph: OutputGraph {
+                sample_rate: output_sr,
+                nodes,
+                terminals: Vec::new(),
+            },
+            controls,
+            bypasses,
+            meters,
+            lufs,
+            gr_handles,
+            scopes,
+        });
     }
 
     let terminals: Vec<TerminalEdge> = match output_id {

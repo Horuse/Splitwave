@@ -14,6 +14,8 @@ struct OutMsg<'a> {
     peer_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sdp: Option<&'a str>,
+    #[serde(rename = "passwordHash", skip_serializing_if = "Option::is_none")]
+    password_hash: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +37,7 @@ pub async fn host_exchange(
     room_code: &str,
     host_peer_id: &str,
     offer_sdp: &str,
+    password_hash: &str,
 ) -> AppResult<(String, String)> {
     let url = format!("{SIG_BASE}/ws/{room_code}?role=host&peerId={host_peer_id}");
     let (mut ws, _) = connect_async(url).await.map_err(sig_err)?;
@@ -43,6 +46,7 @@ pub async fn host_exchange(
         kind: "offer",
         peer_id: Some(host_peer_id),
         sdp: Some(offer_sdp),
+        password_hash: Some(password_hash),
     })
     .unwrap();
     ws.send(Message::text(payload)).await.map_err(sig_err)?;
@@ -65,12 +69,16 @@ pub async fn host_exchange(
 
 /// Guest: connects, receives host's offer, then calls `accept_fn(hostPeerId, offerSdp)`
 /// and sends the returned `(guestPeerId, answerSdp)` back to the host.
-pub async fn guest_exchange<F, Fut>(room_code: &str, accept_fn: F) -> AppResult<()>
+pub async fn guest_exchange<F, Fut>(
+    room_code: &str,
+    password_hash: &str,
+    accept_fn: F,
+) -> AppResult<()>
 where
     F: FnOnce(String, String) -> Fut,
     Fut: std::future::Future<Output = AppResult<(String, String)>>,
 {
-    let url = format!("{SIG_BASE}/ws/{room_code}?role=guest");
+    let url = format!("{SIG_BASE}/ws/{room_code}?role=guest&passwordHash={password_hash}");
     let (mut ws, _) = connect_async(url).await.map_err(sig_err)?;
 
     let (host_peer_id, offer_sdp) = loop {
@@ -78,6 +86,9 @@ where
             Some(Ok(frame)) => {
                 if let Ok(text) = frame.into_text() {
                     if let Ok(m) = serde_json::from_str::<InMsg>(&text) {
+                        if m.kind == "error" {
+                            return Err(sig_err("wrong password"));
+                        }
                         if m.kind == "offer" {
                             if let (Some(pid), Some(sdp)) = (m.peer_id, m.sdp) {
                                 break (pid, sdp);
@@ -97,6 +108,7 @@ where
         kind: "answer",
         peer_id: Some(&guest_peer_id),
         sdp: Some(&answer_sdp),
+        password_hash: None,
     })
     .unwrap();
     ws.send(Message::text(payload)).await.map_err(sig_err)?;
@@ -104,9 +116,10 @@ where
     Ok(())
 }
 
-/// Generates a random 6-character room code (uppercase, no ambiguous chars).
+/// Generates a random 6-digit room code. The password gates access, so the
+/// code only needs to be easy to type; ~1M values keeps collisions unlikely.
 pub fn random_room_code() -> String {
-    const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const CHARS: &[u8] = b"0123456789";
     use std::time::SystemTime;
     let mut n = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

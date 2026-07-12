@@ -22,3 +22,5 @@ export { default as Rewind } from './rewind.svelte';
 export { default as SkipBack5 } from './skip_back_5.svelte';
 export { default as SkipForward5 } from './skip_forward_5.svelte';
 export { default as Stop } from './stop.svelte';
+export { default as Eye } from './eye.svelte';
+export { default as EyeOff } from './eye_off.svelte';

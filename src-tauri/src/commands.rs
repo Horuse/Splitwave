@@ -371,6 +371,7 @@ pub async fn webrtc_create_room(
     node_id: String,
     opus_bitrate: u32,
     opus_application: OpusApplication,
+    password_hash: String,
     app: AppHandle,
 ) -> AppResult<String> {
     let code = signaling::random_room_code();
@@ -387,7 +388,7 @@ pub async fn webrtc_create_room(
     let code_clone = code.clone();
     let task_node_id = node_id.clone();
     let handle = tokio::spawn(async move {
-        match signaling::host_exchange(&code_clone, &peer_id, &offer_sdp).await {
+        match signaling::host_exchange(&code_clone, &peer_id, &offer_sdp, &password_hash).await {
             Ok((_guest_peer_id, answer_sdp)) => {
                 // complete_handshake updates display_id to guest_peer_id;
                 // webrtc_connected is emitted from DataChannel on_open.
@@ -425,12 +426,13 @@ pub async fn webrtc_join_room(
     room_code: String,
     opus_bitrate: u32,
     opus_application: OpusApplication,
+    password_hash: String,
     app: AppHandle,
 ) -> AppResult<()> {
     webrtc::mark_room(&node_id, opus_bitrate, opus_application, "joining", None);
     let node_id_clone = node_id.clone();
     let handle = tokio::spawn(async move {
-        let result = signaling::guest_exchange(&room_code, |_host_peer_id, offer_sdp| {
+        let result = signaling::guest_exchange(&room_code, &password_hash, |_host_peer_id, offer_sdp| {
             let nid = node_id_clone.clone();
             async move {
                 webrtc::accept_offer(nid, offer_sdp, opus_bitrate, opus_application).await

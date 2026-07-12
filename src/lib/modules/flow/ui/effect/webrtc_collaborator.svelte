@@ -4,6 +4,7 @@
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
 	import type { OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { PasswordInput } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
@@ -19,6 +20,8 @@
 
 	let roomCode = $state('');
 	let joinInput = $state('');
+	let password = $state('');
+	let joinPassword = $state('');
 	let phase = $state<'idle' | 'hosting' | 'joining'>('idle');
 	let busy = $state(false);
 	let error = $state('');
@@ -102,7 +105,8 @@
 		busy = true;
 		error = '';
 		try {
-			roomCode = await audioMethods.webrtcCreateRoom(id, data.opusBitrate, data.opusApplication);
+			const hash = await audioMethods.webrtcHashPassword(password);
+			roomCode = await audioMethods.webrtcCreateRoom(id, data.opusBitrate, data.opusApplication, hash);
 			phase = 'hosting';
 		} catch (e) {
 			error = String(e);
@@ -115,7 +119,8 @@
 		busy = true;
 		error = '';
 		try {
-			await audioMethods.webrtcJoinRoom(id, joinInput.trim().toUpperCase(), data.opusBitrate, data.opusApplication);
+			const hash = await audioMethods.webrtcHashPassword(joinPassword);
+			await audioMethods.webrtcJoinRoom(id, joinInput.trim().toUpperCase(), data.opusBitrate, data.opusApplication, hash);
 			phase = 'joining';
 		} catch (e) {
 			error = String(e);
@@ -130,6 +135,8 @@
 		phase = 'idle';
 		roomCode = '';
 		joinInput = '';
+		password = '';
+		joinPassword = '';
 		peers = [];
 		pings = {};
 		error = '';
@@ -301,6 +308,7 @@
 		<hr class="border-neutral-300" />
 
 		{#if phase === 'idle'}
+			<PasswordInput bind:value={password} placeholder="Password (optional)" />
 			<button
 				class="h-6 rounded border border-neutral-400 bg-neutral-100 font-mono text-[10px] text-neutral-800 hover:bg-neutral-200 disabled:opacity-50"
 				disabled={busy}
@@ -308,13 +316,16 @@
 			>
 				{busy ? 'creating…' : 'Create room'}
 			</button>
+			<hr class="border-neutral-200" />
+			<input
+				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
+				placeholder="Room code"
+				inputmode="numeric"
+				maxlength={6}
+				bind:value={joinInput}
+			/>
 			<div class="flex gap-1">
-				<input
-					class="nowheel h-6 min-w-0 flex-1 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] uppercase text-neutral-800 placeholder:normal-case placeholder:text-neutral-400"
-					placeholder="Room code"
-					maxlength={6}
-					bind:value={joinInput}
-				/>
+				<PasswordInput bind:value={joinPassword} placeholder="Password" />
 				<button
 					class="h-6 rounded border border-neutral-400 bg-neutral-100 px-2 font-mono text-[10px] text-neutral-800 hover:bg-neutral-200 disabled:opacity-50"
 					disabled={busy || joinInput.trim().length < 6}

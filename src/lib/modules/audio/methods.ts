@@ -111,21 +111,29 @@ export const methods = {
 			'audio://webrtc_meta',
 			(evt) => cb(evt.payload)
 		),
+	/** SHA-256 hex of a room password; empty string when no password is set. */
+	webrtcHashPassword: async (password: string): Promise<string> => {
+		if (!password) return '';
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
+		return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+	},
 	/** Host: creates a room and returns the 6-char room code. Connection completes via onWebrtcConnected. */
 	webrtcCreateRoom: (
 		nodeId: string,
 		opusBitrate: number,
-		opusApplication: string
+		opusApplication: string,
+		passwordHash: string
 	): Promise<string> =>
-		invoke<string>('webrtc_create_room', { nodeId, opusBitrate, opusApplication }),
+		invoke<string>('webrtc_create_room', { nodeId, opusBitrate, opusApplication, passwordHash }),
 	/** Guest: joins a room by code. Connection completes via onWebrtcConnected. */
 	webrtcJoinRoom: (
 		nodeId: string,
 		roomCode: string,
 		opusBitrate: number,
-		opusApplication: string
+		opusApplication: string,
+		passwordHash: string
 	): Promise<void> =>
-		invoke('webrtc_join_room', { nodeId, roomCode, opusBitrate, opusApplication }),
+		invoke('webrtc_join_room', { nodeId, roomCode, opusBitrate, opusApplication, passwordHash }),
 	/** Cancels hosting/joining: aborts signaling, drops peers, resets the room. */
 	webrtcLeaveRoom: (nodeId: string): Promise<void> => invoke('webrtc_leave_room', { nodeId }),
 	/** Returns RTT ping in ms per display peer ID. 0 = no ping yet. */

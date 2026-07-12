@@ -7,13 +7,9 @@ use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::audio::graph::OpusApplication;
+use crate::audio::stream_recv::{ChannelBroadcast, PlaybackTap, PLAYBACK_RING};
 
-use super::{PeerSnapshotMap, PlaybackTap, OPUS_SR, PLAYBACK_RING};
-
-// A received peer-channel fans out to every output bridge. Each entry is that
-// bridge's graph sample rate plus its ring producer; the snapshot task
-// resamples 48 kHz to each distinct rate (outputs and monitors can differ).
-pub type ChannelBroadcast = Arc<Mutex<Vec<(u32, Producer<f32>)>>>;
+use super::{PeerSnapshotMap, OPUS_SR};
 
 pub struct WebRtcSession {
     #[allow(dead_code)]
@@ -104,12 +100,11 @@ impl WebRtcSession {
         let mut bridges = self.bridge_taps.lock().unwrap();
         bridges.retain(|(_, w)| w.strong_count() > 0);
         for (key, bc) in self.channel_broadcasts.lock().unwrap().iter() {
-            let Some((peer, ch)) = parse_key(key) else { continue };
             let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
             bc.lock().unwrap().push((output_sr, prod));
             map.lock()
                 .unwrap()
-                .insert(key.clone(), PlaybackTap::new(cons, peer, ch));
+                .insert(key.clone(), PlaybackTap::new(cons));
         }
         bridges.push((output_sr, Arc::downgrade(&map)));
         map
@@ -127,7 +122,7 @@ impl WebRtcSession {
                 bc.lock().unwrap().push((*sr, prod));
                 map.lock()
                     .unwrap()
-                    .insert(key.clone(), PlaybackTap::new(cons, peer.clone(), channel));
+                    .insert(key.clone(), PlaybackTap::new(cons));
             }
         }
         self.channel_broadcasts.lock().unwrap().insert(key, bc.clone());
@@ -142,9 +137,4 @@ impl WebRtcSession {
             .unwrap()
             .retain(|k, _| !k.starts_with(&prefix));
     }
-}
-
-fn parse_key(key: &str) -> Option<(String, u8)> {
-    let (peer, ch) = key.rsplit_once(':')?;
-    Some((peer.to_string(), ch.parse().ok()?))
 }

@@ -42,8 +42,9 @@ impl WebRtcBridgeEffect {
         }
     }
 
-    /// Handle ids: `peer:<id>:<ch>` = one channel of a peer, `peer:<id>` = that
-    /// peer's channel mix. Reads the tap `scratch` filled by `process`.
+    /// Handle ids: `peer:<id>:<ch>` = one channel of a peer (tap keyed
+    /// `<id>:<ch>`), `peer:<id>` = that peer's channel mix. Reads the tap
+    /// `scratch` filled by `process`.
     pub fn populate_handle_bufs(&self, handle_bufs: &mut [(String, Vec<f32>)], _frames: usize) {
         if handle_bufs.is_empty() {
             return;
@@ -59,16 +60,17 @@ impl WebRtcBridgeEffect {
             let Some(rest) = handle_id.strip_prefix("peer:") else {
                 continue;
             };
-            match rest.rsplit_once(':').and_then(|(p, c)| c.parse::<u8>().ok().map(|c| (p, c))) {
-                Some((peer, ch)) => {
-                    if let Some(tap) = snapshots.values().find(|t| t.peer == peer && t.channel == ch)
-                    {
-                        let n = tap.valid.min(buf.len());
-                        buf[..n].copy_from_slice(&tap.scratch[..n]);
-                    }
+            if rest.contains(':') {
+                // Specific channel: `rest` is the tap key directly.
+                if let Some(tap) = snapshots.get(rest) {
+                    let n = tap.valid.min(buf.len());
+                    buf[..n].copy_from_slice(&tap.scratch[..n]);
                 }
-                None => {
-                    for tap in snapshots.values().filter(|t| t.peer == rest) {
+            } else {
+                // Peer mix: sum every channel of this peer.
+                let prefix = format!("{rest}:");
+                for (key, tap) in snapshots.iter() {
+                    if key.starts_with(&prefix) {
                         let n = tap.valid.min(buf.len());
                         for (dst, &v) in buf[..n].iter_mut().zip(tap.scratch[..n].iter()) {
                             *dst += v;

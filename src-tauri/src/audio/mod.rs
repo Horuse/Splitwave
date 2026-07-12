@@ -19,6 +19,7 @@ pub mod netaudio;
 pub mod pipeline;
 pub mod resample;
 pub mod signaling;
+pub mod stream_recv;
 pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;

@@ -10,9 +10,10 @@ use crate::audio::graph::OpusApplication;
 
 use super::{PeerSnapshotMap, PlaybackTap, OPUS_SR, PLAYBACK_RING};
 
-// A received peer-channel fans out to every output bridge: the snapshot task
-// pushes resampled audio into each producer here, one per live bridge.
-pub type ChannelBroadcast = Arc<Mutex<Vec<Producer<f32>>>>;
+// A received peer-channel fans out to every output bridge. Each entry is that
+// bridge's graph sample rate plus its ring producer; the snapshot task
+// resamples 48 kHz to each distinct rate (outputs and monitors can differ).
+pub type ChannelBroadcast = Arc<Mutex<Vec<(u32, Producer<f32>)>>>;
 
 pub struct WebRtcSession {
     #[allow(dead_code)]
@@ -27,7 +28,8 @@ pub struct WebRtcSession {
     // fan-out point per received channel; `bridge_taps` are the live bridges'
     // per-channel consumers, wired into every broadcast.
     pub channel_broadcasts: Mutex<HashMap<String, ChannelBroadcast>>,
-    pub bridge_taps: Mutex<Vec<Weak<Mutex<HashMap<String, PlaybackTap>>>>>,
+    // (graph sample rate, weak ref to the bridge's tap map) per live bridge.
+    pub bridge_taps: Mutex<Vec<(u32, Weak<Mutex<HashMap<String, PlaybackTap>>>)>>,
     pub peers: tokio::sync::Mutex<HashMap<String, Arc<PeerState>>>,
     // Local participant name and input count, shared over the ctrl channel.
     pub local_name: Arc<Mutex<String>>,
@@ -97,19 +99,19 @@ impl WebRtcSession {
     /// New output bridge: an empty tap map wired into every known channel's
     /// broadcast, tracked (weakly) so later channels attach to it too.
     /// Locks `bridge_taps` before `channel_broadcasts` (see `attach_channel`).
-    pub fn register_bridge(&self) -> PeerSnapshotMap {
+    pub fn register_bridge(&self, output_sr: u32) -> PeerSnapshotMap {
         let map: PeerSnapshotMap = Arc::new(Mutex::new(HashMap::new()));
         let mut bridges = self.bridge_taps.lock().unwrap();
-        bridges.retain(|w| w.strong_count() > 0);
+        bridges.retain(|(_, w)| w.strong_count() > 0);
         for (key, bc) in self.channel_broadcasts.lock().unwrap().iter() {
             let Some((peer, ch)) = parse_key(key) else { continue };
             let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
-            bc.lock().unwrap().push(prod);
+            bc.lock().unwrap().push((output_sr, prod));
             map.lock()
                 .unwrap()
                 .insert(key.clone(), PlaybackTap::new(cons, peer, ch));
         }
-        bridges.push(Arc::downgrade(&map));
+        bridges.push((output_sr, Arc::downgrade(&map)));
         map
     }
 
@@ -118,11 +120,11 @@ impl WebRtcSession {
         let key = format!("{peer}:{channel}");
         let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
         let mut bridges = self.bridge_taps.lock().unwrap();
-        bridges.retain(|w| w.strong_count() > 0);
-        for w in bridges.iter() {
+        bridges.retain(|(_, w)| w.strong_count() > 0);
+        for (sr, w) in bridges.iter() {
             if let Some(map) = w.upgrade() {
                 let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
-                bc.lock().unwrap().push(prod);
+                bc.lock().unwrap().push((*sr, prod));
                 map.lock()
                     .unwrap()
                     .insert(key.clone(), PlaybackTap::new(cons, peer.clone(), channel));

@@ -171,13 +171,16 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
 }
 
 async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
-    // Collect DCs first to avoid holding the MutexGuard across .await.
+    use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+    // Collect DCs first to avoid holding the MutexGuard across .await. Skip
+    // channels that aren't open (connecting/closing) to avoid per-frame errors.
     let dcs: Vec<(String, Arc<RTCDataChannel>)> = {
         let peers = session.peers.lock().await;
         peers
             .values()
             .filter(|p| !p.muted.load(Ordering::Relaxed))
             .filter_map(|p| p.dc.lock().unwrap().clone().map(|d| (p.peer_id.clone(), d)))
+            .filter(|(_, d)| d.ready_state() == RTCDataChannelState::Open)
             .collect()
     };
     for (peer_id, dc) in dcs {
@@ -231,7 +234,7 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     if let Some(recv_cons) = wiring {
         let display = peer.display_id.lock().unwrap().clone();
         let broadcast = session.attach_channel(display, channel);
-        spawn_peer_snapshot_task(recv_cons, broadcast, session.output_sr.clone());
+        spawn_peer_snapshot_task(recv_cons, broadcast);
     }
 
     let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
@@ -252,19 +255,51 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     }
 }
 
-// Drains the peer channel's 48 kHz receive ring, resamples it to the graph rate,
-// and fans it out into every live output bridge's playback ring (the broadcast).
-// Each ring is that bridge's jitter buffer, so no audio is dropped between ticks.
-pub fn spawn_peer_snapshot_task(
-    mut consumer: Consumer<f32>,
-    broadcast: ChannelBroadcast,
-    output_sr: Arc<std::sync::atomic::AtomicU32>,
-) {
+// Per-target-rate resample state; one per distinct bridge sample rate.
+struct RateState {
+    resampler: Option<StereoResampler>,
+    in_acc: Vec<f32>,
+    out_acc: Vec<f32>,
+}
+
+impl RateState {
+    fn new(rate: u32) -> Self {
+        let resampler = if rate == OPUS_SR {
+            None
+        } else {
+            StereoResampler::new(OPUS_SR, rate, RESAMPLE_CHUNK).ok()
+        };
+        Self { resampler, in_acc: Vec::new(), out_acc: Vec::new() }
+    }
+
+    fn feed(&mut self, samples: &[f32]) {
+        self.out_acc.clear();
+        match self.resampler.as_mut() {
+            Some(r) => {
+                self.in_acc.extend_from_slice(samples);
+                let need = r.chunk_in() * 2;
+                let mut off = 0;
+                while self.in_acc.len() - off >= need {
+                    if r.process_chunk(&self.in_acc[off..off + need], &mut self.out_acc).is_err() {
+                        break;
+                    }
+                    off += need;
+                }
+                self.in_acc.drain(..off);
+            }
+            None => self.out_acc.extend_from_slice(samples),
+        }
+    }
+}
+
+// Drains the peer channel's 48 kHz receive ring and fans it out into every live
+// output bridge's playback ring, resampling once per distinct bridge rate (a
+// speaker output and a monitor graph can run at different rates).
+pub fn spawn_peer_snapshot_task(mut consumer: Consumer<f32>, broadcast: ChannelBroadcast) {
+    use std::collections::HashMap;
     tauri::async_runtime::spawn(async move {
-        let mut resampler: Option<StereoResampler> = None;
-        let mut resampler_sr = 0u32;
-        let mut in_acc: Vec<f32> = Vec::new();
-        let mut out_acc: Vec<f32> = Vec::new();
+        let mut states: HashMap<u32, RateState> = HashMap::new();
+        let mut new: Vec<f32> = Vec::new();
         let mut interval = tokio::time::interval(Duration::from_millis(20));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -274,52 +309,34 @@ pub fn spawn_peer_snapshot_task(
                 return;
             }
 
-            let sr = output_sr.load(Ordering::Relaxed);
-            if sr != resampler_sr {
-                resampler_sr = sr;
-                resampler = if sr == OPUS_SR {
-                    None
-                } else {
-                    StereoResampler::new(OPUS_SR, sr, RESAMPLE_CHUNK).ok()
-                };
-                in_acc.clear();
-                out_acc.clear();
-            }
-
+            new.clear();
             let avail = consumer.slots();
             if avail > 0 {
                 if let Ok(chunk) = consumer.read_chunk(avail) {
                     let (a, b) = chunk.as_slices();
-                    in_acc.extend_from_slice(a);
-                    in_acc.extend_from_slice(b);
+                    new.extend_from_slice(a);
+                    new.extend_from_slice(b);
                     chunk.commit_all();
                 }
             }
 
-            out_acc.clear();
-            match resampler.as_mut() {
-                Some(r) => {
-                    let need = r.chunk_in() * 2;
-                    let mut off = 0;
-                    while in_acc.len() - off >= need {
-                        if r.process_chunk(&in_acc[off..off + need], &mut out_acc).is_err() {
-                            break;
-                        }
-                        off += need;
-                    }
-                    in_acc.drain(..off);
-                }
-                None => {
-                    std::mem::swap(&mut out_acc, &mut in_acc);
-                    in_acc.clear();
-                }
+            let mut producers = broadcast.lock().unwrap();
+            producers.retain(|(_, p)| !p.is_abandoned());
+            let rates: Vec<u32> = {
+                let mut r: Vec<u32> = producers.iter().map(|(sr, _)| *sr).collect();
+                r.sort_unstable();
+                r.dedup();
+                r
+            };
+            states.retain(|rate, _| rates.contains(rate));
+            for rate in rates {
+                states.entry(rate).or_insert_with(|| RateState::new(rate)).feed(&new);
             }
-
-            if !out_acc.is_empty() {
-                let mut producers = broadcast.lock().unwrap();
-                producers.retain(|p| !p.is_abandoned());
-                for prod in producers.iter_mut() {
-                    bulk_push(prod, &out_acc);
+            for (sr, prod) in producers.iter_mut() {
+                if let Some(st) = states.get(sr) {
+                    if !st.out_acc.is_empty() {
+                        bulk_push(prod, &st.out_acc);
+                    }
                 }
             }
         }

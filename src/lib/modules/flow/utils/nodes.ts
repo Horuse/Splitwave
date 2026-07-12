@@ -27,6 +27,7 @@ import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
+import NetReceiver from '../ui/input/net_receiver.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -240,6 +241,14 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
 		component: WebRtcCollaborator,
 		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '' }
+	}),
+	netReceiver: entry<'netReceiver'>({
+		kind: 'netReceiver',
+		category: 'input',
+		label: 'Net Receiver',
+		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
+		component: NetReceiver,
+		defaultData: { port: 5004, channels: 1 }
 	})
 };
 

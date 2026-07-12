@@ -4,10 +4,10 @@
 //! output subgraph gets its own ring, so audio is never drained twice.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use rtrb::{Consumer, Producer};
+use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::resample::StereoResampler;
 use crate::audio::streams::bulk_push;
@@ -90,6 +90,70 @@ impl PlaybackTap {
         }
         self.valid = n;
         n
+    }
+}
+
+/// Fans received channels out to every output consumer. Each received channel
+/// gets a `ChannelBroadcast`; each output subgraph registers a `TapMap` that is
+/// wired a fresh ring per channel, so audio is never drained twice. Shared by
+/// the WebRTC bridge and the direct-IP receiver.
+pub struct FanoutRegistry {
+    broadcasts: Mutex<HashMap<String, ChannelBroadcast>>,
+    // (graph rate, weak ref to that consumer's tap map) per live output.
+    consumers: Mutex<Vec<(u32, Weak<Mutex<HashMap<String, PlaybackTap>>>)>>,
+}
+
+impl Default for FanoutRegistry {
+    fn default() -> Self {
+        Self {
+            broadcasts: Mutex::new(HashMap::new()),
+            consumers: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl FanoutRegistry {
+    /// New output consumer: an empty tap map wired into every known channel's
+    /// broadcast, tracked weakly so later channels attach to it too. Locks
+    /// `consumers` before `broadcasts` (see `attach_channel`).
+    pub fn register_consumer(&self, output_sr: u32) -> TapMap {
+        let map: TapMap = Arc::new(Mutex::new(HashMap::new()));
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|(_, w)| w.strong_count() > 0);
+        for (key, bc) in self.broadcasts.lock().unwrap().iter() {
+            let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
+            bc.lock().unwrap().push((output_sr, prod));
+            map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons));
+        }
+        consumers.push((output_sr, Arc::downgrade(&map)));
+        map
+    }
+
+    /// New received channel: a fresh broadcast wired into every live consumer.
+    pub fn attach_channel(&self, key: String) -> ChannelBroadcast {
+        let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|(_, w)| w.strong_count() > 0);
+        for (sr, w) in consumers.iter() {
+            if let Some(map) = w.upgrade() {
+                let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
+                bc.lock().unwrap().push((*sr, prod));
+                map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons));
+            }
+        }
+        self.broadcasts.lock().unwrap().insert(key, bc.clone());
+        bc
+    }
+
+    /// Drops channels whose key starts with `prefix` so new consumers don't wire
+    /// to a gone source.
+    pub fn drop_prefix(&self, prefix: &str) {
+        self.broadcasts.lock().unwrap().retain(|k, _| !k.starts_with(prefix));
+    }
+
+    pub fn clear(&self) {
+        self.broadcasts.lock().unwrap().clear();
+        self.consumers.lock().unwrap().clear();
     }
 }
 

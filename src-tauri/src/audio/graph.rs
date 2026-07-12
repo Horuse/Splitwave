@@ -56,6 +56,7 @@ pub enum NodeKind {
     NoiseSuppressor,
     AudioFile,
     WebRtcCollaborator,
+    NetReceiver,
 }
 
 impl NodeKind {
@@ -64,6 +65,7 @@ impl NodeKind {
             NodeKind::Microphone
             | NodeKind::SystemAudio
             | NodeKind::AppAudio
+            | NodeKind::NetReceiver
             | NodeKind::AudioFile => NodeCategory::Input,
             NodeKind::Speaker | NodeKind::FileRecording => NodeCategory::Output,
             NodeKind::Gain
@@ -384,6 +386,15 @@ fn default_max_df_thresh_db() -> f32 {
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct NetReceiverData {
+    pub port: u16,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct WebRtcCollaboratorData {
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
@@ -400,6 +411,7 @@ pub enum InputSpec {
     SystemAudio { exclude_current_app: bool },
     AppAudio { bundle_id: String },
     AudioFile { file_path: String },
+    NetReceiver { port: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -654,6 +666,10 @@ impl GraphSpec {
                             .ok_or_else(|| miss(&n.id, "Audio File has no file selected"))?,
                     };
                     (spec, data.volume, data.auto_start)
+                }
+                NodeKind::NetReceiver => {
+                    let data: NetReceiverData = parse(&n.data, "NetReceiver")?;
+                    (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
                 }
                 _ => unreachable!(),
             };

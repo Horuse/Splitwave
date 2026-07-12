@@ -409,6 +409,11 @@ impl ActivePipeline {
         let mut input_native_sr: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
+            // NetReceiver has no capture device; it produces at the output rate
+            // via its own UDP socket, so it needs no resolved input runtime.
+            if matches!(inp.spec, InputSpec::NetReceiver { .. }) {
+                continue;
+            }
             if let Some(state) = self.inputs.get(&inp.id) {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
             } else {

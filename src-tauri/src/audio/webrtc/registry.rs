@@ -78,8 +78,7 @@ pub async fn leave_room(node_id: &str) {
     for peer in peers {
         let _ = peer.pc.close().await;
     }
-    session.channel_broadcasts.lock().unwrap().clear();
-    session.bridge_taps.lock().unwrap().clear();
+    session.fanout.clear();
 }
 
 /// Stores the local name and input count; the ctrl channel's periodic meta

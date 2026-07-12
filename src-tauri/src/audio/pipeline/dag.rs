@@ -12,6 +12,7 @@ use crate::audio::effects::{
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, ValidGraph};
 use crate::audio::resample::StereoResampler;
+use crate::audio::stream_recv::ChannelReceiver;
 use crate::error::{AppError, AppResult};
 
 /// Ring buffer length (in stereo f32 samples) per bridge. Sized for ~500 ms
@@ -105,11 +106,13 @@ impl StagingRing {
 }
 
 /// One node in an output's DAG. `Source` reads from a ring + resamples,
-/// `Effect` sums its upstreams' buffers and runs DSP. Both expose a stereo
+/// `Effect` sums its upstreams' buffers and runs DSP, `Producer` emits
+/// network-received audio on named channel handles. All expose a stereo
 /// `out_buf` of `DSP_BLOCK_FRAMES * 2` samples that downstream nodes consume.
 enum DagNode {
     Source(SourceState),
     Effect(EffectState),
+    Producer(ProducerState),
 }
 
 impl DagNode {
@@ -117,19 +120,24 @@ impl DagNode {
         match self {
             DagNode::Source(s) => &s.out_buf,
             DagNode::Effect(e) => &e.out_buf,
+            DagNode::Producer(p) => &p.out_buf,
         }
     }
 
     /// Unknown or absent handles fall back to the node's main `out_buf`.
     fn out_buf_for_handle(&self, handle: Option<&str>) -> &[f32] {
-        match (self, handle) {
-            (DagNode::Effect(e), Some(h)) => e
-                .handle_bufs
+        let (handle_bufs, out_buf) = match self {
+            DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
+            DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
+            DagNode::Source(_) => return self.out_buf(),
+        };
+        match handle {
+            Some(h) => handle_bufs
                 .iter()
                 .find(|(id, _)| id == h)
                 .map(|(_, buf)| buf.as_slice())
-                .unwrap_or(&e.out_buf),
-            _ => self.out_buf(),
+                .unwrap_or(out_buf),
+            None => out_buf,
         }
     }
 }
@@ -316,6 +324,24 @@ struct EffectState {
     channel_bufs: Vec<(String, Vec<f32>)>,
 }
 
+/// A source with no graph inputs that emits network-received audio: `out_buf`
+/// is the mix of every channel, `handle_bufs` are the per-channel outputs (keyed
+/// by the source handle id, which matches the tap key).
+struct ProducerState {
+    receiver: ChannelReceiver,
+    out_buf: Vec<f32>,
+    handle_bufs: Vec<(String, Vec<f32>)>,
+}
+
+impl ProducerState {
+    fn process(&mut self) {
+        self.receiver.mix_block(&mut self.out_buf);
+        for (handle, buf) in self.handle_bufs.iter_mut() {
+            self.receiver.channel(handle, buf);
+        }
+    }
+}
+
 /// `delay` is `Some` when this path is shorter than the longest reaching the
 /// same mixing point -- pads it for sample-alignment before summing.
 struct IncomingEdge {
@@ -394,8 +420,10 @@ impl OutputGraph {
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
         for node in &mut self.nodes {
-            if let DagNode::Source(s) = node {
-                s.fill_block();
+            match node {
+                DagNode::Source(s) => s.fill_block(),
+                DagNode::Producer(p) => p.process(),
+                DagNode::Effect(_) => {}
             }
         }
         // `split_at_mut` gives mutable access to effect `i` while keeping
@@ -591,6 +619,32 @@ pub(super) fn build_output_graph(
 
     for id in &topo {
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
+            // NetReceiver is a network producer, not a captured source: it emits
+            // per-channel outputs from a shared jitter buffer at the output rate.
+            if let InputSpec::NetReceiver { port } = input.spec {
+                let receiver = crate::audio::netaudio::receiver::get_or_create(id, port);
+                let receiver = ChannelReceiver::new(receiver.register_consumer(output_sr));
+                let mut handles: Vec<String> = valid
+                    .edges
+                    .iter()
+                    .filter(|e| &e.from == id)
+                    .filter_map(|e| e.source_handle.clone())
+                    .collect();
+                handles.sort();
+                handles.dedup();
+                let handle_bufs = handles
+                    .into_iter()
+                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                    .collect();
+                id_to_index.insert(id.clone(), nodes.len());
+                nodes.push(DagNode::Producer(ProducerState {
+                    receiver,
+                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                    handle_bufs,
+                }));
+                node_latencies.push(0);
+                continue;
+            }
             // File sources are paced by backpressure; dropping backlog plays fast.
             let source_realtime =
                 realtime && !matches!(input.spec, InputSpec::AudioFile { .. });

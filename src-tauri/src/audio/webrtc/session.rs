@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, Producer};
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::audio::graph::OpusApplication;
-use crate::audio::stream_recv::{ChannelBroadcast, PlaybackTap, PLAYBACK_RING};
+use crate::audio::stream_recv::{ChannelBroadcast, FanoutRegistry};
 
 use super::{PeerSnapshotMap, OPUS_SR};
 
@@ -19,13 +19,9 @@ pub struct WebRtcSession {
     // One send ring per local channel; the encode task drains all of them and
     // tags each Opus packet with its channel index.
     pub send_consumers: Mutex<Vec<Consumer<f32>>>,
-    // Each output subgraph builds its own bridge, so received audio must fan out
-    // rather than be drained once. `channel_broadcasts` (keyed "peer:ch") is the
-    // fan-out point per received channel; `bridge_taps` are the live bridges'
-    // per-channel consumers, wired into every broadcast.
-    pub channel_broadcasts: Mutex<HashMap<String, ChannelBroadcast>>,
-    // (graph sample rate, weak ref to the bridge's tap map) per live bridge.
-    pub bridge_taps: Mutex<Vec<(u32, Weak<Mutex<HashMap<String, PlaybackTap>>>)>>,
+    // Each output subgraph builds its own bridge, so received audio fans out to
+    // per-bridge rings (keyed "peer:ch") rather than being drained once.
+    pub fanout: FanoutRegistry,
     pub peers: tokio::sync::Mutex<HashMap<String, Arc<PeerState>>>,
     // Local participant name and input count, shared over the ctrl channel.
     pub local_name: Arc<Mutex<String>>,
@@ -74,8 +70,7 @@ impl WebRtcSession {
             opus_bitrate,
             opus_application,
             send_consumers: Mutex::new(Vec::new()),
-            channel_broadcasts: Mutex::new(HashMap::new()),
-            bridge_taps: Mutex::new(Vec::new()),
+            fanout: FanoutRegistry::default(),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
             local_channels: Arc::new(AtomicU32::new(1)),
@@ -92,49 +87,17 @@ impl WebRtcSession {
         self.output_sr.store(output_sr, Ordering::Relaxed);
     }
 
-    /// New output bridge: an empty tap map wired into every known channel's
-    /// broadcast, tracked (weakly) so later channels attach to it too.
-    /// Locks `bridge_taps` before `channel_broadcasts` (see `attach_channel`).
     pub fn register_bridge(&self, output_sr: u32) -> PeerSnapshotMap {
-        let map: PeerSnapshotMap = Arc::new(Mutex::new(HashMap::new()));
-        let mut bridges = self.bridge_taps.lock().unwrap();
-        bridges.retain(|(_, w)| w.strong_count() > 0);
-        for (key, bc) in self.channel_broadcasts.lock().unwrap().iter() {
-            let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
-            bc.lock().unwrap().push((output_sr, prod));
-            map.lock()
-                .unwrap()
-                .insert(key.clone(), PlaybackTap::new(cons));
-        }
-        bridges.push((output_sr, Arc::downgrade(&map)));
-        map
+        self.fanout.register_consumer(output_sr)
     }
 
-    /// New received channel: a fresh broadcast wired into every live bridge.
+    /// New received channel (keyed `peer:channel`), wired into every live bridge.
     pub fn attach_channel(&self, peer: String, channel: u8) -> ChannelBroadcast {
-        let key = format!("{peer}:{channel}");
-        let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
-        let mut bridges = self.bridge_taps.lock().unwrap();
-        bridges.retain(|(_, w)| w.strong_count() > 0);
-        for (sr, w) in bridges.iter() {
-            if let Some(map) = w.upgrade() {
-                let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
-                bc.lock().unwrap().push((*sr, prod));
-                map.lock()
-                    .unwrap()
-                    .insert(key.clone(), PlaybackTap::new(cons));
-            }
-        }
-        self.channel_broadcasts.lock().unwrap().insert(key, bc.clone());
-        bc
+        self.fanout.attach_channel(format!("{peer}:{channel}"))
     }
 
-    /// Drops a disconnected peer's broadcasts so new bridges don't wire to them.
+    /// Drops a disconnected peer's channels so new bridges don't wire to them.
     pub fn drop_peer_channels(&self, peer: &str) {
-        let prefix = format!("{peer}:");
-        self.channel_broadcasts
-            .lock()
-            .unwrap()
-            .retain(|k, _| !k.starts_with(&prefix));
+        self.fanout.drop_prefix(&format!("{peer}:"));
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod codec;
 pub mod packet;
+pub mod receiver;
 
 pub const SR: u32 = 48_000;
 pub const OPUS_FRAME_SAMPLES: usize = 960 * 2;

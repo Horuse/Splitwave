@@ -142,6 +142,14 @@ impl RuntimeEffect {
             e.populate_handle_bufs(handle_bufs, frames);
         }
     }
+
+    /// Pushes per-channel input buffers to the send rings; WebRTC bridge only.
+    #[inline]
+    pub fn push_channel_inputs(&mut self, channel_bufs: &[(String, Vec<f32>)]) {
+        if let RuntimeEffect::WebRtcBridge(e) = self {
+            e.push_channel_inputs(channel_bufs);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -605,17 +613,25 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }
         },
-        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application } => {
+        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application, channels } => {
             use crate::audio::webrtc;
             use rtrb::RingBuffer;
-            // ~1 s of stereo audio at the graph rate; the encode task drains it.
+            // ~1 s of stereo audio at the graph rate per channel; drained by the
+            // encode task.
             const SEND_RING: usize = 96_000;
-            let (send_producer, send_consumer) = RingBuffer::<f32>::new(SEND_RING);
+            let count = channels.clamp(1, 10) as usize;
+            let mut send_producers = Vec::with_capacity(count);
+            let mut send_consumers = Vec::with_capacity(count);
+            for _ in 0..count {
+                let (p, c) = RingBuffer::<f32>::new(SEND_RING);
+                send_producers.push(p);
+                send_consumers.push(c);
+            }
             let peer_snapshots = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application)
-                .set_send_consumer(send_consumer, sample_rate);
+                .set_send_consumers(send_consumers, sample_rate);
             mk(
                 RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
-                    send_producer,
+                    send_producers,
                     peer_snapshots,
                 }),
                 None, None, None, None, None,

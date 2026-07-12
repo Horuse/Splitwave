@@ -11,22 +11,54 @@
 
 	const flow = useSvelteFlow();
 
+	const MAX_CHANNELS = 10;
+	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
+	let inputs = $derived(
+		Array.from({ length: channelCount }, (_, i) => ({ id: `ch${i + 1}`, label: `${i + 1} ch` }))
+	);
+
 	let roomCode = $state('');
 	let joinInput = $state('');
 	let phase = $state<'idle' | 'hosting' | 'joining'>('idle');
 	let busy = $state(false);
 	let error = $state('');
-	let peers = $state<{ peerId: string; muted: boolean }[]>([]);
+	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
 	let pings = $state<Record<string, number>>({});
 	let copied = $state(false);
 
 	function removePeerEdges(peerId: string) {
-		const handleId = `peer:${peerId}`;
+		const mix = `peer:${peerId}`;
+		const prefix = `peer:${peerId}:`;
 		const orphaned = flow
 			.getEdges()
-			.filter((e) => e.source === id && e.sourceHandle === handleId)
+			.filter(
+				(e) =>
+					e.source === id && (e.sourceHandle === mix || e.sourceHandle?.startsWith(prefix))
+			)
 			.map((e) => ({ id: e.id }));
 		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
+	}
+
+	function addChannel() {
+		if (channelCount < MAX_CHANNELS) flow.updateNodeData(id, { channels: channelCount + 1 });
+	}
+
+	function removeChannel() {
+		if (channelCount <= 1) return;
+		const handle = `ch${channelCount}`;
+		const orphaned = flow
+			.getEdges()
+			.filter((e) => e.target === id && e.targetHandle === handle)
+			.map((e) => ({ id: e.id }));
+		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
+		flow.updateNodeData(id, { channels: channelCount - 1 });
+	}
+
+	function setName(name: string) {
+		flow.updateNodeData(id, { name });
+		audioMethods
+			.webrtcSetIdentity(id, name, data.opusBitrate, data.opusApplication)
+			.catch(() => {});
 	}
 
 	const BITRATES: { bps: number; label: string }[] = [
@@ -126,7 +158,7 @@
 			if (e.nodeId !== id) return;
 			busy = false;
 			if (!peers.find((p) => p.peerId === e.peerId))
-				peers = [...peers, { peerId: e.peerId, muted: false }];
+				peers = [...peers, { peerId: e.peerId, muted: false, name: '', channels: [] }];
 			startPingPolling();
 		}),
 		audioMethods.onWebrtcDisconnected((e) => {
@@ -139,12 +171,24 @@
 			error = e.error;
 			busy = false;
 			phase = 'idle';
+		}),
+		audioMethods.onWebrtcMeta((e) => {
+			if (e.nodeId !== id) return;
+			peers = peers.map((p) => (p.peerId === e.peerId ? { ...p, name: e.name } : p));
+		}),
+		audioMethods.onWebrtcChannel((e) => {
+			if (e.nodeId !== id) return;
+			peers = peers.map((p) =>
+				p.peerId === e.peerId && !p.channels.includes(e.channel)
+					? { ...p, channels: [...p.channels, e.channel].sort((a, b) => a - b) }
+					: p
+			);
 		})
 	]);
 
 	onDestroy(() => {
 		stopPingPolling();
-		unlistens.then(([a, b, c]) => { a(); b(); c(); });
+		unlistens.then((fns) => fns.forEach((f) => f()));
 	});
 
 	// The WebRTC session outlives this component, so restore UI state on remount.
@@ -153,13 +197,61 @@
 		if (!state || state.phase === 'idle') return;
 		phase = state.phase;
 		roomCode = state.roomCode ?? '';
-		peers = state.peers.map((p) => ({ peerId: p.peerId, muted: p.muted }));
+		peers = state.peers.map((p) => ({
+			peerId: p.peerId,
+			muted: p.muted,
+			name: p.name ?? '',
+			channels: p.channels ?? []
+		}));
 		if (peers.length > 0) startPingPolling();
 	});
 </script>
 
-<Wrapper label="WebRTC" accent="effect" inputs={[{ id: 'main', label: 'mic' }]}>
+<Wrapper label="WebRTC" accent="effect">
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
+		<!-- device / participant name -->
+		<div class="flex flex-col gap-0.5">
+			<span class="font-mono text-[9px] text-neutral-500">Name</span>
+			<input
+				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
+				placeholder="This device"
+				value={data.name ?? ''}
+				onchange={(e) => setName(e.currentTarget.value)}
+			/>
+		</div>
+
+		<!-- channels -->
+		<div class="flex items-center justify-between">
+			<span class="font-mono text-[9px] text-neutral-500">Channels</span>
+			<div class="flex items-center gap-1">
+				<button
+					type="button"
+					class="flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-800 hover:bg-neutral-200 disabled:opacity-40"
+					disabled={channelCount <= 1}
+					onclick={removeChannel}
+				>
+					-
+				</button>
+				<span class="w-4 text-center font-mono text-[10px] tabular-nums text-neutral-900">{channelCount}</span>
+				<button
+					type="button"
+					class="flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-800 hover:bg-neutral-200 disabled:opacity-40"
+					disabled={channelCount >= MAX_CHANNELS}
+					onclick={addChannel}
+				>
+					+
+				</button>
+			</div>
+		</div>
+
+		<!-- per-channel inputs (left handles) -->
+		{#each inputs as ch (ch.id)}
+			<div class="relative -ml-4 flex min-h-3 items-center gap-1 pl-4">
+				<Handle type="target" id={ch.id} position={Position.Left} class="handle" />
+				<span class="font-mono text-[9px] text-neutral-500">{ch.label}</span>
+			</div>
+		{/each}
+
 		<!-- bitrate -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
@@ -263,21 +355,18 @@
 		{#if phase !== 'idle' || peers.length > 0}
 			<hr class="border-neutral-300" />
 			{#if phase !== 'idle'}
-				<div class="relative -mr-4 flex items-center justify-between gap-1 pr-4">
-					<span class="truncate font-mono text-[9px] text-neutral-500">all</span>
+				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
 					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
 					<Handle type="source" id="mixed" position={Position.Right} class="handle" />
 				</div>
-				<div class="-mr-4 flex items-center justify-between gap-1 pr-4">
-					<span class="truncate font-mono text-[9px] text-neutral-400">you</span>
-					<span class="shrink-0 font-mono text-[9px] tabular-nums text-neutral-300">local</span>
-				</div>
 			{/if}
 			{#each peers as peer (peer.peerId)}
-				<div class="relative -mr-4 flex items-center justify-between gap-1 pr-4">
-					<span class="truncate font-mono text-[9px] text-neutral-700"
-						>{peer.peerId.slice(0, 10)}</span
-					>
+				<!-- peer header + this peer's full mix -->
+				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+					<span class="truncate font-mono text-[9px] text-neutral-700">
+						{peer.name || peer.peerId.slice(0, 10)}
+					</span>
 					<span class="shrink-0 font-mono text-[9px] tabular-nums text-neutral-400">
 						{pings[peer.peerId] ? `${pings[peer.peerId]}ms` : '--'}
 					</span>
@@ -300,13 +389,20 @@
 							x
 						</button>
 					</div>
-					<Handle
-						type="source"
-						id={`peer:${peer.peerId}`}
-						position={Position.Right}
-						class="handle"
-					/>
+					<Handle type="source" id={`peer:${peer.peerId}`} position={Position.Right} class="handle" />
 				</div>
+				<!-- per-channel outputs for this peer -->
+				{#each peer.channels as c (c)}
+					<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
+						<span class="shrink-0 font-mono text-[9px] text-neutral-400">ch {c + 1}</span>
+						<Handle
+							type="source"
+							id={`peer:${peer.peerId}:${c}`}
+							position={Position.Right}
+							class="handle"
+						/>
+					</div>
+				{/each}
 			{/each}
 		{/if}
 	</div>

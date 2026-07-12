@@ -82,6 +82,14 @@ export const methods = {
 		invoke('webrtc_disconnect_peer', { nodeId, peerId }),
 	webrtcSetPeerMuted: (nodeId: string, peerId: string, muted: boolean): Promise<void> =>
 		invoke('webrtc_set_peer_muted', { nodeId, peerId, muted }),
+	/** Sets the local participant name, shared with peers over the ctrl channel. */
+	webrtcSetIdentity: (
+		nodeId: string,
+		name: string,
+		opusBitrate: number,
+		opusApplication: string
+	): Promise<void> =>
+		invoke('webrtc_set_identity', { nodeId, name, opusBitrate, opusApplication }),
 	onWebrtcConnected: (cb: (e: { nodeId: string; peerId: string }) => void): Promise<UnlistenFn> =>
 		listen<{ nodeId: string; peerId: string }>('audio://webrtc_connected', (evt) =>
 			cb(evt.payload)
@@ -94,6 +102,20 @@ export const methods = {
 		),
 	onWebrtcError: (cb: (e: { nodeId: string; error: string }) => void): Promise<UnlistenFn> =>
 		listen<{ nodeId: string; error: string }>('audio://webrtc_error', (evt) => cb(evt.payload)),
+	/** A peer shared its participant name over the ctrl channel. */
+	onWebrtcMeta: (
+		cb: (e: { nodeId: string; peerId: string; name: string }) => void
+	): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; peerId: string; name: string }>('audio://webrtc_meta', (evt) =>
+			cb(evt.payload)
+		),
+	/** A peer's channel was heard for the first time (per-channel output handle). */
+	onWebrtcChannel: (
+		cb: (e: { nodeId: string; peerId: string; channel: number }) => void
+	): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; peerId: string; channel: number }>('audio://webrtc_channel', (evt) =>
+			cb(evt.payload)
+		),
 	/** Host: creates a room and returns the 6-char room code. Connection completes via onWebrtcConnected. */
 	webrtcCreateRoom: (
 		nodeId: string,
@@ -120,6 +142,6 @@ export const methods = {
 	): Promise<{
 		phase: 'idle' | 'hosting' | 'joining';
 		roomCode: string | null;
-		peers: { peerId: string; muted: boolean }[];
+		peers: { peerId: string; muted: boolean; name: string; channels: number[] }[];
 	}> => invoke('webrtc_session_state', { nodeId })
 };

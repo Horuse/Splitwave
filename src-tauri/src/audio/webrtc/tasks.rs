@@ -1,18 +1,116 @@
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use rtrb::Consumer;
+use rtrb::{Consumer, Producer, RingBuffer};
+use serde_json::json;
+use tauri::Emitter;
 use tracing::warn;
 
 use webrtc::data_channel::RTCDataChannel;
 
 use crate::audio::graph::OpusApplication;
 use crate::audio::resample::StereoResampler;
+use crate::audio::streams::bulk_push;
 
-use super::session::WebRtcSession;
-use super::{OPUS_FRAME_SAMPLES, OPUS_SR, RESAMPLE_CHUNK, SNAPSHOT_MAX};
+use super::session::{PeerChannel, WebRtcSession};
+use super::{
+    PlaybackTap, OPUS_FRAME_SAMPLES, OPUS_SR, PLAYBACK_RING, RECV_RING, RESAMPLE_CHUNK,
+};
+
+/// Per-channel Opus encode state. One instance per local send channel.
+struct ChannelEnc {
+    encoder: Option<opus::Encoder>,
+    resampler: Option<StereoResampler>,
+    resampler_sr: u32,
+    in_acc: Vec<f32>,
+    out_acc: Vec<f32>,
+    opus_buf: Vec<u8>,
+    send_buf: Vec<u8>,
+}
+
+impl ChannelEnc {
+    fn new(bitrate: u32, application: opus::Application) -> Self {
+        let encoder = match opus::Encoder::new(OPUS_SR, opus::Channels::Stereo, application) {
+            Ok(mut e) => {
+                if let Err(err) = e.set_bitrate(opus::Bitrate::Bits(bitrate as i32)) {
+                    warn!(error = %err, "set opus bitrate failed");
+                }
+                Some(e)
+            }
+            Err(e) => {
+                warn!(error = %e, "opus encoder init failed");
+                None
+            }
+        };
+        Self {
+            encoder,
+            resampler: None,
+            resampler_sr: 0,
+            in_acc: Vec::new(),
+            out_acc: Vec::new(),
+            opus_buf: vec![0u8; 4096],
+            send_buf: Vec::with_capacity(4097),
+        }
+    }
+
+    fn ensure_resampler(&mut self, sr: u32) {
+        if sr == self.resampler_sr {
+            return;
+        }
+        self.resampler_sr = sr;
+        self.resampler = if sr == OPUS_SR {
+            None
+        } else {
+            match StereoResampler::new(sr, OPUS_SR, RESAMPLE_CHUNK) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    warn!(error = %e, "encode resampler init failed");
+                    None
+                }
+            }
+        };
+        self.in_acc.clear();
+        self.out_acc.clear();
+    }
+
+    fn resample(&mut self) {
+        match self.resampler.as_mut() {
+            Some(r) => {
+                let need = r.chunk_in() * 2;
+                let mut off = 0;
+                while self.in_acc.len() - off >= need {
+                    if r.process_chunk(&self.in_acc[off..off + need], &mut self.out_acc).is_err() {
+                        break;
+                    }
+                    off += need;
+                }
+                self.in_acc.drain(..off);
+            }
+            None => {
+                self.out_acc.append(&mut self.in_acc);
+            }
+        }
+    }
+
+    /// Encode the frame at `off` and prefix it with the channel index.
+    fn encode_frame(&mut self, channel: u8, off: usize) -> Option<Bytes> {
+        let enc = self.encoder.as_mut()?;
+        match enc.encode_float(&self.out_acc[off..off + OPUS_FRAME_SAMPLES], &mut self.opus_buf) {
+            Ok(n) => {
+                self.send_buf.clear();
+                self.send_buf.push(channel);
+                self.send_buf.extend_from_slice(&self.opus_buf[..n]);
+                Some(Bytes::copy_from_slice(&self.send_buf))
+            }
+            Err(e) => {
+                warn!(error = %e, "opus encode failed");
+                None
+            }
+        }
+    }
+}
 
 pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     let bitrate = session.opus_bitrate;
@@ -23,155 +121,156 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     };
 
     tauri::async_runtime::spawn(async move {
-        let mut encoder = match opus::Encoder::new(OPUS_SR, opus::Channels::Stereo, application) {
-            Ok(e) => e,
-            Err(e) => { warn!(error = %e, "opus encoder init failed"); return; }
-        };
-        if let Err(e) = encoder.set_bitrate(opus::Bitrate::Bits(bitrate as i32)) {
-            warn!(error = %e, "set opus bitrate failed");
-        }
-
-        // Resamples graph-rate input up to 48 kHz; rebuilt if the rate changes.
-        let mut resampler: Option<StereoResampler> = None;
-        let mut resampler_sr = 0u32;
-        let mut in_acc: Vec<f32> = Vec::new();
-        let mut out_acc: Vec<f32> = Vec::new();
-        let mut opus_buf = vec![0u8; 4096];
+        let mut encs: Vec<ChannelEnc> = Vec::new();
         let mut interval = tokio::time::interval(Duration::from_millis(20));
 
         loop {
             interval.tick().await;
-
             let sr = session.output_sr.load(Ordering::Relaxed);
-            if sr != resampler_sr {
-                resampler_sr = sr;
-                resampler = if sr == OPUS_SR {
-                    None
-                } else {
-                    match StereoResampler::new(sr, OPUS_SR, RESAMPLE_CHUNK) {
-                        Ok(r) => Some(r),
-                        Err(e) => { warn!(error = %e, "encode resampler init failed"); None }
-                    }
-                };
-                in_acc.clear();
-                out_acc.clear();
-            }
 
+            // Drain each channel's send ring under the lock, then release it
+            // before the async resample/encode/send work.
             {
-                let mut cons_guard = session.send_consumer.lock().unwrap();
-                if let Some(cons) = cons_guard.as_mut() {
-                    let take = cons.slots();
+                let mut cons = session.send_consumers.lock().unwrap();
+                while encs.len() < cons.len() {
+                    encs.push(ChannelEnc::new(bitrate, application));
+                }
+                encs.truncate(cons.len());
+                for (i, c) in cons.iter_mut().enumerate() {
+                    let take = c.slots();
                     if take > 0 {
-                        if let Ok(chunk) = cons.read_chunk(take) {
+                        if let Ok(chunk) = c.read_chunk(take) {
                             let (a, b) = chunk.as_slices();
-                            in_acc.extend_from_slice(a);
-                            in_acc.extend_from_slice(b);
+                            encs[i].in_acc.extend_from_slice(a);
+                            encs[i].in_acc.extend_from_slice(b);
                             chunk.commit_all();
                         }
                     }
                 }
             }
 
-            match resampler.as_mut() {
-                Some(r) => {
-                    let need = r.chunk_in() * 2;
-                    let mut off = 0;
-                    while in_acc.len() - off >= need {
-                        if r.process_chunk(&in_acc[off..off + need], &mut out_acc).is_err() {
-                            break;
-                        }
-                        off += need;
-                    }
-                    in_acc.drain(..off);
-                }
-                None => {
-                    out_acc.append(&mut in_acc);
-                }
-            }
-
-            // Emit every full 20 ms frame; keep the partial tail for next tick.
-            // When idle, emit one silence frame so the peer keeps receiving.
-            if out_acc.len() < OPUS_FRAME_SAMPLES {
-                let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
-                let n = out_acc.len();
-                pcm[..n].copy_from_slice(&out_acc[..n]);
-                out_acc.clear();
-                encode_and_send(&mut encoder, &pcm, &mut opus_buf, &session).await;
-            } else {
+            for (i, enc) in encs.iter_mut().enumerate() {
+                enc.ensure_resampler(sr);
+                enc.resample();
+                // Emit every full 20 ms frame; keep the partial tail for the
+                // next tick (padding it with silence would splice in a gap).
+                let mut frames: Vec<Bytes> = Vec::new();
                 let mut off = 0;
-                while out_acc.len() - off >= OPUS_FRAME_SAMPLES {
-                    encode_and_send(
-                        &mut encoder,
-                        &out_acc[off..off + OPUS_FRAME_SAMPLES],
-                        &mut opus_buf,
-                        &session,
-                    )
-                    .await;
+                while enc.out_acc.len() - off >= OPUS_FRAME_SAMPLES {
+                    if let Some(b) = enc.encode_frame(i as u8, off) {
+                        frames.push(b);
+                    }
                     off += OPUS_FRAME_SAMPLES;
                 }
-                out_acc.drain(..off);
+                if off > 0 {
+                    enc.out_acc.drain(..off);
+                }
+                for b in frames {
+                    send_to_peers(&b, &session).await;
+                }
             }
         }
     });
 }
 
-async fn encode_and_send(
-    encoder: &mut opus::Encoder,
-    pcm: &[f32],
-    opus_buf: &mut [u8],
-    session: &Arc<WebRtcSession>,
-) {
-    match encoder.encode_float(pcm, opus_buf) {
-        Ok(n) => {
-            let data = Bytes::copy_from_slice(&opus_buf[..n]);
-            // Collect DCs first to avoid holding MutexGuard across .await.
-            let dcs: Vec<(String, Arc<RTCDataChannel>)> = {
-                let peers = session.peers.lock().await;
-                peers
-                    .values()
-                    .filter(|p| !p.muted.load(Ordering::Relaxed))
-                    .filter_map(|p| p.dc.lock().unwrap().clone().map(|d| (p.peer_id.clone(), d)))
-                    .collect()
-            };
-            for (peer_id, dc) in dcs {
-                if let Err(e) = dc.send(&data).await {
-                    warn!(peer = %peer_id, error = %e, "send failed");
-                }
-            }
+async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
+    // Collect DCs first to avoid holding the MutexGuard across .await.
+    let dcs: Vec<(String, Arc<RTCDataChannel>)> = {
+        let peers = session.peers.lock().await;
+        peers
+            .values()
+            .filter(|p| !p.muted.load(Ordering::Relaxed))
+            .filter_map(|p| p.dc.lock().unwrap().clone().map(|d| (p.peer_id.clone(), d)))
+            .collect()
+    };
+    for (peer_id, dc) in dcs {
+        if let Err(e) = dc.send(data).await {
+            warn!(peer = %peer_id, error = %e, "send failed");
         }
-        Err(e) => warn!(error = %e, "opus encode failed"),
     }
 }
 
+/// A received Opus packet is `[channel_byte, ...opus]`. Receive state for a
+/// channel is created on its first packet, so peers need not agree on how many
+/// channels each sends.
 pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id: &str) {
+    if data.len() < 2 {
+        return;
+    }
+    let channel = data[0];
+    let payload = data.slice(1..);
+
     let peer = {
         let peers = session.peers.lock().await;
         peers.get(peer_id).cloned()
     };
     let Some(peer) = peer else { return };
-    if peer.muted.load(Ordering::Relaxed) { return; }
+    if peer.muted.load(Ordering::Relaxed) {
+        return;
+    }
 
-    let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
-    let decoded = {
-        let Ok(mut dec) = peer.decoder.lock() else { return };
-        match dec.decode_float(&data, &mut pcm, false) {
-            Ok(n) => n,
-            Err(e) => { warn!(peer = %peer_id, error = %e, "opus decode failed"); return; }
+    let (ch, wiring) = {
+        let mut chans = peer.channels.lock().unwrap();
+        if let Some(c) = chans.get(&channel) {
+            (c.clone(), None)
+        } else {
+            let decoder = match opus::Decoder::new(OPUS_SR, opus::Channels::Stereo) {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!(error = %e, "opus decoder init failed");
+                    return;
+                }
+            };
+            let (recv_prod, recv_cons) = RingBuffer::<f32>::new(RECV_RING);
+            let (pb_prod, pb_cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
+            let c = Arc::new(PeerChannel {
+                decoder: std::sync::Mutex::new(decoder),
+                recv_producer: std::sync::Mutex::new(Some(recv_prod)),
+            });
+            chans.insert(channel, c.clone());
+            (c, Some((recv_cons, pb_prod, pb_cons)))
         }
     };
 
-    let mut prod_guard = peer.recv_producer.lock().unwrap();
+    if let Some((recv_cons, pb_prod, pb_cons)) = wiring {
+        spawn_peer_snapshot_task(recv_cons, pb_prod, session.output_sr.clone());
+        let display = peer.display_id.lock().unwrap().clone();
+        session.peer_snapshots.lock().unwrap().insert(
+            format!("{display}:{channel}"),
+            PlaybackTap::new(pb_cons, display.clone(), channel),
+        );
+        if let Some(app) = crate::app_handle() {
+            let _ = app.emit(
+                "audio://webrtc_channel",
+                json!({ "nodeId": session.node_id, "peerId": display, "channel": channel }),
+            );
+        }
+    }
+
+    let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
+    let decoded = {
+        let Ok(mut dec) = ch.decoder.lock() else { return };
+        match dec.decode_float(&payload, &mut pcm, false) {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(peer = %peer_id, error = %e, "opus decode failed");
+                return;
+            }
+        }
+    };
+
+    let mut prod_guard = ch.recv_producer.lock().unwrap();
     if let Some(prod) = prod_guard.as_mut() {
-        crate::audio::streams::bulk_push(prod, &pcm[..decoded * 2]);
+        bulk_push(prod, &pcm[..decoded * 2]);
     }
 }
 
-// Drains the peer's 48 kHz receive ring, resamples it down to the graph rate,
-// and publishes the latest block into `recv_snapshot` for the RT bridge. On a
-// brief underflow the previous snapshot is held so playback stays continuous.
+// Drains the peer channel's 48 kHz receive ring, resamples it down to the graph
+// rate, and pushes it into the output-rate playback ring the RT bridge drains.
+// The ring itself is the jitter buffer, so no audio is dropped between ticks.
 pub fn spawn_peer_snapshot_task(
     mut consumer: Consumer<f32>,
-    recv_snapshot: Arc<Mutex<Vec<f32>>>,
+    mut producer: Producer<f32>,
     output_sr: Arc<std::sync::atomic::AtomicU32>,
 ) {
     tauri::async_runtime::spawn(async move {
@@ -182,8 +281,8 @@ pub fn spawn_peer_snapshot_task(
         let mut interval = tokio::time::interval(Duration::from_millis(20));
         loop {
             interval.tick().await;
-            // The peer was dropped (disconnect or room cancelled) -- exit.
-            if consumer.is_abandoned() {
+            // The peer/channel was dropped (disconnect or room cancelled) -- exit.
+            if consumer.is_abandoned() || producer.is_abandoned() {
                 return;
             }
 
@@ -228,15 +327,8 @@ pub fn spawn_peer_snapshot_task(
                 }
             }
 
-            // Hold the previous snapshot when no new audio arrived this tick.
-            if out_acc.is_empty() {
-                continue;
-            }
-            let take = out_acc.len().min(SNAPSHOT_MAX);
-            let start = out_acc.len() - take;
-            if let Ok(mut snap) = recv_snapshot.try_lock() {
-                snap.clear();
-                snap.extend_from_slice(&out_acc[start..]);
+            if !out_acc.is_empty() {
+                bulk_push(&mut producer, &out_acc);
             }
         }
     });

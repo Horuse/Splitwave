@@ -55,7 +55,9 @@ export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
 export type ReverbNodeData = XyData<ReverbData>;
 export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
-export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData>;
+// `name` is a FE-only participant label shared over the ctrl channel; the
+// engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
+export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.

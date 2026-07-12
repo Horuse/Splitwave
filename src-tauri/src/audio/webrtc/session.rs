@@ -11,13 +11,16 @@ use crate::audio::graph::OpusApplication;
 use super::{PeerSnapshotMap, OPUS_SR};
 
 pub struct WebRtcSession {
-    #[allow(dead_code)]
     pub node_id: String,
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
-    pub send_consumer: Mutex<Option<Consumer<f32>>>,
+    // One send ring per local channel; the encode task drains all of them and
+    // tags each Opus packet with its channel index.
+    pub send_consumers: Mutex<Vec<Consumer<f32>>>,
     pub peer_snapshots: PeerSnapshotMap,
     pub peers: tokio::sync::Mutex<HashMap<String, Arc<PeerState>>>,
+    // Local participant name, shared with peers over the ctrl channel.
+    pub local_name: Arc<Mutex<String>>,
     // DSP graph rate the bridge feeds/reads at; the async paths resample it to
     // 48 kHz for Opus. Defaults to 48 kHz until the bridge is instantiated.
     pub output_sr: Arc<AtomicU32>,
@@ -34,16 +37,24 @@ pub struct PeerState {
     pub peer_id: String,
     pub pc: Arc<RTCPeerConnection>,
     pub dc: Mutex<Option<Arc<RTCDataChannel>>>,
-    pub recv_producer: Mutex<Option<Producer<f32>>>,
-    pub decoder: Mutex<opus::Decoder>,
-    pub recv_snapshot: Arc<Mutex<Vec<f32>>>,
+    // Ctrl channel, kept so name changes can be re-broadcast after connect.
+    pub ctrl_dc: Mutex<Option<Arc<RTCDataChannel>>>,
+    // Receive state is created lazily per channel index as packets arrive, so a
+    // peer sending N channels is handled without agreeing on N up front.
+    pub channels: Mutex<HashMap<u8, Arc<PeerChannel>>>,
     pub muted: Arc<AtomicBool>,
-    #[allow(dead_code)]
     pub ping_ms: Arc<AtomicU32>,
+    // Remote participant name from the peer's ctrl meta message.
+    pub remote_name: Arc<Mutex<String>>,
     // The peer ID to show in the UI — the *remote* side's identity.
     // Host: starts as connection_id, updated to guestPeerId after complete_handshake.
     // Guest: set to connection_id (= host's ID) at creation.
     pub display_id: Arc<Mutex<String>>,
+}
+
+pub struct PeerChannel {
+    pub decoder: Mutex<opus::Decoder>,
+    pub recv_producer: Mutex<Option<Producer<f32>>>,
 }
 
 impl WebRtcSession {
@@ -52,9 +63,10 @@ impl WebRtcSession {
             node_id,
             opus_bitrate,
             opus_application,
-            send_consumer: Mutex::new(None),
+            send_consumers: Mutex::new(Vec::new()),
             peer_snapshots: Arc::new(Mutex::new(HashMap::new())),
             peers: tokio::sync::Mutex::new(HashMap::new()),
+            local_name: Arc::new(Mutex::new(String::new())),
             output_sr: Arc::new(AtomicU32::new(OPUS_SR)),
             encoder_started: AtomicBool::new(false),
             phase: Mutex::new("idle"),
@@ -63,8 +75,12 @@ impl WebRtcSession {
         }
     }
 
-    pub fn set_send_consumer(&self, consumer: Consumer<f32>, output_sr: u32) -> PeerSnapshotMap {
-        *self.send_consumer.lock().unwrap() = Some(consumer);
+    pub fn set_send_consumers(
+        &self,
+        consumers: Vec<Consumer<f32>>,
+        output_sr: u32,
+    ) -> PeerSnapshotMap {
+        *self.send_consumers.lock().unwrap() = consumers;
         self.output_sr.store(output_sr, Ordering::Relaxed);
         self.peer_snapshots.clone()
     }

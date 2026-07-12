@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rtrb::RingBuffer;
 use tracing::info;
 
 use webrtc::peer_connection::RTCPeerConnection;
@@ -14,8 +14,7 @@ use crate::error::{AppError, AppResult};
 use super::channels::{wire_ctrl_channel, wire_data_channel, wire_peer_events};
 use super::registry::{get, get_or_create};
 use super::session::PeerState;
-use super::tasks::spawn_peer_snapshot_task;
-use super::{AUDIO_CHANNEL, OPUS_FRAME_SAMPLES, OPUS_SR, RECV_RING, STUN_URL};
+use super::{AUDIO_CHANNEL, STUN_URL};
 
 /// Returns `(connection_id, compressed_offer_code)`.
 /// `connection_id` is also used as the map key on both sides.
@@ -47,29 +46,30 @@ pub async fn create_offer(
         .await
         .map_err(|e| AppError::Stream(format!("create ctrl channel: {e}")))?;
 
-    let decoder = opus::Decoder::new(OPUS_SR, opus::Channels::Stereo)
-        .map_err(|e| AppError::Stream(format!("opus decoder: {e}")))?;
-
     let peer = Arc::new(PeerState {
         peer_id: connection_id.clone(),
         pc: pc.clone(),
         dc: Mutex::new(Some(dc.clone())),
-        recv_producer: Mutex::new(None),
-        decoder: Mutex::new(decoder),
-        recv_snapshot: Arc::new(Mutex::new(vec![0.0_f32; OPUS_FRAME_SAMPLES])),
+        ctrl_dc: Mutex::new(Some(ctrl_dc.clone())),
+        channels: Mutex::new(HashMap::new()),
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
+        remote_name: Arc::new(Mutex::new(String::new())),
         display_id: display_id.clone(),
     });
 
-    let (prod, cons) = RingBuffer::<f32>::new(RECV_RING);
-    *peer.recv_producer.lock().unwrap() = Some(prod);
-    spawn_peer_snapshot_task(cons, peer.recv_snapshot.clone(), session.output_sr.clone());
-
     wire_data_channel(dc, &session, connection_id.clone(), node_id.clone(), display_id.clone()).await;
-    wire_ctrl_channel(ctrl_dc, peer.ping_ms.clone()).await;
+    wire_ctrl_channel(
+        ctrl_dc,
+        node_id.clone(),
+        peer.ping_ms.clone(),
+        peer.remote_name.clone(),
+        display_id.clone(),
+        session.local_name.clone(),
+    )
+    .await;
     session.peers.lock().await.insert(connection_id.clone(), peer);
-    wire_peer_events(pc.clone(), node_id.clone(), session.clone(), display_id.clone());
+    wire_peer_events(pc.clone(), connection_id.clone(), node_id.clone(), session.clone(), display_id.clone());
 
     let offer = pc
         .create_offer(None)
@@ -163,11 +163,20 @@ pub async fn accept_offer(
                         wire_data_channel(dc, &session, connection_id, node_id, display_id).await;
                     }
                     "ctrl" => {
-                        let ping_ms = session.peers.lock().await
-                            .get(&connection_id)
-                            .map(|p| p.ping_ms.clone());
-                        if let Some(ping_ms) = ping_ms {
-                            wire_ctrl_channel(dc, ping_ms).await;
+                        let arcs = session.peers.lock().await.get(&connection_id).map(|p| {
+                            *p.ctrl_dc.lock().unwrap() = Some(dc.clone());
+                            (p.ping_ms.clone(), p.remote_name.clone())
+                        });
+                        if let Some((ping_ms, remote_name)) = arcs {
+                            wire_ctrl_channel(
+                                dc,
+                                node_id,
+                                ping_ms,
+                                remote_name,
+                                display_id,
+                                session.local_name.clone(),
+                            )
+                            .await;
                         }
                     }
                     _ => {}
@@ -222,25 +231,19 @@ pub async fn accept_offer(
         "answer ready"
     );
 
-    let decoder = opus::Decoder::new(OPUS_SR, opus::Channels::Stereo)
-        .map_err(|e| AppError::Stream(format!("opus decoder: {e}")))?;
-
     let peer = Arc::new(PeerState {
         peer_id: connection_id.clone(),
         pc: pc.clone(),
         dc: Mutex::new(None),
-        recv_producer: Mutex::new(None),
-        decoder: Mutex::new(decoder),
-        recv_snapshot: Arc::new(Mutex::new(vec![0.0_f32; OPUS_FRAME_SAMPLES])),
+        ctrl_dc: Mutex::new(None),
+        channels: Mutex::new(HashMap::new()),
         muted: Arc::new(AtomicBool::new(false)),
         ping_ms: Arc::new(AtomicU32::new(0)),
+        remote_name: Arc::new(Mutex::new(String::new())),
         display_id: display_id.clone(),
     });
-    let (prod, cons) = RingBuffer::<f32>::new(RECV_RING);
-    *peer.recv_producer.lock().unwrap() = Some(prod);
-    spawn_peer_snapshot_task(cons, peer.recv_snapshot.clone(), session.output_sr.clone());
     session.peers.lock().await.insert(connection_id.clone(), peer);
-    wire_peer_events(pc, node_id.clone(), session.clone(), display_id.clone());
+    wire_peer_events(pc, connection_id.clone(), node_id.clone(), session.clone(), display_id.clone());
 
     // Answer carries: connection_id (map key) + guest_peer_id (shown in host UI) + sdp.
     let answer_code = encode_sdp(&format!("{connection_id}\n{guest_peer_id}\n{sdp}"))?;

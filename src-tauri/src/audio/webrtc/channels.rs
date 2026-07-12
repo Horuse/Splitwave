@@ -13,15 +13,26 @@ use webrtc::peer_connection::RTCPeerConnection;
 use super::session::WebRtcSession;
 use super::tasks::{decode_and_write, spawn_encode_task};
 
-// Ctrl DataChannel: "P{ts_ms}" = ping, "Q{ts_ms}" = pong.
-// Both sides ping each other independently; each updates its own ping_ms.
-pub async fn wire_ctrl_channel(dc: Arc<RTCDataChannel>, ping_ms: Arc<AtomicU32>) {
+// Ctrl DataChannel messages: "P{ts}" ping, "Q{ts}" pong, "M{name}" identity.
+pub async fn wire_ctrl_channel(
+    dc: Arc<RTCDataChannel>,
+    node_id: String,
+    ping_ms: Arc<AtomicU32>,
+    remote_name: Arc<Mutex<String>>,
+    display_id: Arc<Mutex<String>>,
+    local_name: Arc<Mutex<String>>,
+) {
     let dc_open = dc.clone();
     let dc_msg = dc.clone();
 
     dc.on_open(Box::new(move || {
         let dc = dc_open.clone();
+        let local_name = local_name.clone();
         Box::pin(async move {
+            // Announce our name once the channel is up.
+            let name = local_name.lock().unwrap().clone();
+            let _ = dc.send_text(format!("M{name}")).await;
+
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(2));
                 loop {
@@ -42,6 +53,9 @@ pub async fn wire_ctrl_channel(dc: Arc<RTCDataChannel>, ping_ms: Arc<AtomicU32>)
     dc.on_message(Box::new(move |msg: DataChannelMessage| {
         let dc = dc_msg.clone();
         let ping_ms = ping_ms.clone();
+        let remote_name = remote_name.clone();
+        let display_id = display_id.clone();
+        let node_id = node_id.clone();
         Box::pin(async move {
             if !msg.is_string { return; }
             let Ok(text) = String::from_utf8(msg.data.to_vec()) else { return };
@@ -54,6 +68,15 @@ pub async fn wire_ctrl_channel(dc: Arc<RTCDataChannel>, ping_ms: Arc<AtomicU32>)
                         .unwrap_or_default()
                         .as_millis() as u64;
                     ping_ms.store(now.saturating_sub(ts) as u32, Ordering::Relaxed);
+                }
+            } else if let Some(name) = text.strip_prefix('M') {
+                *remote_name.lock().unwrap() = name.to_string();
+                let peer = display_id.lock().unwrap().clone();
+                if let Some(app) = crate::app_handle() {
+                    let _ = app.emit(
+                        "audio://webrtc_meta",
+                        json!({ "nodeId": node_id, "peerId": peer, "name": name }),
+                    );
                 }
             }
         })
@@ -75,29 +98,16 @@ pub async fn wire_data_channel(
         let session = session_send.clone();
         let node_id = node_id.clone();
         let display_id = display_id.clone();
-        let peer_id = peer_id.clone();
         move || {
             let session = session.clone();
             let node_id = node_id.clone();
             let display_id = display_id.clone();
-            let peer_id = peer_id.clone();
             Box::pin(async move {
                 // Only one encode loop per session regardless of peer count.
                 if !session.encoder_started.swap(true, Ordering::SeqCst) {
                     spawn_encode_task(session.clone());
                 }
                 let remote_id = display_id.lock().unwrap().clone();
-                let snapshot = {
-                    let peers = session.peers.lock().await;
-                    peers.get(&peer_id).map(|p| p.recv_snapshot.clone())
-                };
-                if let Some(snapshot) = snapshot {
-                    session
-                        .peer_snapshots
-                        .lock()
-                        .unwrap()
-                        .insert(remote_id.clone(), snapshot);
-                }
                 if let Some(app) = crate::app_handle() {
                     let _ = app.emit(
                         "audio://webrtc_connected",
@@ -117,26 +127,46 @@ pub async fn wire_data_channel(
 
 pub fn wire_peer_events(
     pc: Arc<RTCPeerConnection>,
+    connection_id: String,
     node_id: String,
     session: Arc<WebRtcSession>,
     display_id: Arc<Mutex<String>>,
 ) {
     use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+    let self_pc = pc.clone();
     pc.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
+        let connection_id = connection_id.clone();
         let node_id = node_id.clone();
         let session = session.clone();
         let display_id = display_id.clone();
+        let self_pc = self_pc.clone();
         Box::pin(async move {
-            // Connected is emitted from DataChannel on_open instead, so we
-            // only handle terminal states here.
+            // Only Failed/Closed are terminal; Disconnected is often transient
+            // and can recover to Connected, so we don't tear the peer down on it.
             let event = match state {
-                RTCPeerConnectionState::Disconnected
-                | RTCPeerConnectionState::Failed
-                | RTCPeerConnectionState::Closed => "audio://webrtc_disconnected",
+                RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
+                    "audio://webrtc_disconnected"
+                }
                 _ => return,
             };
             let remote_id = display_id.lock().unwrap().clone();
-            session.peer_snapshots.lock().unwrap().remove(&remote_id);
+            // Drop the peer and its playback taps. Only if the map still holds
+            // this pc: a retry may have reused the connection_id with a new one.
+            {
+                let mut peers = session.peers.lock().await;
+                let is_current = peers
+                    .get(&connection_id)
+                    .map(|p| Arc::ptr_eq(&p.pc, &self_pc))
+                    .unwrap_or(false);
+                if is_current {
+                    peers.remove(&connection_id);
+                }
+            }
+            session
+                .peer_snapshots
+                .lock()
+                .unwrap()
+                .retain(|_, tap| tap.peer != remote_id);
             info!(node = %node_id, peer = %remote_id, ?state, "peer state changed");
             if let Some(app) = crate::app_handle() {
                 let _ = app.emit(event, json!({ "nodeId": node_id, "peerId": remote_id }));

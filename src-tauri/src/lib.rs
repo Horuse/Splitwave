@@ -149,6 +149,7 @@ pub fn run() {
             commands::webrtc_join_room,
             commands::webrtc_leave_room,
             commands::webrtc_peer_pings,
+            commands::webrtc_set_identity,
             commands::webrtc_session_state,
         ])
         .run(tauri::generate_context!())

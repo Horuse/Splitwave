@@ -311,6 +311,9 @@ struct EffectState {
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
     handle_bufs: Vec<(String, Vec<f32>)>,
+    // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
+    // summed by target handle and pushed to the matching send ring.
+    channel_bufs: Vec<(String, Vec<f32>)>,
 }
 
 /// `delay` is `Some` when this path is shorter than the longest reaching the
@@ -318,6 +321,7 @@ struct EffectState {
 struct IncomingEdge {
     src_idx: usize,
     source_handle: Option<String>,
+    target_handle: Option<String>,
     delay: Option<DelayLine>,
 }
 
@@ -397,6 +401,41 @@ impl OutputGraph {
         for i in 0..self.nodes.len() {
             let (head, tail) = self.nodes.split_at_mut(i);
             if let DagNode::Effect(eff) = &mut tail[0] {
+                // WebRTC bridge: sum each incoming edge into its channel input
+                // buffer by target handle, then push to the send rings.
+                if !eff.channel_bufs.is_empty() {
+                    for (_, buf) in eff.channel_bufs.iter_mut() {
+                        for s in buf.iter_mut() {
+                            *s = 0.0;
+                        }
+                    }
+                    for edge in &mut eff.incoming {
+                        let src =
+                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                        let Some((_, buf)) = eff
+                            .channel_bufs
+                            .iter_mut()
+                            .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                        else {
+                            continue;
+                        };
+                        match &mut edge.delay {
+                            Some(d) => d.process_and_add(src, buf),
+                            None => {
+                                for (dst, sv) in buf.iter_mut().zip(src.iter()) {
+                                    *dst += *sv;
+                                }
+                            }
+                        }
+                    }
+                    eff.effect.push_channel_inputs(&eff.channel_bufs);
+                    // out_buf becomes the global mix (every peer, every channel).
+                    eff.effect
+                        .process_with_sidechain(&mut eff.out_buf, None, DSP_BLOCK_FRAMES);
+                    eff.effect
+                        .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
+                    continue;
+                }
                 for s in eff.out_buf.iter_mut() {
                     *s = 0.0;
                 }
@@ -618,12 +657,13 @@ pub(super) fn build_output_graph(
                 scopes.push(s);
             }
             let bypass = build.bypass;
-            let mut main_upstream: Vec<(usize, Option<String>)> = Vec::new();
-            let mut side_upstream: Vec<(usize, Option<String>)> = Vec::new();
+            type Upstream = (usize, Option<String>, Option<String>);
+            let mut main_upstream: Vec<Upstream> = Vec::new();
+            let mut side_upstream: Vec<Upstream> = Vec::new();
             for e in &valid.edges {
                 if &e.to == id && reachable.contains(&e.from) {
                     let idx = id_to_index[&e.from];
-                    let entry = (idx, e.source_handle.clone());
+                    let entry = (idx, e.source_handle.clone(), e.target_handle.clone());
                     match e.kind {
                         EdgeKind::Main => main_upstream.push(entry),
                         EdgeKind::Sidechain => side_upstream.push(entry),
@@ -633,24 +673,26 @@ pub(super) fn build_output_graph(
             let max_upstream = main_upstream
                 .iter()
                 .chain(side_upstream.iter())
-                .map(|(i, _)| node_latencies[*i])
+                .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
-            let make_edge = |src_idx: usize, source_handle: Option<String>| {
-                let pad = max_upstream - node_latencies[src_idx];
-                IncomingEdge {
-                    src_idx,
-                    source_handle,
-                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
-                }
-            };
+            let make_edge =
+                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
+                    let pad = max_upstream - node_latencies[src_idx];
+                    IncomingEdge {
+                        src_idx,
+                        source_handle,
+                        target_handle,
+                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    }
+                };
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
-                .map(|(i, h)| make_edge(i, h))
+                .map(|(i, s, t)| make_edge(i, s, t))
                 .collect();
             let sidechain: Vec<IncomingEdge> = side_upstream
                 .into_iter()
-                .map(|(i, h)| make_edge(i, h))
+                .map(|(i, s, t)| make_edge(i, s, t))
                 .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
@@ -677,6 +719,15 @@ pub(super) fn build_output_graph(
                 } else {
                     Vec::new()
                 };
+            // One input buffer per WebRTC send channel, keyed "ch1".."chN".
+            let channel_bufs: Vec<(String, Vec<f32>)> =
+                if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
+                    (1..=(*channels).clamp(1, 10))
+                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
             let own = build.effect.latency_frames();
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
@@ -687,6 +738,7 @@ pub(super) fn build_output_graph(
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 sidechain_buf,
                 handle_bufs,
+                channel_bufs,
             }));
             node_latencies.push(max_upstream + own);
         }

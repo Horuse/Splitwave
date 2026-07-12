@@ -387,6 +387,11 @@ fn default_max_df_thresh_db() -> f32 {
 pub struct WebRtcCollaboratorData {
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+}
+fn default_channels() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,6 +428,7 @@ pub enum EffectSpec {
         node_id: String,
         opus_bitrate: u32,
         opus_application: OpusApplication,
+        channels: u32,
     },
 }
 
@@ -479,6 +485,8 @@ pub struct ValidEdge {
     pub from: String,
     pub source_handle: Option<String>,
     pub to: String,
+    /// Target-side handle, e.g. `Some("ch1")` for a WebRTC bridge channel input.
+    pub target_handle: Option<String>,
     pub kind: EdgeKind,
 }
 
@@ -590,6 +598,7 @@ impl GraphSpec {
                 from: e.source.clone(),
                 source_handle: e.source_handle.clone(),
                 to: e.target.clone(),
+                target_handle: e.target_handle.clone(),
                 kind: match e.target_handle.as_deref() {
                     Some("sidechain") => EdgeKind::Sidechain,
                     _ => EdgeKind::Main,
@@ -790,6 +799,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
                 node_id: n.id.clone(),
                 opus_bitrate: data.opus_bitrate,
                 opus_application: data.opus_application,
+                channels: data.channels.clamp(1, 10),
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

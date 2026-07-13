@@ -405,14 +405,25 @@
 	// update_effect live, no restart needed.
 	function routingSignature(): string {
 		return JSON.stringify({
-			nodes: nodes.map((n) => ({
-				id: n.id,
-				type: n.type,
-				deviceId: (n.data as Record<string, unknown>).deviceId ?? null,
-				bundleId: (n.data as Record<string, unknown>).bundleId ?? null,
-				filePath: (n.data as Record<string, unknown>).filePath ?? null,
-				excludeCurrentApp: (n.data as Record<string, unknown>).excludeCurrentApp ?? null
-			})),
+			nodes: nodes.map((n) => {
+				const d = n.data as Record<string, unknown>;
+				return {
+					id: n.id,
+					type: n.type,
+					deviceId: d.deviceId ?? null,
+					bundleId: d.bundleId ?? null,
+					filePath: d.filePath ?? null,
+					excludeCurrentApp: d.excludeCurrentApp ?? null,
+					// Direct-IP / codec config is structural (rebuilds the send/receive
+					// path), not a live-updatable effect param, so a change must restart.
+					targetIp: d.targetIp ?? null,
+					port: d.port ?? null,
+					channels: d.channels ?? null,
+					codec: d.codec ?? null,
+					opusBitrate: d.opusBitrate ?? null,
+					opusApplication: d.opusApplication ?? null
+				};
+			}),
 			edges: edges.map((e) => ({
 				id: e.id,
 				source: e.source,

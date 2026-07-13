@@ -21,11 +21,16 @@ pub const RECV_RING: usize = 48_000;
 pub const PLAYBACK_RING: usize = 48_000;
 /// Max samples a consumer pulls per block (DSP_BLOCK_FRAMES * 2 channels).
 pub const PLAYBACK_SCRATCH: usize = 2048;
-/// Buffer this many samples (~40 ms stereo) before playback starts, and
+/// Buffer this many samples (~50 ms stereo) before playback starts, and
 /// re-buffer after a full drain, so network jitter doesn't stutter output.
-pub const PLAYBACK_PRIME: usize = 4096;
-/// Above this backlog (~120 ms) drift has piled up; skip ahead to bound latency.
-pub const PLAYBACK_MAX: usize = 12_288;
+pub const PLAYBACK_PRIME: usize = 4800;
+/// Operating backlog after a drift correction (~100 ms). Kept well above the
+/// prime level so normal jitter never dips into an underflow re-prime -- that
+/// boundary oscillation is what caused the periodic ~0.5 s cut-in/cut-out.
+pub const PLAYBACK_TARGET: usize = 9600;
+/// Above this backlog (~200 ms) sender-vs-playback clock drift has piled up;
+/// skip ahead down to PLAYBACK_TARGET to bound latency.
+pub const PLAYBACK_MAX: usize = 19_200;
 
 /// One received channel fans out to every consumer: `(graph rate, ring
 /// producer)` per live consumer. The fan-out task resamples 48 kHz to each
@@ -73,13 +78,22 @@ impl PlaybackTap {
             self.valid = 0;
             return 0;
         }
-        // Drop drift backlog (even sample count so channels stay aligned).
+        // Sender-vs-playback clock drift makes the backlog creep. A big backlog
+        // (burst / resume) is trimmed at once; otherwise a single stereo frame is
+        // dropped per block -- a ~20 us splice that's inaudible but steadily
+        // cancels drift, instead of one audible ~100 ms skip every several
+        // seconds. (See adaptive-resampling / frame-drop drift compensation.)
         if avail > PLAYBACK_MAX {
-            let drop = (avail - PLAYBACK_PRIME) & !1;
+            let drop = (avail - PLAYBACK_TARGET) & !1;
             if let Ok(chunk) = self.consumer.read_chunk(drop) {
                 chunk.commit_all();
             }
             avail = self.consumer.slots();
+        } else if avail > PLAYBACK_TARGET + need {
+            if let Ok(chunk) = self.consumer.read_chunk(2) {
+                chunk.commit_all();
+            }
+            avail -= 2;
         }
         let n = need.min(avail);
         if let Ok(chunk) = self.consumer.read_chunk(n) {

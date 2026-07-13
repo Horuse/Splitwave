@@ -4,7 +4,7 @@
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';
-	import { formatRate } from '$lib/components/format';
+	import { formatRate, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
@@ -16,6 +16,7 @@
 	let rate = $state(0); // bytes/sec
 	let prevBytes = 0;
 	let prevAt = 0;
+	const lossWindow = new LossWindow();
 
 	const POLL_MS = 1000;
 	const interval = setInterval(async () => {
@@ -26,9 +27,10 @@
 			rate = 0;
 			prevBytes = 0;
 			prevAt = now;
+			lossWindow.reset();
 			return;
 		}
-		loss = s.loss;
+		loss = lossWindow.update(s.packets, s.lost);
 		if (prevAt > 0 && s.bytes >= prevBytes) {
 			rate = ((s.bytes - prevBytes) * 1000) / (now - prevAt);
 		}

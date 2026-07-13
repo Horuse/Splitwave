@@ -348,15 +348,17 @@ pub fn webrtc_peer_pings(node_id: String) -> std::collections::HashMap<String, u
 #[serde(rename_all = "camelCase")]
 pub struct PeerStats {
     pub ping_ms: u32,
-    pub loss: f32,
+    pub packets: u64,
+    pub lost: u64,
 }
 
-/// Per-peer receive quality: RTT ping and inferred packet-loss ratio (0..1).
+/// Per-peer receive quality: RTT ping plus cumulative received/lost packet
+/// counters (windowed into a recent loss ratio on the frontend).
 #[tauri::command]
 pub fn webrtc_peer_stats(node_id: String) -> std::collections::HashMap<String, PeerStats> {
     webrtc::peer_stats(&node_id)
         .into_iter()
-        .map(|(id, (ping_ms, loss))| (id, PeerStats { ping_ms, loss }))
+        .map(|(id, (ping_ms, packets, lost))| (id, PeerStats { ping_ms, packets, lost }))
         .collect()
 }
 
@@ -365,17 +367,15 @@ pub fn webrtc_peer_stats(node_id: String) -> std::collections::HashMap<String, P
 pub struct NetReceiverStats {
     pub bytes: u64,
     pub packets: u64,
-    pub loss: f32,
+    pub lost: u64,
 }
 
-/// Direct-IP receive stats: total bytes, packets, and packet-loss ratio (0..1).
+/// Direct-IP receive stats: cumulative bytes, packets, and lost packets
+/// (windowed into a recent loss ratio / rate on the frontend).
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
-    crate::audio::netaudio::receiver::stats(&node_id).map(|(bytes, packets, lost)| {
-        let total = packets + lost;
-        let loss = if total == 0 { 0.0 } else { lost as f32 / total as f32 };
-        NetReceiverStats { bytes, packets, loss }
-    })
+    crate::audio::netaudio::receiver::stats(&node_id)
+        .map(|(bytes, packets, lost)| NetReceiverStats { bytes, packets, lost })
 }
 
 #[derive(serde::Serialize)]

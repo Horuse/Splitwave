@@ -6,6 +6,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { PasswordInput } from '$lib/modules/form/ui';
 	import SignalBars from '$lib/components/signal_bars.svelte';
+	import { LossWindow } from '$lib/components/format';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
@@ -29,7 +30,8 @@
 	let busy = $state(false);
 	let error = $state('');
 	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
-	let stats = $state<Record<string, { pingMs: number; loss: number }>>({});
+	let quality = $state<Record<string, { ping: number; loss: number }>>({});
+	const lossWindows = new Map<string, LossWindow>();
 	let copied = $state(false);
 
 	function removePeerEdges(peerId: string) {
@@ -180,7 +182,8 @@
 		password = '';
 		joinPassword = '';
 		peers = [];
-		stats = {};
+		quality = {};
+		lossWindows.clear();
 		error = '';
 		busy = false;
 	}
@@ -203,7 +206,17 @@
 		if (pingInterval) return;
 		pingInterval = setInterval(async () => {
 			if (peers.length === 0) return;
-			stats = await audioMethods.webrtcPeerStats(id).catch(() => ({}));
+			const raw = await audioMethods.webrtcPeerStats(id).catch(() => ({}));
+			const next: Record<string, { ping: number; loss: number }> = {};
+			for (const [peerId, s] of Object.entries(raw)) {
+				let w = lossWindows.get(peerId);
+				if (!w) {
+					w = new LossWindow();
+					lossWindows.set(peerId, w);
+				}
+				next[peerId] = { ping: s.pingMs, loss: w.update(s.packets, s.lost) };
+			}
+			quality = next;
 		}, 2000);
 	}
 
@@ -466,11 +479,11 @@
 					</span>
 					<div class="flex shrink-0 items-center gap-1">
 						<SignalBars
-							loss={stats[peer.peerId]?.loss ?? null}
-							ping={stats[peer.peerId]?.pingMs ?? null}
+							loss={quality[peer.peerId]?.loss ?? null}
+							ping={quality[peer.peerId]?.ping ?? null}
 						/>
 						<span class="font-mono text-[9px] tabular-nums text-neutral-400">
-							{stats[peer.peerId]?.pingMs ? `${stats[peer.peerId].pingMs}ms` : '--'}
+							{quality[peer.peerId]?.ping ? `${quality[peer.peerId].ping}ms` : '--'}
 						</span>
 					</div>
 					<div class="flex gap-1">

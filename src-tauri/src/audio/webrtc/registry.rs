@@ -183,9 +183,10 @@ pub fn peer_pings(node_id: &str) -> HashMap<String, u32> {
     result
 }
 
-/// Returns `(display_id -> (ping_ms, loss_ratio))` for connected peers. Loss is
-/// the fraction of inferred-missing packets over received-plus-missing.
-pub fn peer_stats(node_id: &str) -> HashMap<String, (u32, f32)> {
+/// Returns `(display_id -> (ping_ms, packets, lost))` for connected peers, as
+/// cumulative counters. The caller windows them (loss over a recent interval)
+/// so a rough patch shows up instead of being diluted by lifetime totals.
+pub fn peer_stats(node_id: &str) -> HashMap<String, (u32, u64, u64)> {
     let Some(session) = get(node_id) else {
         return HashMap::new();
     };
@@ -199,9 +200,7 @@ pub fn peer_stats(node_id: &str) -> HashMap<String, (u32, f32)> {
             let ms = p.ping_ms.load(Ordering::Relaxed);
             let recv = p.packets.load(Ordering::Relaxed);
             let lost = p.lost.load(Ordering::Relaxed);
-            let total = recv + lost;
-            let loss = if total == 0 { 0.0 } else { lost as f32 / total as f32 };
-            (id, (ms, loss))
+            (id, (ms, recv, lost))
         })
         .collect()
 }

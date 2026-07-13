@@ -9,6 +9,7 @@
 //! ratio by a fraction of a percent so playback tracks the sender continuously,
 //! without ever dropping or inserting samples (which would be audible).
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -24,19 +25,27 @@ pub const SR: u32 = 48_000;
 pub const RESAMPLE_CHUNK: usize = 256;
 /// 48 kHz decoded ring feeding the fan-out task (~0.5 s stereo).
 pub const RECV_RING: usize = 48_000;
-/// Output-rate jitter buffer one consumer drains a block at a time.
-pub const PLAYBACK_RING: usize = 48_000;
+/// Output-rate jitter buffer (~1 s stereo) -- headroom for a deep adaptive
+/// target plus a burst after a latency spike.
+pub const PLAYBACK_RING: usize = 96_000;
 /// Max samples a consumer pulls per block (DSP_BLOCK_FRAMES * 2 channels).
 pub const PLAYBACK_SCRATCH: usize = 2048;
-/// Buffer this many samples (~50 ms stereo) before playback starts, and
-/// re-buffer after a full drain, so network jitter doesn't stutter output.
-pub const PLAYBACK_PRIME: usize = 4800;
-/// Backlog the drift controller steers toward (~100 ms stereo).
-pub const PLAYBACK_TARGET: usize = 9600;
-/// Above this backlog (~200 ms) something abnormal happened (burst, resume);
-/// skip ahead to the target as a safety net. Normal drift never reaches it --
-/// the resampler controller keeps the backlog near PLAYBACK_TARGET.
-pub const PLAYBACK_MAX: usize = 19_200;
+
+/// Adaptive jitter-buffer target (samples stereo): the depth the drift
+/// controller steers toward and the buffer primes to. It starts moderate and
+/// grows when the network under-delivers (a latency spike drains the buffer),
+/// then shrinks slowly during sustained calm -- so a periodic spike (e.g. a
+/// Wi-Fi background scan) is absorbed after the first occurrence instead of
+/// clicking every time.
+const TARGET_INIT: usize = 5_760; // ~60 ms
+const TARGET_MIN: usize = 3_840; // ~40 ms
+const TARGET_MAX: usize = 38_400; // ~400 ms
+/// Deepen the target by this much (~50 ms) whenever a block underruns.
+const TARGET_GROW: usize = 4_800;
+/// Shrink by this much (~10 ms) after a calm window with margin to spare.
+const TARGET_SHRINK: usize = 960;
+/// Blocks of sustained calm before shrinking (~10 s at ~21 ms/block).
+const CALM_WINDOW: u32 = 480;
 
 /// Proportional gain: backlog error (samples) -> ratio correction. Sized so a
 /// steady drift settles with only a few ms of extra backlog, and the ratio
@@ -58,6 +67,9 @@ pub type TapMap = Arc<Mutex<HashMap<String, PlaybackTap>>>;
 pub struct ConsumerHandle {
     pub taps: TapMap,
     pub drift: Arc<AtomicU32>,
+    /// Adaptive jitter-buffer depth (samples), shared by the taps (prime/hard
+    /// cap) and the controller (drift setpoint).
+    pub target: Arc<AtomicU32>,
     pub realtime: bool,
 }
 
@@ -129,15 +141,17 @@ impl Target {
 /// `scratch` (read by both a mix and any per-channel output).
 pub struct PlaybackTap {
     consumer: Consumer<f32>,
+    target: Arc<AtomicU32>,
     pub scratch: Vec<f32>,
     pub valid: usize,
     primed: bool,
 }
 
 impl PlaybackTap {
-    pub fn new(consumer: Consumer<f32>) -> Self {
+    pub fn new(consumer: Consumer<f32>, target: Arc<AtomicU32>) -> Self {
         Self {
             consumer,
+            target,
             scratch: vec![0.0; PLAYBACK_SCRATCH],
             valid: 0,
             primed: false,
@@ -148,43 +162,48 @@ impl PlaybackTap {
         self.consumer.slots()
     }
 
-    /// Pop up to `block_len` samples into `scratch`, applying the jitter buffer.
-    /// Returns the count written; the rest of `scratch` is stale, so callers
-    /// must read only `..valid`.
+    /// Pop one full block of `block_len` samples into `scratch`, applying the
+    /// jitter buffer. Returns the count written (0 = emit silence this block).
+    /// Only whole blocks are popped, so there's never a mid-block splice; a
+    /// momentary underrun is one silent block, not a re-prime stall.
     pub fn fill_block(&mut self, block_len: usize) -> usize {
         let need = block_len.min(self.scratch.len());
+        let target = self.target.load(Ordering::Relaxed) as usize;
         let mut avail = self.consumer.slots();
+        // Prime to the (adaptive) target before first playback.
         if !self.primed {
-            if avail < PLAYBACK_PRIME {
+            if avail < target {
                 self.valid = 0;
                 return 0;
             }
             self.primed = true;
         }
-        if avail == 0 {
-            self.primed = false;
-            self.valid = 0;
-            return 0;
-        }
-        // Safety net only: normal drift is absorbed by the resampler controller,
-        // so this fires only on an abnormal burst/resume. Even sample count so
+        // Safety net: an abnormal burst overshot the target far past what the
+        // controller allows -- skip ahead to bound latency. Even sample count so
         // channels stay aligned.
-        if avail > PLAYBACK_MAX {
-            let drop = (avail - PLAYBACK_TARGET) & !1;
+        let hard_cap = (target * 2).max(target + PLAYBACK_SCRATCH * 4);
+        if avail > hard_cap {
+            let drop = (avail - target) & !1;
             if let Ok(chunk) = self.consumer.read_chunk(drop) {
                 chunk.commit_all();
             }
             avail = self.consumer.slots();
         }
-        let n = need.min(avail);
-        if let Ok(chunk) = self.consumer.read_chunk(n) {
+        // Not enough for a whole block: emit silence, keep what's buffered (no
+        // partial-block splice, no re-prime). Stays primed so playback resumes
+        // seamlessly when the next packets land.
+        if avail < need {
+            self.valid = 0;
+            return 0;
+        }
+        if let Ok(chunk) = self.consumer.read_chunk(need) {
             let (a, b) = chunk.as_slices();
             self.scratch[..a.len()].copy_from_slice(a);
             self.scratch[a.len()..a.len() + b.len()].copy_from_slice(b);
             chunk.commit_all();
         }
-        self.valid = n;
-        n
+        self.valid = need;
+        need
     }
 }
 
@@ -201,6 +220,7 @@ struct ConsumerRef {
     rate: u32,
     realtime: bool,
     drift: Arc<AtomicU32>,
+    target: Arc<AtomicU32>,
     taps: Weak<Mutex<HashMap<String, PlaybackTap>>>,
 }
 
@@ -220,20 +240,22 @@ impl FanoutRegistry {
     pub fn register_consumer(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
         let map: TapMap = Arc::new(Mutex::new(HashMap::new()));
         let drift = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let target = Arc::new(AtomicU32::new(TARGET_INIT as u32));
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
         for (key, bc) in self.broadcasts.lock().unwrap().iter() {
             let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
             bc.lock().unwrap().push(Target::new(output_sr, realtime, prod, drift.clone()));
-            map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons));
+            map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons, target.clone()));
         }
         consumers.push(ConsumerRef {
             rate: output_sr,
             realtime,
             drift: drift.clone(),
+            target: target.clone(),
             taps: Arc::downgrade(&map),
         });
-        ConsumerHandle { taps: map, drift, realtime }
+        ConsumerHandle { taps: map, drift, target, realtime }
     }
 
     /// New received channel: a fresh broadcast wired into every live consumer.
@@ -245,7 +267,7 @@ impl FanoutRegistry {
             if let Some(map) = c.taps.upgrade() {
                 let (prod, cons) = RingBuffer::<f32>::new(PLAYBACK_RING);
                 bc.lock().unwrap().push(Target::new(c.rate, c.realtime, prod, c.drift.clone()));
-                map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons));
+                map.lock().unwrap().insert(key.clone(), PlaybackTap::new(cons, c.target.clone()));
             }
         }
         self.broadcasts.lock().unwrap().insert(key, bc.clone());
@@ -270,7 +292,11 @@ impl FanoutRegistry {
 pub struct ChannelReceiver {
     taps: TapMap,
     drift: Arc<AtomicU32>,
+    target: Arc<AtomicU32>,
     realtime: bool,
+    // Adaptive-jitter window state; only the single worker thread touches these.
+    min_backlog: Cell<usize>,
+    window_blocks: Cell<u32>,
 }
 
 impl ChannelReceiver {
@@ -278,34 +304,68 @@ impl ChannelReceiver {
         Self {
             taps: handle.taps,
             drift: handle.drift,
+            target: handle.target,
             realtime: handle.realtime,
+            min_backlog: Cell::new(usize::MAX),
+            window_blocks: Cell::new(0),
         }
     }
 
     /// Pop one block from every tap into its `scratch` and sum into `mix`. Call
     /// once per block before any `channel`/`prefix_mix` reads (they reuse the
-    /// popped scratch). Real-time consumers also update the drift ratio here
-    /// from the current jitter-buffer fill.
+    /// popped scratch). Real-time consumers also adapt the buffer depth and the
+    /// drift ratio here from the current jitter-buffer fill.
     pub fn mix_block(&self, mix: &mut [f32]) {
         mix.fill(0.0);
+        let need = mix.len();
         if let Ok(mut taps) = self.taps.try_lock() {
             if self.realtime {
                 // All channels of a consumer drain in lockstep, so any tap's
-                // backlog represents this consumer; one shared ratio keeps the
-                // channels phase-coherent.
+                // backlog represents this consumer; one shared target + ratio
+                // keeps the channels phase-coherent.
                 if let Some(tap) = taps.values().next() {
-                    let e = tap.backlog() as f64 - PLAYBACK_TARGET as f64;
-                    let d = (1.0 - DRIFT_KP * e).clamp(DRIFT_MIN, DRIFT_MAX);
-                    self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
+                    let backlog = tap.backlog();
+                    self.control(backlog, need);
                 }
             }
             for tap in taps.values_mut() {
-                let n = tap.fill_block(mix.len());
+                let n = tap.fill_block(need);
                 for (d, &v) in mix[..n].iter_mut().zip(tap.scratch[..n].iter()) {
                     *d += v;
                 }
             }
         }
+    }
+
+    /// Adaptive buffer depth + drift ratio from the current backlog. Grow the
+    /// target the moment a block can't be filled (a latency spike drained us),
+    /// shrink it slowly during sustained calm, and steer the resampler toward
+    /// whatever the target currently is.
+    fn control(&self, backlog: usize, need: usize) {
+        let mut target = self.target.load(Ordering::Relaxed) as usize;
+        self.min_backlog.set(self.min_backlog.get().min(backlog));
+        self.window_blocks.set(self.window_blocks.get() + 1);
+
+        if backlog < need {
+            // Underrun this block: deepen so the next spike is absorbed.
+            target = (target + TARGET_GROW).min(TARGET_MAX);
+            self.target.store(target as u32, Ordering::Relaxed);
+            self.min_backlog.set(usize::MAX);
+            self.window_blocks.set(0);
+        } else if self.window_blocks.get() >= CALM_WINDOW {
+            // Sustained calm with a whole block of headroom above target: we're
+            // deeper than we need, reclaim a little latency.
+            if self.min_backlog.get() > target + need {
+                target = target.saturating_sub(TARGET_SHRINK).max(TARGET_MIN);
+                self.target.store(target as u32, Ordering::Relaxed);
+            }
+            self.min_backlog.set(usize::MAX);
+            self.window_blocks.set(0);
+        }
+
+        let e = backlog as f64 - target as f64;
+        let d = (1.0 - DRIFT_KP * e).clamp(DRIFT_MIN, DRIFT_MAX);
+        self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
     }
 
     /// Whether at least one channel has a full block buffered. Availability-paced

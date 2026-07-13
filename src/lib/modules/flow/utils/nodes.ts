@@ -241,7 +241,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'WebRTC',
 		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
 		component: WebRtcCollaborator,
-		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '' }
+		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '', codec: 'opus' }
 	}),
 	netReceiver: entry<'netReceiver'>({
 		kind: 'netReceiver',

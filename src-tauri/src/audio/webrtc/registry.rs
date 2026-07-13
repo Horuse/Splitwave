@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 
-use crate::audio::graph::OpusApplication;
+use crate::audio::graph::{NetCodec, OpusApplication};
 
 use super::session::{PeerState, WebRtcSession};
 
@@ -83,10 +83,11 @@ pub async fn leave_room(node_id: &str) {
 
 /// Stores the local name and input count; the ctrl channel's periodic meta
 /// message carries them to peers.
-pub fn set_identity(node_id: &str, name: String, channels: u32) {
+pub fn set_identity(node_id: &str, name: String, channels: u32, codec: NetCodec) {
     if let Some(session) = get(node_id) {
         *session.local_name.lock().unwrap() = name;
         session.local_channels.store(channels.clamp(1, 10), Ordering::Relaxed);
+        session.set_codec(codec);
     }
 }
 

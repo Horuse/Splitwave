@@ -9,47 +9,48 @@ use tracing::warn;
 use webrtc::data_channel::RTCDataChannel;
 
 use crate::audio::graph::OpusApplication;
+use crate::audio::netaudio::codec::ChannelEncoder;
+use crate::audio::netaudio::packet::{self, Format};
 use crate::audio::resample::StereoResampler;
 use crate::audio::streams::bulk_push;
 
 use crate::audio::stream_recv::RECV_RING;
 
 use super::session::{PeerChannel, WebRtcSession};
-use super::{OPUS_FRAME_SAMPLES, OPUS_SR, RESAMPLE_CHUNK};
+use super::{OPUS_SR, RESAMPLE_CHUNK};
 
-/// Per-channel Opus encode state. One instance per local send channel.
+/// Per-channel encode state: resample the graph rate to 48 kHz, then hand off
+/// to a format-agnostic `ChannelEncoder` (Opus or raw PCM). The encoder is
+/// rebuilt when the UI switches codec.
 struct ChannelEnc {
-    encoder: Option<opus::Encoder>,
     resampler: Option<StereoResampler>,
     resampler_sr: u32,
     in_acc: Vec<f32>,
     out_acc: Vec<f32>,
-    opus_buf: Vec<u8>,
-    send_buf: Vec<u8>,
+    encoder: ChannelEncoder,
+    format: Format,
+    bitrate: u32,
+    application: opus::Application,
 }
 
 impl ChannelEnc {
-    fn new(bitrate: u32, application: opus::Application) -> Self {
-        let encoder = match opus::Encoder::new(OPUS_SR, opus::Channels::Stereo, application) {
-            Ok(mut e) => {
-                if let Err(err) = e.set_bitrate(opus::Bitrate::Bits(bitrate as i32)) {
-                    warn!(error = %err, "set opus bitrate failed");
-                }
-                Some(e)
-            }
-            Err(e) => {
-                warn!(error = %e, "opus encoder init failed");
-                None
-            }
-        };
+    fn new(format: Format, bitrate: u32, application: opus::Application) -> Self {
         Self {
-            encoder,
             resampler: None,
             resampler_sr: 0,
             in_acc: Vec::new(),
             out_acc: Vec::new(),
-            opus_buf: vec![0u8; 4096],
-            send_buf: Vec::with_capacity(4097),
+            encoder: ChannelEncoder::new(format, bitrate, application),
+            format,
+            bitrate,
+            application,
+        }
+    }
+
+    fn ensure_format(&mut self, format: Format) {
+        if format != self.format {
+            self.format = format;
+            self.encoder = ChannelEncoder::new(format, self.bitrate, self.application);
         }
     }
 
@@ -91,25 +92,6 @@ impl ChannelEnc {
             }
         }
     }
-
-    /// Encode the frame at `off`, prefixed with `[channel, seq_be]` for the
-    /// receiver's per-channel loss accounting.
-    fn encode_frame(&mut self, channel: u8, seq: u16, off: usize) -> Option<Bytes> {
-        let enc = self.encoder.as_mut()?;
-        match enc.encode_float(&self.out_acc[off..off + OPUS_FRAME_SAMPLES], &mut self.opus_buf) {
-            Ok(n) => {
-                self.send_buf.clear();
-                self.send_buf.push(channel);
-                self.send_buf.extend_from_slice(&seq.to_be_bytes());
-                self.send_buf.extend_from_slice(&self.opus_buf[..n]);
-                Some(Bytes::copy_from_slice(&self.send_buf))
-            }
-            Err(e) => {
-                warn!(error = %e, "opus encode failed");
-                None
-            }
-        }
-    }
 }
 
 pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
@@ -129,13 +111,15 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
         loop {
             interval.tick().await;
             let sr = session.output_sr.load(Ordering::Relaxed);
+            let format = Format::from_byte(session.codec.load(Ordering::Relaxed))
+                .unwrap_or(Format::Opus);
 
             // Drain each channel's send ring under the lock, then release it
             // before the async resample/encode/send work.
             {
                 let mut cons = session.send_consumers.lock().unwrap();
                 while encs.len() < cons.len() {
-                    encs.push(ChannelEnc::new(bitrate, application));
+                    encs.push(ChannelEnc::new(format, bitrate, application));
                     seqs.push(0);
                 }
                 encs.truncate(cons.len());
@@ -154,22 +138,20 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
             }
 
             for (i, enc) in encs.iter_mut().enumerate() {
+                enc.ensure_format(format);
                 enc.ensure_resampler(sr);
                 enc.resample();
-                // Emit every full 20 ms frame; keep the partial tail for the
-                // next tick (padding it with silence would splice in a gap).
+                let channel = i as u8;
+                let seq = &mut seqs[i];
                 let mut frames: Vec<Bytes> = Vec::new();
-                let mut off = 0;
-                while enc.out_acc.len() - off >= OPUS_FRAME_SAMPLES {
-                    if let Some(b) = enc.encode_frame(i as u8, seqs[i], off) {
-                        frames.push(b);
-                        seqs[i] = seqs[i].wrapping_add(1);
-                    }
-                    off += OPUS_FRAME_SAMPLES;
-                }
-                if off > 0 {
-                    enc.out_acc.drain(..off);
-                }
+                enc.encoder.push(&enc.out_acc, |payload| {
+                    let mut d = Vec::with_capacity(packet::HEADER_LEN + payload.len());
+                    packet::write_header(&mut d, format, channel, *seq);
+                    *seq = seq.wrapping_add(1);
+                    d.extend_from_slice(payload);
+                    frames.push(Bytes::copy_from_slice(&d));
+                });
+                enc.out_acc.clear();
                 for b in frames {
                     send_to_peers(&b, &session).await;
                 }
@@ -198,16 +180,16 @@ async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
     }
 }
 
-/// A received Opus packet is `[channel_byte, seq_be, ...opus]`. Receive state
-/// for a channel is created on its first packet, so peers need not agree on how
-/// many channels each sends.
+/// A received packet is self-describing: `[format, channel, seq_be, ...payload]`
+/// (same wire format as the direct-IP transport). Receive state for a channel is
+/// created on its first packet, so peers need not agree on how many channels
+/// each sends, nor on the codec.
 pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id: &str) {
-    if data.len() < 4 {
-        return;
-    }
-    let channel = data[0];
-    let seq = u16::from_be_bytes([data[1], data[2]]);
-    let payload = data.slice(3..);
+    let Some(pkt) = packet::parse(&data) else { return };
+    let format = pkt.format;
+    let channel = pkt.channel;
+    let seq = pkt.seq;
+    let payload = data.slice(packet::HEADER_LEN..);
 
     let peer = {
         let peers = session.peers.lock().await;
@@ -223,16 +205,9 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         if let Some(c) = chans.get(&channel) {
             (c.clone(), None)
         } else {
-            let decoder = match opus::Decoder::new(OPUS_SR, opus::Channels::Stereo) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(error = %e, "opus decoder init failed");
-                    return;
-                }
-            };
             let (recv_prod, recv_cons) = RingBuffer::<f32>::new(RECV_RING);
             let c = Arc::new(PeerChannel {
-                decoder: std::sync::Mutex::new(decoder),
+                decoder: std::sync::Mutex::new(crate::audio::netaudio::codec::ChannelDecoder::new()),
                 recv_producer: std::sync::Mutex::new(Some(recv_prod)),
                 last_seq: std::sync::Mutex::new(None),
             });
@@ -261,20 +236,14 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         crate::audio::stream_recv::spawn_recv_fanout_task(recv_cons, broadcast);
     }
 
-    let mut pcm = vec![0.0_f32; OPUS_FRAME_SAMPLES];
-    let decoded = {
+    let mut pcm: Vec<f32> = Vec::new();
+    {
         let Ok(mut dec) = ch.decoder.lock() else { return };
-        match dec.decode_float(&payload, &mut pcm, false) {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(peer = %peer_id, error = %e, "opus decode failed");
-                return;
-            }
-        }
-    };
+        dec.decode(format, &payload, &mut pcm);
+    }
 
     let mut prod_guard = ch.recv_producer.lock().unwrap();
     if let Some(prod) = prod_guard.as_mut() {
-        bulk_push(prod, &pcm[..decoded * 2]);
+        bulk_push(prod, &pcm);
     }
 }

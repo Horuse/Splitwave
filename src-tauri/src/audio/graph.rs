@@ -426,9 +426,14 @@ pub struct WebRtcCollaboratorData {
     pub opus_application: OpusApplication,
     #[serde(default = "default_channels")]
     pub channels: u32,
+    #[serde(default = "default_codec")]
+    pub codec: NetCodec,
 }
 fn default_channels() -> u32 {
     1
+}
+fn default_codec() -> NetCodec {
+    NetCodec::Opus
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

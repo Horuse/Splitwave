@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
-	import type { OpusApplication } from '$lib/modules/pipeline/types';
+	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { PasswordInput } from '$lib/modules/form/ui';
 	import SignalBars from '$lib/components/signal_bars.svelte';
@@ -47,7 +47,14 @@
 
 	function pushIdentity(name: string, channels: number) {
 		audioMethods
-			.webrtcSetIdentity(id, name, channels, data.opusBitrate, data.opusApplication)
+			.webrtcSetIdentity(
+				id,
+				name,
+				channels,
+				data.codec ?? 'opus',
+				data.opusBitrate,
+				data.opusApplication
+			)
 			.catch(() => {});
 	}
 
@@ -88,6 +95,17 @@
 		{ value: 'audio', label: 'Audio', sub: 'music' },
 		{ value: 'low-delay', label: 'Low', sub: 'delay' }
 	];
+
+	const CODECS: { value: NetCodec; label: string; sub: string }[] = [
+		{ value: 'opus', label: 'Opus', sub: 'compressed' },
+		{ value: 'pcm-f32', label: 'PCM', sub: 'f32' },
+		{ value: 'pcm-i16', label: 'PCM', sub: 'i16' }
+	];
+
+	function setCodec(codec: NetCodec) {
+		flow.updateNodeData(id, { codec });
+		pushIdentity(data.name ?? '', channelCount);
+	}
 
 	function setBitrate(bps: number) {
 		flow.updateNodeData(id, { opusBitrate: bps });
@@ -292,48 +310,72 @@
 			</div>
 		{/each}
 
-		<!-- bitrate -->
+		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-			<div class="grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each BITRATES as b (b.bps)}
+			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
+			<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
+				{#each CODECS as c (c.value)}
 					<button
 						type="button"
-						onclick={() => setBitrate(b.bps)}
+						onclick={() => setCodec(c.value)}
 						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.opusBitrate === b.bps
+							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
+							(data.codec ?? 'opus') === c.value
 								? 'bg-neutral-900 text-white'
 								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
 						]}
 					>
-						{b.label}
+						<span class="font-mono text-[10px]">{c.label}</span>
+						<span class="text-[8px] opacity-70">{c.sub}</span>
 					</button>
 				{/each}
 			</div>
 		</div>
 
-		<!-- application -->
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-			<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each APPS as a (a.value)}
-					<button
-						type="button"
-						onclick={() => setApp(a.value)}
-						class={[
-							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-							data.opusApplication === a.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						<span class="font-mono text-[10px]">{a.label}</span>
-						<span class="text-[8px] opacity-70">{a.sub}</span>
-					</button>
-				{/each}
+		{#if (data.codec ?? 'opus') === 'opus'}
+			<!-- bitrate -->
+			<div class="flex flex-col gap-0.5">
+				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
+				<div class="grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
+					{#each BITRATES as b (b.bps)}
+						<button
+							type="button"
+							onclick={() => setBitrate(b.bps)}
+							class={[
+								'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
+								data.opusBitrate === b.bps
+									? 'bg-neutral-900 text-white'
+									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+							]}
+						>
+							{b.label}
+						</button>
+					{/each}
+				</div>
 			</div>
-		</div>
+
+			<!-- application -->
+			<div class="flex flex-col gap-0.5">
+				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
+				<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
+					{#each APPS as a (a.value)}
+						<button
+							type="button"
+							onclick={() => setApp(a.value)}
+							class={[
+								'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
+								data.opusApplication === a.value
+									? 'bg-neutral-900 text-white'
+									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+							]}
+						>
+							<span class="font-mono text-[10px]">{a.label}</span>
+							<span class="text-[8px] opacity-70">{a.sub}</span>
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<hr class="border-neutral-300" />
 

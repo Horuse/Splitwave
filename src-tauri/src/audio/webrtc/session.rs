@@ -1,12 +1,14 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rtrb::{Consumer, Producer};
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::RTCPeerConnection;
 
-use crate::audio::graph::OpusApplication;
+use crate::audio::graph::{NetCodec, OpusApplication};
+use crate::audio::netaudio::codec::ChannelDecoder;
+use crate::audio::netaudio::packet::Format;
 use crate::audio::stream_recv::{ChannelBroadcast, FanoutRegistry};
 
 use super::{PeerSnapshotMap, OPUS_SR};
@@ -26,6 +28,10 @@ pub struct WebRtcSession {
     // Local participant name and input count, shared over the ctrl channel.
     pub local_name: Arc<Mutex<String>>,
     pub local_channels: Arc<AtomicU32>,
+    // Wire codec (packet::Format byte). Live-read by the encode loop, so the UI
+    // can switch Opus/PCM without reconnecting. Packets are self-describing, so
+    // the receiver adapts per packet regardless of this setting.
+    pub codec: AtomicU8,
     // DSP graph rate the bridge feeds/reads at; the async paths resample it to
     // 48 kHz for Opus. Defaults to 48 kHz until the bridge is instantiated.
     pub output_sr: Arc<AtomicU32>,
@@ -63,7 +69,8 @@ pub struct PeerState {
 }
 
 pub struct PeerChannel {
-    pub decoder: Mutex<opus::Decoder>,
+    // Format-agnostic decoder (Opus or raw PCM, chosen per packet).
+    pub decoder: Mutex<ChannelDecoder>,
     pub recv_producer: Mutex<Option<Producer<f32>>>,
     // Last seq seen on this channel, to count gaps as loss.
     pub last_seq: Mutex<Option<u16>>,
@@ -80,12 +87,22 @@ impl WebRtcSession {
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
             local_channels: Arc::new(AtomicU32::new(1)),
+            codec: AtomicU8::new(Format::Opus.to_byte()),
             output_sr: Arc::new(AtomicU32::new(OPUS_SR)),
             encoder_started: AtomicBool::new(false),
             phase: Mutex::new("idle"),
             room_code: Mutex::new(None),
             signaling_task: Mutex::new(None),
         }
+    }
+
+    pub fn set_codec(&self, codec: NetCodec) {
+        let f = match codec {
+            NetCodec::PcmF32 => Format::PcmF32,
+            NetCodec::PcmI16 => Format::PcmI16,
+            NetCodec::Opus => Format::Opus,
+        };
+        self.codec.store(f.to_byte(), Ordering::Relaxed);
     }
 
     pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>, output_sr: u32) {

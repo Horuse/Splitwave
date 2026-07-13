@@ -87,10 +87,18 @@ export const methods = {
 		nodeId: string,
 		name: string,
 		channels: number,
+		codec: string,
 		opusBitrate: number,
 		opusApplication: string
 	): Promise<void> =>
-		invoke('webrtc_set_identity', { nodeId, name, channels, opusBitrate, opusApplication }),
+		invoke('webrtc_set_identity', {
+			nodeId,
+			name,
+			channels,
+			codec,
+			opusBitrate,
+			opusApplication
+		}),
 	onWebrtcConnected: (cb: (e: { nodeId: string; peerId: string }) => void): Promise<UnlistenFn> =>
 		listen<{ nodeId: string; peerId: string }>('audio://webrtc_connected', (evt) =>
 			cb(evt.payload)

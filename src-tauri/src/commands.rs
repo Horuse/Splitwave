@@ -399,11 +399,12 @@ pub fn webrtc_set_identity(
     node_id: String,
     name: String,
     channels: u32,
+    codec: crate::audio::graph::NetCodec,
     opus_bitrate: u32,
     opus_application: OpusApplication,
 ) {
     webrtc::get_or_create(&node_id, opus_bitrate, opus_application);
-    webrtc::set_identity(&node_id, name, channels);
+    webrtc::set_identity(&node_id, name, channels, codec);
 }
 
 #[tauri::command]

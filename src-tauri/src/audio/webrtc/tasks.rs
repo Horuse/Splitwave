@@ -3,18 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use rtrb::RingBuffer;
 use tracing::warn;
 
 use webrtc::data_channel::RTCDataChannel;
 
 use crate::audio::graph::OpusApplication;
-use crate::audio::netaudio::codec::ChannelEncoder;
+use crate::audio::netaudio::codec::{ChannelDecoder, ChannelEncoder};
 use crate::audio::netaudio::packet::{self, Format};
 use crate::audio::resample::StereoResampler;
-use crate::audio::streams::bulk_push;
-
-use crate::audio::stream_recv::RECV_RING;
+use crate::audio::stream_recv::broadcast_push;
 
 use super::session::{PeerChannel, WebRtcSession};
 use super::{OPUS_SR, RESAMPLE_CHUNK};
@@ -200,19 +197,20 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         return;
     }
 
-    let (ch, wiring) = {
+    let ch = {
         let mut chans = peer.channels.lock().unwrap();
         if let Some(c) = chans.get(&channel) {
-            (c.clone(), None)
+            c.clone()
         } else {
-            let (recv_prod, recv_cons) = RingBuffer::<f32>::new(RECV_RING);
+            let display = peer.display_id.lock().unwrap().clone();
+            let broadcast = session.attach_channel(display, channel);
             let c = Arc::new(PeerChannel {
-                decoder: std::sync::Mutex::new(crate::audio::netaudio::codec::ChannelDecoder::new()),
-                recv_producer: std::sync::Mutex::new(Some(recv_prod)),
+                decoder: std::sync::Mutex::new(ChannelDecoder::new()),
+                broadcast,
                 last_seq: std::sync::Mutex::new(None),
             });
             chans.insert(channel, c.clone());
-            (c, Some(recv_cons))
+            c
         }
     };
 
@@ -230,20 +228,10 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     }
     peer.packets.fetch_add(1, Ordering::Relaxed);
 
-    if let Some(recv_cons) = wiring {
-        let display = peer.display_id.lock().unwrap().clone();
-        let broadcast = session.attach_channel(display, channel);
-        crate::audio::stream_recv::spawn_recv_fanout_task(recv_cons, broadcast);
-    }
-
     let mut pcm: Vec<f32> = Vec::new();
     {
         let Ok(mut dec) = ch.decoder.lock() else { return };
         dec.decode(format, &payload, &mut pcm);
     }
-
-    let mut prod_guard = ch.recv_producer.lock().unwrap();
-    if let Some(prod) = prod_guard.as_mut() {
-        bulk_push(prod, &pcm);
-    }
+    broadcast_push(&ch.broadcast, &pcm);
 }

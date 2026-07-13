@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rtrb::{Consumer, Producer};
+use rtrb::Consumer;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::peer_connection::RTCPeerConnection;
 
@@ -71,7 +71,8 @@ pub struct PeerState {
 pub struct PeerChannel {
     // Format-agnostic decoder (Opus or raw PCM, chosen per packet).
     pub decoder: Mutex<ChannelDecoder>,
-    pub recv_producer: Mutex<Option<Producer<f32>>>,
+    // Decoded 48 kHz audio is pushed straight into every consumer's ring.
+    pub broadcast: ChannelBroadcast,
     // Last seq seen on this channel, to count gaps as loss.
     pub last_seq: Mutex<Option<u16>>,
 }

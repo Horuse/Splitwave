@@ -6,22 +6,18 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rtrb::{Producer, RingBuffer};
 use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
-use crate::audio::stream_recv::{
-    spawn_recv_fanout_task, ConsumerHandle, FanoutRegistry, RECV_RING,
-};
-use crate::audio::streams::bulk_push;
+use crate::audio::stream_recv::{broadcast_push, ChannelBroadcast, ConsumerHandle, FanoutRegistry};
 
 use super::codec::ChannelDecoder;
 use super::packet;
 
 struct ChannelState {
     decoder: Mutex<ChannelDecoder>,
-    // 48 kHz decoded ring; the fan-out task drains the matching consumer.
-    recv_producer: Mutex<Producer<f32>>,
+    // Decoded 48 kHz audio is pushed straight into every consumer's ring.
+    broadcast: ChannelBroadcast,
 }
 
 pub struct NetReceiver {
@@ -125,23 +121,22 @@ impl NetReceiver {
             pcm.clear();
             channel.decoder.lock().unwrap().decode(pkt.format, pkt.payload, &mut pcm);
             if !pcm.is_empty() {
-                bulk_push(&mut channel.recv_producer.lock().unwrap(), &pcm);
+                broadcast_push(&channel.broadcast, &pcm);
             }
         }
     }
 
-    /// Receive state for a channel index, created (and fanned out) on first packet.
+    /// Receive state for a channel index, created (and wired to consumers) on
+    /// its first packet.
     fn channel(&self, index: u8) -> Arc<ChannelState> {
         let mut channels = self.channels.lock().unwrap();
         if let Some(c) = channels.get(&index) {
             return c.clone();
         }
-        let (prod, cons) = RingBuffer::<f32>::new(RECV_RING);
         let broadcast = self.fanout.attach_channel(index.to_string());
-        spawn_recv_fanout_task(cons, broadcast);
         let state = Arc::new(ChannelState {
             decoder: Mutex::new(ChannelDecoder::new()),
-            recv_producer: Mutex::new(prod),
+            broadcast,
         });
         channels.insert(index, state.clone());
         state

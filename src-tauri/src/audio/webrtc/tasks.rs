@@ -216,17 +216,33 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
 
     // Count gaps between consecutive seq numbers as loss (guard against
     // reorder / wrap producing an absurd jump).
+    let mut gap = 0u16;
     {
         let mut last = ch.last_seq.lock().unwrap();
         if let Some(prev) = *last {
-            let gap = seq.wrapping_sub(prev).wrapping_sub(1);
-            if gap > 0 && (gap as u32) < 1000 {
-                peer.lost.fetch_add(gap as u64, Ordering::Relaxed);
+            let g = seq.wrapping_sub(prev).wrapping_sub(1);
+            if g > 0 && (g as u32) < 1000 {
+                peer.lost.fetch_add(g as u64, Ordering::Relaxed);
+                gap = g;
             }
         }
         *last = Some(seq);
     }
     peer.packets.fetch_add(1, Ordering::Relaxed);
+
+    // Opus conceals lost frames from decoder state; PCM has no codec PLC (the
+    // playback side fades instead), so only conceal for Opus.
+    if gap > 0 && format == Format::Opus {
+        for _ in 0..gap.min(10) {
+            let mut c: Vec<f32> = Vec::new();
+            if let Ok(mut dec) = ch.decoder.lock() {
+                dec.conceal(&mut c);
+            }
+            if !c.is_empty() {
+                broadcast_push(&ch.broadcast, &c);
+            }
+        }
+    }
 
     let mut pcm: Vec<f32> = Vec::new();
     {

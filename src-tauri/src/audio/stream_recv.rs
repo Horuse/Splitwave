@@ -84,6 +84,11 @@ pub struct PlaybackTap {
     pub scratch: Vec<f32>,
     pub valid: usize,
     primed: bool,
+    // PLC: the last real output block, and whether we're currently in a gap.
+    // On a network underrun we fade this out (instead of a hard silence step),
+    // and fade the real audio back in on recovery.
+    last_block: Vec<f32>,
+    gap: bool,
 }
 
 impl PlaybackTap {
@@ -109,6 +114,8 @@ impl PlaybackTap {
             scratch: Vec::with_capacity(OUT_BLOCK_FRAMES * 2),
             valid: 0,
             primed: false,
+            last_block: vec![0.0; OUT_BLOCK_FRAMES * 2],
+            gap: false,
         }
     }
 
@@ -156,10 +163,8 @@ impl PlaybackTap {
         }
 
         if self.consumer.slots() < need {
-            // Real underrun (network gap): emit silence, stay primed so playback
-            // resumes seamlessly. (Clock-drift beating no longer causes this.)
-            self.valid = 0;
-            return 0;
+            // Real network underrun: conceal (fade), don't step to silence.
+            return self.conceal();
         }
 
         self.in_buf.clear();
@@ -171,8 +176,43 @@ impl PlaybackTap {
         }
         self.scratch.clear();
         if self.resampler.process(&self.in_buf, &mut self.scratch).is_err() {
+            return self.conceal();
+        }
+        // Keep the real (full-amplitude) block for future concealment.
+        if self.last_block.len() == self.scratch.len() {
+            self.last_block.copy_from_slice(&self.scratch);
+        }
+        if self.gap {
+            // Recovery: fade the real audio in over this block so the join off
+            // the concealed tail has no step.
+            let frames = self.scratch.len() / 2;
+            for (i, fr) in self.scratch.chunks_mut(2).enumerate() {
+                let g = (i as f32 + 1.0) / frames as f32;
+                fr[0] *= g;
+                fr[1] *= g;
+            }
+            self.gap = false;
+        }
+        self.valid = self.scratch.len();
+        self.valid
+    }
+
+    /// Concealment for a missing block: on entering a gap, one fade-out of the
+    /// last real block; sustained gap is silence. Far less audible than a hard
+    /// silence step, which reads as a needle on the scope.
+    fn conceal(&mut self) -> usize {
+        if self.gap {
             self.valid = 0;
             return 0;
+        }
+        self.gap = true;
+        self.scratch.clear();
+        self.scratch.extend_from_slice(&self.last_block);
+        let frames = self.scratch.len() / 2;
+        for (i, fr) in self.scratch.chunks_mut(2).enumerate() {
+            let g = 1.0 - (i as f32 + 1.0) / frames as f32;
+            fr[0] *= g;
+            fr[1] *= g;
         }
         self.valid = self.scratch.len();
         self.valid
@@ -272,6 +312,9 @@ pub struct ChannelReceiver {
     min_backlog: Cell<usize>,
     window_blocks: Cell<u32>,
     avg_backlog: Cell<f64>,
+    // Last emitted mix, held when the tap map is briefly locked for registration
+    // so a lock miss is an inaudible repeat rather than a silent click.
+    last_mix: std::cell::RefCell<Vec<f32>>,
 }
 
 impl ChannelReceiver {
@@ -284,31 +327,52 @@ impl ChannelReceiver {
             min_backlog: Cell::new(usize::MAX),
             window_blocks: Cell::new(0),
             avg_backlog: Cell::new(-1.0),
+            last_mix: std::cell::RefCell::new(Vec::new()),
         }
     }
 
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
     /// Real-time consumers also adapt the buffer depth and drift ratio here.
     pub fn mix_block(&self, mix: &mut [f32]) {
-        mix.fill(0.0);
         let out_frames = mix.len() / 2;
         // The playback resamplers are built for exactly OUT_BLOCK_FRAMES output.
         debug_assert_eq!(out_frames, OUT_BLOCK_FRAMES);
-        if let Ok(mut taps) = self.taps.try_lock() {
-            if self.realtime {
-                if let Some(tap) = taps.values().next() {
-                    let backlog = tap.backlog();
-                    let need = tap.need_in();
-                    self.control(backlog, need);
-                }
+        let Ok(mut taps) = self.taps.try_lock() else {
+            // Map briefly locked for registration: hold the last mix rather than
+            // emit a silent click.
+            let held = self.last_mix.borrow();
+            if held.len() == mix.len() {
+                mix.copy_from_slice(&held);
+            } else {
+                mix.fill(0.0);
             }
-            for tap in taps.values_mut() {
-                let n = tap.fill_block(out_frames);
-                for (d, &v) in mix[..n].iter_mut().zip(tap.scratch[..n].iter()) {
-                    *d += v;
-                }
+            return;
+        };
+        mix.fill(0.0);
+        if self.realtime {
+            // Drive from the emptiest channel so no channel is left to underrun;
+            // one shared ratio keeps channels phase-coherent.
+            let mut min_backlog = usize::MAX;
+            let mut need = OUT_BLOCK_FRAMES * 2;
+            for tap in taps.values() {
+                min_backlog = min_backlog.min(tap.backlog());
+                need = tap.need_in();
+            }
+            if min_backlog != usize::MAX {
+                self.control(min_backlog, need);
             }
         }
+        for tap in taps.values_mut() {
+            let n = tap.fill_block(out_frames);
+            for (d, &v) in mix[..n].iter_mut().zip(tap.scratch[..n].iter()) {
+                *d += v;
+            }
+        }
+        let mut held = self.last_mix.borrow_mut();
+        if held.len() != mix.len() {
+            held.resize(mix.len(), 0.0);
+        }
+        held.copy_from_slice(mix);
     }
 
     /// Adaptive buffer depth + drift ratio from the current backlog.

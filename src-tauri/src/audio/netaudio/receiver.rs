@@ -111,13 +111,26 @@ impl NetReceiver {
             let Some(pkt) = packet::parse(&buf[..n]) else { continue };
             self.bytes.fetch_add(n as u64, Ordering::Relaxed);
             self.packets.fetch_add(1, Ordering::Relaxed);
+            let channel = self.channel(pkt.channel);
+            let mut gap = 0u16;
             if let Some(prev) = last_seq.insert(pkt.channel, pkt.seq) {
-                let gap = pkt.seq.wrapping_sub(prev).wrapping_sub(1);
-                if gap > 0 && (gap as u32) < 1000 {
-                    self.lost.fetch_add(gap as u64, Ordering::Relaxed);
+                let g = pkt.seq.wrapping_sub(prev).wrapping_sub(1);
+                if g > 0 && (g as u32) < 1000 {
+                    self.lost.fetch_add(g as u64, Ordering::Relaxed);
+                    gap = g;
                 }
             }
-            let channel = self.channel(pkt.channel);
+            // Opus conceals lost frames from decoder state; PCM has no codec PLC
+            // (the playback side fades instead), so only conceal for Opus.
+            if gap > 0 && pkt.format == packet::Format::Opus {
+                for _ in 0..gap.min(10) {
+                    pcm.clear();
+                    channel.decoder.lock().unwrap().conceal(&mut pcm);
+                    if !pcm.is_empty() {
+                        broadcast_push(&channel.broadcast, &pcm);
+                    }
+                }
+            }
             pcm.clear();
             channel.decoder.lock().unwrap().decode(pkt.format, pkt.payload, &mut pcm);
             if !pcm.is_empty() {

@@ -91,6 +91,17 @@ impl ChannelDecoder {
         Self { opus, pcm: vec![0.0; OPUS_FRAME_SAMPLES] }
     }
 
+    /// Generate one frame of Opus packet-loss concealment (Opus extrapolates
+    /// from decoder state) appended to `out`. No-op for raw PCM -- there the
+    /// playback side conceals with a fade. Call once per lost Opus packet.
+    pub fn conceal(&mut self, out: &mut Vec<f32>) {
+        if let Some(dec) = self.opus.as_mut() {
+            if let Ok(n) = dec.decode_float(&[], &mut self.pcm, false) {
+                out.extend_from_slice(&self.pcm[..n * 2]);
+            }
+        }
+    }
+
     /// Decodes one payload into 48 kHz interleaved samples appended to `out`.
     pub fn decode(&mut self, format: Format, payload: &[u8], out: &mut Vec<f32>) {
         match format {

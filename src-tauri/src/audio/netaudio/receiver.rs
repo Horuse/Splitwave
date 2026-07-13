@@ -10,7 +10,9 @@ use rtrb::{Producer, RingBuffer};
 use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
-use crate::audio::stream_recv::{spawn_recv_fanout_task, FanoutRegistry, TapMap, RECV_RING};
+use crate::audio::stream_recv::{
+    spawn_recv_fanout_task, ConsumerHandle, FanoutRegistry, RECV_RING,
+};
 use crate::audio::streams::bulk_push;
 
 use super::codec::ChannelDecoder;
@@ -77,8 +79,8 @@ pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {
 
 impl NetReceiver {
     /// New output subgraph consumer at `output_sr`; wired to every live channel.
-    pub fn register_consumer(&self, output_sr: u32) -> TapMap {
-        self.fanout.register_consumer(output_sr)
+    pub fn register_consumer(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
+        self.fanout.register_consumer(output_sr, realtime)
     }
 
     fn stop(&self) {

@@ -47,6 +47,13 @@ impl StereoResampler {
         self.out_max
     }
 
+    /// Nudge the output/input ratio for clock-drift tracking. Must stay within
+    /// the relative bound set at construction (1.05). Ramped so the change is
+    /// applied smoothly across the next chunk rather than as a step.
+    pub fn set_ratio(&mut self, ratio: f64) {
+        let _ = self.inner.set_resample_ratio(ratio, true);
+    }
+
     pub fn process_chunk(&mut self, interleaved_in: &[f32], dst: &mut Vec<f32>) -> AppResult<()> {
         debug_assert_eq!(interleaved_in.len(), self.chunk_in * 2);
 

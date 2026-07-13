@@ -14,9 +14,6 @@ pub use registry::{
     set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,
 };
 
-// Shared receive tap map (jitter buffer, broadcast, fan-out task live in stream_recv).
-pub use crate::audio::stream_recv::TapMap as PeerSnapshotMap;
-
 // Opus operates only at 48 kHz; the DSP graph runs at the output device rate,
 // so the encode and receive paths resample to/from 48 kHz.
 pub const OPUS_SR: u32 = 48_000;

@@ -354,6 +354,7 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
+    realtime: bool,
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -629,8 +630,9 @@ pub fn instantiate_effect(
             }
             let session = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application);
             session.set_send_consumers(send_consumers, sample_rate);
-            let receiver =
-                crate::audio::stream_recv::ChannelReceiver::new(session.register_bridge(sample_rate));
+            let receiver = crate::audio::stream_recv::ChannelReceiver::new(
+                session.register_bridge(sample_rate, realtime),
+            );
             mk(
                 RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
                     send_producers,

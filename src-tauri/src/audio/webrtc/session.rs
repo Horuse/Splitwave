@@ -9,9 +9,9 @@ use webrtc::peer_connection::RTCPeerConnection;
 use crate::audio::graph::{NetCodec, OpusApplication};
 use crate::audio::netaudio::codec::ChannelDecoder;
 use crate::audio::netaudio::packet::Format;
-use crate::audio::stream_recv::{ChannelBroadcast, FanoutRegistry};
+use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry};
 
-use super::{PeerSnapshotMap, OPUS_SR};
+use super::OPUS_SR;
 
 pub struct WebRtcSession {
     #[allow(dead_code)]
@@ -110,8 +110,8 @@ impl WebRtcSession {
         self.output_sr.store(output_sr, Ordering::Relaxed);
     }
 
-    pub fn register_bridge(&self, output_sr: u32) -> PeerSnapshotMap {
-        self.fanout.register_consumer(output_sr)
+    pub fn register_bridge(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
+        self.fanout.register_consumer(output_sr, realtime)
     }
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.

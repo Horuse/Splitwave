@@ -345,6 +345,10 @@ impl ProducerState {
             self.receiver.channel(handle, buf);
         }
     }
+
+    fn is_ready_for_block(&self) -> bool {
+        self.receiver.ready(DSP_BLOCK_FRAMES * 2)
+    }
 }
 
 /// A terminal sink that consumes per-channel inputs (summed by target handle
@@ -421,10 +425,13 @@ impl OutputGraph {
     /// gate block production.
     pub(super) fn all_sources_ready(&self) -> bool {
         for node in &self.nodes {
-            if let DagNode::Source(s) = node {
-                if !s.is_ready_for_block() {
-                    return false;
-                }
+            match node {
+                DagNode::Source(s) if !s.is_ready_for_block() => return false,
+                // A network producer paces an availability worker (file
+                // recording) at the real-time arrival rate; without this the
+                // recorder spins flat-out and writes minutes per second.
+                DagNode::Producer(p) if !p.is_ready_for_block() => return false,
+                _ => {}
             }
         }
         true
@@ -668,7 +675,8 @@ pub(super) fn build_output_graph(
             // per-channel outputs from a shared jitter buffer at the output rate.
             if let InputSpec::NetReceiver { port } = input.spec {
                 let receiver = crate::audio::netaudio::receiver::get_or_create(id, port);
-                let receiver = ChannelReceiver::new(receiver.register_consumer(output_sr));
+                let receiver =
+                    ChannelReceiver::new(receiver.register_consumer(output_sr, realtime));
                 let mut handles: Vec<String> = valid
                     .edges
                     .iter()
@@ -738,7 +746,7 @@ pub(super) fn build_output_graph(
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
-            let build = instantiate_effect(&effect.spec, id, output_sr, registry);
+            let build = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
             }

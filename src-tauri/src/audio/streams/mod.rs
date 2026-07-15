@@ -48,7 +48,9 @@ pub fn bulk_push(prod: &mut Producer<f32>, samples: &[f32]) {
         return;
     }
     let avail = prod.slots();
-    let to_write = want.min(avail);
+    // Even count only: a partial (odd) write on overflow would shift every
+    // later frame's L/R by one sample, permanently desyncing the stereo pair.
+    let to_write = want.min(avail) & !1;
     if to_write == 0 {
         return;
     }

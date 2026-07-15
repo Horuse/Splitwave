@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 
 use serde::Deserialize;
 use ts_rs::TS;
@@ -24,6 +25,8 @@ pub struct EdgeSpec {
     #[allow(dead_code)]
     pub id: String,
     pub source: String,
+    /// `Some("peer:<id>")` selects a WebRTC per-peer output; `None` is the main out.
+    pub source_handle: Option<String>,
     pub target: String,
     /// `Some("sidechain")` routes to an effect's sidechain key input.
     pub target_handle: Option<String>,
@@ -53,6 +56,9 @@ pub enum NodeKind {
     Reverb,
     NoiseSuppressor,
     AudioFile,
+    WebRtcCollaborator,
+    NetReceiver,
+    NetSender,
 }
 
 impl NodeKind {
@@ -61,8 +67,11 @@ impl NodeKind {
             NodeKind::Microphone
             | NodeKind::SystemAudio
             | NodeKind::AppAudio
+            | NodeKind::NetReceiver
             | NodeKind::AudioFile => NodeCategory::Input,
-            NodeKind::Speaker | NodeKind::FileRecording => NodeCategory::Output,
+            NodeKind::Speaker | NodeKind::FileRecording | NodeKind::NetSender => {
+                NodeCategory::Output
+            }
             NodeKind::Gain
             | NodeKind::Mute
             | NodeKind::ChannelBalance
@@ -76,7 +85,8 @@ impl NodeKind {
             | NodeKind::NoiseGate
             | NodeKind::Delay
             | NodeKind::Reverb
-            | NodeKind::NoiseSuppressor => NodeCategory::Effect,
+            | NodeKind::NoiseSuppressor
+            | NodeKind::WebRtcCollaborator => NodeCategory::Effect,
         }
     }
 }
@@ -377,18 +387,76 @@ fn default_max_df_thresh_db() -> f32 {
     20.0
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NetReceiverData {
+    pub port: u16,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum NetCodec {
+    PcmF32,
+    PcmI16,
+    Opus,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NetSenderData {
+    pub target_ip: String,
+    pub port: u16,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+    pub codec: NetCodec,
+    pub opus_bitrate: u32,
+    pub opus_application: OpusApplication,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WebRtcCollaboratorData {
+    pub opus_bitrate: u32,
+    pub opus_application: OpusApplication,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+    #[serde(default = "default_codec")]
+    pub codec: NetCodec,
+}
+fn default_channels() -> u32 {
+    1
+}
+fn default_codec() -> NetCodec {
+    NetCodec::Opus
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSpec {
     Microphone { device_id: String },
     SystemAudio { exclude_current_app: bool },
     AppAudio { bundle_id: String },
     AudioFile { file_path: String },
+    NetReceiver { port: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputSpec {
     Speaker { device_id: String },
     FileRecording { file_path: String, format: RecordingFormat },
+    NetSender {
+        node_id: String,
+        target: SocketAddr,
+        channels: u32,
+        codec: NetCodec,
+        opus_bitrate: u32,
+        opus_application: OpusApplication,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -407,6 +475,12 @@ pub enum EffectSpec {
     Delay(DelayData),
     Reverb(ReverbData),
     NoiseSuppressor(NoiseSuppressorData),
+    WebRtcBridge {
+        node_id: String,
+        opus_bitrate: u32,
+        opus_application: OpusApplication,
+        channels: u32,
+    },
 }
 
 impl EffectSpec {
@@ -423,7 +497,10 @@ impl EffectSpec {
             EffectSpec::Delay(d) => d.bypassed,
             EffectSpec::Reverb(d) => d.bypassed,
             EffectSpec::NoiseSuppressor(d) => d.bypassed,
-            EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) | EffectSpec::Waveform(_) => false,
+            EffectSpec::LevelMeter(_)
+            | EffectSpec::LufsMeter(_)
+            | EffectSpec::Waveform(_)
+            | EffectSpec::WebRtcBridge { .. } => false,
         }
     }
 }
@@ -457,7 +534,10 @@ pub enum EdgeKind {
 #[derive(Debug, Clone)]
 pub struct ValidEdge {
     pub from: String,
+    pub source_handle: Option<String>,
     pub to: String,
+    /// Target-side handle, e.g. `Some("ch1")` for a WebRTC bridge channel input.
+    pub target_handle: Option<String>,
     pub kind: EdgeKind,
 }
 
@@ -526,10 +606,15 @@ impl GraphSpec {
         check_acyclic(&self.nodes, &outgoing)?;
 
         let has_outputs = self.nodes.iter().any(|n| n.kind.category() == NodeCategory::Output);
-        let has_monitors = self
-            .nodes
-            .iter()
-            .any(|n| matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform));
+        let has_monitors = self.nodes.iter().any(|n| {
+            matches!(
+                n.kind,
+                NodeKind::LevelMeter
+                    | NodeKind::LufsMeter
+                    | NodeKind::Waveform
+                    | NodeKind::WebRtcCollaborator
+            )
+        });
         if !has_outputs && !has_monitors {
             return Err(AppError::Validation(
                 "no routing — connect an input to an output or a meter".into(),
@@ -539,7 +624,13 @@ impl GraphSpec {
         let reachable_from_inputs = bfs_forward(&self.nodes, &outgoing, NodeCategory::Input);
         let reachable_from_terminals: HashSet<&str> = bfs_backward_pred(&self.nodes, &incoming, |n| {
             n.kind.category() == NodeCategory::Output
-                || matches!(n.kind, NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform)
+                || matches!(
+                    n.kind,
+                    NodeKind::LevelMeter
+                        | NodeKind::LufsMeter
+                        | NodeKind::Waveform
+                        | NodeKind::WebRtcCollaborator
+                )
         });
         let keep: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)
@@ -556,7 +647,9 @@ impl GraphSpec {
             .filter(|e| keep.contains(e.source.as_str()) && keep.contains(e.target.as_str()))
             .map(|e| ValidEdge {
                 from: e.source.clone(),
+                source_handle: e.source_handle.clone(),
                 to: e.target.clone(),
+                target_handle: e.target_handle.clone(),
                 kind: match e.target_handle.as_deref() {
                     Some("sidechain") => EdgeKind::Sidechain,
                     _ => EdgeKind::Main,
@@ -613,6 +706,10 @@ impl GraphSpec {
                     };
                     (spec, data.volume, data.auto_start)
                 }
+                NodeKind::NetReceiver => {
+                    let data: NetReceiverData = parse(&n.data, "NetReceiver")?;
+                    (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
+                }
                 _ => unreachable!(),
             };
             result.push(ValidInput {
@@ -658,6 +755,22 @@ impl GraphSpec {
                         format: data.format,
                     }
                 }
+                NodeKind::NetSender => {
+                    let data: NetSenderData = parse(&n.data, "NetSender")?;
+                    let ip: IpAddr = data
+                        .target_ip
+                        .trim()
+                        .parse()
+                        .map_err(|_| miss(&n.id, "Net Sender has an invalid target IP"))?;
+                    OutputSpec::NetSender {
+                        node_id: n.id.clone(),
+                        target: SocketAddr::new(ip, data.port),
+                        channels: data.channels.clamp(1, 10),
+                        codec: data.codec,
+                        opus_bitrate: data.opus_bitrate,
+                        opus_application: data.opus_application,
+                    }
+                }
                 _ => unreachable!(),
             };
             result.push(ValidOutput {
@@ -689,9 +802,11 @@ fn bfs_forward<'a>(
     start_category: NodeCategory,
 ) -> HashSet<&'a str> {
     let mut seen = HashSet::new();
+    // The WebRTC node is also a seed: it emits audio received from peers, so it
+    // counts as fed even with nothing wired into its mic input.
     let mut stack: Vec<&str> = nodes
         .iter()
-        .filter(|n| n.kind.category() == start_category)
+        .filter(|n| n.kind.category() == start_category || n.kind == NodeKind::WebRtcCollaborator)
         .map(|n| n.id.as_str())
         .collect();
     while let Some(cur) = stack.pop() {
@@ -748,6 +863,15 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         NodeKind::Reverb => EffectSpec::Reverb(parse(&n.data, "Reverb")?),
         NodeKind::NoiseSuppressor => {
             EffectSpec::NoiseSuppressor(parse(&n.data, "NoiseSuppressor")?)
+        }
+        NodeKind::WebRtcCollaborator => {
+            let data: WebRtcCollaboratorData = parse(&n.data, "WebRtcCollaborator")?;
+            EffectSpec::WebRtcBridge {
+                node_id: n.id.clone(),
+                opus_bitrate: data.opus_bitrate,
+                opus_application: data.opus_application,
+                channels: data.channels.clamp(1, 10),
+            }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),
     })

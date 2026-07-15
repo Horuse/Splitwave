@@ -39,6 +39,7 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             bundle_id: bundle_id.clone(),
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
+        InputSpec::NetReceiver { .. } => unreachable!("NetReceiver has no capture device"),
     }
 }
 

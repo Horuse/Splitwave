@@ -10,8 +10,11 @@ use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
-use crate::audio::graph::{EdgeKind, InputSpec, ValidGraph};
+use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
+use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::StereoResampler;
+use crate::audio::stream_recv::ChannelReceiver;
+use crate::audio::streams::bulk_push;
 use crate::error::{AppError, AppResult};
 
 /// Ring buffer length (in stereo f32 samples) per bridge. Sized for ~500 ms
@@ -105,11 +108,14 @@ impl StagingRing {
 }
 
 /// One node in an output's DAG. `Source` reads from a ring + resamples,
-/// `Effect` sums its upstreams' buffers and runs DSP. Both expose a stereo
+/// `Effect` sums its upstreams' buffers and runs DSP, `Producer` emits
+/// network-received audio on named channel handles. All expose a stereo
 /// `out_buf` of `DSP_BLOCK_FRAMES * 2` samples that downstream nodes consume.
 enum DagNode {
     Source(SourceState),
     Effect(EffectState),
+    Producer(ProducerState),
+    Consumer(ConsumerState),
 }
 
 impl DagNode {
@@ -117,6 +123,26 @@ impl DagNode {
         match self {
             DagNode::Source(s) => &s.out_buf,
             DagNode::Effect(e) => &e.out_buf,
+            DagNode::Producer(p) => &p.out_buf,
+            // Terminal sink; validation forbids outgoing edges, so never read.
+            DagNode::Consumer(_) => &[],
+        }
+    }
+
+    /// Unknown or absent handles fall back to the node's main `out_buf`.
+    fn out_buf_for_handle(&self, handle: Option<&str>) -> &[f32] {
+        let (handle_bufs, out_buf) = match self {
+            DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
+            DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
+            DagNode::Source(_) | DagNode::Consumer(_) => return self.out_buf(),
+        };
+        match handle {
+            Some(h) => handle_bufs
+                .iter()
+                .find(|(id, _)| id == h)
+                .map(|(_, buf)| buf.as_slice())
+                .unwrap_or(out_buf),
+            None => out_buf,
         }
     }
 }
@@ -297,17 +323,55 @@ struct EffectState {
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
+    handle_bufs: Vec<(String, Vec<f32>)>,
+    // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
+    // summed by target handle and pushed to the matching send ring.
+    channel_bufs: Vec<(String, Vec<f32>)>,
+}
+
+/// A source with no graph inputs that emits network-received audio: `out_buf`
+/// is the mix of every channel, `handle_bufs` are the per-channel outputs (keyed
+/// by the source handle id, which matches the tap key).
+struct ProducerState {
+    receiver: ChannelReceiver,
+    out_buf: Vec<f32>,
+    handle_bufs: Vec<(String, Vec<f32>)>,
+}
+
+impl ProducerState {
+    fn process(&mut self) {
+        self.receiver.mix_block(&mut self.out_buf);
+        for (handle, buf) in self.handle_bufs.iter_mut() {
+            self.receiver.channel(handle, buf);
+        }
+    }
+
+    fn is_ready_for_block(&self) -> bool {
+        self.receiver.ready(DSP_BLOCK_FRAMES * 2)
+    }
+}
+
+/// A terminal sink that consumes per-channel inputs (summed by target handle
+/// into `channel_bufs`, keyed "ch1".."chN") and pushes each channel into its
+/// send ring for a background transmitter (direct-IP NetSender).
+struct ConsumerState {
+    incoming: Vec<IncomingEdge>,
+    channel_bufs: Vec<(String, Vec<f32>)>,
+    send_producers: Vec<Producer<f32>>,
 }
 
 /// `delay` is `Some` when this path is shorter than the longest reaching the
 /// same mixing point -- pads it for sample-alignment before summing.
 struct IncomingEdge {
     src_idx: usize,
+    source_handle: Option<String>,
+    target_handle: Option<String>,
     delay: Option<DelayLine>,
 }
 
 struct TerminalEdge {
     src_idx: usize,
+    source_handle: Option<String>,
     delay: Option<DelayLine>,
 }
 
@@ -346,23 +410,28 @@ impl DelayLine {
 /// Per-output DAG runtime: sources + effects in topological order plus the
 /// terminal edges whose buffers get summed into the final output.
 pub(super) struct OutputGraph {
-    /// Reserved for drift-correction; not yet consumed.
-    #[allow(dead_code)]
     sample_rate: u32,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
 }
 
 impl OutputGraph {
+    pub(super) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// True if every source has enough buffered input to produce one full
     /// output block without underrun. Availability-paced workers use this to
     /// gate block production.
     pub(super) fn all_sources_ready(&self) -> bool {
         for node in &self.nodes {
-            if let DagNode::Source(s) = node {
-                if !s.is_ready_for_block() {
-                    return false;
-                }
+            match node {
+                DagNode::Source(s) if !s.is_ready_for_block() => return false,
+                // A network producer paces an availability worker (file
+                // recording) at the real-time arrival rate; without this the
+                // recorder spins flat-out and writes minutes per second.
+                DagNode::Producer(p) if !p.is_ready_for_block() => return false,
+                _ => {}
             }
         }
         true
@@ -372,20 +441,88 @@ impl OutputGraph {
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
         for node in &mut self.nodes {
-            if let DagNode::Source(s) = node {
-                s.fill_block();
+            match node {
+                DagNode::Source(s) => s.fill_block(),
+                DagNode::Producer(p) => p.process(),
+                DagNode::Effect(_) | DagNode::Consumer(_) => {}
             }
         }
         // `split_at_mut` gives mutable access to effect `i` while keeping
         // immutable access to its upstreams (all at indices < i by topo sort).
         for i in 0..self.nodes.len() {
             let (head, tail) = self.nodes.split_at_mut(i);
+            if let DagNode::Consumer(cons) = &mut tail[0] {
+                for (_, buf) in cons.channel_bufs.iter_mut() {
+                    for s in buf.iter_mut() {
+                        *s = 0.0;
+                    }
+                }
+                for edge in &mut cons.incoming {
+                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                    let Some((_, buf)) = cons
+                        .channel_bufs
+                        .iter_mut()
+                        .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                    else {
+                        continue;
+                    };
+                    match &mut edge.delay {
+                        Some(d) => d.process_and_add(src, buf),
+                        None => {
+                            for (dst, sv) in buf.iter_mut().zip(src.iter()) {
+                                *dst += *sv;
+                            }
+                        }
+                    }
+                }
+                for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
+                    if let Some(prod) = cons.send_producers.get_mut(i) {
+                        bulk_push(prod, buf);
+                    }
+                }
+                continue;
+            }
             if let DagNode::Effect(eff) = &mut tail[0] {
+                // WebRTC bridge: sum each incoming edge into its channel input
+                // buffer by target handle, then push to the send rings.
+                if !eff.channel_bufs.is_empty() {
+                    for (_, buf) in eff.channel_bufs.iter_mut() {
+                        for s in buf.iter_mut() {
+                            *s = 0.0;
+                        }
+                    }
+                    for edge in &mut eff.incoming {
+                        let src =
+                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                        let Some((_, buf)) = eff
+                            .channel_bufs
+                            .iter_mut()
+                            .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                        else {
+                            continue;
+                        };
+                        match &mut edge.delay {
+                            Some(d) => d.process_and_add(src, buf),
+                            None => {
+                                for (dst, sv) in buf.iter_mut().zip(src.iter()) {
+                                    *dst += *sv;
+                                }
+                            }
+                        }
+                    }
+                    eff.effect.push_channel_inputs(&eff.channel_bufs);
+                    // out_buf becomes the global mix (every peer, every channel).
+                    eff.effect
+                        .process_with_sidechain(&mut eff.out_buf, None, DSP_BLOCK_FRAMES);
+                    eff.effect
+                        .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
+                    continue;
+                }
                 for s in eff.out_buf.iter_mut() {
                     *s = 0.0;
                 }
                 for edge in &mut eff.incoming {
-                    let src = head[edge.src_idx].out_buf();
+                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     match &mut edge.delay {
                         Some(d) => d.process_and_add(src, &mut eff.out_buf),
                         None => {
@@ -400,7 +537,8 @@ impl OutputGraph {
                         *s = 0.0;
                     }
                     for edge in &mut eff.sidechain {
-                        let src = head[edge.src_idx].out_buf();
+                        let src =
+                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, sc_buf),
                             None => {
@@ -416,13 +554,16 @@ impl OutputGraph {
                     eff.effect
                         .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
                 }
+                eff.effect
+                    .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
             }
         }
         for s in output.iter_mut() {
             *s = 0.0;
         }
         for terminal in &mut self.terminals {
-            let src = self.nodes[terminal.src_idx].out_buf();
+            let src =
+                self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
             match &mut terminal.delay {
                 Some(d) => d.process_and_add(src, output),
                 None => {
@@ -530,6 +671,33 @@ pub(super) fn build_output_graph(
 
     for id in &topo {
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
+            // NetReceiver is a network producer, not a captured source: it emits
+            // per-channel outputs from a shared jitter buffer at the output rate.
+            if let InputSpec::NetReceiver { port } = input.spec {
+                let receiver = crate::audio::netaudio::receiver::get_or_create(id, port);
+                let receiver =
+                    ChannelReceiver::new(receiver.register_consumer(output_sr, realtime));
+                let mut handles: Vec<String> = valid
+                    .edges
+                    .iter()
+                    .filter(|e| &e.from == id)
+                    .filter_map(|e| e.source_handle.clone())
+                    .collect();
+                handles.sort();
+                handles.dedup();
+                let handle_bufs = handles
+                    .into_iter()
+                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                    .collect();
+                id_to_index.insert(id.clone(), nodes.len());
+                nodes.push(DagNode::Producer(ProducerState {
+                    receiver,
+                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                    handle_bufs,
+                }));
+                node_latencies.push(0);
+                continue;
+            }
             // File sources are paced by backpressure; dropping backlog plays fast.
             let source_realtime =
                 realtime && !matches!(input.spec, InputSpec::AudioFile { .. });
@@ -578,7 +746,7 @@ pub(super) fn build_output_graph(
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
-            let build = instantiate_effect(&effect.spec, id, output_sr, registry);
+            let build = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
             }
@@ -598,38 +766,77 @@ pub(super) fn build_output_graph(
                 scopes.push(s);
             }
             let bypass = build.bypass;
-            let mut main_upstream: Vec<usize> = Vec::new();
-            let mut side_upstream: Vec<usize> = Vec::new();
+            type Upstream = (usize, Option<String>, Option<String>);
+            let mut main_upstream: Vec<Upstream> = Vec::new();
+            let mut side_upstream: Vec<Upstream> = Vec::new();
             for e in &valid.edges {
                 if &e.to == id && reachable.contains(&e.from) {
                     let idx = id_to_index[&e.from];
+                    let entry = (idx, e.source_handle.clone(), e.target_handle.clone());
                     match e.kind {
-                        EdgeKind::Main => main_upstream.push(idx),
-                        EdgeKind::Sidechain => side_upstream.push(idx),
+                        EdgeKind::Main => main_upstream.push(entry),
+                        EdgeKind::Sidechain => side_upstream.push(entry),
                     }
                 }
             }
             let max_upstream = main_upstream
                 .iter()
                 .chain(side_upstream.iter())
-                .map(|&i| node_latencies[i])
+                .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
-            let make_edge = |src_idx: usize| {
-                let pad = max_upstream - node_latencies[src_idx];
-                IncomingEdge {
-                    src_idx,
-                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
-                }
-            };
-            let incoming: Vec<IncomingEdge> = main_upstream.iter().copied().map(make_edge).collect();
-            let sidechain: Vec<IncomingEdge> =
-                side_upstream.iter().copied().map(make_edge).collect();
+            let make_edge =
+                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
+                    let pad = max_upstream - node_latencies[src_idx];
+                    IncomingEdge {
+                        src_idx,
+                        source_handle,
+                        target_handle,
+                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    }
+                };
+            let incoming: Vec<IncomingEdge> = main_upstream
+                .into_iter()
+                .map(|(i, s, t)| make_edge(i, s, t))
+                .collect();
+            let sidechain: Vec<IncomingEdge> = side_upstream
+                .into_iter()
+                .map(|(i, s, t)| make_edge(i, s, t))
+                .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
             } else {
                 Some(vec![0.0; DSP_BLOCK_FRAMES * 2])
             };
+            // Built from the edges actually drawn off this node's `peer:<id>`
+            // handles, so a stale handle simply yields silence.
+            let handle_bufs: Vec<(String, Vec<f32>)> =
+                if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+                    let mut handles: Vec<String> = valid
+                        .edges
+                        .iter()
+                        .filter(|e| &e.from == id)
+                        .filter_map(|e| e.source_handle.clone())
+                        .filter(|h| h.starts_with("peer:"))
+                        .collect();
+                    handles.sort();
+                    handles.dedup();
+                    handles
+                        .into_iter()
+                        .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+            // One input buffer per WebRTC send channel, keyed "ch1".."chN".
+            let channel_bufs: Vec<(String, Vec<f32>)> =
+                if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
+                    (1..=(*channels).clamp(1, 10))
+                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
             let own = build.effect.latency_frames();
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
@@ -639,30 +846,123 @@ pub(super) fn build_output_graph(
                 sidechain,
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 sidechain_buf,
+                handle_bufs,
+                channel_bufs,
             }));
             node_latencies.push(max_upstream + own);
         }
     }
 
+    // A NetSender output is a terminal Consumer node inside the DAG (not a
+    // summed output terminal): it sums per-channel inputs and pushes them into
+    // send rings drained by the background UDP transmitter.
+    let net_sender = output_id
+        .and_then(|oid| valid.outputs.iter().find(|o| o.id == oid))
+        .and_then(|o| match &o.spec {
+            OutputSpec::NetSender { .. } => Some(o.spec.clone()),
+            _ => None,
+        });
+    if let Some(OutputSpec::NetSender {
+        node_id,
+        target,
+        channels,
+        codec,
+        opus_bitrate,
+        opus_application,
+    }) = net_sender
+    {
+        let oid = output_id.unwrap();
+        let mut up: Vec<(usize, Option<String>, Option<String>)> = Vec::new();
+        for e in &valid.edges {
+            if e.to == oid && reachable.contains(&e.from) {
+                let idx = id_to_index[&e.from];
+                up.push((idx, e.source_handle.clone(), e.target_handle.clone()));
+            }
+        }
+        let max_up = up.iter().map(|(i, _, _)| node_latencies[*i]).max().unwrap_or(0);
+        let incoming: Vec<IncomingEdge> = up
+            .into_iter()
+            .map(|(idx, source_handle, target_handle)| {
+                let pad = max_up - node_latencies[idx];
+                IncomingEdge {
+                    src_idx: idx,
+                    source_handle,
+                    target_handle,
+                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                }
+            })
+            .collect();
+
+        let n = channels.clamp(1, 10) as usize;
+        let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
+        let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
+        let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);
+        for c in 1..=n {
+            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]));
+            let (prod, cons) = RingBuffer::<f32>::new(crate::audio::netaudio::SEND_RING);
+            send_producers.push(prod);
+            send_consumers.push(cons);
+        }
+        let format = match codec {
+            NetCodec::PcmF32 => Format::PcmF32,
+            NetCodec::PcmI16 => Format::PcmI16,
+            NetCodec::Opus => Format::Opus,
+        };
+        let sender = crate::audio::netaudio::sender::get_or_create(
+            &node_id,
+            target,
+            format,
+            opus_bitrate,
+            opus_application,
+        );
+        sender.set_send_consumers(send_consumers);
+
+        nodes.push(DagNode::Consumer(ConsumerState {
+            incoming,
+            channel_bufs,
+            send_producers,
+        }));
+
+        return Ok(BuiltOutputGraph {
+            graph: OutputGraph {
+                sample_rate: output_sr,
+                nodes,
+                terminals: Vec::new(),
+            },
+            controls,
+            bypasses,
+            meters,
+            lufs,
+            gr_handles,
+            scopes,
+        });
+    }
+
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<usize> = valid
+            let upstream: Vec<(usize, Option<String>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
-                .filter_map(|e| id_to_index.get(&e.from).copied())
+                .filter_map(|e| {
+                    id_to_index
+                        .get(&e.from)
+                        .copied()
+                        .map(|idx| (idx, e.source_handle.clone()))
+                })
                 .collect();
             let max_upstream = upstream
                 .iter()
-                .map(|&i| node_latencies[i])
+                .map(|(i, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
             upstream
                 .into_iter()
-                .map(|src_idx| {
+                .map(|(src_idx, source_handle)| {
                     let pad = max_upstream - node_latencies[src_idx];
                     TerminalEdge {
                         src_idx,
+                        source_handle,
                         delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
                     }
                 })

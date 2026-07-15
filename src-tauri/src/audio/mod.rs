@@ -15,9 +15,14 @@ pub mod encoders;
 pub mod playback;
 #[cfg(target_os = "linux")]
 pub mod pw_enum;
+pub mod netaudio;
 pub mod pipeline;
 pub mod resample;
+pub mod signaling;
+pub mod stream_recv;
 pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;
 pub mod volume;
+pub mod webrtc;
+pub mod webrtc_codec;

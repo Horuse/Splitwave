@@ -11,6 +11,8 @@ import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
 import type { WaveformData } from './generated/WaveformData';
 import type { MicrophoneData } from './generated/MicrophoneData';
+import type { NetReceiverData } from './generated/NetReceiverData';
+import type { NetSenderData } from './generated/NetSenderData';
 import type { MuteData } from './generated/MuteData';
 import type { NoiseGateData } from './generated/NoiseGateData';
 import type { NoiseSuppressorData } from './generated/NoiseSuppressorData';
@@ -18,10 +20,12 @@ import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
 import type { SystemAudioData } from './generated/SystemAudioData';
+import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData';
 
 export type { AiffBitDepth } from './generated/AiffBitDepth';
 export type { FlacBitDepth } from './generated/FlacBitDepth';
 export type { FlacCompression } from './generated/FlacCompression';
+export type { NetCodec } from './generated/NetCodec';
 export type { NodeKind } from './generated/NodeKind';
 export type { OpusApplication } from './generated/OpusApplication';
 export type { RecordingFormat } from './generated/RecordingFormat';
@@ -54,6 +58,11 @@ export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
 export type ReverbNodeData = XyData<ReverbData>;
 export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
+// `name` is a FE-only participant label shared over the ctrl channel; the
+// engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
+export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
+export type NetReceiverNodeData = XyData<NetReceiverData>;
+export type NetSenderNodeData = XyData<NetSenderData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -80,6 +89,9 @@ export type NodeDataMap = {
 	delay: DelayNodeData;
 	reverb: ReverbNodeData;
 	noiseSuppressor: NoiseSuppressorNodeData;
+	webRtcCollaborator: WebRtcCollaboratorNodeData;
+	netReceiver: NetReceiverNodeData;
+	netSender: NetSenderNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];
@@ -96,6 +108,7 @@ export interface PipelineNode<K extends NodeKind = NodeKind> {
 export interface PipelineEdge {
 	id: string;
 	source: string;
+	sourceHandle?: string;
 	target: string;
 	targetHandle?: string;
 }

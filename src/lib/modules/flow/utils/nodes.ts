@@ -26,6 +26,9 @@ import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
+import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
+import NetReceiver from '../ui/input/net_receiver.svelte';
+import NetSender from '../ui/output/net_sender.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -230,6 +233,37 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 			maxErbThreshDb: 30,
 			maxDfThreshDb: 20,
 			bypassed: false
+		}
+	}),
+	webRtcCollaborator: entry<'webRtcCollaborator'>({
+		kind: 'webRtcCollaborator',
+		category: 'effect',
+		label: 'WebRTC',
+		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
+		component: WebRtcCollaborator,
+		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '', codec: 'opus' }
+	}),
+	netReceiver: entry<'netReceiver'>({
+		kind: 'netReceiver',
+		category: 'input',
+		label: 'Net Receiver',
+		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
+		component: NetReceiver,
+		defaultData: { port: 5004, channels: 1 }
+	}),
+	netSender: entry<'netSender'>({
+		kind: 'netSender',
+		category: 'output',
+		label: 'Net Sender',
+		description: 'Send audio over UDP to a direct IP target (Opus or raw PCM).',
+		component: NetSender,
+		defaultData: {
+			targetIp: '',
+			port: 5004,
+			channels: 1,
+			codec: 'opus',
+			opusBitrate: 96000,
+			opusApplication: 'audio'
 		}
 	})
 };

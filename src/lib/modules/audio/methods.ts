@@ -62,5 +62,112 @@ export const methods = {
 	installVirtualDriver: (): Promise<void> => invoke('install_virtual_driver'),
 	uninstallVirtualDriver: (): Promise<void> => invoke('uninstall_virtual_driver'),
 	applyVirtualDevices: (devices: VirtualDeviceConfig[]): Promise<void> =>
-		invoke('apply_virtual_devices', { devices })
+		invoke('apply_virtual_devices', { devices }),
+	webrtcCreateOffer: (
+		nodeId: string,
+		opusBitrate: number,
+		opusApplication: string
+	): Promise<{ peerId: string; offerCode: string }> =>
+		invoke('webrtc_create_offer', { nodeId, opusBitrate, opusApplication }),
+	webrtcAcceptOffer: (
+		nodeId: string,
+		offerCode: string,
+		opusBitrate: number,
+		opusApplication: string
+	): Promise<{ peerId: string; answerCode: string }> =>
+		invoke('webrtc_accept_offer', { nodeId, offerCode, opusBitrate, opusApplication }),
+	webrtcCompleteHandshake: (nodeId: string, answerCode: string): Promise<void> =>
+		invoke('webrtc_complete_handshake', { nodeId, answerCode }),
+	webrtcDisconnectPeer: (nodeId: string, peerId: string): Promise<void> =>
+		invoke('webrtc_disconnect_peer', { nodeId, peerId }),
+	webrtcSetPeerMuted: (nodeId: string, peerId: string, muted: boolean): Promise<void> =>
+		invoke('webrtc_set_peer_muted', { nodeId, peerId, muted }),
+	/** Sets the local participant name and input count, shared over the ctrl channel. */
+	webrtcSetIdentity: (
+		nodeId: string,
+		name: string,
+		channels: number,
+		codec: string,
+		opusBitrate: number,
+		opusApplication: string
+	): Promise<void> =>
+		invoke('webrtc_set_identity', {
+			nodeId,
+			name,
+			channels,
+			codec,
+			opusBitrate,
+			opusApplication
+		}),
+	onWebrtcConnected: (cb: (e: { nodeId: string; peerId: string }) => void): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; peerId: string }>('audio://webrtc_connected', (evt) =>
+			cb(evt.payload)
+		),
+	onWebrtcDisconnected: (
+		cb: (e: { nodeId: string; peerId: string }) => void
+	): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; peerId: string }>('audio://webrtc_disconnected', (evt) =>
+			cb(evt.payload)
+		),
+	onWebrtcError: (cb: (e: { nodeId: string; error: string }) => void): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; error: string }>('audio://webrtc_error', (evt) => cb(evt.payload)),
+	/** A peer shared its participant name and input count over the ctrl channel. */
+	onWebrtcMeta: (
+		cb: (e: { nodeId: string; peerId: string; name: string; channels: number }) => void
+	): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; peerId: string; name: string; channels: number }>(
+			'audio://webrtc_meta',
+			(evt) => cb(evt.payload)
+		),
+	/** SHA-256 hex of a room password; empty string when no password is set. */
+	webrtcHashPassword: async (password: string): Promise<string> => {
+		if (!password) return '';
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
+		return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+	},
+	/** Host: creates a room and returns the 6-char room code. Connection completes via onWebrtcConnected. */
+	webrtcCreateRoom: (
+		nodeId: string,
+		opusBitrate: number,
+		opusApplication: string,
+		passwordHash: string
+	): Promise<string> =>
+		invoke<string>('webrtc_create_room', { nodeId, opusBitrate, opusApplication, passwordHash }),
+	/** Guest: joins a room by code. Connection completes via onWebrtcConnected. */
+	webrtcJoinRoom: (
+		nodeId: string,
+		roomCode: string,
+		opusBitrate: number,
+		opusApplication: string,
+		passwordHash: string
+	): Promise<void> =>
+		invoke('webrtc_join_room', { nodeId, roomCode, opusBitrate, opusApplication, passwordHash }),
+	/** Cancels hosting/joining: aborts signaling, drops peers, resets the room. */
+	webrtcLeaveRoom: (nodeId: string): Promise<void> => invoke('webrtc_leave_room', { nodeId }),
+	/** Returns RTT ping in ms per display peer ID. 0 = no ping yet. */
+	webrtcPeerPings: (nodeId: string): Promise<Record<string, number>> =>
+		invoke<Record<string, number>>('webrtc_peer_pings', { nodeId }),
+	/** Per-peer RTT ping (ms) and cumulative received/lost packet counters. */
+	webrtcPeerStats: (
+		nodeId: string
+	): Promise<Record<string, { pingMs: number; packets: number; lost: number }>> =>
+		invoke('webrtc_peer_stats', { nodeId }),
+	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
+	netReceiverStats: (
+		nodeId: string
+	): Promise<{ bytes: number; packets: number; lost: number } | null> =>
+		invoke('net_receiver_stats', { nodeId }),
+	/** Direct-IP send stats, or null when the node isn't running. */
+	netSenderStats: (
+		nodeId: string
+	): Promise<{ bytes: number; packets: number } | null> =>
+		invoke('net_sender_stats', { nodeId }),
+	/** Current room phase/code and connected peers, for restoring node UI on remount. */
+	webrtcSessionState: (
+		nodeId: string
+	): Promise<{
+		phase: 'idle' | 'hosting' | 'joining';
+		roomCode: string | null;
+		peers: { peerId: string; muted: boolean; name: string; channels: number[] }[];
+	}> => invoke('webrtc_session_state', { nodeId })
 };

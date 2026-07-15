@@ -8,7 +8,10 @@ mod registry;
 mod session;
 mod tasks;
 
-pub use handshake::{accept_offer, complete_handshake, create_offer};
+pub use handshake::{
+    accept_offer, accept_offer_trickle, add_remote_candidate, apply_answer, complete_handshake,
+    create_offer, create_offer_trickle,
+};
 pub use registry::{
     disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, peer_stats, session_state,
     set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,

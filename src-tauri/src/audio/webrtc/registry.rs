@@ -46,7 +46,9 @@ pub fn mark_room(
 
 pub fn set_signaling_task(node_id: &str, task: tokio::task::JoinHandle<()>) {
     if let Some(session) = registry().lock().unwrap().get(node_id) {
-        *session.signaling_task.lock().unwrap() = Some(task);
+        if let Some(old) = session.signaling_task.lock().unwrap().replace(task) {
+            old.abort();
+        }
     }
 }
 

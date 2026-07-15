@@ -4,6 +4,8 @@ interface Env {
 	ROOMS: DurableObjectNamespace<SignalingRoom>;
 }
 
+// Host stays connected; each guest `join` makes it mint a fresh offer (pre-gathered
+// ones go stale as NAT mappings expire). Offer/answer/candidates relayed per joinId.
 export class SignalingRoom extends DurableObject<Env> {
 	async fetch(request: Request): Promise<Response> {
 		if (request.headers.get('Upgrade') !== 'websocket') {
@@ -12,44 +14,36 @@ export class SignalingRoom extends DurableObject<Env> {
 
 		const url = new URL(request.url);
 		const role = (url.searchParams.get('role') ?? 'guest') as 'host' | 'guest';
-		const peerId = url.searchParams.get('peerId') ?? '';
 		const passwordHash = url.searchParams.get('passwordHash') ?? '';
 
 		const pair = new WebSocketPair();
 		const [client, server] = Object.values(pair);
-		this.ctx.acceptWebSocket(server, [role, peerId, passwordHash]);
 
-		if (role === 'guest') {
-			const offer = await this.ctx.storage.get<string>('offer');
-			const hostPeerId = await this.ctx.storage.get<string>('hostPeerId');
-			if (offer && hostPeerId) {
-				const stored = (await this.ctx.storage.get<string>('passwordHash')) ?? '';
-				this.deliverOffer(server, offer, hostPeerId, stored, passwordHash);
+		if (role === 'host') {
+			await this.ctx.storage.put('passwordHash', passwordHash);
+			this.ctx.acceptWebSocket(server, ['host']);
+		} else {
+			const joinId = crypto.randomUUID();
+			this.ctx.acceptWebSocket(server, ['guest', joinId]);
+			const stored = (await this.ctx.storage.get<string>('passwordHash')) ?? '';
+			const host = this.ctx.getWebSockets('host')[0];
+			if (!host) {
+				server.send(JSON.stringify({ type: 'error', reason: 'no-host' }));
+				server.close(1000);
+			} else if (stored && passwordHash !== stored) {
+				server.send(JSON.stringify({ type: 'error', reason: 'password' }));
+				server.close(1000);
+			} else {
+				host.send(JSON.stringify({ type: 'join', joinId }));
 			}
 		}
 
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	// Sends the offer only when the guest's password hash matches the room's;
-	// otherwise rejects so a guessed room code alone can't join.
-	private deliverOffer(
-		guestWs: WebSocket,
-		offer: string,
-		hostPeerId: string,
-		storedHash: string,
-		guestHash: string
-	): void {
-		if (storedHash && guestHash !== storedHash) {
-			guestWs.send(JSON.stringify({ type: 'error', reason: 'password' }));
-			return;
-		}
-		guestWs.send(JSON.stringify({ type: 'offer', peerId: hostPeerId, sdp: offer }));
-	}
-
 	async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
 		if (typeof message !== 'string') return;
-		let msg: { type?: string; peerId?: string; sdp?: string; passwordHash?: string };
+		let msg: { type?: string; joinId?: string; peerId?: string; sdp?: string; candidate?: string };
 		try {
 			msg = JSON.parse(message);
 		} catch {
@@ -57,25 +51,29 @@ export class SignalingRoom extends DurableObject<Env> {
 		}
 
 		const tags = this.ctx.getTags(ws);
-		const role = tags[0];
-
-		if (role === 'host' && msg.type === 'offer' && msg.sdp && msg.peerId) {
-			const storedHash = msg.passwordHash ?? '';
-			await this.ctx.storage.put('offer', msg.sdp);
-			await this.ctx.storage.put('hostPeerId', msg.peerId);
-			await this.ctx.storage.put('passwordHash', storedHash);
-			for (const guestWs of this.ctx.getWebSockets('guest')) {
-				const guestHash = this.ctx.getTags(guestWs)[2] ?? '';
-				this.deliverOffer(guestWs, msg.sdp, msg.peerId, storedHash, guestHash);
+		if (tags[0] === 'host') {
+			if ((msg.type === 'offer' || msg.type === 'candidate') && msg.joinId) {
+				for (const guest of this.ctx.getWebSockets(msg.joinId)) {
+					guest.send(JSON.stringify(msg));
+				}
 			}
-		} else if (role === 'guest' && msg.type === 'answer' && msg.sdp && msg.peerId) {
-			for (const hostWs of this.ctx.getWebSockets('host')) {
-				hostWs.send(JSON.stringify({ type: 'answer', peerId: msg.peerId, sdp: msg.sdp }));
+		} else {
+			if (msg.type === 'answer' || msg.type === 'candidate') {
+				msg.joinId = tags[1];
+				for (const host of this.ctx.getWebSockets('host')) {
+					host.send(JSON.stringify(msg));
+				}
 			}
 		}
 	}
 
-	async webSocketClose(_ws: WebSocket, _code: number, _reason: string): Promise<void> {}
+	async webSocketClose(ws: WebSocket, _code: number, _reason: string): Promise<void> {
+		// Room dies with its host; a reconnecting host re-registers the hash.
+		if (this.ctx.getTags(ws)[0] === 'host') {
+			await this.ctx.storage.deleteAll();
+		}
+	}
+
 	async webSocketError(_ws: WebSocket, _error: unknown): Promise<void> {}
 }
 

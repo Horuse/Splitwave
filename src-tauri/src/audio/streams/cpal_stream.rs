@@ -59,6 +59,7 @@ where
     f32: cpal::FromSample<T>,
 {
     let mut staging: Vec<f32> = vec![0.0; 16384];
+    let mut meter_buf: Vec<f32> = vec![0.0; 16384];
     let stream = device
         .build_input_stream::<T, _, _>(
             config,
@@ -68,13 +69,20 @@ where
                     return;
                 }
                 let frames = data.len() / src_channels;
-                let needed = frames * 2;
+                let needed = frames * src_channels;
                 if staging.len() < needed {
                     staging.resize(needed, 0.0);
                 }
-                convert_to_stereo::<T>(data, &mut staging[..needed], src_channels);
+                for (o, &s) in staging[..needed].iter_mut().zip(data) {
+                    *o = s.to_sample::<f32>();
+                }
                 if let Some(m) = &meter {
-                    update_meter(m, &staging[..needed]);
+                    let mneeded = frames * 2;
+                    if meter_buf.len() < mneeded {
+                        meter_buf.resize(mneeded, 0.0);
+                    }
+                    convert_to_stereo::<T>(data, &mut meter_buf[..mneeded], src_channels);
+                    update_meter(m, &meter_buf[..mneeded]);
                 }
                 bridge.broadcast(&staging[..needed]);
             },

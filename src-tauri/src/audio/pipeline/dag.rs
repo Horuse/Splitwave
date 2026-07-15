@@ -149,6 +149,7 @@ impl DagNode {
 
 struct SourceState {
     label: String,
+    channels: usize,
     consumer: Consumer<f32>,
     resampler: Option<MultiResampler>,
     input_staging: Vec<f32>,
@@ -228,7 +229,8 @@ impl SourceState {
             let high = self.input_samples_per_block * SOURCE_BACKLOG_HIGH_BLOCKS;
             if have > high {
                 let low = self.input_samples_per_block * SOURCE_BACKLOG_LOW_BLOCKS;
-                let drop = (have - low) & !1;
+                let excess = have - low;
+                let drop = excess - excess % self.channels;
                 if let Ok(chunk) = self.consumer.read_chunk(drop) {
                     chunk.commit_all();
                 }
@@ -263,7 +265,7 @@ impl SourceState {
 
     fn try_refill_one_chunk(&mut self) {
         if let Some(rs) = &mut self.resampler {
-            let needed = rs.chunk_in() * 2;
+            let needed = rs.chunk_in() * self.channels;
             // Bulk read what we still need (one rtrb reservation instead of
             // one atomic op per sample -- RT-friendly).
             let want = needed - self.input_staging.len();
@@ -291,7 +293,7 @@ impl SourceState {
             self.input_staging.drain(..needed);
         } else {
             self.chunk_tmp.clear();
-            let want = RESAMPLE_CHUNK * 2;
+            let want = RESAMPLE_CHUNK * self.channels;
             let avail = self.consumer.slots().min(want);
             if avail > 0 {
                 if let Ok(chunk) = self.consumer.read_chunk(avail) {
@@ -303,9 +305,9 @@ impl SourceState {
                 }
             }
         }
-        // Even-count guarantee (don't half a frame).
-        let frames = self.chunk_tmp.len() / 2;
-        self.chunk_tmp.truncate(frames * 2);
+        // Whole-frame guarantee (don't split a frame across channels).
+        let frames = self.chunk_tmp.len() / self.channels;
+        self.chunk_tmp.truncate(frames * self.channels);
         if !self.chunk_tmp.is_empty() {
             if !self.first_data_logged {
                 info!(source = %self.label, "source online");
@@ -375,33 +377,67 @@ struct TerminalEdge {
     delay: Option<DelayLine>,
 }
 
+/// Sum `src` into `dst` mapping channel-for-channel when the two have different
+/// widths (min of the two; extra source channels dropped, extra dest channels
+/// left untouched). Widths are inferred from length: `len / DSP_BLOCK_FRAMES`.
+#[inline]
+fn add_mapped(src: &[f32], dst: &mut [f32]) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || dst_ch == 0 {
+        return;
+    }
+    if src_ch == dst_ch {
+        for (d, &s) in dst.iter_mut().zip(src.iter()) {
+            *d += s;
+        }
+        return;
+    }
+    let n = src_ch.min(dst_ch);
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let db = f * dst_ch;
+        for c in 0..n {
+            dst[db + c] += src[sb + c];
+        }
+    }
+}
+
 struct DelayLine {
     buf: Box<[f32]>,
     pos: usize,
+    channels: usize,
 }
 
 impl DelayLine {
-    fn new(delay_frames: usize) -> Self {
+    fn new(delay_frames: usize, channels: usize) -> Self {
         Self {
-            buf: vec![0.0; delay_frames * 2].into_boxed_slice(),
+            buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
             pos: 0,
+            channels,
         }
     }
 
     fn process_and_add(&mut self, input: &[f32], dst: &mut [f32]) {
         let cap = self.buf.len();
         if cap == 0 {
-            for (d, &v) in dst.iter_mut().zip(input.iter()) {
-                *d += v;
-            }
+            add_mapped(input, dst);
             return;
         }
+        let src_ch = self.channels;
+        let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+        let n = src_ch.min(dst_ch);
+        let frames = input.len() / src_ch;
         let mut pos = self.pos;
-        for (i, &v) in input.iter().enumerate() {
-            let delayed = self.buf[pos];
-            self.buf[pos] = v;
-            dst[i] += delayed;
-            pos = if pos + 1 == cap { 0 } else { pos + 1 };
+        for f in 0..frames {
+            for c in 0..src_ch {
+                let delayed = self.buf[pos];
+                self.buf[pos] = input[f * src_ch + c];
+                if c < n {
+                    dst[f * dst_ch + c] += delayed;
+                }
+                pos = if pos + 1 == cap { 0 } else { pos + 1 };
+            }
         }
         self.pos = pos;
     }
@@ -468,11 +504,7 @@ impl OutputGraph {
                     };
                     match &mut edge.delay {
                         Some(d) => d.process_and_add(src, buf),
-                        None => {
-                            for (dst, sv) in buf.iter_mut().zip(src.iter()) {
-                                *dst += *sv;
-                            }
-                        }
+                        None => add_mapped(src, buf),
                     }
                 }
                 for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
@@ -503,11 +535,7 @@ impl OutputGraph {
                         };
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, buf),
-                            None => {
-                                for (dst, sv) in buf.iter_mut().zip(src.iter()) {
-                                    *dst += *sv;
-                                }
-                            }
+                            None => add_mapped(src, buf),
                         }
                     }
                     eff.effect.push_channel_inputs(&eff.channel_bufs);
@@ -525,11 +553,7 @@ impl OutputGraph {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     match &mut edge.delay {
                         Some(d) => d.process_and_add(src, &mut eff.out_buf),
-                        None => {
-                            for (dst, sv) in eff.out_buf.iter_mut().zip(src.iter()) {
-                                *dst += *sv;
-                            }
-                        }
+                        None => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -541,11 +565,7 @@ impl OutputGraph {
                             head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, sc_buf),
-                            None => {
-                                for (dst, sv) in sc_buf.iter_mut().zip(src.iter()) {
-                                    *dst += *sv;
-                                }
-                            }
+                            None => add_mapped(src, sc_buf),
                         }
                     }
                 }
@@ -566,11 +586,7 @@ impl OutputGraph {
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
             match &mut terminal.delay {
                 Some(d) => d.process_and_add(src, output),
-                None => {
-                    for (dst, sv) in output.iter_mut().zip(src.iter()) {
-                        *dst += *sv;
-                    }
-                }
+                None => add_mapped(src, output),
             }
         }
     }
@@ -602,6 +618,7 @@ pub(super) fn build_output_graph(
     realtime: bool,
     valid: &ValidGraph,
     input_native_sr: &HashMap<String, u32>,
+    input_native_channels: &HashMap<String, u32>,
     producer_pairs: &mut Vec<(String, Producer<f32>)>,
     registry: &mut EffectRegistry,
     input_volumes: &HashMap<String, Arc<AtomicU32>>,
@@ -711,8 +728,7 @@ pub(super) fn build_output_graph(
             let (producer, consumer) = RingBuffer::<f32>::new(RING_CAPACITY);
             producer_pairs.push((id.clone(), producer));
 
-            // TODO Phase 1: derive from device channel count; capture is stereo today.
-            let source_channels = 2;
+            let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;
             let resampler = if input_sr == output_sr {
                 None
             } else {
@@ -729,6 +745,7 @@ pub(super) fn build_output_graph(
 
             let source = SourceState {
                 label: format!("{id}@{input_sr}->{output_sr}"),
+                channels: source_channels,
                 consumer,
                 resampler,
                 input_staging: Vec::with_capacity(RESAMPLE_CHUNK * source_channels + 8),
@@ -804,7 +821,11 @@ pub(super) fn build_output_graph(
                         src_idx,
                         source_handle,
                         target_handle,
-                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                        delay: if pad > 0 {
+                            Some(DelayLine::new(pad, node_channels[src_idx]))
+                        } else {
+                            None
+                        },
                     }
                 };
             let incoming: Vec<IncomingEdge> = main_upstream
@@ -901,7 +922,11 @@ pub(super) fn build_output_graph(
                     src_idx: idx,
                     source_handle,
                     target_handle,
-                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    delay: if pad > 0 {
+                        Some(DelayLine::new(pad, node_channels[idx]))
+                    } else {
+                        None
+                    },
                 }
             })
             .collect();
@@ -976,7 +1001,11 @@ pub(super) fn build_output_graph(
                     TerminalEdge {
                         src_idx,
                         source_handle,
-                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                        delay: if pad > 0 {
+                            Some(DelayLine::new(pad, node_channels[src_idx]))
+                        } else {
+                            None
+                        },
                     }
                 })
                 .collect()

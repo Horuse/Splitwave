@@ -78,6 +78,7 @@ pub struct ActivePipeline {
 struct InputState {
     _handle: InputHandle,
     sample_rate: u32,
+    channels: u32,
     bridge_tx: BroadcastTx,
     bridges_by_output: HashMap<String, Vec<usize>>,
     volume: Arc<AtomicU32>,
@@ -428,6 +429,7 @@ impl ActivePipeline {
         let monitor_mode = monitor_mode(graph);
 
         let mut input_native_sr: HashMap<String, u32> = HashMap::new();
+        let mut input_native_channels: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
             // NetReceiver has no capture device; it produces at the output rate
@@ -437,9 +439,11 @@ impl ActivePipeline {
             }
             if let Some(state) = self.inputs.get(&inp.id) {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
+                input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
                 let resolved = resolve_input(inp)?;
                 input_native_sr.insert(inp.id.clone(), resolved.sample_rate());
+                input_native_channels.insert(inp.id.clone(), resolved.native_channels());
                 input_runtime.insert(inp.id.clone(), resolved);
             }
         }
@@ -556,6 +560,7 @@ impl ActivePipeline {
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
                 &input_native_sr,
+                &input_native_channels,
                 &mut my_pairs,
                 &mut self.effect_registry,
                 &input_volumes,
@@ -603,6 +608,7 @@ impl ActivePipeline {
                     false,
                     graph,
                     &input_native_sr,
+                    &input_native_channels,
                     &mut my_pairs,
                     &mut self.effect_registry,
                     &input_volumes,
@@ -649,6 +655,7 @@ impl ActivePipeline {
                     AppError::Validation(format!("input runtime missing for {input_id}"))
                 })?;
                 let sample_rate = resolved.sample_rate();
+                let channels = resolved.native_channels();
                 let meter = new_input_meters.remove(&input_id)
                     .unwrap_or_else(|| MeterHandle::new(input_id.clone()));
                 self.meters.insert(input_id.clone(), meter);
@@ -670,6 +677,7 @@ impl ActivePipeline {
                     InputState {
                         _handle: handle,
                         sample_rate,
+                        channels,
                         bridge_tx,
                         bridges_by_output,
                         volume,

@@ -80,6 +80,16 @@ impl ResolvedInput {
             ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
         }
     }
+
+    /// Channel count this input broadcasts. Only cpal devices carry their
+    /// native count; every other source path emits stereo.
+    pub(super) fn native_channels(&self) -> u32 {
+        match self {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            ResolvedInput::Cpal { src_channels, .. } => *src_channels as u32,
+            _ => 2,
+        }
+    }
 }
 
 /// Shared file probe -- both platforms resolve audio files identically.

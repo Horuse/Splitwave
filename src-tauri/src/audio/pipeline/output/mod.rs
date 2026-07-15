@@ -161,13 +161,16 @@ pub(super) fn start_monitor_worker(
 
 // Clock-paced worker for a NetSender output. The Consumer node pushes each
 // channel into its send ring inside `process_block`; the sink is a no-op since
-// the background UDP task does the transmitting.
+// the background UDP task does the transmitting. Catch-up pacing: a scheduler
+// hiccup must not lose wire time -- the send rings are elastic, and lost time
+// otherwise builds capture backlog until the trim splices it (a click baked
+// into the stream).
 pub(super) fn start_net_sender_worker(
     graph: OutputGraph,
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
-    let ticker = SystemClockTicker::new(graph.sample_rate(), DSP_BLOCK_FRAMES);
+    let ticker = SystemClockTicker::with_catchup(graph.sample_rate(), DSP_BLOCK_FRAMES, 8);
     let (worker, ctrl) = dsp_worker(graph);
     let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()

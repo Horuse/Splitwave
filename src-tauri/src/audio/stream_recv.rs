@@ -38,13 +38,19 @@ const TARGET_GROW: usize = 4_800; // +50 ms on underrun
 const TARGET_SHRINK: usize = 960; // -10 ms per calm window
 const CALM_WINDOW: u32 = 480; // ~10 s at ~21 ms/block
 
-/// Proportional gain: backlog error (samples) -> ratio correction.
-const DRIFT_KP: f64 = 2.0e-6;
-const DRIFT_MIN: f64 = 0.97;
-const DRIFT_MAX: f64 = 1.03;
-/// EMA smoothing for the backlog the drift controller sees (~1 s time constant)
+/// Proportional gain: backlog error (samples) -> ratio correction. A varying
+/// resample ratio IS pitch modulation, so the loop must be far slower and far
+/// narrower than the jitter it rides on: corrections stay within +-2000 ppm
+/// (real oscillator pairs differ by <200 ppm) and jitter is absorbed by the
+/// buffer, never by the ratio -- otherwise bursty links produce audible wow.
+const DRIFT_KP: f64 = 1.0e-7;
+const DRIFT_MIN: f64 = 0.998;
+const DRIFT_MAX: f64 = 1.002;
+/// EMA smoothing for the backlog the drift controller sees (~3 s time constant)
 /// so it tracks real clock drift (slow) and ignores per-block fill ripple.
-const DRIFT_BACKLOG_ALPHA: f64 = 0.02;
+const DRIFT_BACKLOG_ALPHA: f64 = 0.007;
+/// No correction while the smoothed backlog is this close to target.
+const DRIFT_DEADBAND: f64 = 240.0;
 
 /// One received channel's fan-out: the 48 kHz ring producer for each live
 /// consumer. The decode task pushes decoded audio into all of them.
@@ -153,12 +159,16 @@ impl PlaybackTap {
         }
 
         // Safety net only (abnormal burst): the drift loop normally keeps the
-        // ring near target. Even sample count so channels stay aligned.
-        let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 8);
+        // ring near target. Generous headroom -- sender catch-up bursts after a
+        // scheduler stall are legitimate and must not get spliced. Even sample
+        // count so channels stay aligned.
+        let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
         if self.consumer.slots() > hard_cap {
             let drop = (self.consumer.slots() - target) & !1;
             if let Ok(chunk) = self.consumer.read_chunk(drop) {
                 chunk.commit_all();
+                // The discard is a splice; fade back in over the next block.
+                self.gap = true;
             }
         }
 
@@ -198,10 +208,13 @@ impl PlaybackTap {
     }
 
     /// Concealment for a missing block: on entering a gap, one fade-out of the
-    /// last real block; sustained gap is silence. Far less audible than a hard
-    /// silence step, which reads as a needle on the scope.
+    /// last real block; a sustained gap drops back to priming so the ring
+    /// refills to target in silence -- resuming shallow would leave every
+    /// jitter ripple causing another underrun (audible fade cycling), and the
+    /// narrow drift clamp can't rebuild depth.
     fn conceal(&mut self) -> usize {
         if self.gap {
+            self.primed = false;
             self.valid = 0;
             return 0;
         }
@@ -396,15 +409,19 @@ impl ChannelReceiver {
         }
 
         // Drive the ratio from a smoothed backlog so it tracks real drift (slow)
-        // and ignores per-block fill ripple (fast).
-        let avg = if self.avg_backlog.get() < 0.0 {
+        // and ignores per-block fill ripple (fast). A jump far beyond jitter
+        // scale is a re-prime refill, not drift -- restart the EMA there so the
+        // controller doesn't chase the refill as a huge error.
+        let prev = self.avg_backlog.get();
+        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_GROW as f64 {
             backlog as f64
         } else {
-            self.avg_backlog.get() + DRIFT_BACKLOG_ALPHA * (backlog as f64 - self.avg_backlog.get())
+            prev + DRIFT_BACKLOG_ALPHA * (backlog as f64 - prev)
         };
         self.avg_backlog.set(avg);
 
         let e = avg - target as f64;
+        let e = if e.abs() < DRIFT_DEADBAND { 0.0 } else { e - DRIFT_DEADBAND.copysign(e) };
         let d = (1.0 - DRIFT_KP * e).clamp(DRIFT_MIN, DRIFT_MAX);
         self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
     }

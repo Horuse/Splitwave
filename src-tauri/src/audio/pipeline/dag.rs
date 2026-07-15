@@ -12,7 +12,7 @@ use crate::audio::effects::{
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
 use crate::audio::netaudio::packet::Format;
-use crate::audio::resample::StereoResampler;
+use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
 use crate::audio::streams::bulk_push;
 use crate::error::{AppError, AppResult};
@@ -150,7 +150,7 @@ impl DagNode {
 struct SourceState {
     label: String,
     consumer: Consumer<f32>,
-    resampler: Option<StereoResampler>,
+    resampler: Option<MultiResampler>,
     input_staging: Vec<f32>,
     out_pending: StagingRing,
     chunk_tmp: Vec<f32>,
@@ -668,6 +668,8 @@ pub(super) fn build_output_graph(
     let mut gr_handles: Vec<GrHandle> = Vec::new();
     let mut scopes: Vec<WaveformHandle> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
+    // Per-node channel width; effects inherit the max width of their upstreams.
+    let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
 
     for id in &topo {
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
@@ -685,17 +687,19 @@ pub(super) fn build_output_graph(
                     .collect();
                 handles.sort();
                 handles.dedup();
+                let pw = 2;
                 let handle_bufs = handles
                     .into_iter()
-                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * pw]))
                     .collect();
                 id_to_index.insert(id.clone(), nodes.len());
                 nodes.push(DagNode::Producer(ProducerState {
                     receiver,
-                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * pw],
                     handle_bufs,
                 }));
                 node_latencies.push(0);
+                node_channels.push(pw);
                 continue;
             }
             // File sources are paced by backpressure; dropping backlog plays fast.
@@ -707,28 +711,30 @@ pub(super) fn build_output_graph(
             let (producer, consumer) = RingBuffer::<f32>::new(RING_CAPACITY);
             producer_pairs.push((id.clone(), producer));
 
+            // TODO Phase 1: derive from device channel count; capture is stereo today.
+            let source_channels = 2;
             let resampler = if input_sr == output_sr {
                 None
             } else {
-                Some(StereoResampler::new(input_sr, output_sr, RESAMPLE_CHUNK)?)
+                Some(MultiResampler::new(input_sr, output_sr, RESAMPLE_CHUNK, source_channels)?)
             };
             let out_max = resampler.as_ref().map(|r| r.out_max()).unwrap_or(RESAMPLE_CHUNK);
             // x4 headroom: one chunk draining + one in-flight + alignment slack.
-            let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * 2;
+            let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * source_channels;
             let input_frames_per_block = (DSP_BLOCK_FRAMES as u64 * input_sr as u64
                 + output_sr as u64
                 - 1)
                 / output_sr as u64;
-            let input_samples_per_block = (input_frames_per_block as usize) * 2;
+            let input_samples_per_block = (input_frames_per_block as usize) * source_channels;
 
             let source = SourceState {
                 label: format!("{id}@{input_sr}->{output_sr}"),
                 consumer,
                 resampler,
-                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * 2 + 8),
+                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * source_channels + 8),
                 out_pending: StagingRing::with_capacity(staging_cap),
-                chunk_tmp: Vec::with_capacity(out_max * 2),
-                out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                chunk_tmp: Vec::with_capacity(out_max * source_channels),
+                out_buf: vec![0.0; DSP_BLOCK_FRAMES * source_channels],
                 input_samples_per_block,
                 realtime: source_realtime,
                 last_pop_at: Instant::now(),
@@ -745,6 +751,7 @@ pub(super) fn build_output_graph(
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
+            node_channels.push(source_channels);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
             let build = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
             if let Some(c) = build.control {
@@ -785,6 +792,11 @@ pub(super) fn build_output_graph(
                 .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
+            let eff_channels = main_upstream
+                .iter()
+                .map(|(i, _, _)| node_channels[*i])
+                .max()
+                .unwrap_or(2);
             let make_edge =
                 |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
                     let pad = max_upstream - node_latencies[src_idx];
@@ -806,7 +818,7 @@ pub(super) fn build_output_graph(
             let sidechain_buf = if sidechain.is_empty() {
                 None
             } else {
-                Some(vec![0.0; DSP_BLOCK_FRAMES * 2])
+                Some(vec![0.0; DSP_BLOCK_FRAMES * eff_channels])
             };
             // Built from the edges actually drawn off this node's `peer:<id>`
             // handles, so a stale handle simply yields silence.
@@ -844,12 +856,13 @@ pub(super) fn build_output_graph(
                 bypass,
                 incoming,
                 sidechain,
-                out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                out_buf: vec![0.0; DSP_BLOCK_FRAMES * eff_channels],
                 sidechain_buf,
                 handle_bufs,
                 channel_bufs,
             }));
             node_latencies.push(max_upstream + own);
+            node_channels.push(eff_channels);
         }
     }
 

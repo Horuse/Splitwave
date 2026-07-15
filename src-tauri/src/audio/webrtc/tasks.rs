@@ -10,7 +10,7 @@ use webrtc::data_channel::RTCDataChannel;
 use crate::audio::graph::OpusApplication;
 use crate::audio::netaudio::codec::{ChannelDecoder, ChannelEncoder};
 use crate::audio::netaudio::packet::{self, Format};
-use crate::audio::resample::StereoResampler;
+use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::broadcast_push;
 
 use super::session::{PeerChannel, WebRtcSession};
@@ -20,7 +20,7 @@ use super::{OPUS_SR, RESAMPLE_CHUNK};
 /// to a format-agnostic `ChannelEncoder` (Opus or raw PCM). The encoder is
 /// rebuilt when the UI switches codec.
 struct ChannelEnc {
-    resampler: Option<StereoResampler>,
+    resampler: Option<MultiResampler>,
     resampler_sr: u32,
     in_acc: Vec<f32>,
     out_acc: Vec<f32>,
@@ -59,7 +59,7 @@ impl ChannelEnc {
         self.resampler = if sr == OPUS_SR {
             None
         } else {
-            match StereoResampler::new(sr, OPUS_SR, RESAMPLE_CHUNK) {
+            match MultiResampler::new(sr, OPUS_SR, RESAMPLE_CHUNK, 2) {
                 Ok(r) => Some(r),
                 Err(e) => {
                     warn!(error = %e, "encode resampler init failed");

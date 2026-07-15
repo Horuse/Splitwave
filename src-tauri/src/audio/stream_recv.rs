@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::resample::StereoResamplerOut;
+use crate::audio::resample::MultiResamplerOut;
 use crate::audio::streams::bulk_push;
 
 /// Decoded network audio is always carried at 48 kHz stereo.
@@ -80,7 +80,7 @@ pub fn broadcast_push(broadcast: &ChannelBroadcast, samples: &[f32]) {
 /// fixed-output resampler (48 kHz -> consumer rate) whose ratio tracks drift.
 pub struct PlaybackTap {
     consumer: Consumer<f32>,
-    resampler: StereoResamplerOut,
+    resampler: MultiResamplerOut,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
@@ -106,7 +106,7 @@ impl PlaybackTap {
         target: Arc<AtomicU32>,
     ) -> Self {
         let base_ratio = rate as f64 / SR as f64;
-        let resampler = StereoResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES)
+        let resampler = MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 2)
             .expect("stereo resampler init");
         Self {
             consumer,

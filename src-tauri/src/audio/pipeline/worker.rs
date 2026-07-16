@@ -101,7 +101,7 @@ impl DspWorker {
         F: FnMut(&[f32]) -> AppResult<()>,
     {
         thread::sleep(DSP_PREROLL);
-        let mut block = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+        let mut block = vec![0.0_f32; DSP_BLOCK_FRAMES * self.graph.out_channels()];
 
         loop {
             self.drain_swaps();

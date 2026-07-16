@@ -15,6 +15,8 @@ use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
     pub sample_rate: u32,
+    // PipeWire null-sink playback is stereo.
+    pub out_channels: usize,
 }
 
 pub(in crate::audio::pipeline) struct SpeakerHandle {
@@ -26,6 +28,7 @@ pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<
     Ok(SpeakerResolved {
         node_id: device_id.to_string(),
         sample_rate: 48_000,
+        out_channels: 2,
     })
 }
 

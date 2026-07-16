@@ -109,8 +109,9 @@ impl StagingRing {
 
 /// One node in an output's DAG. `Source` reads from a ring + resamples,
 /// `Effect` sums its upstreams' buffers and runs DSP, `Producer` emits
-/// network-received audio on named channel handles. All expose a stereo
-/// `out_buf` of `DSP_BLOCK_FRAMES * 2` samples that downstream nodes consume.
+/// network-received audio on named channel handles. Each exposes an
+/// interleaved `out_buf` of `DSP_BLOCK_FRAMES * node_channels` that downstream
+/// nodes consume.
 enum DagNode {
     Source(SourceState),
     Effect(EffectState),
@@ -393,6 +394,18 @@ fn add_mapped(src: &[f32], dst: &mut [f32]) {
         }
         return;
     }
+    if dst_ch == 1 {
+        let g = 1.0 / src_ch as f32;
+        for f in 0..DSP_BLOCK_FRAMES {
+            let sb = f * src_ch;
+            let mut acc = 0.0;
+            for c in 0..src_ch {
+                acc += src[sb + c];
+            }
+            dst[f] += acc * g;
+        }
+        return;
+    }
     let n = src_ch.min(dst_ch);
     for f in 0..DSP_BLOCK_FRAMES {
         let sb = f * src_ch;
@@ -447,6 +460,9 @@ impl DelayLine {
 /// terminal edges whose buffers get summed into the final output.
 pub(super) struct OutputGraph {
     sample_rate: u32,
+    /// Interleaved channel width of `process_block`'s output. Stereo unless a
+    /// speaker sets it to the device's channel count.
+    out_channels: usize,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
 }
@@ -454,6 +470,14 @@ pub(super) struct OutputGraph {
 impl OutputGraph {
     pub(super) fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    pub(super) fn out_channels(&self) -> usize {
+        self.out_channels
+    }
+
+    pub(super) fn set_out_channels(&mut self, channels: usize) {
+        self.out_channels = channels;
     }
 
     /// True if every source has enough buffered input to produce one full
@@ -473,7 +497,7 @@ impl OutputGraph {
         true
     }
 
-    /// Fill `output` (must be `DSP_BLOCK_FRAMES * 2` long) with one block of
+    /// Fill `output` (`DSP_BLOCK_FRAMES * out_channels` long) with one block of
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
         for node in &mut self.nodes {
@@ -964,6 +988,7 @@ pub(super) fn build_output_graph(
         return Ok(BuiltOutputGraph {
             graph: OutputGraph {
                 sample_rate: output_sr,
+                out_channels: 2,
                 nodes,
                 terminals: Vec::new(),
             },
@@ -1016,6 +1041,7 @@ pub(super) fn build_output_graph(
     Ok(BuiltOutputGraph {
         graph: OutputGraph {
             sample_rate: output_sr,
+            out_channels: 2,
             nodes,
             terminals,
         },
@@ -1058,4 +1084,40 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
         .filter(|i| reachable.contains(&i.id))
         .map(|i| i.id.as_str())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_mapped, DSP_BLOCK_FRAMES};
+
+    #[test]
+    fn add_mapped_maps_by_channel() {
+        // 4->2: first two channels pass, rest dropped.
+        let mut src = vec![0.0; DSP_BLOCK_FRAMES * 4];
+        for f in 0..DSP_BLOCK_FRAMES {
+            for c in 0..4 {
+                src[f * 4 + c] = c as f32 + 1.0;
+            }
+        }
+        let mut dst = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        add_mapped(&src, &mut dst);
+        assert_eq!(dst[0], 1.0);
+        assert_eq!(dst[1], 2.0);
+
+        // 2->1: mono downmix is the mean.
+        let mut stereo = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        for f in 0..DSP_BLOCK_FRAMES {
+            stereo[f * 2] = 1.0;
+            stereo[f * 2 + 1] = 3.0;
+        }
+        let mut mono = vec![0.0; DSP_BLOCK_FRAMES];
+        add_mapped(&stereo, &mut mono);
+        assert!((mono[0] - 2.0).abs() < 1e-6);
+
+        // equal width: straight sum-in.
+        let src = vec![0.5; DSP_BLOCK_FRAMES * 3];
+        let mut dst = vec![0.25; DSP_BLOCK_FRAMES * 3];
+        add_mapped(&src, &mut dst);
+        assert!((dst[0] - 0.75).abs() < 1e-6);
+    }
 }

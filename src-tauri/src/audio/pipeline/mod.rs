@@ -698,10 +698,11 @@ impl ActivePipeline {
             let resolved = output_runtime.remove(&out.id).ok_or_else(|| {
                 AppError::Validation(format!("output runtime missing for {}", out.id))
             })?;
-            let og = output_graphs.remove(&out.id).unwrap();
+            let mut og = output_graphs.remove(&out.id).unwrap();
             let new_sig = compute_output_sig(graph, &out.id);
             match resolved {
                 ResolvedOutput::Speaker(spec) => {
+                    og.set_out_channels(spec.out_channels);
                     if let Some(state) = self.speakers.get_mut(&out.id) {
                         if state.sample_rate == spec.sample_rate {
                             state.ctrl.send_graph(og)?;

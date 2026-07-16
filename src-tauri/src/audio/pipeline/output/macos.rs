@@ -99,8 +99,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
         let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
-        let fill = move |stereo_out: &mut [f32], _frames: usize| {
-            streams::bulk_pop(&mut consumer, stereo_out);
+        let fill = move |out: &mut [f32], _frames: usize| {
+            streams::bulk_pop(&mut consumer, out);
         };
         let app_err = app.clone();
         let dead_cb = dead.clone();

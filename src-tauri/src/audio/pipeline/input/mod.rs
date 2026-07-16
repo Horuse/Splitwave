@@ -85,8 +85,9 @@ impl ResolvedInput {
     /// native count; every other source path emits stereo.
     pub(super) fn native_channels(&self) -> u32 {
         match self {
+            // Mono capture is upmixed to stereo, so the floor is 2.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            ResolvedInput::Cpal { src_channels, .. } => *src_channels as u32,
+            ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(2),
             _ => 2,
         }
     }

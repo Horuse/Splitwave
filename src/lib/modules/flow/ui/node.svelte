@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { getContext, type Snippet } from 'svelte';
-	import { Handle, Position } from '@xyflow/svelte';
+	import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
 	import { PREVIEW_CTX } from '../utils';
+	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
+	const flow = useSvelteFlow();
+	const MAX_CH = 16;
 
 	export interface InputHandleConfig {
 		id: string;
@@ -20,6 +23,12 @@
 		outputLabel?: string;
 		bypassed?: boolean;
 		onBypass?: () => void;
+		// When set, shows a split/mix toggle + counter that exposes N per-channel
+		// input (left) and output (right) handles. Requires `nodeId`.
+		channelIo?: boolean;
+		nodeId?: string;
+		channels?: number;
+		channelsExpanded?: boolean;
 		children?: Snippet;
 	}
 
@@ -32,8 +41,37 @@
 		outputLabel,
 		bypassed,
 		onBypass,
+		channelIo = false,
+		nodeId,
+		channels,
+		channelsExpanded = false,
 		children
 	}: Props = $props();
+
+	let chCount = $derived(Math.min(Math.max(channels ?? 2, 2), MAX_CH));
+	let chExpanded = $derived(channelIo && channelsExpanded);
+
+	function toggleChannels() {
+		if (!nodeId) return;
+		const next = !channelsExpanded;
+		if (!next) {
+			const orphaned = flow
+				.getEdges()
+				.filter(
+					(e) =>
+						(e.source === nodeId || e.target === nodeId) &&
+						(e.sourceHandle?.startsWith('ch') || e.targetHandle?.startsWith('ch'))
+				)
+				.map((e) => ({ id: e.id }));
+			if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
+		}
+		flow.updateNodeData(nodeId, { channelsExpanded: next });
+	}
+
+	function setChannels(n: number) {
+		if (!nodeId) return;
+		flow.updateNodeData(nodeId, { channels: Math.min(Math.max(n, 2), MAX_CH) });
+	}
 
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
@@ -58,28 +96,75 @@
 		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{label}
 		</span>
-		{#if onBypass}
-			<button
-				type="button"
-				class={[
-					'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
-					bypassed
-						? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
-						: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-				]}
-				title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
-				onclick={onBypass}
-			>
-				{bypassed ? 'BYP' : 'ON'}
-			</button>
-		{/if}
+		<div class="flex items-center gap-1">
+			{#if channelIo && !isPreview}
+				{#if chExpanded}
+					<div class="flex items-center gap-0.5">
+						<button
+							type="button"
+							class="nodrag nopan flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
+							disabled={chCount <= 2}
+							onclick={() => setChannels(chCount - 1)}>-</button
+						>
+						<span class="w-3 text-center font-mono text-[9px] tabular-nums text-neutral-900">{chCount}</span>
+						<button
+							type="button"
+							class="nodrag nopan flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
+							disabled={chCount >= MAX_CH}
+							onclick={() => setChannels(chCount + 1)}>+</button
+						>
+					</div>
+				{/if}
+				<button
+					type="button"
+					class={[
+						'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
+						chExpanded
+							? 'border-neutral-900 bg-neutral-900 text-white'
+							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+					]}
+					title="Split into per-channel handles"
+					onclick={toggleChannels}
+				>
+					{chExpanded ? 'mix' : 'split'}
+				</button>
+			{/if}
+			{#if onBypass}
+				<button
+					type="button"
+					class={[
+						'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
+						bypassed
+							? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
+							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+					]}
+					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+					onclick={onBypass}
+				>
+					{bypassed ? 'BYP' : 'ON'}
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	<div class={[bypassed && 'opacity-40']}>
 		{@render children?.()}
 	</div>
 
-	{#if !isPreview}
+	{#if chExpanded}
+		<div class="mt-2 flex justify-between gap-2">
+			{#if hasInput}
+				<ChannelHandles count={chCount} side="target" />
+			{:else}
+				<div></div>
+			{/if}
+			{#if hasOutput}
+				<ChannelHandles count={chCount} side="source" />
+			{/if}
+		</div>
+	{/if}
+
+	{#if !isPreview && !chExpanded}
 		{#if inputs && inputs.length > 0}
 			{#each inputs as h (h.id)}
 				<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>

@@ -663,9 +663,11 @@ impl OutputGraph {
                 }
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                    match &mut edge.delay {
-                        Some(d) => d.process_and_add(src, &mut eff.out_buf),
-                        None => add_mapped(src, &mut eff.out_buf),
+                    let dst_ch = edge.target_handle.as_deref().and_then(parse_ch);
+                    match (&mut edge.delay, dst_ch) {
+                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
+                        (None, Some(k)) => add_to_channel(src, &mut eff.out_buf, k - 1),
+                        (None, None) => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -686,6 +688,16 @@ impl OutputGraph {
                 }
                 eff.effects[0]
                     .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
+                let w = eff.out_buf.len() / DSP_BLOCK_FRAMES;
+                for (h, buf) in eff.handle_bufs.iter_mut() {
+                    let Some(k) = parse_ch(h) else { continue };
+                    let c = (k - 1).min(w - 1);
+                    for f in 0..DSP_BLOCK_FRAMES {
+                        let v = eff.out_buf[f * w + c];
+                        buf[f * 2] = v;
+                        buf[f * 2 + 1] = v;
+                    }
+                }
             }
         }
         for s in output.iter_mut() {
@@ -934,11 +946,26 @@ pub(super) fn build_output_graph(
                 .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
-            let eff_channels = main_upstream
+            // Width is the max of: upstream widths, any `chK` target channel fed
+            // in, and any `chK` output tap drawn off this effect.
+            let upstream_w = main_upstream
                 .iter()
                 .map(|(i, _, _)| node_channels[*i])
                 .max()
                 .unwrap_or(2);
+            let target_w = main_upstream
+                .iter()
+                .filter_map(|(_, _, t)| t.as_deref().and_then(parse_ch))
+                .max()
+                .unwrap_or(0);
+            let tap_w = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.as_deref().and_then(parse_ch))
+                .max()
+                .unwrap_or(0);
+            let eff_channels = upstream_w.max(target_w).max(tap_w).max(2);
             let make_edge =
                 |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
                     let pad = max_upstream - node_latencies[src_idx];
@@ -966,26 +993,22 @@ pub(super) fn build_output_graph(
             } else {
                 Some(vec![0.0; DSP_BLOCK_FRAMES * eff_channels])
             };
-            // Built from the edges actually drawn off this node's `peer:<id>`
-            // handles, so a stale handle simply yields silence.
-            let handle_bufs: Vec<(String, Vec<f32>)> =
-                if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
-                    let mut handles: Vec<String> = valid
-                        .edges
-                        .iter()
-                        .filter(|e| &e.from == id)
-                        .filter_map(|e| e.source_handle.clone())
-                        .filter(|h| h.starts_with("peer:"))
-                        .collect();
-                    handles.sort();
-                    handles.dedup();
-                    handles
-                        .into_iter()
-                        .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+            // Output taps drawn off this effect: WebRTC `peer:<id>` mixes plus
+            // generic `chK` per-channel taps. A stale handle just yields silence.
+            let is_webrtc = matches!(effect.spec, EffectSpec::WebRtcBridge { .. });
+            let mut handle_ids: Vec<String> = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.clone())
+                .filter(|h| parse_ch(h).is_some() || (is_webrtc && h.starts_with("peer:")))
+                .collect();
+            handle_ids.sort();
+            handle_ids.dedup();
+            let handle_bufs: Vec<(String, Vec<f32>)> = handle_ids
+                .into_iter()
+                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                .collect();
             // One input buffer per WebRTC send channel, keyed "ch1".."chN".
             let channel_bufs: Vec<(String, Vec<f32>)> =
                 if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {

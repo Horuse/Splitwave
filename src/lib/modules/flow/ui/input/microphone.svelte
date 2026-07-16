@@ -5,7 +5,6 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
-	import ChannelHandles from '../_channel_handles.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
@@ -183,11 +182,7 @@
 					onChange={setGainPct}
 				/>
 			{/if}
-			<InputMeter nodeId={id} />
-		{/if}
-
-		{#if expanded}
-			<ChannelHandles count={channelCount} side="source" />
+			<InputMeter nodeId={id} channelCount={channelCount} split={expanded} />
 		{/if}
 	</div>
 </Wrapper>

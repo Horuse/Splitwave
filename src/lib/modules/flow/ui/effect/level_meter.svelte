@@ -7,7 +7,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
-	let { id }: NodeProps<LevelMeterNodeType> = $props();
+	let { id, data }: NodeProps<LevelMeterNodeType> = $props();
 
 	let targetPeakL = 0;
 	let targetPeakR = 0;
@@ -188,7 +188,16 @@
 	}
 </script>
 
-<Wrapper label="Level Meter" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Level Meter"
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	channels={data.channels as number}
+	channelsExpanded={data.channelsExpanded as boolean}
+>
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">
 			<div class="flex flex-col gap-0.5">

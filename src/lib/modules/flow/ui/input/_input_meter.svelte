@@ -86,11 +86,11 @@
 	});
 </script>
 
-<div class={['flex w-full flex-col gap-[3px]', split && '-mr-4 pr-4']} aria-label="Live input level">
+<div class="flex w-full flex-col gap-[3px]" aria-label="Live input level">
 	{#each rows as i (i)}
 		{@const db = displays[i] ?? -Infinity}
 		{@const hold = holds[i] ?? -Infinity}
-		<div class="relative flex items-center gap-1.5">
+		<div class={['relative flex items-center gap-1.5', split && '-mr-4 pr-4']}>
 			<span
 				class="w-7 shrink-0 text-right font-mono text-[8px] leading-none"
 				style="color:{channelColor(i)}">{channelLabel(i, rows.length)}</span

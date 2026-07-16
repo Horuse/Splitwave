@@ -79,7 +79,16 @@
 	});
 </script>
 
-<Wrapper label="LUFS Meter" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="LUFS Meter"
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	channels={data.channels as number}
+	channelsExpanded={data.channelsExpanded as boolean}
+>
 	<div class="flex w-36 flex-col gap-1 font-mono text-[10px]">
 		<div class="flex items-baseline justify-between rounded-sm border border-neutral-300 px-1.5 py-0.5">
 			<span class="text-neutral-500">M</span>

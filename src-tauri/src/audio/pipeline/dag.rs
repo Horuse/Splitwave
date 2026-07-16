@@ -264,7 +264,7 @@ impl SourceState {
             }
         }
         if let Some(m) = &self.meter {
-            update_meter(m, &self.out_buf);
+            update_meter(m, &self.out_buf, self.channels);
         }
         if !self.handle_bufs.is_empty() {
             let w = self.channels;
@@ -358,7 +358,7 @@ impl EffectState {
     /// per-channel filter state never bleeds across pairs.
     fn run(&mut self, frames: usize) {
         let w = self.out_buf.len() / frames;
-        if w <= 2 {
+        if w == 2 {
             let sc = self.sidechain_buf.as_deref();
             self.effects[0].process_with_sidechain(&mut self.out_buf, sc, frames);
             return;
@@ -472,6 +472,17 @@ fn add_mapped(src: &[f32], dst: &mut [f32]) {
                 acc += src[sb + c];
             }
             dst[f] += acc * g;
+        }
+        return;
+    }
+    if src_ch == 1 {
+        // Mono upmix: a single-channel source feeds every destination channel.
+        for f in 0..DSP_BLOCK_FRAMES {
+            let v = src[f];
+            let db = f * dst_ch;
+            for c in 0..dst_ch {
+                dst[db + c] += v;
+            }
         }
         return;
     }
@@ -965,7 +976,7 @@ pub(super) fn build_output_graph(
                 .filter_map(|e| e.source_handle.as_deref().and_then(parse_ch))
                 .max()
                 .unwrap_or(0);
-            let eff_channels = upstream_w.max(target_w).max(tap_w).max(2);
+            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
             let make_edge =
                 |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
                     let pad = max_upstream - node_latencies[src_idx];

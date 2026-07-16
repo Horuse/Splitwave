@@ -4,16 +4,6 @@
 
 	let { nodeId }: { nodeId: string } = $props();
 
-	let targetL = 0;
-	let targetR = 0;
-
-	let displayL = $state(-Infinity);
-	let displayR = $state(-Infinity);
-	let holdL = $state(-Infinity);
-	let holdR = $state(-Infinity);
-	let holdTimeL = 0;
-	let holdTimeR = 0;
-
 	const DB_FLOOR = -60;
 	const PEAK_FALL_DB_PER_SEC = 30;
 	const HOLD_SEC = 1.5;
@@ -21,11 +11,14 @@
 
 	interface MeterTick {
 		nodeId: string;
-		peakL: number;
-		peakR: number;
-		rmsL: number;
-		rmsR: number;
+		peaks: number[];
+		rms: number[];
 	}
+
+	let targets: number[] = [];
+	let displays = $state<number[]>([]);
+	let holds = $state<number[]>([]);
+	let holdTimes: number[] = [];
 
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
@@ -40,31 +33,29 @@
 	let unlisten: UnlistenFn | undefined;
 	let lastFrame = 0;
 
-	function updateChannel(
-		target: number,
-		display: number,
-		hold: number,
-		holdTime: number,
-		dt: number
-	): [number, number, number] {
-		const t = ampToDb(target);
-		const newDisplay = t > display ? t : Math.max(t, display - PEAK_FALL_DB_PER_SEC * dt);
-		let newHold = hold;
-		let newHoldTime = holdTime + dt;
-		if (t >= hold) {
-			newHold = t;
-			newHoldTime = 0;
-		} else if (newHoldTime > HOLD_SEC) {
-			newHold = Math.max(t, hold - HOLD_FALL_DB_PER_SEC * dt);
-		}
-		return [newDisplay, newHold, newHoldTime];
-	}
-
 	function tick(now: number) {
 		const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.1) : 0;
 		lastFrame = now;
-		[displayL, holdL, holdTimeL] = updateChannel(targetL, displayL, holdL, holdTimeL, dt);
-		[displayR, holdR, holdTimeR] = updateChannel(targetR, displayR, holdR, holdTimeR, dt);
+		const n = targets.length;
+		const nextDisplays = new Array(n);
+		const nextHolds = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const t = ampToDb(targets[i]);
+			const d = displays[i] ?? -Infinity;
+			const h = holds[i] ?? -Infinity;
+			nextDisplays[i] = t > d ? t : Math.max(t, d - PEAK_FALL_DB_PER_SEC * dt);
+			let newHold = h;
+			holdTimes[i] = (holdTimes[i] ?? 0) + dt;
+			if (t >= h) {
+				newHold = t;
+				holdTimes[i] = 0;
+			} else if (holdTimes[i] > HOLD_SEC) {
+				newHold = Math.max(t, h - HOLD_FALL_DB_PER_SEC * dt);
+			}
+			nextHolds[i] = newHold;
+		}
+		displays = nextDisplays;
+		holds = nextHolds;
 		rafId = requestAnimationFrame(tick);
 	}
 
@@ -72,8 +63,7 @@
 		unlisten = await listen<MeterTick>('audio://meter', (event) => {
 			const p = event.payload;
 			if (p.nodeId !== nodeId) return;
-			targetL = p.peakL;
-			targetR = p.peakR;
+			targets = p.peaks;
 		});
 		rafId = requestAnimationFrame(tick);
 	});
@@ -85,7 +75,7 @@
 </script>
 
 <div class="flex w-full flex-col gap-[2px]" aria-label="Live input level">
-	{#each [[displayL, holdL], [displayR, holdR]] as [db, hold], i (i)}
+	{#each displays as db, i (i)}
 		<div class="relative h-1.5 overflow-hidden rounded-sm bg-neutral-300">
 			<div
 				class="absolute inset-0"
@@ -94,8 +84,8 @@
 					clip-path: inset(0 {100 - dbToPct(db)}% 0 0);
 				"
 			></div>
-			{#if isFinite(hold) && dbToPct(hold) > 0}
-				<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(hold)}%;"></div>
+			{#if isFinite(holds[i]) && dbToPct(holds[i]) > 0}
+				<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(holds[i])}%;"></div>
 			{/if}
 		</div>
 	{/each}

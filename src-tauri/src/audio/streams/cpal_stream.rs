@@ -15,7 +15,6 @@ use cpal::{Sample, SampleFormat, StreamConfig};
 use tracing::error;
 
 use crate::audio::effects::{update_meter, MeterHandle};
-use crate::audio::format::convert_to_stereo;
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
@@ -59,7 +58,6 @@ where
     f32: cpal::FromSample<T>,
 {
     let mut staging: Vec<f32> = vec![0.0; 16384];
-    let mut meter_buf: Vec<f32> = vec![0.0; 16384];
     let stream = device
         .build_input_stream::<T, _, _>(
             config,
@@ -68,32 +66,15 @@ where
                 if src_channels == 0 || data.is_empty() {
                     return;
                 }
-                let frames = data.len() / src_channels;
-                // Keep a stereo floor: mono upmixes to L=R so downstream effects
-                // (which process in pairs) never see a 1-wide buffer.
-                let out_channels = src_channels.max(2);
-                let needed = frames * out_channels;
+                let needed = data.len();
                 if staging.len() < needed {
                     staging.resize(needed, 0.0);
                 }
-                if src_channels == 1 {
-                    for (i, &s) in data.iter().enumerate() {
-                        let v = s.to_sample::<f32>();
-                        staging[i * 2] = v;
-                        staging[i * 2 + 1] = v;
-                    }
-                } else {
-                    for (o, &s) in staging[..needed].iter_mut().zip(data) {
-                        *o = s.to_sample::<f32>();
-                    }
+                for (o, &s) in staging[..needed].iter_mut().zip(data) {
+                    *o = s.to_sample::<f32>();
                 }
                 if let Some(m) = &meter {
-                    let mneeded = frames * 2;
-                    if meter_buf.len() < mneeded {
-                        meter_buf.resize(mneeded, 0.0);
-                    }
-                    convert_to_stereo::<T>(data, &mut meter_buf[..mneeded], src_channels);
-                    update_meter(m, &meter_buf[..mneeded]);
+                    update_meter(m, &staging[..needed], src_channels);
                 }
                 bridge.broadcast(&staging[..needed]);
             },

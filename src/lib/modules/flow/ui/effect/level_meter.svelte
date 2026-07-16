@@ -49,10 +49,8 @@
 
 	interface MeterTick {
 		nodeId: string;
-		peakL: number;
-		peakR: number;
-		rmsL: number;
-		rmsR: number;
+		peaks: number[];
+		rms: number[];
 	}
 
 	function ampToDb(amp: number): number {
@@ -159,10 +157,10 @@
 		unlisten = await listen<MeterTick>('audio://meter', (event) => {
 			const p = event.payload;
 			if (p.nodeId !== id) return;
-			targetPeakL = p.peakL;
-			targetPeakR = p.peakR;
-			targetRmsL = p.rmsL;
-			targetRmsR = p.rmsR;
+			targetPeakL = p.peaks[0] ?? 0;
+			targetPeakR = p.peaks[1] ?? p.peaks[0] ?? 0;
+			targetRmsL = p.rms[0] ?? 0;
+			targetRmsR = p.rms[1] ?? p.rms[0] ?? 0;
 		});
 		rafId = requestAnimationFrame(tick);
 	});

@@ -33,6 +33,7 @@ export interface VirtualDriverStatus {
 export interface VirtualDeviceConfig {
 	id: string;
 	name: string;
+	channels: number;
 }
 
 export type AudioStateEvent =

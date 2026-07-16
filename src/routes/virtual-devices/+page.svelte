@@ -37,7 +37,7 @@
 	}
 
 	function addDevice() {
-		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}` }];
+		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2 }];
 		dirty = true;
 	}
 
@@ -48,6 +48,12 @@
 
 	function rename(id: string, name: string) {
 		devices = devices.map((d) => (d.id === id ? { ...d, name } : d));
+		dirty = true;
+	}
+
+	function setChannels(id: string, channels: number) {
+		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 64);
+		devices = devices.map((d) => (d.id === id ? { ...d, channels: clamped } : d));
 		dirty = true;
 	}
 
@@ -167,6 +173,17 @@
 								value={d.name}
 								oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)}
 							/>
+							<label class="flex items-center gap-1.5 text-xs text-neutral-900">
+								Channels
+								<input
+									class="input-base w-16 text-center font-mono tabular-nums"
+									type="number"
+									min="1"
+									max="64"
+									value={d.channels ?? 2}
+									onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)}
+								/>
+							</label>
 							<span class="font-mono tabular-nums text-xs text-neutral-900"
 								>{d.id.slice(0, 8)}</span
 							>

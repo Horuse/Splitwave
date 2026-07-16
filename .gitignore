@@ -11,3 +11,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .idea/*
 !.idea/codeStyles/
+
+# ts-rs default export dir; real types live in src/lib/modules/pipeline/generated
+/src-tauri/bindings/

@@ -48,10 +48,8 @@ pub(super) fn spawn_meter_thread(
                         METER_EVENT,
                         json!({
                             "nodeId": m.node_id,
-                            "peakL": snap.peak_l,
-                            "peakR": snap.peak_r,
-                            "rmsL": snap.rms_l,
-                            "rmsR": snap.rms_r,
+                            "peaks": snap.peaks,
+                            "rms": snap.rms,
                         }),
                     );
                 }

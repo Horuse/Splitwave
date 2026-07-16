@@ -65,7 +65,7 @@ public:
     }
 };
 
-struct DeviceConfig { std::string id; std::string name; };
+struct DeviceConfig { std::string id; std::string name; uint32_t channels; };
 
 static std::string CFStr(CFStringRef s) {
     if (!s) return {};
@@ -110,7 +110,14 @@ static std::vector<DeviceConfig> ReadConfig() {
         if (CFGetTypeID(d) != CFDictionaryGetTypeID()) continue;
         std::string id   = CFStr((CFStringRef)CFDictionaryGetValue(d, CFSTR("id")));
         std::string name = CFStr((CFStringRef)CFDictionaryGetValue(d, CFSTR("name")));
-        if (!id.empty() && !name.empty()) out.push_back({id, name});
+        uint32_t channels = 2;
+        CFNumberRef ch = (CFNumberRef)CFDictionaryGetValue(d, CFSTR("channels"));
+        if (ch && CFGetTypeID(ch) == CFNumberGetTypeID()) {
+            int v = 0;
+            CFNumberGetValue(ch, kCFNumberIntType, &v);
+            if (v >= 1 && v <= 64) channels = (uint32_t)v;
+        }
+        if (!id.empty() && !name.empty()) out.push_back({id, name, channels});
     }
     CFRelease(plist);
     return out;
@@ -139,7 +146,7 @@ static std::shared_ptr<aspl::Driver> CreateDriver() {
     auto plugin  = std::make_shared<aspl::Plugin>(context);
 
     for (const auto& cfg : ReadConfig()) {
-        auto ring    = std::make_unique<DeviceRing>(2);
+        auto ring    = std::make_unique<DeviceRing>(cfg.channels);
         auto handler = std::make_shared<SplitIOHandler>(*ring);
 
         aspl::DeviceParameters params;
@@ -148,7 +155,7 @@ static std::shared_ptr<aspl::Driver> CreateDriver() {
         params.DeviceUID    = "com.horuse.splitwave.audio." + cfg.id;
         params.ModelUID     = "com.horuse.splitwave.audio.model";
         params.SampleRate   = 48000;
-        params.ChannelCount = 2;
+        params.ChannelCount = cfg.channels;
         params.EnableMixing = true;
 
         auto device = std::make_shared<aspl::Device>(context, params);

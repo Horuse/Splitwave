@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
-	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
+	import ChannelHandles from '../_channel_handles.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
@@ -187,20 +187,7 @@
 		{/if}
 
 		{#if expanded}
-			<div class="flex flex-col gap-1">
-				{#each Array.from({ length: channelCount }, (_, i) => i) as i (i)}
-					<div class="relative -mr-4 flex min-h-4 items-center justify-end gap-1 pr-4">
-						<span class="font-mono text-[9px] text-neutral-500">{channelLabel(i, channelCount)}</span>
-						<Handle
-							type="source"
-							id={`ch${i + 1}`}
-							position={Position.Right}
-							class="handle"
-							style={`background:${channelColor(i)}`}
-						/>
-					</div>
-				{/each}
-			</div>
+			<ChannelHandles count={channelCount} side="source" />
 		{/if}
 	</div>
 </Wrapper>

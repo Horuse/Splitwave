@@ -20,6 +20,7 @@ export function toXyNodes(nodes: PipelineNode[]): XyNode[] {
 export function toXyEdges(edges: PipelineEdge[]): XyEdge[] {
 	return edges.map((e) => ({
 		id: e.id,
+		type: 'channel',
 		source: e.source,
 		sourceHandle: e.sourceHandle,
 		target: e.target,

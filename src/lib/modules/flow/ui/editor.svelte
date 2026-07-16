@@ -27,6 +27,8 @@
 		toXyNodes
 	} from '../utils';
 	import Sidebar from './sidebar.svelte';
+	import ChannelEdge from './_channel_edge.svelte';
+	const edgeTypes = { channel: ChannelEdge };
 	import {
 		Backspace,
 		Copy,
@@ -559,7 +561,8 @@
 			bind:nodes
 			bind:edges
 			{nodeTypes}
-			defaultEdgeOptions={{ animated: true }}
+			{edgeTypes}
+			defaultEdgeOptions={{ animated: true, type: 'channel' }}
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}
 			onedgecontextmenu={onEdgeContextMenu}

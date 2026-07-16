@@ -135,7 +135,8 @@ impl DagNode {
         let (handle_bufs, out_buf) = match self {
             DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
             DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
-            DagNode::Source(_) | DagNode::Consumer(_) => return self.out_buf(),
+            DagNode::Source(s) => (&s.handle_bufs, &s.out_buf),
+            DagNode::Consumer(_) => return self.out_buf(),
         };
         match handle {
             Some(h) => handle_bufs
@@ -169,6 +170,9 @@ struct SourceState {
     drain: Option<Arc<AtomicU64>>,
     last_drain_gen: u64,
     meter: Option<MeterHandle>,
+    // Per-channel taps ("chK") drawn off this source, each a stereo buffer with
+    // the single physical channel duplicated L=R.
+    handle_bufs: Vec<(String, Vec<f32>)>,
 }
 
 impl SourceState {
@@ -261,6 +265,17 @@ impl SourceState {
         }
         if let Some(m) = &self.meter {
             update_meter(m, &self.out_buf);
+        }
+        if !self.handle_bufs.is_empty() {
+            let w = self.channels;
+            for (h, buf) in self.handle_bufs.iter_mut() {
+                let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
+                for f in 0..DSP_BLOCK_FRAMES {
+                    let v = self.out_buf[f * w + c];
+                    buf[f * 2] = v;
+                    buf[f * 2 + 1] = v;
+                }
+            }
         }
     }
 
@@ -420,7 +435,16 @@ struct IncomingEdge {
 struct TerminalEdge {
     src_idx: usize,
     source_handle: Option<String>,
+    /// `Some(c)` routes this edge to physical output channel `c` (from a `chK`
+    /// target handle); the source is downmixed to mono for that channel.
+    dst_ch: Option<usize>,
     delay: Option<DelayLine>,
+}
+
+/// Parse a `chK` handle into its 1-based channel number.
+#[inline]
+fn parse_ch(handle: &str) -> Option<usize> {
+    handle.strip_prefix("ch").and_then(|s| s.parse::<usize>().ok())
 }
 
 /// Sum `src` into `dst` mapping channel-for-channel when the two have different
@@ -458,6 +482,25 @@ fn add_mapped(src: &[f32], dst: &mut [f32]) {
         for c in 0..n {
             dst[db + c] += src[sb + c];
         }
+    }
+}
+
+/// Add `src` (downmixed to mono) into a single physical channel `ch` of `dst`.
+#[inline]
+fn add_to_channel(src: &[f32], dst: &mut [f32], ch: usize) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || ch >= dst_ch {
+        return;
+    }
+    let g = 1.0 / src_ch as f32;
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let mut acc = 0.0;
+        for c in 0..src_ch {
+            acc += src[sb + c];
+        }
+        dst[f * dst_ch + ch] += acc * g;
     }
 }
 
@@ -651,9 +694,10 @@ impl OutputGraph {
         for terminal in &mut self.terminals {
             let src =
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
-            match &mut terminal.delay {
-                Some(d) => d.process_and_add(src, output),
-                None => add_mapped(src, output),
+            match (&mut terminal.delay, terminal.dst_ch) {
+                (Some(d), _) => d.process_and_add(src, output),
+                (None, Some(c)) => add_to_channel(src, output, c),
+                (None, None) => add_mapped(src, output),
             }
         }
     }
@@ -796,6 +840,19 @@ pub(super) fn build_output_graph(
             producer_pairs.push((id.clone(), producer));
 
             let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;
+            let mut ch_handles: Vec<String> = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.clone())
+                .filter(|h| parse_ch(h).is_some())
+                .collect();
+            ch_handles.sort();
+            ch_handles.dedup();
+            let source_handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
+                .into_iter()
+                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                .collect();
             let resampler = if input_sr == output_sr {
                 None
             } else {
@@ -831,6 +888,7 @@ pub(super) fn build_output_graph(
                 drain: input_drain.get(id).cloned(),
                 last_drain_gen: 0,
                 meter: input_meters.get(id).cloned(),
+                handle_bufs: source_handle_bufs,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1061,29 +1119,30 @@ pub(super) fn build_output_graph(
 
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<(usize, Option<String>)> = valid
+            let upstream: Vec<(usize, Option<String>, Option<usize>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
                 .filter_map(|e| {
-                    id_to_index
-                        .get(&e.from)
-                        .copied()
-                        .map(|idx| (idx, e.source_handle.clone()))
+                    id_to_index.get(&e.from).copied().map(|idx| {
+                        let dst_ch = e.target_handle.as_deref().and_then(parse_ch);
+                        (idx, e.source_handle.clone(), dst_ch.map(|k| k - 1))
+                    })
                 })
                 .collect();
             let max_upstream = upstream
                 .iter()
-                .map(|(i, _)| node_latencies[*i])
+                .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
             upstream
                 .into_iter()
-                .map(|(src_idx, source_handle)| {
+                .map(|(src_idx, source_handle, dst_ch)| {
                     let pad = max_upstream - node_latencies[src_idx];
                     TerminalEdge {
                         src_idx,
                         source_handle,
+                        dst_ch,
                         delay: if pad > 0 {
                             Some(DelayLine::new(pad, node_channels[src_idx]))
                         } else {

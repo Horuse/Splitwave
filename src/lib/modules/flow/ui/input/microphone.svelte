@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
+	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
@@ -109,9 +110,24 @@
 	}
 
 	let gainPct = $derived(gain === null ? 0 : gain * 100);
+
+	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+	let expanded = $derived(data.channelsExpanded && channelCount > 1);
+
+	function toggleExpand() {
+		const next = !data.channelsExpanded;
+		if (!next) {
+			const orphaned = flow
+				.getEdges()
+				.filter((e) => e.source === id && e.sourceHandle?.startsWith('ch'))
+				.map((e) => ({ id: e.id }));
+			if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
+		}
+		flow.updateNodeData(id, { channelsExpanded: next });
+	}
 </script>
 
-<Wrapper label="Microphone" accent="input" hasOutput>
+<Wrapper label="Microphone" accent="input" hasOutput={!expanded}>
 	<div class="flex w-50 flex-col gap-3">
 		<div class="flex items-center gap-1">
 			<Combobox {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} />
@@ -128,9 +144,26 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<span class="font-mono text-[10px] text-neutral-900">
-				{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
-			</span>
+			<div class="flex items-center justify-between gap-1">
+				<span class="font-mono text-[10px] text-neutral-900">
+					{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
+				</span>
+				{#if channelCount > 1}
+					<button
+						type="button"
+						class={[
+							'nodrag nopan h-4 shrink-0 rounded border px-1.5 font-mono text-[9px] transition-colors',
+							expanded
+								? 'border-neutral-900 bg-neutral-900 text-white'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+						]}
+						title="Split into per-channel outputs"
+						onclick={toggleExpand}
+					>
+						{expanded ? 'mix' : 'split'}
+					</button>
+				{/if}
+			</div>
 		{/if}
 
 		{#if data.deviceId && !missing}
@@ -151,6 +184,23 @@
 				/>
 			{/if}
 			<InputMeter nodeId={id} />
+		{/if}
+
+		{#if expanded}
+			<div class="flex flex-col gap-1">
+				{#each Array.from({ length: channelCount }, (_, i) => i) as i (i)}
+					<div class="relative -mr-4 flex min-h-4 items-center justify-end gap-1 pr-4">
+						<span class="font-mono text-[9px] text-neutral-500">{channelLabel(i, channelCount)}</span>
+						<Handle
+							type="source"
+							id={`ch${i + 1}`}
+							position={Position.Right}
+							class="handle"
+							style={`background:${channelColor(i)}`}
+						/>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 </Wrapper>

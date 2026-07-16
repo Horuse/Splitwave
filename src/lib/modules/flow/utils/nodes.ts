@@ -55,7 +55,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Microphone',
 		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
 		component: Microphone,
-		defaultData: { deviceId: null }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
@@ -87,7 +87,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Speaker',
 		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
 		component: Speaker,
-		defaultData: { deviceId: null }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',

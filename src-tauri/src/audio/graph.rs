@@ -103,6 +103,8 @@ pub enum NodeCategory {
 #[ts(export)]
 pub struct MicrophoneData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub channels_expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -148,6 +150,8 @@ pub struct AudioFileData {
 #[ts(export)]
 pub struct SpeakerData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub channels_expanded: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]

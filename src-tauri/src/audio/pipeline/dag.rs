@@ -320,16 +320,61 @@ impl SourceState {
 }
 
 struct EffectState {
-    effect: RuntimeEffect,
+    // One instance per stereo pair; each carries its own DSP state but shares
+    // the parameter atomics. `effects[0]` alone for width <= 2.
+    effects: Vec<RuntimeEffect>,
     bypass: Arc<AtomicBool>,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
+    // Scratch for deinterleaving one pair out of a >2-wide buffer.
+    pair_main: Vec<f32>,
+    pair_side: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
     // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
     // summed by target handle and pushed to the matching send ring.
     channel_bufs: Vec<(String, Vec<f32>)>,
+}
+
+impl EffectState {
+    /// Run the effect chain over `out_buf`. Width <= 2 processes in place; wider
+    /// buffers are split into stereo pairs, each through its own instance so
+    /// per-channel filter state never bleeds across pairs.
+    fn run(&mut self, frames: usize) {
+        let w = self.out_buf.len() / frames;
+        if w <= 2 {
+            let sc = self.sidechain_buf.as_deref();
+            self.effects[0].process_with_sidechain(&mut self.out_buf, sc, frames);
+            return;
+        }
+        for p in 0..self.effects.len() {
+            let (c0, c1) = (2 * p, 2 * p + 1);
+            for f in 0..frames {
+                let base = f * w;
+                self.pair_main[f * 2] = self.out_buf[base + c0];
+                self.pair_main[f * 2 + 1] = if c1 < w { self.out_buf[base + c1] } else { 0.0 };
+            }
+            let sc = if let Some(scb) = self.sidechain_buf.as_ref() {
+                for f in 0..frames {
+                    let base = f * w;
+                    self.pair_side[f * 2] = scb[base + c0];
+                    self.pair_side[f * 2 + 1] = if c1 < w { scb[base + c1] } else { 0.0 };
+                }
+                Some(self.pair_side.as_slice())
+            } else {
+                None
+            };
+            self.effects[p].process_with_sidechain(&mut self.pair_main, sc, frames);
+            for f in 0..frames {
+                let base = f * w;
+                self.out_buf[base + c0] = self.pair_main[f * 2];
+                if c1 < w {
+                    self.out_buf[base + c1] = self.pair_main[f * 2 + 1];
+                }
+            }
+        }
+    }
 }
 
 /// A source with no graph inputs that emits network-received audio: `out_buf`
@@ -562,11 +607,11 @@ impl OutputGraph {
                             None => add_mapped(src, buf),
                         }
                     }
-                    eff.effect.push_channel_inputs(&eff.channel_bufs);
+                    eff.effects[0].push_channel_inputs(&eff.channel_bufs);
                     // out_buf becomes the global mix (every peer, every channel).
-                    eff.effect
+                    eff.effects[0]
                         .process_with_sidechain(&mut eff.out_buf, None, DSP_BLOCK_FRAMES);
-                    eff.effect
+                    eff.effects[0]
                         .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
                     continue;
                 }
@@ -594,11 +639,9 @@ impl OutputGraph {
                     }
                 }
                 if !eff.bypass.load(Ordering::Relaxed) {
-                    let sc_slice = eff.sidechain_buf.as_deref();
-                    eff.effect
-                        .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
+                    eff.run(DSP_BLOCK_FRAMES);
                 }
-                eff.effect
+                eff.effects[0]
                     .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
             }
         }
@@ -894,15 +937,30 @@ pub(super) fn build_output_graph(
                 } else {
                     Vec::new()
                 };
+            // One effect instance per stereo pair (WebRTC bridge stays single).
+            // Extra instances share the parameter atomics via the registry.
+            let pairs = if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+                1
+            } else {
+                eff_channels.div_ceil(2)
+            };
+            let mut effects = Vec::with_capacity(pairs);
             let own = build.effect.latency_frames();
+            effects.push(build.effect);
+            for _ in 1..pairs {
+                let extra = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
+                effects.push(extra.effect);
+            }
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
-                effect: build.effect,
+                effects,
                 bypass,
                 incoming,
                 sidechain,
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * eff_channels],
                 sidechain_buf,
+                pair_main: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                pair_side: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 handle_bufs,
                 channel_bufs,
             }));

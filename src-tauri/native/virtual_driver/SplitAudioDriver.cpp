@@ -115,7 +115,7 @@ static std::vector<DeviceConfig> ReadConfig() {
         if (ch && CFGetTypeID(ch) == CFNumberGetTypeID()) {
             int v = 0;
             CFNumberGetValue(ch, kCFNumberIntType, &v);
-            if (v >= 1 && v <= 64) channels = (uint32_t)v;
+            if (v >= 1 && v <= 256) channels = (uint32_t)v;
         }
         if (!id.empty() && !name.empty()) out.push_back({id, name, channels});
     }

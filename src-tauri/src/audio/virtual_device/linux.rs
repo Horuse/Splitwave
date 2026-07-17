@@ -24,7 +24,7 @@ fn clean_label(name: &str) -> String {
 // PipeWire channel map. Standard names for mono/stereo; generic AUX for wider
 // layouts so any channel count is accepted.
 fn positions(channels: u32) -> String {
-    let list: Vec<String> = match channels.clamp(1, 64) {
+    let list: Vec<String> = match channels.clamp(1, 256) {
         1 => vec!["MONO".into()],
         2 => vec!["FL".into(), "FR".into()],
         n => (0..n).map(|i| format!("AUX{i}")).collect(),

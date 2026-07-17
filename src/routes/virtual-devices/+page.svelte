@@ -52,7 +52,7 @@
 	}
 
 	function setChannels(id: string, channels: number) {
-		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 64);
+		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 256);
 		devices = devices.map((d) => (d.id === id ? { ...d, channels: clamped } : d));
 		dirty = true;
 	}
@@ -179,7 +179,7 @@
 									class="input-base w-16 text-center font-mono tabular-nums"
 									type="number"
 									min="1"
-									max="64"
+									max="256"
 									value={d.channels ?? 2}
 									onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)}
 								/>

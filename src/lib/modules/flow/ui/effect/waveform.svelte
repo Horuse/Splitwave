@@ -5,7 +5,7 @@
 	import { useSvelteFlow, Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
 	import { Add, Minus } from '$lib/components/icons';
-	import { PREVIEW_CTX, channelColor } from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX, channelColor, channelLabel } from '$lib/modules/flow/utils';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -34,10 +34,12 @@
 	let Hpx  = $state(105);
 
 	let channels = $state(1);
-	let WW   = $derived(Math.max(1, W - SCALE_W));
-	let laneH = $derived(Math.max(20, Math.floor((Hpx - (channels - 1)) / channels)));
-	let H     = $derived(laneH * channels + (channels - 1));
-	let halfH = $derived(Math.max(4, laneH / 2 - Math.min(VERT_PAD, laneH * 0.2)));
+	let WW    = $derived(Math.max(1, W - SCALE_W));
+	// viewBox height tracks the measured container exactly so the drawing fills
+	// the node with no leftover strip; lanes divide it evenly.
+	let H     = $derived(Hpx);
+	let laneH = $derived(Hpx / channels);
+	let halfH = $derived(Math.max(4, laneH / 2 - Math.min(VERT_PAD, laneH * 0.25)));
 
 	let waveWrap: HTMLDivElement;
 
@@ -56,53 +58,116 @@
 		return () => ro.disconnect();
 	});
 
-	// Ring of recent blocks; each block is channels x FRAMES.
+	// Per-channel min/max envelope over WW columns, scrolled newest-on-right.
+	// Filled incrementally per block so the full width fills continuously; the
+	// block ring only backs a full rebuild on resize / zoom change.
+	let peaks: Float32Array[] = [];
+	let troughs: Float32Array[] = [];
 	const blocks: number[][][] = [];
+	let blockHead = 0;
+	let blockCount = 0;
 	let dirty = false;
 
 	interface ScopeTick { nodeId: string; channels: number; data: number[][]; }
 
+	function ensureArrays() {
+		if (peaks.length === channels && peaks[0]?.length === WW) return;
+		peaks = Array.from({ length: channels }, () => new Float32Array(WW));
+		troughs = Array.from({ length: channels }, () => new Float32Array(WW));
+	}
+
+	function segEnvelope(buf: number[], seg: number, segSize: number): [number, number] {
+		const i0 = seg * segSize;
+		const i1 = Math.min(i0 + segSize, FRAMES);
+		let p = 0, t = 0;
+		for (let i = i0; i < i1; i++) {
+			if (buf[i] > p) p = buf[i];
+			if (buf[i] < t) t = buf[i];
+		}
+		return [Math.min(p, 1), Math.max(t, -1)];
+	}
+
+	function rebuildColumns() {
+		ensureArrays();
+		for (let c = 0; c < channels; c++) {
+			peaks[c].fill(0);
+			troughs[c].fill(0);
+		}
+		if (blockCount === 0) return;
+		const segSize = Math.floor(FRAMES / segs);
+		let col = WW - 1;
+		for (let b = 0; b < blockCount && col >= 0; b++) {
+			const bi = (blockHead + blockCount - 1 - b + MAX_BLOCKS) % MAX_BLOCKS;
+			const blk = blocks[bi];
+			for (let seg = segs - 1; seg >= 0 && col >= 0; seg--) {
+				for (let c = 0; c < channels; c++) {
+					const [p, t] = segEnvelope(blk[c], seg, segSize);
+					peaks[c][col] = p;
+					troughs[c][col] = t;
+				}
+				col--;
+			}
+		}
+	}
+
 	function pushBlock(block: number[][]) {
 		if (block.length !== channels) {
 			channels = block.length;
-			blocks.length = 0;
+			blockCount = 0;
+			blockHead = 0;
+			ensureArrays();
 		}
-		blocks.push(block);
-		if (blocks.length > MAX_BLOCKS) blocks.shift();
+		ensureArrays();
+		const idx = (blockHead + blockCount) % MAX_BLOCKS;
+		if (blockCount < MAX_BLOCKS) blockCount++;
+		else blockHead = (blockHead + 1) % MAX_BLOCKS;
+		blocks[idx] = block;
+
+		const segSize = Math.floor(FRAMES / segs);
+		for (let c = 0; c < channels; c++) {
+			peaks[c].copyWithin(0, segs);
+			troughs[c].copyWithin(0, segs);
+		}
+		for (let s = 0; s < segs; s++) {
+			const col = WW - segs + s;
+			if (col < 0) continue;
+			for (let c = 0; c < channels; c++) {
+				const [p, t] = segEnvelope(block[c], s, segSize);
+				peaks[c][col] = p;
+				troughs[c][col] = t;
+			}
+		}
 		dirty = true;
 	}
 
 	function changeSegs(delta: number) {
 		segs = Math.min(MAX_SEGS, Math.max(MIN_SEGS, segs + delta));
 		flow.updateNodeData(id, { segs });
+		rebuildColumns();
 		dirty = true;
 	}
+
+	// Width change resizes the envelope buffers -- refill from the block ring.
+	let prevWW = 0;
+	$effect(() => {
+		const ww = WW;
+		if (ww === prevWW) return;
+		prevWW = ww;
+		rebuildColumns();
+		dirty = true;
+	});
 
 	let paths = $state<string[]>([]);
 
 	function buildPaths() {
 		const ww = WW;
-		const segSize = Math.floor(FRAMES / segs);
 		const out: string[] = new Array(channels);
 		for (let c = 0; c < channels; c++) {
-			const peak = new Float32Array(ww);
-			const trough = new Float32Array(ww);
-			let col = ww - 1;
-			for (let b = blocks.length - 1; b >= 0 && col >= 0; b--) {
-				const buf = blocks[b][c];
-				if (!buf) continue;
-				for (let seg = segs - 1; seg >= 0 && col >= 0; seg--) {
-					const i0 = seg * segSize;
-					const i1 = Math.min(i0 + segSize, FRAMES);
-					let p = 0, t = 0;
-					for (let i = i0; i < i1; i++) {
-						if (buf[i] > p) p = buf[i];
-						if (buf[i] < t) t = buf[i];
-					}
-					peak[col] = Math.min(p, 1);
-					trough[col] = Math.max(t, -1);
-					col--;
-				}
+			const peak = peaks[c];
+			const trough = troughs[c];
+			if (!peak) {
+				out[c] = '';
+				continue;
 			}
 			let d = `M0,${(-peak[0] * halfH).toFixed(1)}`;
 			for (let x = 1; x < ww; x++) d += ` L${x},${(-peak[x] * halfH).toFixed(1)}`;
@@ -184,7 +249,7 @@
 			<rect width={W} height={H} fill="#111" rx="10" />
 
 			{#each paths as d, c (c)}
-				{@const top = c * (laneH + 1)}
+				{@const top = c * laneH}
 				{@const color = channelColor(c)}
 				<g transform={`translate(${SCALE_W},${top + laneH / 2})`}>
 					<line x1="0" y1="0" x2={WW} y2="0"
@@ -207,6 +272,13 @@
 				{/each}
 				<line x1={SCALE_W - 1} y1={top} x2={SCALE_W - 1} y2={top + laneH}
 				      stroke="rgba(255,255,255,0.12)" stroke-width="1" shape-rendering="crispEdges" />
+
+				<!-- Channel tag, top of the lane just right of the scale rail. -->
+				<text
+					x={SCALE_W + 4} y={top + 9}
+					fill={color} font-size="8" font-weight="bold" font-family="monospace"
+					dominant-baseline="middle"
+				>{channelLabel(c, channels)}</text>
 
 				{#if c < channels - 1}
 					<rect x="0" y={top + laneH} width={W} height="1" fill="rgba(255,255,255,0.08)" />

@@ -37,7 +37,7 @@ mod worker;
 
 use dag::{build_output_graph, inputs_feeding_output, OutputGraph};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
-use meter::{spawn_meter_thread, MeterTickThread};
+use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
     resolve_output, start_monitor_worker, start_net_sender_worker, start_recorder_worker,
     start_speaker_stream, RecorderWorker, ResolvedOutput, SpeakerHandle,
@@ -73,6 +73,9 @@ pub struct ActivePipeline {
     gr_handles: HashMap<String, GrHandle>,
     scopes: HashMap<String, WaveformHandle>,
     meter_thread: Option<MeterTickThread>,
+    /// Per-source underrun counters, rebuilt each reconcile alongside the graphs.
+    xrun_handles: Vec<(String, Arc<AtomicU64>)>,
+    xrun_thread: Option<XrunTickThread>,
 }
 
 struct InputState {
@@ -136,6 +139,8 @@ impl ActivePipeline {
             gr_handles: HashMap::new(),
             scopes: HashMap::new(),
             meter_thread: None,
+            xrun_handles: Vec::new(),
+            xrun_thread: None,
         }
     }
 
@@ -250,6 +255,8 @@ impl ActivePipeline {
         self.net_senders.clear();
         self.monitor = None;
         self.meter_thread = None;
+        self.xrun_handles.clear();
+        self.xrun_thread = None;
         self.effect_controls.clear();
         self.effect_bypasses.clear();
         // Input meters live with their inputs and survive this teardown;
@@ -338,9 +345,11 @@ impl ActivePipeline {
             }
         }
 
-        // Drop the meter tick thread -- it captured a stale snapshot. The
-        // new one is spawned at the tail of `apply_full`.
+        // Drop the meter / xrun tick threads -- they captured stale snapshots.
+        // Fresh ones are spawned at the tail of `apply_full`.
         self.meter_thread = None;
+        self.xrun_handles.clear();
+        self.xrun_thread = None;
 
         // Inputs whose spec changed (or vanished) drop here. Consumers
         // listed them in `OutputSig.inputs`, so spec change => sig change
@@ -634,6 +643,7 @@ impl ActivePipeline {
             for s in built.scopes {
                 self.scopes.insert(s.node_id.clone(), s);
             }
+            self.xrun_handles.extend(built.xruns);
             output_graphs.insert(out.id.clone(), built.graph);
         }
 
@@ -679,6 +689,7 @@ impl ActivePipeline {
                 for s in built.scopes {
                     self.scopes.insert(s.node_id.clone(), s);
                 }
+                self.xrun_handles.extend(built.xruns);
                 monitor_graph = Some(built.graph);
             }
         }
@@ -912,6 +923,12 @@ impl ActivePipeline {
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
             Some(spawn_meter_thread(app, meters_snapshot, lufs_snapshot, gr_snapshot, scopes_snapshot))
+        };
+
+        self.xrun_thread = if self.xrun_handles.is_empty() {
+            None
+        } else {
+            Some(spawn_xrun_thread(self.xrun_handles.clone()))
         };
 
         Ok(())

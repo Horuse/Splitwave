@@ -17,11 +17,11 @@ use crate::audio::stream_recv::ChannelReceiver;
 use crate::audio::streams::bulk_push;
 use crate::error::{AppError, AppResult};
 
-/// Ring buffer length (in stereo f32 samples) per bridge. Sized for ~500 ms
-/// of stereo audio at 96 kHz so the worker can ride out longer source pauses
-/// (SCK silent gaps, scheduler hiccups) without overflowing the FAST source's
-/// ring while waiting on a SLOW one.
-pub(super) const RING_CAPACITY: usize = 96_000;
+/// Ring buffer length in frames per source; multiplied by the source's channel
+/// count at build time. ~500 ms at 96 kHz so the worker rides out longer source
+/// pauses (SCK silent gaps, scheduler hiccups, capture-clock drift) without
+/// overflowing the FAST source's ring while waiting on a SLOW one.
+pub(super) const RING_CAPACITY_FRAMES: usize = 48_000;
 
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
@@ -173,6 +173,9 @@ struct SourceState {
     // Per-channel taps ("chK") drawn off this source, each a stereo buffer with
     // the single physical channel duplicated L=R.
     handle_bufs: Vec<(String, Vec<f32>)>,
+    // Counts samples zero-filled on genuine mid-stream underrun (ring ran dry
+    // while streaming). A non-RT tick thread reads it to surface xruns.
+    xrun: Arc<AtomicU64>,
 }
 
 impl SourceState {
@@ -249,6 +252,12 @@ impl SourceState {
                 // Ring empty too -- zero-fill the rest (real underrun).
                 for s in &mut self.out_buf[written..] {
                     *s = 0.0;
+                }
+                // A stalled/paused source silences by design; only a source that
+                // is actively streaming and ran dry mid-block is a real xrun.
+                if !self.is_stalled() {
+                    self.xrun
+                        .fetch_add((need - written) as u64, Ordering::Relaxed);
                 }
                 break;
             }
@@ -807,6 +816,7 @@ pub(super) struct BuiltOutputGraph {
     pub lufs: Vec<LufsHandle>,
     pub gr_handles: Vec<GrHandle>,
     pub scopes: Vec<WaveformHandle>,
+    pub xruns: Vec<(String, Arc<AtomicU64>)>,
 }
 
 /// Build the per-output DAG: walk backward from `output_id`, topo-sort the
@@ -891,6 +901,7 @@ pub(super) fn build_output_graph(
     let mut lufs: Vec<LufsHandle> = Vec::new();
     let mut gr_handles: Vec<GrHandle> = Vec::new();
     let mut scopes: Vec<WaveformHandle> = Vec::new();
+    let mut xruns: Vec<(String, Arc<AtomicU64>)> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
     // Per-node channel width; effects inherit the max width of their upstreams.
     let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
@@ -932,10 +943,12 @@ pub(super) fn build_output_graph(
             let input_sr = *input_native_sr
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
-            let (producer, consumer) = RingBuffer::<f32>::new(RING_CAPACITY);
-            producer_pairs.push((id.clone(), producer));
-
             let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;
+            // Scale by channels to keep the buffered span constant in time; at
+            // high channel counts a smaller cushion starves on capture-clock drift.
+            let (producer, consumer) =
+                RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * source_channels);
+            producer_pairs.push((id.clone(), producer));
             let mut ch_handles: Vec<String> = valid
                 .edges
                 .iter()
@@ -966,8 +979,18 @@ pub(super) fn build_output_graph(
                 / output_sr as u64;
             let input_samples_per_block = (input_frames_per_block as usize) * source_channels;
 
+            let kind = match &input.spec {
+                InputSpec::Microphone { device_id } => format!("mic:{device_id}"),
+                InputSpec::SystemAudio { .. } => "system-audio".to_string(),
+                InputSpec::AppAudio { bundle_id } => format!("app:{bundle_id}"),
+                InputSpec::AudioFile { file_path } => format!("file:{file_path}"),
+                InputSpec::NetReceiver { port } => format!("net:{port}"),
+            };
+            let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
+            let xrun = Arc::new(AtomicU64::new(0));
+            xruns.push((label.clone(), xrun.clone()));
             let source = SourceState {
-                label: format!("{id}@{input_sr}->{output_sr}"),
+                label,
                 channels: source_channels,
                 consumer,
                 resampler,
@@ -988,6 +1011,7 @@ pub(super) fn build_output_graph(
                 last_drain_gen: 0,
                 meter: input_meters.get(id).cloned(),
                 handle_bufs: source_handle_bufs,
+                xrun,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1284,6 +1308,7 @@ pub(super) fn build_output_graph(
             lufs,
             gr_handles,
             scopes,
+            xruns,
         });
     }
 
@@ -1338,6 +1363,7 @@ pub(super) fn build_output_graph(
         lufs,
         gr_handles,
         scopes,
+        xruns,
     })
 }
 

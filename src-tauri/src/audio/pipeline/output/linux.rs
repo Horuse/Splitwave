@@ -10,7 +10,7 @@ use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
+use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
@@ -41,7 +41,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
+    let (producer, mut consumer) =
+        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
     let fill = move |out: &mut [f32]| {
         streams::bulk_pop(&mut consumer, out);
         out.len()

@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
+use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -98,7 +98,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
+        let (producer, mut consumer) =
+            RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
         let fill = move |out: &mut [f32], _frames: usize| {
             streams::bulk_pop(&mut consumer, out);
         };

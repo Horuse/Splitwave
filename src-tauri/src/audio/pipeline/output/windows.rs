@@ -14,7 +14,7 @@ use crate::error::AppResult;
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
+use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -60,7 +60,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
+    let (producer, mut consumer) =
+        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
     let fill = move |out: &mut [f32], _frames: usize| {
         streams::bulk_pop(&mut consumer, out);
     };

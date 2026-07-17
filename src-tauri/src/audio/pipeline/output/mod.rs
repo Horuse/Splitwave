@@ -36,8 +36,10 @@ pub(super) use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
 
-// 32k f32 samples = ~340 ms @ 48 kHz stereo; absorbs cpal/scheduler jitter.
-pub(super) const SPEAKER_RING_CAPACITY: usize = 32_768;
+// Ring length in frames; multiplied by the device channel count at open so the
+// buffered span stays ~340 ms @ 48 kHz at any channel count, absorbing cpal /
+// scheduler jitter and output-clock drift.
+pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 16_384;
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),

@@ -2,13 +2,21 @@
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
+	import { channelColor, channelLabel, handleStyle } from '$lib/modules/flow/utils';
 
 	let {
 		nodeId,
 		channelCount = 0,
-		split = false
-	}: { nodeId: string; channelCount?: number; split?: boolean } = $props();
+		split = false,
+		stereoGroups = [],
+		onToggleGroup
+	}: {
+		nodeId: string;
+		channelCount?: number;
+		split?: boolean;
+		stereoGroups?: number[];
+		onToggleGroup?: (lower: number) => void;
+	} = $props();
 
 	const DB_FLOOR = -60;
 	const PEAK_FALL_DB_PER_SEC = 30;
@@ -26,11 +34,13 @@
 	let holds = $state<number[]>([]);
 	let holdTimes: number[] = [];
 
-	// Row count follows the real channel count so the layout is stable before
-	// meter data arrives; falls back to whatever the last tick delivered.
 	let rows = $derived(
 		Array.from({ length: Math.max(channelCount, displays.length, 1) }, (_, i) => i)
 	);
+
+	function isGrouped(lower: number): boolean {
+		return stereoGroups.includes(lower);
+	}
 
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
@@ -86,36 +96,69 @@
 	});
 </script>
 
-<div class="grid w-full grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5 gap-y-1.5" aria-label="Live input level">
+<div class="flex w-full flex-col gap-1" aria-label="Live input level">
 	{#each rows as i (i)}
 		{@const db = displays[i] ?? -Infinity}
 		{@const hold = holds[i] ?? -Infinity}
-		<span
-			class="text-right font-mono text-[8px] leading-none"
-			style="color:{channelColor(i)}">{channelLabel(i, rows.length)}</span
-		>
-		<div class={['relative flex items-center', split && '-mr-4 pr-4']}>
-			<div class="relative h-2 flex-1 overflow-hidden rounded-sm bg-neutral-300">
-				<div
-					class="absolute inset-0"
-					style="
+		<div class="grid grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5">
+			<span class="text-right font-mono text-[8px] leading-none" style="color:{channelColor(i)}">
+				{channelLabel(i, rows.length)}
+			</span>
+			<div class={['relative flex items-center', split && '-mr-4 pr-4']}>
+				<div class="relative h-2 flex-1 overflow-hidden rounded-sm bg-neutral-300">
+					<div
+						class="absolute inset-0"
+						style="
                    background: linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%);
                    clip-path: inset(0 {100 - dbToPct(db)}% 0 0);
                 "
-				></div>
-				{#if isFinite(hold) && dbToPct(hold) > 0}
-					<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(hold)}%;"></div>
+					></div>
+					{#if isFinite(hold) && dbToPct(hold) > 0}
+						<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(hold)}%;"></div>
+					{/if}
+				</div>
+				{#if split}
+					<Handle
+						type="source"
+						id={`ch${i + 1}`}
+						position={Position.Right}
+						class="handle"
+						style={handleStyle(channelColor(i))}
+					/>
 				{/if}
 			</div>
-			{#if split}
-				<Handle
-					type="source"
-					id={`ch${i + 1}`}
-					position={Position.Right}
-					class="handle"
-					style={`background:${channelColor(i)}`}
-				/>
-			{/if}
 		</div>
+
+		{#if split && onToggleGroup && i < rows.length - 1}
+			{@const lower = i + 1}
+			{@const grouped = isGrouped(lower)}
+			<div class="grid grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5">
+				<div></div>
+				<div class="relative -mr-4 flex min-h-4 items-center justify-end gap-1 pr-4">
+					<button
+						type="button"
+						class={[
+							'nodrag nopan flex h-3.5 items-center rounded-full border px-1 font-mono text-[7px] leading-none transition-colors',
+							grouped
+								? 'border-neutral-900 bg-neutral-900 text-white'
+								: 'border-neutral-300 bg-neutral-100 text-neutral-400 hover:bg-neutral-200'
+						]}
+						title={grouped ? 'Unlink stereo pair' : `Link ch${lower}+ch${lower + 1} as stereo`}
+						onclick={() => onToggleGroup(lower)}
+					>
+						{grouped ? 'stereo' : 'link'}
+					</button>
+					{#if grouped}
+						<Handle
+							type="source"
+							id={`st${lower}`}
+							position={Position.Right}
+							class="handle"
+							style={handleStyle('#a3a3a3')}
+						/>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	{/each}
 </div>

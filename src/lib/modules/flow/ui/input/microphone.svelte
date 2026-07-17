@@ -9,7 +9,7 @@
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type MicrophoneNodeType = Node<MicrophoneNodeData, 'microphone'>;
@@ -114,6 +114,10 @@
 	// Always per-channel: a multi-channel device exposes one output handle per
 	// channel; mono stays a single handle.
 	let expanded = $derived(channelCount > 1);
+
+	function onToggleGroup(lower: number) {
+		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+	}
 </script>
 
 <Wrapper label="Microphone" accent="input" hasOutput={!expanded}>
@@ -155,7 +159,13 @@
 					onChange={setGainPct}
 				/>
 			{/if}
-			<InputMeter nodeId={id} channelCount={channelCount} split={expanded} />
+			<InputMeter
+				nodeId={id}
+				channelCount={channelCount}
+				split={expanded}
+				stereoGroups={data.stereoGroups ?? []}
+				{onToggleGroup}
+			/>
 		{/if}
 	</div>
 </Wrapper>

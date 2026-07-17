@@ -5,7 +5,7 @@
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { PermissionState } from '$lib/modules/audio/types';
-	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX, toggleGroup } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
@@ -64,9 +64,17 @@
 	}
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	// System Audio capture is stereo; expose one output handle per channel.
+	const channelCount = 2;
+	const expanded = true;
+
+	function onToggleGroup(lower: number) {
+		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+	}
 </script>
 
-<Wrapper label="System Audio" accent="input" hasOutput>
+<Wrapper label="System Audio" accent="input" hasOutput={!expanded}>
 	<div class="flex w-64 flex-col gap-3">
 		{#if isMac && permission !== 'allowed'}
 			<div class={[
@@ -122,7 +130,13 @@
 				Exclude this app (avoid feedback)
 			</label>
 		{/if}
-		<InputMeter nodeId={id} />
+		<InputMeter
+			nodeId={id}
+			channelCount={channelCount}
+			split={expanded}
+			stereoGroups={data.stereoGroups ?? []}
+			{onToggleGroup}
+		/>
 		<Slider
 			label="Volume"
 			value={volumePct}

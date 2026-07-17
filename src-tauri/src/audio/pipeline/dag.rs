@@ -269,9 +269,18 @@ impl SourceState {
         if !self.handle_bufs.is_empty() {
             let w = self.channels;
             for (h, buf) in self.handle_bufs.iter_mut() {
-                let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
-                for f in 0..DSP_BLOCK_FRAMES {
-                    buf[f] = self.out_buf[f * w + c];
+                if let Some(a) = parse_stereo(h) {
+                    let c0 = (a - 1).min(w - 1);
+                    let c1 = a.min(w - 1);
+                    for f in 0..DSP_BLOCK_FRAMES {
+                        buf[f * 2] = self.out_buf[f * w + c0];
+                        buf[f * 2 + 1] = self.out_buf[f * w + c1];
+                    }
+                } else {
+                    let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
+                    for f in 0..DSP_BLOCK_FRAMES {
+                        buf[f] = self.out_buf[f * w + c];
+                    }
                 }
             }
         }
@@ -439,9 +448,9 @@ struct IncomingEdge {
 struct TerminalEdge {
     src_idx: usize,
     source_handle: Option<String>,
-    /// `Some(c)` routes this edge to physical output channel `c` (from a `chK`
-    /// target handle); the source is downmixed to mono for that channel.
-    dst_ch: Option<usize>,
+    /// `Some((off, width))` routes this edge to a physical output block: width 1
+    /// (`chK`) downmixes to mono at `off`, width 2 (`stA`) places a stereo pair.
+    route: Option<(usize, usize)>,
     delay: Option<DelayLine>,
 }
 
@@ -449,6 +458,38 @@ struct TerminalEdge {
 #[inline]
 fn parse_ch(handle: &str) -> Option<usize> {
     handle.strip_prefix("ch").and_then(|s| s.parse::<usize>().ok())
+}
+
+/// Parse an `stA` stereo-group handle into its 1-based lower channel; the group
+/// carries channels A and A+1.
+#[inline]
+fn parse_stereo(handle: &str) -> Option<usize> {
+    handle.strip_prefix("st").and_then(|s| s.parse::<usize>().ok())
+}
+
+/// A per-channel tap handle (`chK` mono or `stA` stereo) and its channel width.
+#[inline]
+fn tap_handle_width(handle: &str) -> Option<usize> {
+    if parse_stereo(handle).is_some() {
+        Some(2)
+    } else if parse_ch(handle).is_some() {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// Route a target handle to a `(physical channel offset, width)` block: `chK`
+/// lands on one channel, `stA` on the pair starting at A.
+#[inline]
+fn target_route(handle: &str) -> Option<(usize, usize)> {
+    if let Some(a) = parse_stereo(handle) {
+        Some((a - 1, 2))
+    } else if let Some(k) = parse_ch(handle) {
+        Some((k - 1, 1))
+    } else {
+        None
+    }
 }
 
 /// Sum `src` into `dst` mapping channel-for-channel when the two have different
@@ -697,11 +738,12 @@ impl OutputGraph {
                 }
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                    let dst_ch = edge.target_handle.as_deref().and_then(parse_ch);
-                    match (edge.stack_ch, &mut edge.delay, dst_ch) {
+                    let route = edge.target_handle.as_deref().and_then(target_route);
+                    match (edge.stack_ch, &mut edge.delay, route) {
                         (Some(off), _, _) => add_block_at(src, &mut eff.out_buf, off),
                         (None, Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
-                        (None, None, Some(k)) => add_to_channel(src, &mut eff.out_buf, k - 1),
+                        (None, None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
+                        (None, None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
                         (None, None, None) => add_mapped(src, &mut eff.out_buf),
                     }
                 }
@@ -725,10 +767,18 @@ impl OutputGraph {
                     .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
                 let w = eff.out_buf.len() / DSP_BLOCK_FRAMES;
                 for (h, buf) in eff.handle_bufs.iter_mut() {
-                    let Some(k) = parse_ch(h) else { continue };
-                    let c = (k - 1).min(w - 1);
-                    for f in 0..DSP_BLOCK_FRAMES {
-                        buf[f] = eff.out_buf[f * w + c];
+                    if let Some(a) = parse_stereo(h) {
+                        let c0 = (a - 1).min(w - 1);
+                        let c1 = a.min(w - 1);
+                        for f in 0..DSP_BLOCK_FRAMES {
+                            buf[f * 2] = eff.out_buf[f * w + c0];
+                            buf[f * 2 + 1] = eff.out_buf[f * w + c1];
+                        }
+                    } else if let Some(k) = parse_ch(h) {
+                        let c = (k - 1).min(w - 1);
+                        for f in 0..DSP_BLOCK_FRAMES {
+                            buf[f] = eff.out_buf[f * w + c];
+                        }
                     }
                 }
             }
@@ -739,9 +789,10 @@ impl OutputGraph {
         for terminal in &mut self.terminals {
             let src =
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
-            match (&mut terminal.delay, terminal.dst_ch) {
+            match (&mut terminal.delay, terminal.route) {
                 (Some(d), _) => d.process_and_add(src, output),
-                (None, Some(c)) => add_to_channel(src, output, c),
+                (None, Some((off, 1))) => add_to_channel(src, output, off),
+                (None, Some((off, _))) => add_block_at(src, output, off),
                 (None, None) => add_mapped(src, output),
             }
         }
@@ -890,13 +941,16 @@ pub(super) fn build_output_graph(
                 .iter()
                 .filter(|e| &e.from == id)
                 .filter_map(|e| e.source_handle.clone())
-                .filter(|h| parse_ch(h).is_some())
+                .filter(|h| tap_handle_width(h).is_some())
                 .collect();
             ch_handles.sort();
             ch_handles.dedup();
             let source_handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
                 .into_iter()
-                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES]))
+                .map(|h| {
+                    let w = tap_handle_width(&h).unwrap_or(1);
+                    (h, vec![0.0; DSP_BLOCK_FRAMES * w])
+                })
                 .collect();
             let resampler = if input_sr == output_sr {
                 None
@@ -986,7 +1040,7 @@ pub(super) fn build_output_graph(
             let upstream_w = main_upstream
                 .iter()
                 .map(|(i, sh, _)| match sh.as_deref() {
-                    Some(h) if parse_ch(h).is_some() => {
+                    Some(h) if tap_handle_width(h).is_some() => {
                         nodes[*i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
                     }
                     _ => node_channels[*i],
@@ -995,14 +1049,16 @@ pub(super) fn build_output_graph(
                 .unwrap_or(2);
             let target_w = main_upstream
                 .iter()
-                .filter_map(|(_, _, t)| t.as_deref().and_then(parse_ch))
+                .filter_map(|(_, _, t)| t.as_deref().and_then(target_route))
+                .map(|(off, w)| off + w)
                 .max()
                 .unwrap_or(0);
             let tap_w = valid
                 .edges
                 .iter()
                 .filter(|e| &e.from == id)
-                .filter_map(|e| e.source_handle.as_deref().and_then(parse_ch))
+                .filter_map(|e| e.source_handle.as_deref())
+                .filter_map(|h| parse_stereo(h).map(|a| a + 1).or_else(|| parse_ch(h)))
                 .max()
                 .unwrap_or(0);
             // Monitors in `mix` mode stack each input onto its own channel; in
@@ -1018,7 +1074,7 @@ pub(super) fn build_output_graph(
             let stack = is_analyzer && !split;
             let edge_w = |i: usize, sh: &Option<String>| -> usize {
                 match sh.as_deref() {
-                    Some(h) if parse_ch(h).is_some() => {
+                    Some(h) if tap_handle_width(h).is_some() => {
                         nodes[i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
                     }
                     _ => node_channels[i],
@@ -1083,14 +1139,14 @@ pub(super) fn build_output_graph(
                 .iter()
                 .filter(|e| &e.from == id)
                 .filter_map(|e| e.source_handle.clone())
-                .filter(|h| parse_ch(h).is_some() || (is_webrtc && h.starts_with("peer:")))
+                .filter(|h| tap_handle_width(h).is_some() || (is_webrtc && h.starts_with("peer:")))
                 .collect();
             handle_ids.sort();
             handle_ids.dedup();
             let handle_bufs: Vec<(String, Vec<f32>)> = handle_ids
                 .into_iter()
                 .map(|h| {
-                    let w = if parse_ch(&h).is_some() { 1 } else { 2 };
+                    let w = tap_handle_width(&h).unwrap_or(2);
                     (h, vec![0.0; DSP_BLOCK_FRAMES * w])
                 })
                 .collect();
@@ -1233,14 +1289,14 @@ pub(super) fn build_output_graph(
 
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<(usize, Option<String>, Option<usize>)> = valid
+            let upstream: Vec<(usize, Option<String>, Option<(usize, usize)>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
                 .filter_map(|e| {
                     id_to_index.get(&e.from).copied().map(|idx| {
-                        let dst_ch = e.target_handle.as_deref().and_then(parse_ch);
-                        (idx, e.source_handle.clone(), dst_ch.map(|k| k - 1))
+                        let route = e.target_handle.as_deref().and_then(target_route);
+                        (idx, e.source_handle.clone(), route)
                     })
                 })
                 .collect();
@@ -1251,12 +1307,12 @@ pub(super) fn build_output_graph(
                 .unwrap_or(0);
             upstream
                 .into_iter()
-                .map(|(src_idx, source_handle, dst_ch)| {
+                .map(|(src_idx, source_handle, route)| {
                     let pad = max_upstream - node_latencies[src_idx];
                     TerminalEdge {
                         src_idx,
                         source_handle,
-                        dst_ch,
+                        route,
                         delay: if pad > 0 {
                             Some(DelayLine::new(pad, node_channels[src_idx]))
                         } else {

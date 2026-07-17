@@ -8,7 +8,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
@@ -63,6 +63,10 @@
 	// App Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
 	const expanded = true;
+
+	function onToggleGroup(lower: number) {
+		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+	}
 </script>
 
 <Wrapper label="App Audio" accent="input" hasOutput={!expanded}>
@@ -83,7 +87,13 @@
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}
 		{#if data.bundleId && !missing}
-			<InputMeter nodeId={id} channelCount={channelCount} split={expanded} />
+			<InputMeter
+				nodeId={id}
+				channelCount={channelCount}
+				split={expanded}
+				stereoGroups={data.stereoGroups ?? []}
+				{onToggleGroup}
+			/>
 		{/if}
 		<Slider
 			label="Volume"

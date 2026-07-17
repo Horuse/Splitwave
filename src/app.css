@@ -244,5 +244,5 @@
 }
 
 .handle {
-    @apply !size-2 border-0 rounded-full !border-neutral-500 !bg-neutral-200 ring-[1px] !ring-neutral-500
+    @apply !size-2 rounded-full !bg-neutral-200
 }

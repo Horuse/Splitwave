@@ -9,7 +9,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type SpeakerNodeType = Node<SpeakerNodeData, 'speaker'>;
@@ -114,6 +114,10 @@
 	// Always per-channel: a multi-channel device exposes one input handle per
 	// channel; mono stays a single handle.
 	let expanded = $derived(channelCount > 1);
+
+	function onToggleGroup(lower: number) {
+		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+	}
 </script>
 
 <Wrapper label="Speaker" accent="output" hasInput={!expanded}>
@@ -159,7 +163,12 @@
 
 		{#if expanded}
 			<div class="mt-1">
-				<ChannelHandles count={channelCount} side="target" />
+				<ChannelHandles
+					count={channelCount}
+					side="target"
+					stereoGroups={data.stereoGroups ?? []}
+					{onToggleGroup}
+				/>
 			</div>
 		{/if}
 	</div>

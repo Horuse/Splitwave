@@ -111,25 +111,15 @@
 	let volumePct = $derived(volume === null ? 0 : volume * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
-	let expanded = $derived(data.channelsExpanded && channelCount > 1);
-
-	function toggleExpand() {
-		const next = !data.channelsExpanded;
-		if (!next) {
-			const orphaned = flow
-				.getEdges()
-				.filter((e) => e.target === id && e.targetHandle?.startsWith('ch'))
-				.map((e) => ({ id: e.id }));
-			if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		}
-		flow.updateNodeData(id, { channelsExpanded: next });
-	}
+	// Always per-channel: a multi-channel device exposes one input handle per
+	// channel; mono stays a single handle.
+	let expanded = $derived(channelCount > 1);
 </script>
 
 <Wrapper label="Speaker" accent="output" hasInput={!expanded}>
 	<div class="flex w-50 flex-col gap-1">
-		<div class="flex items-center gap-1">
-			<Combobox {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} />
+		<div class="flex items-center w-full gap-1">
+			<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} />
 			<button
 				type="button"
 				class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
@@ -143,26 +133,9 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<div class="flex items-center justify-between gap-1">
-				<span class="font-mono text-[10px] text-neutral-900">
-					{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
-				</span>
-				{#if channelCount > 1}
-					<button
-						type="button"
-						class={[
-							'nodrag nopan h-4 shrink-0 rounded border px-1.5 font-mono text-[9px] transition-colors',
-							expanded
-								? 'border-neutral-900 bg-neutral-900 text-white'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-						title="Split into per-channel inputs"
-						onclick={toggleExpand}
-					>
-						{expanded ? 'mix' : 'split'}
-					</button>
-				{/if}
-			</div>
+			<span class="font-mono text-[10px] text-neutral-900">
+				{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
+			</span>
 		{/if}
 
 		{#if data.deviceId && !missing}

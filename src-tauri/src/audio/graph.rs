@@ -291,7 +291,10 @@ pub struct EqData {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
-pub struct LevelMeterData {}
+pub struct LevelMeterData {
+    pub channels: u32,
+    pub channels_expanded: bool,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
@@ -301,7 +304,10 @@ pub struct LufsMeterData {}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
-pub struct WaveformData {}
+pub struct WaveformData {
+    pub channels: u32,
+    pub channels_expanded: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -636,12 +642,20 @@ impl GraphSpec {
                         | NodeKind::WebRtcCollaborator
                 )
         });
-        let keep: HashSet<&str> = reachable_from_inputs
+        let routed: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)
             .copied()
             .collect();
+        // Keep unrouted input nodes too, so their capture + level meter run
+        // before they're wired anywhere; unresolvable ones drop in resolve_inputs.
+        let mut keep = routed.clone();
+        for n in &self.nodes {
+            if n.kind.category() == NodeCategory::Input {
+                keep.insert(n.id.as_str());
+            }
+        }
 
-        let inputs = self.resolve_inputs(&keep)?;
+        let inputs = self.resolve_inputs(&keep, &routed)?;
         let outputs = self.resolve_outputs(&keep)?;
         let effects = self.resolve_effects(&keep)?;
 
@@ -669,13 +683,22 @@ impl GraphSpec {
         })
     }
 
-    fn resolve_inputs(&self, keep: &HashSet<&str>) -> AppResult<Vec<ValidInput>> {
+    /// `routed` are inputs on a real path to a terminal — they must resolve or
+    /// validation fails. `keep` may also include unrouted inputs (kept so their
+    /// capture + level meter run); if one of those fails to resolve (e.g. no
+    /// device selected yet) it's dropped silently rather than failing the graph.
+    fn resolve_inputs(
+        &self,
+        keep: &HashSet<&str>,
+        routed: &HashSet<&str>,
+    ) -> AppResult<Vec<ValidInput>> {
         let mut result = Vec::new();
         for n in &self.nodes {
             if n.kind.category() != NodeCategory::Input || !keep.contains(n.id.as_str()) {
                 continue;
             }
-            let (spec, volume, auto_start) = match n.kind {
+            let resolved = (|| -> AppResult<(InputSpec, f32, bool)> {
+                Ok(match n.kind {
                 NodeKind::Microphone => {
                     let data: MicrophoneData = parse(&n.data, "Microphone")?;
                     let spec = InputSpec::Microphone {
@@ -715,6 +738,12 @@ impl GraphSpec {
                     (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
                 }
                 _ => unreachable!(),
+                })
+            })();
+            let (spec, volume, auto_start) = match resolved {
+                Ok(v) => v,
+                Err(e) if routed.contains(n.id.as_str()) => return Err(e),
+                Err(_) => continue,
             };
             result.push(ValidInput {
                 id: n.id.clone(),

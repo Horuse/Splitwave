@@ -86,22 +86,22 @@
 	});
 </script>
 
-<div class="flex w-full flex-col gap-[3px]" aria-label="Live input level">
+<div class="grid w-full grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5 gap-y-1.5" aria-label="Live input level">
 	{#each rows as i (i)}
 		{@const db = displays[i] ?? -Infinity}
 		{@const hold = holds[i] ?? -Infinity}
-		<div class={['relative flex items-center gap-1.5', split && '-mr-4 pr-4']}>
-			<span
-				class="w-7 shrink-0 text-right font-mono text-[8px] leading-none"
-				style="color:{channelColor(i)}">{channelLabel(i, rows.length)}</span
-			>
-			<div class="relative h-1.5 flex-1 overflow-hidden rounded-sm bg-neutral-300">
+		<span
+			class="text-right font-mono text-[8px] leading-none"
+			style="color:{channelColor(i)}">{channelLabel(i, rows.length)}</span
+		>
+		<div class={['relative flex items-center', split && '-mr-4 pr-4']}>
+			<div class="relative h-2 flex-1 overflow-hidden rounded-sm bg-neutral-300">
 				<div
 					class="absolute inset-0"
 					style="
-						background: linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%);
-						clip-path: inset(0 {100 - dbToPct(db)}% 0 0);
-					"
+                   background: linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%);
+                   clip-path: inset(0 {100 - dbToPct(db)}% 0 0);
+                "
 				></div>
 				{#if isFinite(hold) && dbToPct(hold) > 0}
 					<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(hold)}%;"></div>

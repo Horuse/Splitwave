@@ -36,13 +36,18 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    meter: Option<crate::audio::effects::MeterHandle>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
         ResolvedInput::PwSource { node_id, .. } => {
             let mut bridge = bridge;
+            let meter = meter;
             let cb = move |samples: &[f32]| {
                 bridge.apply_commands();
+                if let Some(m) = &meter {
+                    crate::audio::effects::update_meter(m, samples, 2);
+                }
                 bridge.broadcast(samples);
             };
             let capture = if let Some(sink) = node_id.strip_prefix("monitor:") {

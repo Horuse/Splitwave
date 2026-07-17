@@ -72,10 +72,19 @@ pub(super) fn spawn_meter_thread(
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {
-                    let interleaved = s.snapshot();
-                    let l: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[0]).collect();
-                    let r: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[1]).collect();
-                    let _ = app.emit(SCOPE_EVENT, json!({ "nodeId": s.node_id, "l": l, "r": r }));
+                    let (interleaved, ch) = s.snapshot();
+                    let frames = interleaved.len() / ch;
+                    let mut chans: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); ch];
+                    for f in 0..frames {
+                        let base = f * ch;
+                        for c in 0..ch {
+                            chans[c].push(interleaved[base + c]);
+                        }
+                    }
+                    let _ = app.emit(
+                        SCOPE_EVENT,
+                        json!({ "nodeId": s.node_id, "channels": ch, "data": chans }),
+                    );
                 }
             }
         })

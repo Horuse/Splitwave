@@ -271,9 +271,7 @@ impl SourceState {
             for (h, buf) in self.handle_bufs.iter_mut() {
                 let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
                 for f in 0..DSP_BLOCK_FRAMES {
-                    let v = self.out_buf[f * w + c];
-                    buf[f * 2] = v;
-                    buf[f * 2 + 1] = v;
+                    buf[f] = self.out_buf[f * w + c];
                 }
             }
         }
@@ -338,6 +336,9 @@ struct EffectState {
     // One instance per stereo pair; each carries its own DSP state but shares
     // the parameter atomics. `effects[0]` alone for width <= 2.
     effects: Vec<RuntimeEffect>,
+    // Analyzers (level meter) read the whole N-wide buffer at once instead of
+    // being split into stereo pairs, so they report every channel.
+    full_width: bool,
     bypass: Arc<AtomicBool>,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
@@ -358,7 +359,7 @@ impl EffectState {
     /// per-channel filter state never bleeds across pairs.
     fn run(&mut self, frames: usize) {
         let w = self.out_buf.len() / frames;
-        if w == 2 {
+        if self.full_width || w == 2 {
             let sc = self.sidechain_buf.as_deref();
             self.effects[0].process_with_sidechain(&mut self.out_buf, sc, frames);
             return;
@@ -429,6 +430,9 @@ struct IncomingEdge {
     src_idx: usize,
     source_handle: Option<String>,
     target_handle: Option<String>,
+    /// `Some(off)` places this input at channel `off` (monitors stack their
+    /// inputs side by side instead of summing them onto shared channels).
+    stack_ch: Option<usize>,
     delay: Option<DelayLine>,
 }
 
@@ -512,6 +516,25 @@ fn add_to_channel(src: &[f32], dst: &mut [f32], ch: usize) {
             acc += src[sb + c];
         }
         dst[f * dst_ch + ch] += acc * g;
+    }
+}
+
+/// Place `src`'s channels into `dst` starting at channel `off`. Distinct offsets
+/// leave inputs side by side; `dst` is zeroed each block so this is a copy.
+#[inline]
+fn add_block_at(src: &[f32], dst: &mut [f32], off: usize) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || off >= dst_ch {
+        return;
+    }
+    let n = src_ch.min(dst_ch - off);
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let db = f * dst_ch + off;
+        for c in 0..n {
+            dst[db + c] += src[sb + c];
+        }
     }
 }
 
@@ -675,10 +698,11 @@ impl OutputGraph {
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     let dst_ch = edge.target_handle.as_deref().and_then(parse_ch);
-                    match (&mut edge.delay, dst_ch) {
-                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
-                        (None, Some(k)) => add_to_channel(src, &mut eff.out_buf, k - 1),
-                        (None, None) => add_mapped(src, &mut eff.out_buf),
+                    match (edge.stack_ch, &mut edge.delay, dst_ch) {
+                        (Some(off), _, _) => add_block_at(src, &mut eff.out_buf, off),
+                        (None, Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
+                        (None, None, Some(k)) => add_to_channel(src, &mut eff.out_buf, k - 1),
+                        (None, None, None) => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -704,9 +728,7 @@ impl OutputGraph {
                     let Some(k) = parse_ch(h) else { continue };
                     let c = (k - 1).min(w - 1);
                     for f in 0..DSP_BLOCK_FRAMES {
-                        let v = eff.out_buf[f * w + c];
-                        buf[f * 2] = v;
-                        buf[f * 2 + 1] = v;
+                        buf[f] = eff.out_buf[f * w + c];
                     }
                 }
             }
@@ -874,7 +896,7 @@ pub(super) fn build_output_graph(
             ch_handles.dedup();
             let source_handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
                 .into_iter()
-                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES]))
                 .collect();
             let resampler = if input_sr == output_sr {
                 None
@@ -959,9 +981,16 @@ pub(super) fn build_output_graph(
                 .unwrap_or(0);
             // Width is the max of: upstream widths, any `chK` target channel fed
             // in, and any `chK` output tap drawn off this effect.
+            // A chK source handle carries exactly its tapped channel (mono), so
+            // the edge width is the tap buffer's, not the source node's full width.
             let upstream_w = main_upstream
                 .iter()
-                .map(|(i, _, _)| node_channels[*i])
+                .map(|(i, sh, _)| match sh.as_deref() {
+                    Some(h) if parse_ch(h).is_some() => {
+                        nodes[*i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
+                    }
+                    _ => node_channels[*i],
+                })
                 .max()
                 .unwrap_or(2);
             let target_w = main_upstream
@@ -976,28 +1005,70 @@ pub(super) fn build_output_graph(
                 .filter_map(|e| e.source_handle.as_deref().and_then(parse_ch))
                 .max()
                 .unwrap_or(0);
-            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
-            let make_edge =
-                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
-                    let pad = max_upstream - node_latencies[src_idx];
-                    IncomingEdge {
-                        src_idx,
-                        source_handle,
-                        target_handle,
-                        delay: if pad > 0 {
-                            Some(DelayLine::new(pad, node_channels[src_idx]))
-                        } else {
-                            None
-                        },
+            // Monitors in `mix` mode stack each input onto its own channel; in
+            // `split` mode they route each `chK` input to channel k like any
+            // other per-channel node. Everything else sums its inputs by channel.
+            let (is_analyzer, split, declared_ch) = match &effect.spec {
+                EffectSpec::LevelMeter(d) => {
+                    (true, d.channels_expanded, d.channels as usize)
+                }
+                EffectSpec::Waveform(d) => (true, d.channels_expanded, d.channels as usize),
+                _ => (false, false, 0),
+            };
+            let stack = is_analyzer && !split;
+            let edge_w = |i: usize, sh: &Option<String>| -> usize {
+                match sh.as_deref() {
+                    Some(h) if parse_ch(h).is_some() => {
+                        nodes[i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
                     }
-                };
+                    _ => node_channels[i],
+                }
+            };
+            let eff_channels = if stack {
+                main_upstream
+                    .iter()
+                    .map(|(i, s, _)| edge_w(*i, s))
+                    .sum::<usize>()
+                    .max(1)
+            } else if split {
+                target_w.max(declared_ch).max(1)
+            } else {
+                upstream_w.max(target_w).max(tap_w).max(1)
+            };
+            let make_edge = |src_idx: usize,
+                             source_handle: Option<String>,
+                             target_handle: Option<String>,
+                             stack_ch: Option<usize>| {
+                let pad = max_upstream - node_latencies[src_idx];
+                IncomingEdge {
+                    src_idx,
+                    source_handle,
+                    target_handle,
+                    stack_ch,
+                    delay: if pad > 0 {
+                        Some(DelayLine::new(pad, node_channels[src_idx]))
+                    } else {
+                        None
+                    },
+                }
+            };
+            let mut stack_off = 0;
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
-                .map(|(i, s, t)| make_edge(i, s, t))
+                .map(|(i, s, t)| {
+                    let stack_at = if stack {
+                        let cur = stack_off;
+                        stack_off += edge_w(i, &s);
+                        Some(cur)
+                    } else {
+                        None
+                    };
+                    make_edge(i, s, t, stack_at)
+                })
                 .collect();
             let sidechain: Vec<IncomingEdge> = side_upstream
                 .into_iter()
-                .map(|(i, s, t)| make_edge(i, s, t))
+                .map(|(i, s, t)| make_edge(i, s, t, None))
                 .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
@@ -1018,7 +1089,10 @@ pub(super) fn build_output_graph(
             handle_ids.dedup();
             let handle_bufs: Vec<(String, Vec<f32>)> = handle_ids
                 .into_iter()
-                .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                .map(|h| {
+                    let w = if parse_ch(&h).is_some() { 1 } else { 2 };
+                    (h, vec![0.0; DSP_BLOCK_FRAMES * w])
+                })
                 .collect();
             // One input buffer per WebRTC send channel, keyed "ch1".."chN".
             let channel_bufs: Vec<(String, Vec<f32>)> =
@@ -1029,9 +1103,13 @@ pub(super) fn build_output_graph(
                 } else {
                     Vec::new()
                 };
-            // One effect instance per stereo pair (WebRTC bridge stays single).
-            // Extra instances share the parameter atomics via the registry.
-            let pairs = if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+            // Analyzers read all channels at once; WebRTC bridge is single.
+            // Everything else runs one instance per stereo pair.
+            let full_width = matches!(
+                effect.spec,
+                EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_)
+            );
+            let pairs = if full_width || matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
                 1
             } else {
                 eff_channels.div_ceil(2)
@@ -1046,6 +1124,7 @@ pub(super) fn build_output_graph(
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
                 effects,
+                full_width,
                 bypass,
                 incoming,
                 sidechain,
@@ -1096,6 +1175,7 @@ pub(super) fn build_output_graph(
                     src_idx: idx,
                     source_handle,
                     target_handle,
+                    stack_ch: None,
                     delay: if pad > 0 {
                         Some(DelayLine::new(pad, node_channels[idx]))
                     } else {

@@ -671,7 +671,8 @@ impl ActivePipeline {
                     let slot = bridge_tx.add(prod)?;
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
-                let handle = start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), &app)?;
+                let handle =
+                    start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), None, &app)?;
                 self.inputs.insert(
                     input_id,
                     InputState {
@@ -686,6 +687,47 @@ impl ActivePipeline {
                     },
                 );
             }
+        }
+
+        // Inputs that resolved but feed nothing: start their capture anyway so
+        // the level meter runs. The capture meters directly (no DAG source).
+        // File inputs are skipped -- don't auto-play an unrouted file.
+        let unrouted: Vec<String> = input_runtime.keys().cloned().collect();
+        for input_id in unrouted {
+            if self.inputs.contains_key(&input_id) {
+                continue;
+            }
+            let resolved = input_runtime.remove(&input_id).unwrap();
+            if matches!(resolved, ResolvedInput::AudioFile { .. }) {
+                continue;
+            }
+            let sample_rate = resolved.sample_rate();
+            let channels = resolved.native_channels();
+            let meter = new_input_meters
+                .remove(&input_id)
+                .unwrap_or_else(|| MeterHandle::new(input_id.clone()));
+            self.meters.insert(input_id.clone(), meter.clone());
+            let volume = new_input_volumes
+                .remove(&input_id)
+                .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+            let paused = new_input_paused.remove(&input_id);
+            let drain = new_input_drain.remove(&input_id);
+            let (bridge_tx, bridge_rx) = broadcast_channel();
+            let handle =
+                start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), Some(meter), &app)?;
+            self.inputs.insert(
+                input_id,
+                InputState {
+                    _handle: handle,
+                    sample_rate,
+                    channels,
+                    bridge_tx,
+                    bridges_by_output: HashMap::new(),
+                    volume,
+                    paused,
+                    drain,
+                },
+            );
         }
 
         // Hot-swap the new sub-graph into an existing worker when

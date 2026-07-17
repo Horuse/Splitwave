@@ -59,12 +59,16 @@
 	}
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	// App Audio capture is stereo; expose one output handle per channel.
+	const channelCount = 2;
+	const expanded = true;
 </script>
 
-<Wrapper label="App Audio" accent="input" hasOutput>
+<Wrapper label="App Audio" accent="input" hasOutput={!expanded}>
 	<div class="flex w-64 flex-col gap-3">
-		<div class="flex items-center gap-1">
-			<Combobox {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
+		<div class="flex items-center w-full gap-1">
+			<Combobox class="w-full" {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
 			<button
 				type="button"
 				class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
@@ -79,7 +83,7 @@
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}
 		{#if data.bundleId && !missing}
-			<InputMeter nodeId={id} />
+			<InputMeter nodeId={id} channelCount={channelCount} split={expanded} />
 		{/if}
 		<Slider
 			label="Volume"

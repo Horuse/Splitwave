@@ -48,6 +48,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    meter: Option<crate::audio::effects::MeterHandle>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -71,7 +72,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 sample_format,
                 src_channels,
                 bridge,
-                None,
+                meter,
                 err_cb,
             )?;
             Ok(InputHandle::Cpal(stream))

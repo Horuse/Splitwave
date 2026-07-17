@@ -15,6 +15,7 @@
 		placeholder?: string;
 		emptyHint?: string;
 		onChange: (v: string | null) => void;
+		class?: string;
 	}
 
 	let {
@@ -22,7 +23,8 @@
 		value,
 		placeholder = '— Select —',
 		emptyHint = 'No matches',
-		onChange
+		onChange,
+		class: ClassName
 	}: Props = $props();
 
 	let open = $state(false);
@@ -85,7 +87,7 @@
 	});
 </script>
 
-<div bind:this={containerEl} class="relative min-w-0">
+<div bind:this={containerEl} class="relative min-w-0 {ClassName}">
 	<button
 		type="button"
 		class="nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-1100 hover:bg-neutral-200"

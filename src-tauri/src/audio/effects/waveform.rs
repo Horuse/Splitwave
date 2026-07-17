@@ -6,15 +6,21 @@ use super::Effect;
 
 pub const WAVEFORM_FRAMES: usize = 1024;
 
+/// Upper bound on scoped channels; sizes the fixed ring so display never
+/// allocates on the RT path.
+pub const MAX_WAVEFORM_CHANNELS: usize = 64;
+
 struct WaveformState {
-    buf: Box<[f32]>, // interleaved L/R, len = WAVEFORM_FRAMES * 2
-    write: usize,    // write head in frames
+    buf: Box<[f32]>, // interleaved, len = WAVEFORM_FRAMES * MAX_WAVEFORM_CHANNELS
+    channels: usize,
+    write: usize, // frame write head
 }
 
 impl WaveformState {
     fn new() -> Self {
         Self {
-            buf: vec![0.0_f32; WAVEFORM_FRAMES * 2].into_boxed_slice(),
+            buf: vec![0.0_f32; WAVEFORM_FRAMES * MAX_WAVEFORM_CHANNELS].into_boxed_slice(),
+            channels: 0,
             write: 0,
         }
     }
@@ -26,10 +32,6 @@ pub struct WaveformHandle {
     state: Arc<Mutex<WaveformState>>,
 }
 
-pub struct WaveformEffect {
-    handle: WaveformHandle,
-}
-
 impl WaveformHandle {
     fn new(node_id: String) -> Self {
         Self {
@@ -39,16 +41,23 @@ impl WaveformHandle {
     }
 
     /// Returns the last WAVEFORM_FRAMES frames as a chronologically ordered
-    /// interleaved L/R buffer. Called from the meter tick thread (non-RT).
-    pub fn snapshot(&self) -> Box<[f32]> {
+    /// interleaved buffer plus its channel count. Called from the meter tick
+    /// thread (non-RT).
+    pub fn snapshot(&self) -> (Vec<f32>, usize) {
         let g = self.state.lock().unwrap();
-        let pos = g.write * 2;
-        let mut out = vec![0.0_f32; WAVEFORM_FRAMES * 2].into_boxed_slice();
-        let first_len = WAVEFORM_FRAMES * 2 - pos;
-        out[..first_len].copy_from_slice(&g.buf[pos..]);
+        let ch = g.channels.max(1);
+        let used = WAVEFORM_FRAMES * ch;
+        let pos = g.write * ch;
+        let mut out = vec![0.0_f32; used];
+        let first_len = used - pos;
+        out[..first_len].copy_from_slice(&g.buf[pos..used]);
         out[first_len..].copy_from_slice(&g.buf[..pos]);
-        out
+        (out, ch)
     }
+}
+
+pub struct WaveformEffect {
+    handle: WaveformHandle,
 }
 
 impl WaveformEffect {
@@ -65,21 +74,30 @@ impl WaveformEffect {
 impl Effect for WaveformEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        let ch = (samples.len() / frames).clamp(1, MAX_WAVEFORM_CHANNELS);
         // try_lock: a miss means this display block is skipped -- acceptable.
         if let Ok(mut g) = self.handle.state.try_lock() {
-            let n = frames.min(WAVEFORM_FRAMES);
-            let src = &samples[..n * 2];
-            let byte_pos = g.write * 2;
-            let end = byte_pos + n * 2;
-            if end <= WAVEFORM_FRAMES * 2 {
-                g.buf[byte_pos..end].copy_from_slice(src);
-                g.write = if end == WAVEFORM_FRAMES * 2 { 0 } else { g.write + n };
+            // Channel count changed: reset the ring rather than misalign strides.
+            if g.channels != ch {
+                g.channels = ch;
+                g.write = 0;
+            }
+            let cap = WAVEFORM_FRAMES;
+            let n = frames.min(cap);
+            let src = &samples[..n * ch];
+            let pos = g.write;
+            let end = pos + n;
+            if end <= cap {
+                g.buf[pos * ch..end * ch].copy_from_slice(src);
+                g.write = if end == cap { 0 } else { end };
             } else {
-                let first_samps = WAVEFORM_FRAMES * 2 - byte_pos;
-                g.buf[byte_pos..].copy_from_slice(&src[..first_samps]);
-                let second_samps = n * 2 - first_samps;
-                g.buf[..second_samps].copy_from_slice(&src[first_samps..]);
-                g.write = second_samps / 2;
+                let first = (cap - pos) * ch;
+                g.buf[pos * ch..cap * ch].copy_from_slice(&src[..first]);
+                g.buf[..(n * ch - first)].copy_from_slice(&src[first..]);
+                g.write = end - cap;
             }
         }
     }

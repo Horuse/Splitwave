@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::info;
 
 use crate::audio::device::{self, DeviceKind};
+use crate::audio::effects::MeterHandle;
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
@@ -50,6 +51,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    meter: Option<MeterHandle>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -73,7 +75,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 sample_format,
                 src_channels,
                 bridge,
-                None,
+                meter,
                 err_cb,
             )?;
             Ok(InputHandle::Cpal(stream))

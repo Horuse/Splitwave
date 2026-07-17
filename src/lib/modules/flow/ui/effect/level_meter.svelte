@@ -4,6 +4,7 @@
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
+	import { DataBar } from '$lib/components/icons';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
@@ -162,6 +163,7 @@
 <Wrapper
 	label="Level Meter"
 	accent="effect"
+	icon={DataBar}
 	hasInput
 	hasOutput
 	channelIo

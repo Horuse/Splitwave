@@ -9,6 +9,7 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
+	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
 
 	// Screen-recording permission and self-exclusion are macOS/ScreenCaptureKit
@@ -74,7 +75,7 @@
 	}
 </script>
 
-<Wrapper label="System Audio" accent="input" hasOutput={!expanded}>
+<Wrapper label="System Audio" accent="input" icon={SoundWave} hasOutput={!expanded}>
 	<div class="flex w-64 flex-col gap-3">
 		{#if isMac && permission !== 'allowed'}
 			<div class={[

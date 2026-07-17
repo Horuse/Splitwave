@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { getContext, type Snippet } from 'svelte';
+	import { getContext, type Component, type Snippet } from 'svelte';
+	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
 	import { PREVIEW_CTX } from '../utils';
 	import ChannelHandles from './_channel_handles.svelte';
@@ -17,6 +18,7 @@
 	interface Props {
 		label: string;
 		accent?: 'input' | 'output' | 'effect';
+		icon?: Component<{ class?: ClassValue; title?: string }>;
 		hasInput?: boolean;
 		hasOutput?: boolean;
 		inputs?: InputHandleConfig[];
@@ -35,6 +37,7 @@
 	let {
 		label,
 		accent = 'effect',
+		icon: NodeIcon,
 		hasInput = false,
 		hasOutput = false,
 		inputs,
@@ -73,6 +76,12 @@
 		flow.updateNodeData(nodeId, { channels: Math.min(Math.max(n, 2), MAX_CH) });
 	}
 
+	const ACCENT_TEXT = {
+		input: 'text-emerald-600 dark:text-emerald-400',
+		output: 'text-sky-600 dark:text-sky-400',
+		effect: 'text-violet-600 dark:text-violet-400'
+	} as const;
+
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
 		if (p === 'top') return Position.Top;
@@ -93,7 +102,10 @@
 	]}
 >
 	<div class="mb-2 flex items-center justify-between gap-2">
-		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+			{#if NodeIcon}
+				<NodeIcon class={['size-3 shrink-0', ACCENT_TEXT[accent]]} />
+			{/if}
 			{label}
 		</span>
 		<div class="flex items-center gap-1">

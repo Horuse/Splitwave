@@ -7,7 +7,7 @@
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
-	import { Refresh } from '$lib/components/icons';
+	import { Apps, Refresh } from '$lib/components/icons';
 	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -69,7 +69,7 @@
 	}
 </script>
 
-<Wrapper label="App Audio" accent="input" hasOutput={!expanded}>
+<Wrapper label="App Audio" accent="input" icon={Apps} hasOutput={!expanded}>
 	<div class="flex w-64 flex-col gap-3">
 		<div class="flex items-center w-full gap-1">
 			<Combobox class="w-full" {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />

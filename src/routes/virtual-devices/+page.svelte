@@ -5,6 +5,7 @@
 	import type { VirtualDeviceConfig, VirtualDriverStatus } from '$lib/modules/audio/types';
 	import Header from '$lib/components/layout/header.svelte';
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
+	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
 	import { page } from '$app/state';
 	import { platform } from '@tauri-apps/plugin-os';
 
@@ -127,6 +128,9 @@
 
 	{#if !isLinux && !isWindows}
 		<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
+			<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
+				<Plug class={['size-4.5', status?.installed ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-700']} />
+			</div>
 			<div class="flex-1">
 				<div class="font-medium">Audio Server Plugin</div>
 				<div class="text-xs text-neutral-900">
@@ -159,15 +163,24 @@
 		<div class="flex flex-col gap-4">
 			<div class="flex items-center justify-between">
 				<h2 class="text-lg font-medium">Devices</h2>
-				<button class="button-main primary py-1.5" onclick={addDevice}>Add device</button>
+				<button class="button-main primary gap-1.5 py-1.5" onclick={addDevice}>
+					<Add class="size-4" />
+					Add device
+				</button>
 			</div>
 
 			{#if devices.length === 0}
-				<p class="text-sm text-theme">No virtual devices. Add one above.</p>
+				<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-12">
+					<SoundWave class="size-10 text-neutral-600" />
+					<p class="text-sm text-neutral-900">No virtual devices. Add one above.</p>
+				</div>
 			{:else}
 				<ul class="flex flex-col gap-2">
 					{#each devices as d (d.id)}
 						<li class="flex items-center gap-3 rounded-2xl bg-neutral-200 px-4 py-3">
+							<div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-neutral-300">
+								<SoundWave class="size-4 text-sky-600 dark:text-sky-400" />
+							</div>
 							<input
 								class="input-base flex-1 font-medium"
 								value={d.name}
@@ -192,6 +205,7 @@
 								onclick={() => removeDevice(d.id)}
 								aria-label="Remove device"
 							>
+								<Delete class="size-3.5" />
 								Remove
 							</button>
 						</li>

@@ -8,7 +8,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
-	import { Autoplay, Loop, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
+	import { Autoplay, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 
@@ -165,7 +165,7 @@
 	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
-<Wrapper label="Audio File" accent="input" hasOutput>
+<Wrapper label="Audio File" accent="input" icon={MusicNote} hasOutput>
 	<div class="flex w-64 flex-col gap-3">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"

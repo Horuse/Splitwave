@@ -8,7 +8,7 @@
 	import ChannelHandles from '../_channel_handles.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
-	import { Refresh } from '$lib/components/icons';
+	import { Refresh, Speaker } from '$lib/components/icons';
 	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -120,7 +120,7 @@
 	}
 </script>
 
-<Wrapper label="Speaker" accent="output" hasInput={!expanded}>
+<Wrapper label="Speaker" accent="output" icon={Speaker} hasInput={!expanded}>
 	<div class="flex w-50 flex-col gap-1">
 		<div class="flex items-center w-full gap-1">
 			<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} />

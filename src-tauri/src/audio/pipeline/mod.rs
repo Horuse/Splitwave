@@ -141,6 +141,13 @@ impl ActivePipeline {
 
     /// Diff `graph` against the running pipeline; only touch what changed.
     pub fn reconcile(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
+        // Param-only resend: nothing structural changed, so leave every worker
+        // (and the meter thread) running untouched.
+        if self.is_structurally_current(graph) {
+            self.current = Some(graph.clone());
+            return Ok(());
+        }
+
         for state in self.inputs.values_mut() {
             state.bridge_tx.drain_discarded();
         }
@@ -372,6 +379,44 @@ impl ActivePipeline {
         }
 
         Ok(())
+    }
+
+    /// True when `graph` differs from the running pipeline only in live params:
+    /// every input spec, output key, and structural output sig is unchanged.
+    /// Lets `reconcile` no-op a param-only resend without disturbing workers or
+    /// the meter thread (params already flowed through `update_effect`).
+    fn is_structurally_current(&self, graph: &ValidGraph) -> bool {
+        let Some(current) = &self.current else {
+            return false;
+        };
+        let cur_inputs: HashMap<&str, &InputSpec> =
+            current.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
+        let new_inputs: HashMap<&str, &InputSpec> =
+            graph.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
+        if cur_inputs != new_inputs {
+            return false;
+        }
+
+        let mut new_keys: Vec<String> = graph.outputs.iter().map(|o| o.id.clone()).collect();
+        if monitor_mode(graph) {
+            new_keys.push(MONITOR_KEY.to_string());
+        }
+        let new_set: HashSet<String> = new_keys.iter().cloned().collect();
+
+        let mut running: HashSet<String> = HashSet::new();
+        running.extend(self.speakers.keys().cloned());
+        running.extend(self.recorders.keys().cloned());
+        running.extend(self.net_senders.keys().cloned());
+        if self.monitor.is_some() {
+            running.insert(MONITOR_KEY.to_string());
+        }
+        if running != new_set {
+            return false;
+        }
+
+        new_keys
+            .iter()
+            .all(|key| self.current_output_sig(key) == Some(&compute_output_sig(graph, key)))
     }
 
     fn current_output_sig(&self, id: &str) -> Option<&OutputSig> {

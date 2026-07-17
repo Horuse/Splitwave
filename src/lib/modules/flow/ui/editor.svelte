@@ -403,32 +403,16 @@
 		lastSnapshotAt = Date.now() - SNAPSHOT_MIN_SPACING_MS - 1;
 	});
 
-	// Auto-restart on routing changes only — effect params flow through
-	// update_effect live, no restart needed.
+	// Every node's data (minus canvas geometry) and every edge with its handles.
+	// The backend reconcile classifies the resend, so a live-param-only change is
+	// a no-op there and needs no field-by-field gate here.
 	function routingSignature(): string {
 		return JSON.stringify({
-			nodes: nodes.map((n) => {
-				const d = n.data as Record<string, unknown>;
-				return {
-					id: n.id,
-					type: n.type,
-					deviceId: d.deviceId ?? null,
-					bundleId: d.bundleId ?? null,
-					filePath: d.filePath ?? null,
-					excludeCurrentApp: d.excludeCurrentApp ?? null,
-					// Direct-IP / codec config is structural (rebuilds the send/receive
-					// path), not a live-updatable effect param, so a change must restart.
-					targetIp: d.targetIp ?? null,
-					port: d.port ?? null,
-					channels: d.channels ?? null,
-					codec: d.codec ?? null,
-					opusBitrate: d.opusBitrate ?? null,
-					opusApplication: d.opusApplication ?? null
-				};
-			}),
+			nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
 			edges: edges.map((e) => ({
 				id: e.id,
 				source: e.source,
+				sourceHandle: e.sourceHandle ?? null,
 				target: e.target,
 				targetHandle: e.targetHandle ?? null
 			}))

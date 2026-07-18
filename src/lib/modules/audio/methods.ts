@@ -4,8 +4,8 @@ import type {
 	AudioApplication,
 	AudioDevice,
 	AudioStateEvent,
+	CapturePermission,
 	NativeDeviceInfo,
-	PermissionState,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus
@@ -22,8 +22,8 @@ export const methods = {
 		invoke<Record<string, string>>('get_app_icons', { bundleIds }),
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> =>
 		invoke<NativeDeviceInfo>('device_info', { kind, name }),
-	checkScreenRecordingPermission: (): Promise<PermissionState> =>
-		invoke<PermissionState>('check_screen_recording_permission'),
+	checkCapturePermission: (): Promise<CapturePermission> =>
+		invoke<CapturePermission>('check_capture_permission'),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
 		invoke('start_pipeline', { graph }),

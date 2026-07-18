@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
 use crate::audio::engine::Command;
 use crate::audio::graph::{GraphSpec, OpusApplication};
-use crate::audio::permission::{self, PermissionState};
+use crate::audio::permission::{self, CapturePermission};
 use crate::audio::{signaling, webrtc};
 use crate::audio::system_audio::{self, AudioApplication};
 use crate::audio::virtual_device::{self, VirtualDeviceConfig, VirtualDriverStatus};
@@ -51,9 +51,9 @@ pub fn device_info(kind: DeviceKind, name: String) -> AppResult<NativeDeviceInfo
 }
 
 #[tauri::command]
-pub fn check_screen_recording_permission() -> PermissionState {
-    let state = permission::screen_recording();
-    info!(?state, "screen recording permission checked");
+pub fn check_capture_permission() -> CapturePermission {
+    let state = permission::capture();
+    info!(?state, "capture permission checked");
     state
 }
 

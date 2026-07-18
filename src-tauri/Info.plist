@@ -4,8 +4,10 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Splitwave needs microphone access to route audio between devices.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Splitwave captures system or per-app audio to route it between devices.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Splitwave uses Screen Recording permission to capture system or per-app audio via ScreenCaptureKit.</string>
+	<string>Splitwave falls back to Screen Recording for audio capture on macOS earlier than 14.4.</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 </dict>

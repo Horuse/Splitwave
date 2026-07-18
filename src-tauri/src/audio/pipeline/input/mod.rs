@@ -26,6 +26,7 @@ pub(super) use platform::{resolve_input, start_input_stream};
 
 /// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
 /// the device side so no resampling happens on capture delivery.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(super) const SCK_SR: u32 = 48_000;
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears

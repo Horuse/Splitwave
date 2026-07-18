@@ -4,7 +4,7 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import type { PermissionState } from '$lib/modules/audio/types';
+	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX, toggleGroup } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
@@ -12,8 +12,8 @@
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	// Screen-recording permission and self-exclusion are macOS/ScreenCaptureKit
-	// only; Linux (PipeWire) and Windows (WASAPI loopback) need neither.
+	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
+	// loopback) need it neither.
 	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
 	const isPreview = getContext(PREVIEW_CTX) === true;
 	const isMac = isPreview || platform() === 'macos';
@@ -23,8 +23,17 @@
 
 	const flow = useSvelteFlow();
 
-	let permission = $state<PermissionState | null>(null);
+	let permission = $state<CapturePermission | null>(null);
 	let checking = $state(false);
+
+	// Core Audio process taps have no preflight API: the grant is requested on
+	// the first capture and a refusal surfaces as a pipeline error. Only the
+	// ScreenCaptureKit path (macOS < 14.4) can be checked up front.
+	let showBanner = $derived(
+		permission !== null &&
+			permission.kind === 'screenrecording' &&
+			permission.state !== 'allowed'
+	);
 
 	function onToggle(e: Event) {
 		const checked = (e.currentTarget as HTMLInputElement).checked;
@@ -34,9 +43,9 @@
 	async function refreshPermission() {
 		checking = true;
 		try {
-			permission = await audioMethods.checkScreenRecordingPermission();
+			permission = await audioMethods.checkCapturePermission();
 		} catch {
-			permission = 'unknown';
+			permission = { kind: 'none', state: 'unknown' };
 		} finally {
 			checking = false;
 		}
@@ -77,29 +86,29 @@
 
 <Wrapper label="System Audio" accent="input" icon={SoundWave} hasOutput={!expanded}>
 	<div class="flex w-64 flex-col gap-3">
-		{#if isMac && permission !== 'allowed'}
+		{#if showBanner}
 			<div class={[
 				'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
-				permission === 'denied' && 'border-red-300 bg-red-50 text-red-700',
-				(permission === 'unknown' || permission === null) && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
+				permission?.state === 'denied' && 'border-red-300 bg-red-50 text-red-700',
+				permission?.state === 'unknown' && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
 			]}>
 				<span class="flex items-center gap-1.5">
 					<span
 						class={[
 							'inline-block h-2 w-2 rounded-full',
-							permission === 'denied' && 'bg-red-500',
-							(permission === 'unknown' || permission === null) && 'bg-neutral-500'
+							permission?.state === 'denied' && 'bg-red-500',
+							permission?.state === 'unknown' && 'bg-neutral-500'
 						]}
 					></span>
 					<span>
-						{#if permission === 'denied'}
+						{#if permission?.state === 'denied'}
 							Screen Recording denied
 						{:else}
 							Checking permission…
 						{/if}
 					</span>
 				</span>
-				{#if permission === 'denied'}
+				{#if permission?.state === 'denied'}
 					<button
 						type="button"
 						class="nodrag nopan shrink-0 rounded border border-red-400 bg-red-100 px-1.5 py-0.5 hover:bg-red-200"

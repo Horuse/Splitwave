@@ -49,15 +49,20 @@ export function handleStyle(color: string): string {
 // Nudge a handle from the padded content edge onto the node's outer border
 // (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
 // desynced the visible dot from its clickable connection target.
+// Socket geometry: matches the connector pin drawn at the cable's end so the
+// two read as one seated connection rather than a dot with a line touching it.
+const PIN_SHAPE =
+	'width:5px !important;height:10px !important;border-radius:2px !important;';
+
 export function handleEdgeStyle(color: string, side: 'source' | 'target'): string {
 	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
-	return `${handleStyle(color)};${edge}`;
+	return `${handleStyle(color)};${PIN_SHAPE}${edge}`;
 }
 
-// An unwired slot reads as an outline, not a channel: no fill, dashed border.
+// An unwired slot reads as an empty socket: no fill, dashed outline.
 export function handleFreeStyle(side: 'source' | 'target'): string {
 	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
-	return `background:transparent !important;border:1px dashed #a3a3a3 !important;${edge}`;
+	return `background:transparent !important;border:1px dashed #a3a3a3 !important;${PIN_SHAPE}${edge}`;
 }
 
 export interface Slot {

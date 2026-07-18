@@ -17,14 +17,10 @@ use crate::state::AppState;
 
 const STATE_EVENT: &str = "audio://state";
 
-/// Opening or closing devices legitimately costs hundreds of ms. Past this the
-/// audio thread is wedged -- typically a CoreAudio call into a device that
-/// disappeared mid-reconfigure -- and every later request would queue behind it.
+/// Device open/close legitimately costs hundreds of ms; past this the thread is wedged.
 const AUDIO_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Sends a command to the audio thread and waits for its reply off the main
-/// thread. Tauri runs sync commands on the main thread, so waiting there froze
-/// the whole webview for as long as the reconfigure took.
+/// Waits off the main thread: Tauri runs sync commands there, freezing the webview.
 async fn audio_request<T, F>(tx: Sender<Command>, make: F) -> AppResult<T>
 where
     T: Send + 'static,
@@ -249,9 +245,7 @@ pub async fn apply_virtual_devices(
     app: AppHandle,
 ) -> Result<(), String> {
     info!(count = devices.len(), "applying virtual devices");
-    // Reloading the driver yanks its devices out of CoreAudio. A pipeline still
-    // holding one wedges the audio thread mid-call, so tear it down first and
-    // let the user restart once the new device set is published.
+    // Reloading the driver yanks its devices; a pipeline holding one wedges mid-call.
     let tx = state.audio_tx.clone();
     audio_request(tx, |reply| Command::Stop { reply })
         .await

@@ -46,20 +46,18 @@ export function handleStyle(color: string): string {
 	return `background:${color} !important;border:1px solid ${edge} !important;--tw-ring-color:${edge}`;
 }
 
-// Nudge a handle from the padded content edge onto the node's outer border
-// (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
-// desynced the visible dot from its clickable connection target.
-// Socket geometry: matches the connector pin drawn at the cable's end so the
-// two read as one seated connection rather than a dot with a line touching it.
+// Matches the connector pin on the cable end, so the two read as one seated joint.
 const PIN_SHAPE =
 	'width:5px !important;height:10px !important;border-radius:2px !important;';
 
+// Nudge a handle from the padded content edge onto the node's outer border
+// (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
+// desynced the visible dot from its clickable connection target.
 export function handleEdgeStyle(color: string, side: 'source' | 'target'): string {
 	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
 	return `${handleStyle(color)};${PIN_SHAPE}${edge}`;
 }
 
-// An unwired slot reads as an empty socket: no fill, dashed outline.
 export function handleFreeStyle(side: 'source' | 'target'): string {
 	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
 	return `background:transparent !important;border:1px dashed #a3a3a3 !important;${PIN_SHAPE}${edge}`;
@@ -68,60 +66,42 @@ export function handleFreeStyle(side: 'source' | 'target'): string {
 export interface Slot {
 	id: string;
 	ch: number;
-	width: number;
 	occupied: boolean;
 }
 
-export function parseHandle(handle: string): { ch: number; width: number } | null {
-	const st = /^st(\d+)$/.exec(handle);
-	if (st) return { ch: Number(st[1]), width: 2 };
-	const ch = /^ch(\d+)$/.exec(handle);
-	if (ch) return { ch: Number(ch[1]), width: 1 };
-	return null;
+export function parseHandle(handle: string): number | null {
+	const m = /^ch(\d+)$/.exec(handle);
+	return m ? Number(m[1]) : null;
 }
 
-// Slots a node shows, derived from the handles currently wired into it. A
-// removed cable leaves its slot free in place rather than renumbering the live
-// ones below it -- a shift would silently reroute audio to another channel.
-// `trailing` appends the one free slot that lets the target side grow.
+// A removed cable frees its slot in place; renumbering would reroute live audio.
 export function deriveSlots(occupiedHandles: string[], trailing: boolean): Slot[] {
-	const widths = new Map<number, number>();
+	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
-		const p = parseHandle(h);
-		if (!p) continue;
-		widths.set(p.ch, Math.max(widths.get(p.ch) ?? 0, p.width));
+		const ch = parseHandle(h);
+		if (ch !== null) taken.add(ch);
 	}
 
-	let end = 0;
-	for (const [ch, w] of widths) end = Math.max(end, ch + w - 1);
-
+	const end = taken.size === 0 ? 0 : Math.max(...taken);
 	const slots: Slot[] = [];
-	for (let ch = 1; ch <= end; ) {
-		const w = widths.get(ch);
-		if (w === undefined) {
-			slots.push({ id: `ch${ch}`, ch, width: 1, occupied: false });
-			ch += 1;
-			continue;
-		}
-		slots.push({ id: w === 2 ? `st${ch}` : `ch${ch}`, ch, width: w, occupied: true });
-		ch += w;
+	for (let ch = 1; ch <= end; ch++) {
+		slots.push({ id: `ch${ch}`, ch, occupied: taken.has(ch) });
 	}
-
 	if (trailing) {
-		slots.push({ id: `ch${end + 1}`, ch: end + 1, width: 1, occupied: false });
+		slots.push({ id: `ch${end + 1}`, ch: end + 1, occupied: false });
 	}
 	return slots;
 }
 
-// A stereo group is stored as the 1-based lower channel it pairs with the next.
-
-export function groupLowerOf(groups: number[], ch1: number): number | null {
-	for (const g of groups) if (g === ch1 || g + 1 === ch1) return g;
-	return null;
-}
-
-export function toggleGroup(groups: number[], lower: number): number[] {
-	if (groups.includes(lower)) return groups.filter((g) => g !== lower);
-	// Drop any group overlapping this pair, then add it.
-	return [...groups.filter((g) => g !== lower - 1 && g !== lower + 1), lower].sort((a, b) => a - b);
+export function freeRunFrom(occupiedHandles: string[], start: number, count: number): number[] {
+	const taken = new Set<number>();
+	for (const h of occupiedHandles) {
+		const ch = parseHandle(h);
+		if (ch !== null) taken.add(ch);
+	}
+	const run: number[] = [];
+	for (let ch = start; run.length < count; ch++) {
+		if (!taken.has(ch)) run.push(ch);
+	}
+	return run;
 }

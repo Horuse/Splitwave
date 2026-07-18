@@ -10,7 +10,7 @@
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Mic, Refresh } from '$lib/components/icons';
-	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type MicrophoneNodeType = Node<MicrophoneNodeData, 'microphone'>;
@@ -115,13 +115,6 @@
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
 	// Always per-channel: a multi-channel device exposes one output handle per
 	// channel; mono stays a single handle.
-
-	function onToggleGroup(lower: number) {
-		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
-		// Toggling a pair swaps handles without changing node height, so xyflow's
-		// resize observer never fires and the new handle stays unconnectable.
-		updateNodeInternals(id);
-	}
 </script>
 
 <Wrapper label="Microphone" accent="input" icon={Mic}>
@@ -174,8 +167,6 @@
 			<InputMeter
 				nodeId={id}
 				channelCount={channelCount}
-				stereoGroups={data.stereoGroups ?? []}
-				{onToggleGroup}
 			/>
 		{/if}
 	</div>

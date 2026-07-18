@@ -10,7 +10,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh, Speaker } from '$lib/components/icons';
-	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type SpeakerNodeType = Node<SpeakerNodeData, 'speaker'>;
@@ -115,13 +115,6 @@
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
 	// Always per-channel: a multi-channel device exposes one input handle per
 	// channel; mono stays a single handle.
-
-	function onToggleGroup(lower: number) {
-		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
-		// Toggling a pair swaps handles without changing node height, so xyflow's
-		// resize observer never fires and the new handle stays unconnectable.
-		updateNodeInternals(id);
-	}
 </script>
 
 <Wrapper label="Speaker" accent="output" icon={Speaker}>
@@ -175,8 +168,6 @@
 				nodeId={id}
 				side="target"
 				channelCount={channelCount}
-				stereoGroups={data.stereoGroups ?? []}
-				{onToggleGroup}
 			/>
 		{/if}
 	</div>

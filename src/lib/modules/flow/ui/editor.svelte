@@ -19,15 +19,19 @@
 		DND_MIME,
 		defaultDataFor,
 		emitNodeAction,
+		freeRunFrom,
 		fromXyEdges,
 		fromXyNodes,
 		nodeTypes,
+		parseHandle,
 		registry,
 		toXyEdges,
 		toXyNodes
 	} from '../utils';
 	import Sidebar from './sidebar.svelte';
 	import ChannelEdge from './_channel_edge.svelte';
+	import ConnectionLine from './_connection_line.svelte';
+	import EdgeRectSelect from './_edge_rect_select.svelte';
 	const edgeTypes = { channel: ChannelEdge };
 	import {
 		Backspace,
@@ -40,6 +44,7 @@
 		Refresh,
 		Rewind
 	} from '$lib/components/icons';
+	import { channelSelection } from '../stores.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
@@ -57,6 +62,55 @@
 		const n = toXyNodes(pipeline.nodes);
 		return sanitizeEdges(n, toXyEdges(pipeline.edges));
 	}));
+
+	// Fresh edges only: an already-wired armed channel would re-fire the fan-out.
+	// Not `onbeforeconnect` -- xyflow 1.5.2 throws on pointer-up when it is set.
+	let seenEdgeIds = new Set<string>(untrack(() => edges.map((e) => e.id)));
+	$effect(() => {
+		const current = edges;
+		const armed = channelSelection.channels;
+		const from = channelSelection.nodeId;
+
+		untrack(() => {
+			const fresh = current.filter((e) => !seenEdgeIds.has(e.id));
+			seenEdgeIds = new Set(current.map((e) => e.id));
+			if (!from || armed.length < 2 || fresh.length === 0) return;
+
+			const seed = fresh.find((e) => {
+				const ch = e.sourceHandle ? parseHandle(e.sourceHandle) : null;
+				return e.source === from && ch !== null && armed.includes(ch);
+			});
+			const seedCh = seed?.sourceHandle ? parseHandle(seed.sourceHandle) : null;
+			if (!seed?.targetHandle || seedCh === null) return;
+
+			const dropped = parseHandle(seed.targetHandle) ?? 1;
+			const taken = current
+				.filter((e) => e.target === seed.target && e.id !== seed.id)
+				.map((e) => e.targetHandle ?? '');
+			const run = freeRunFrom(taken, dropped, armed.length);
+			const seedIdx = armed.indexOf(seedCh);
+
+			const added: XyEdge[] = [];
+			const retargeted = current.map((e) =>
+				e.id === seed.id ? { ...e, targetHandle: `ch${run[seedIdx]}` } : e
+			);
+			armed.forEach((ch, i) => {
+				if (i === seedIdx) return;
+				added.push({
+					id: createId(),
+					source: seed.source,
+					sourceHandle: `ch${ch}`,
+					target: seed.target,
+					targetHandle: `ch${run[i]}`,
+					animated: true,
+					type: 'channel'
+				});
+			});
+			edges = [...retargeted, ...added];
+			added.forEach((e) => seenEdgeIds.add(e.id));
+			channelSelection.clear();
+		});
+	});
 
 	type MenuItem = {
 		label: string;
@@ -452,6 +506,11 @@
 		const inField =
 			tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable;
 
+		if (e.key === 'Escape' && channelSelection.nodeId) {
+			channelSelection.clear();
+			return;
+		}
+
 		if (e.key === 'Backspace' || e.key === 'Delete') {
 			if (inField) return;
 			e.preventDefault();
@@ -533,7 +592,7 @@
 
 <div class="flex h-full w-full">
 	<div
-		class="flex-1"
+		class="relative flex-1"
 		role="region"
 		aria-label="Flow editor"
 		ondragover={onDragOver}
@@ -547,6 +606,7 @@
 			{nodeTypes}
 			{edgeTypes}
 			defaultEdgeOptions={{ animated: true, type: 'channel' }}
+			connectionLineComponent={ConnectionLine}
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}
 			onedgecontextmenu={onEdgeContextMenu}
@@ -559,7 +619,17 @@
 		>
 			<Background patternClass="fill-neutral-200"/>
 			<Controls />
+			<EdgeRectSelect />
 		</SvelteFlow>
+
+		{#if channelSelection.channels.length > 0}
+			<div
+				class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm"
+			>
+				<span class="font-mono tabular-nums">{channelSelection.channels.length}</span>
+				channels armed &mdash; drag any one to connect them all, Esc to clear
+			</div>
+		{/if}
 	</div>
 	<Sidebar />
 </div>

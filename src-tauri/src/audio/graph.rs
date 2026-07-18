@@ -105,10 +105,6 @@ pub struct MicrophoneData {
     pub device_id: Option<String>,
     #[serde(default)]
     pub channels_expanded: bool,
-    /// Lower channel (1-based) of each stereo group; the group pairs it with the
-    /// next channel. UI-only: drives which `stK` handles exist.
-    #[serde(default)]
-    pub stereo_groups: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -119,8 +115,6 @@ pub struct SystemAudioData {
     pub exclude_current_app: bool,
     #[serde(default = "default_one")]
     pub volume: f32,
-    #[serde(default)]
-    pub stereo_groups: Vec<u32>,
 }
 fn default_true() -> bool {
     true
@@ -136,8 +130,6 @@ pub struct AppAudioData {
     pub bundle_id: Option<String>,
     #[serde(default = "default_one")]
     pub volume: f32,
-    #[serde(default)]
-    pub stereo_groups: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -160,8 +152,6 @@ pub struct SpeakerData {
     pub device_id: Option<String>,
     #[serde(default)]
     pub channels_expanded: bool,
-    #[serde(default)]
-    pub stereo_groups: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]

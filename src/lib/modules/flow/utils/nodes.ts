@@ -55,7 +55,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Microphone',
 		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
 		component: Microphone,
-		defaultData: { deviceId: null, channelsExpanded: false, stereoGroups: [1] }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
@@ -63,7 +63,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'System Audio',
 		description: 'Capture everything the system is playing.',
 		component: SystemAudio,
-		defaultData: { excludeCurrentApp: true, volume: 1, stereoGroups: [1] }
+		defaultData: { excludeCurrentApp: true, volume: 1 }
 	}),
 	appAudio: entry<'appAudio'>({
 		kind: 'appAudio',
@@ -71,7 +71,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'App Audio',
 		description: 'Capture audio from a single running application.',
 		component: AppAudio,
-		defaultData: { bundleId: null, volume: 1, stereoGroups: [1] }
+		defaultData: { bundleId: null, volume: 1 }
 	}),
 	audioFile: entry<'audioFile'>({
 		kind: 'audioFile',
@@ -87,7 +87,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Speaker',
 		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
 		component: Speaker,
-		defaultData: { deviceId: null, channelsExpanded: false, stereoGroups: [1] }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',

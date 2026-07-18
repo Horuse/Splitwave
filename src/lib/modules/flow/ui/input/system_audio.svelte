@@ -5,7 +5,7 @@
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { CapturePermission } from '$lib/modules/audio/types';
-	import { PREVIEW_CTX, toggleGroup } from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
@@ -78,13 +78,6 @@
 
 	// System Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
-
-	function onToggleGroup(lower: number) {
-		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
-		// Toggling a pair swaps handles without changing node height, so xyflow's
-		// resize observer never fires and the new handle stays unconnectable.
-		updateNodeInternals(id);
-	}
 </script>
 
 <Wrapper label="System Audio" accent="input" icon={SoundWave}>
@@ -157,8 +150,6 @@
 		<InputMeter
 			nodeId={id}
 			channelCount={channelCount}
-			stereoGroups={data.stereoGroups ?? []}
-			{onToggleGroup}
 		/>
 	</div>
 </Wrapper>

@@ -8,7 +8,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Apps, Refresh } from '$lib/components/icons';
-	import { onNodeAction, toggleGroup } from '$lib/modules/flow/utils';
+	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
@@ -63,13 +63,6 @@
 
 	// App Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
-
-	function onToggleGroup(lower: number) {
-		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
-		// Toggling a pair swaps handles without changing node height, so xyflow's
-		// resize observer never fires and the new handle stays unconnectable.
-		updateNodeInternals(id);
-	}
 </script>
 
 <Wrapper label="App Audio" accent="input" icon={Apps}>
@@ -104,8 +97,6 @@
 			<InputMeter
 				nodeId={id}
 				channelCount={channelCount}
-				stereoGroups={data.stereoGroups ?? []}
-				{onToggleGroup}
 			/>
 		{/if}
 	</div>

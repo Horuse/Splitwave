@@ -7,6 +7,7 @@
 		handleEdgeStyle,
 		handleFreeStyle
 	} from '$lib/modules/flow/utils';
+	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
 		nodeId: string;
@@ -15,31 +16,39 @@
 	let { nodeId, side }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
-	// A node's id is fixed for the component's lifetime; the hook takes a value.
+	// The hook takes a value; a node's id is fixed for the component's lifetime.
 	const incoming = useNodeConnections({ id: untrack(() => nodeId), handleType: 'target' });
 
 	let isSource = $derived(side === 'source');
-	// Both sides key off the incoming cables: a channel only has an output once
-	// something feeds it, so only the target side trails a free slot to grow on.
+	// A channel only has an output once something feeds it, so only the target grows.
 	let occupied = $derived(
 		incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
 	);
 	let slots = $derived(deriveSlots(occupied, !isSource).filter((s) => !isSource || s.occupied));
 
-	// xyflow caches handle bounds and only remeasures on a resize; a slot that
-	// appears without changing node height would stay unconnectable otherwise.
+	// xyflow remeasures handles only on resize; a slot added at equal height would not connect.
 	$effect(() => {
 		slots.length;
 		updateNodeInternals(nodeId);
 	});
+
+	// Capture beats xyflow's mousedown, which would otherwise start a drag.
+	function onArm(event: MouseEvent, ch: number) {
+		if (!event.altKey || !isSource) return;
+		event.stopPropagation();
+		event.preventDefault();
+		channelSelection.toggle(nodeId, ch);
+	}
 </script>
 
 <div class="flex flex-col gap-0.5">
 	{#each slots as slot (slot.id)}
 		{@const color = channelColor(slot.ch - 1)}
+		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
 		<div
-			class={['relative flex items-center gap-1', isSource && 'justify-end']}
-			style="min-height:{slot.width}rem"
+			class="relative flex min-h-4 items-center gap-1"
+			class:justify-end={isSource}
+			onmousedowncapture={(e) => onArm(e, slot.ch)}
 		>
 			{#if slot.occupied}
 				<div
@@ -51,7 +60,7 @@
 				type={side}
 				id={slot.id}
 				position={isSource ? Position.Right : Position.Left}
-				class="handle"
+				class={['handle', armed && 'handle-armed']}
 				style={slot.occupied ? handleEdgeStyle(color, side) : handleFreeStyle(side)}
 			/>
 		</div>

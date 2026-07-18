@@ -3,8 +3,8 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
 	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 	import MeterBar from '$lib/components/meter_bar.svelte';
-	import StereoBracket from '../_stereo_bracket.svelte';
 
 	const METER_GRADIENT =
 		'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
@@ -13,17 +13,22 @@
 		nodeId,
 		channelCount = 0,
 		side = 'source',
-		stereoGroups = [],
-		onToggleGroup
+
 	}: {
 		nodeId: string;
 		channelCount?: number;
 		side?: 'source' | 'target';
-		stereoGroups?: number[];
-		onToggleGroup?: (lower: number) => void;
 	} = $props();
 
 	let isSource = $derived(side === 'source');
+
+	// Capture beats xyflow's mousedown, which would otherwise start a drag.
+	function onArm(event: MouseEvent, ch: number) {
+		if (!event.altKey || !isSource) return;
+		event.stopPropagation();
+		event.preventDefault();
+		channelSelection.toggle(nodeId, ch);
+	}
 
 	const DB_FLOOR = -60;
 	const PEAK_FALL_DB_PER_SEC = 30;
@@ -44,10 +49,6 @@
 	let rows = $derived(
 		Array.from({ length: Math.max(channelCount, displays.length, 1) }, (_, i) => i)
 	);
-
-	function isGrouped(lower: number): boolean {
-		return stereoGroups.includes(lower);
-	}
 
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
@@ -113,7 +114,7 @@
 					{channelLabel(i, rows.length)}
 				</span>
 			{/if}
-			<div class="relative flex items-center">
+			<div class="relative flex items-center" onmousedowncapture={(e) => onArm(e, i + 1)}>
 				<MeterBar
 					class="h-2 flex-1 rounded-sm"
 					ghost
@@ -123,7 +124,7 @@
 				/>
 				{#if isSource}
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
-					<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
+					<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class={['handle', channelSelection.has(nodeId, i + 1) && 'handle-armed']} style={handleEdgeStyle(channelColor(i), 'source')} />
 				{:else}
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
 					<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
@@ -135,17 +136,5 @@
 				</span>
 			{/if}
 		</div>
-
-		{#if onToggleGroup && i < rows.length - 1}
-			<div class={['grid items-center gap-x-1.5', isSource ? 'grid-cols-[minmax(2px,max-content)_1fr]' : 'grid-cols-[1fr_minmax(2px,max-content)]']}>
-				{#if isSource}
-					<div></div>
-					<StereoBracket {side} lower={i + 1} grouped={isGrouped(i + 1)} onToggle={onToggleGroup} />
-				{:else}
-					<StereoBracket {side} lower={i + 1} grouped={isGrouped(i + 1)} onToggle={onToggleGroup} />
-					<div></div>
-				{/if}
-			</div>
-		{/if}
 	{/each}
 </div>

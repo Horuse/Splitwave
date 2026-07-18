@@ -131,13 +131,6 @@
 				Exclude this app (avoid feedback)
 			</label>
 		{/if}
-		<InputMeter
-			nodeId={id}
-			channelCount={channelCount}
-			split={expanded}
-			stereoGroups={data.stereoGroups ?? []}
-			{onToggleGroup}
-		/>
 		<Slider
 			label="Volume"
 			value={volumePct}
@@ -148,6 +141,13 @@
 			defaultValue={100}
 			ticks={[25, 50, 75]}
 			onChange={setVolume}
+		/>
+		<InputMeter
+			nodeId={id}
+			channelCount={channelCount}
+			split={expanded}
+			stereoGroups={data.stereoGroups ?? []}
+			{onToggleGroup}
 		/>
 	</div>
 </Wrapper>

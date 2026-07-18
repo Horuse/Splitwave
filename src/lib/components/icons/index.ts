@@ -31,3 +31,4 @@ export { default as MusicNote } from './music_note.svelte';
 export { default as SoundWave } from './sound_wave.svelte';
 export { default as DataBar } from './data_bar.svelte';
 export { default as Plug } from './plug.svelte';
+export { default as Link } from './link.svelte';

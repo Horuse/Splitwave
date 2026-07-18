@@ -5,6 +5,7 @@
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { DataBar } from '$lib/components/icons';
+	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
@@ -43,9 +44,6 @@
 
 	let channelCount = $derived(Math.max(displayPeaks.length, 1));
 
-	let hoverDb = $state<number | null>(null);
-	let hoverY = $state(0);
-
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
 	}
@@ -63,25 +61,15 @@
 		return isFinite(db) && db > DB_FLOOR ? db.toFixed(1) : '−∞';
 	}
 
+	function hoverLabel(pct: number): string {
+		return pctToDb(pct).toFixed(1);
+	}
+
 	function dbTextClass(db: number): string {
 		if (!isFinite(db) || db <= DB_FLOOR) return 'text-neutral-400';
 		if (db >= -1) return 'text-red-500';
 		if (db >= -6) return 'text-amber-500';
 		return 'text-neutral-700';
-	}
-
-	function handleBarHover(e: MouseEvent) {
-		const el = e.currentTarget as HTMLElement;
-		const rect = el.getBoundingClientRect();
-		const scale = rect.height / el.offsetHeight;
-		const y = (e.clientY - rect.top) / scale;
-		const pct = Math.max(0, Math.min(100, 100 - (y / el.offsetHeight) * 100));
-		hoverDb = pctToDb(pct);
-		hoverY = y;
-	}
-
-	function clearHover() {
-		hoverDb = null;
 	}
 
 	let unlisten: UnlistenFn | undefined;
@@ -190,8 +178,6 @@
 				<div
 					class="relative flex h-72 cursor-crosshair overflow-hidden rounded-sm border border-neutral-300"
 					style="width: {channelCount * BAR_W}px; --bar-h: 288px;"
-					onmousemove={handleBarHover}
-					onmouseleave={clearHover}
 					onclick={resetPeaks}
 					onkeydown={handleBarKey}
 					role="button"
@@ -199,31 +185,21 @@
 					aria-label="Level meter — click to reset peaks, hover to read level"
 				>
 					{#each displayPeaks as p, i (i)}
-						<div class="relative flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}">
-							<div class="absolute inset-0 opacity-30 dark:brightness-[0.2]" style="background: {METER_GRADIENT};"></div>
-							<div
-								class="absolute right-0 bottom-0 left-0"
-								style="height: {dbToPct(p)}%;
-                                background: {METER_GRADIENT};
-                                background-size: 100% var(--bar-h);
-                                background-position: bottom;
-                                background-repeat: no-repeat;"
-							></div>
+						<MeterBar
+							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
+							orientation="vertical"
+							gradient={METER_GRADIENT}
+							ghost
+							hover
+							{hoverLabel}
+							pct={dbToPct(p)}
+						>
 							<div class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;"></div>
 							{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
 								<div class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]" style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);"></div>
 							{/if}
-						</div>
+						</MeterBar>
 					{/each}
-
-					{#if hoverDb !== null}
-						<div class="pointer-events-none absolute right-0 left-0 z-10 h-px bg-cyan-400" style="top: {hoverY}px;">
-							<span
-								class="absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight text-white"
-								style="top: {hoverY < 12 ? '2px' : '-10px'};"
-							>{hoverDb.toFixed(1)}</span>
-						</div>
-					{/if}
 				</div>
 			</div>
 

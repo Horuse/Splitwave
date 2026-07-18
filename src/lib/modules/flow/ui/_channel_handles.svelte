@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 	import { channelColor, channelLabel, handleStyle } from '$lib/modules/flow/utils';
+	import { Link } from '$lib/components/icons';
 
 	interface Props {
 		count: number;
@@ -43,19 +44,35 @@
 				{#if side === 'target' && grouped}
 					<Handle type="target" id={`st${lower}`} position={Position.Left} class="handle" style={handleStyle('#a3a3a3')} />
 				{/if}
+				{#if side === 'target'}
+					<span
+						class={[
+							'pointer-events-none ml-4 -my-2.5 z-5 w-1.5 self-stretch rounded-r-sm border-y border-r transition-opacity',
+							grouped ? 'border-neutral-900 opacity-100' : 'opacity-0'
+						]}
+					></span>
+				{/if}
 				<button
 					type="button"
 					class={[
-						'nodrag nopan flex h-3.5 items-center rounded-full border px-1 font-mono text-[7px] leading-none transition-colors',
+						'nodrag nopan flex size-4 items-center justify-center rounded-full border transition-colors',
 						grouped
 							? 'border-neutral-900 bg-neutral-900 text-white'
-							: 'border-neutral-300 bg-neutral-100 text-neutral-400 hover:bg-neutral-200'
+							: 'border-neutral-300 bg-neutral-100 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900'
 					]}
 					title={grouped ? 'Unlink stereo pair' : `Link ch${lower}+ch${lower + 1} as stereo`}
 					onclick={() => onToggleGroup(lower)}
 				>
-					{grouped ? 'stereo' : 'link'}
+					<Link class="size-2.5" />
 				</button>
+				{#if side === 'source'}
+					<span
+						class={[
+							'pointer-events-none ml-3 -my-2.25 z-5 w-1.5 self-stretch rounded-r-sm border-y border-r transition-opacity',
+							grouped ? 'border-neutral-900 opacity-100' : 'opacity-0'
+						]}
+					></span>
+				{/if}
 				{#if side === 'source' && grouped}
 					<Handle type="source" id={`st${lower}`} position={Position.Right} class="handle" style={handleStyle('#a3a3a3')} />
 				{/if}

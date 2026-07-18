@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -123,7 +124,15 @@
 <Wrapper label="Microphone" accent="input" icon={Mic} hasOutput={!expanded}>
 	<div class="flex w-50 flex-col gap-3">
 		<div class="flex items-center w-full gap-1">
-			<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} />
+			<Combobox
+				class="w-full"
+				{options}
+				value={data.deviceId ?? null}
+				placeholder="— Select microphone —"
+				onChange={setDevice}
+				actionLabel="Add virtual device"
+				onAction={() => goto('/virtual-devices')}
+			/>
 			<button
 				type="button"
 				class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"

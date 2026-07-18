@@ -177,37 +177,77 @@
 			{:else}
 				<ul class="flex flex-col gap-2">
 					{#each devices as d (d.id)}
-						<li class="flex items-center gap-3 rounded-2xl bg-neutral-200 px-4 py-3">
-							<div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-neutral-300">
-								<SoundWave class="size-4 text-sky-600 dark:text-sky-400" />
-							</div>
-							<input
-								class="input-base flex-1 font-medium"
-								value={d.name}
-								oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)}
-							/>
-							<label class="flex items-center gap-1.5 text-xs text-neutral-900">
-								Channels
+						<li class="flex flex-col gap-3 rounded-2xl bg-neutral-200 p-4">
+							<div class="flex items-center gap-3">
+								<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
+									<SoundWave class="size-4.5 text-sky-600 dark:text-sky-400" />
+								</div>
 								<input
-									class="input-base w-16 text-center font-mono tabular-nums"
-									type="number"
-									min="1"
-									max="256"
-									value={d.channels ?? 2}
-									onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)}
+									class="input-base h-8 flex-1 font-medium"
+									value={d.name}
+									oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)}
 								/>
-							</label>
-							<span class="font-mono tabular-nums text-xs text-neutral-900"
-								>{d.id.slice(0, 8)}</span
-							>
-							<button
-								class="btn-alert py-2"
-								onclick={() => removeDevice(d.id)}
-								aria-label="Remove device"
-							>
-								<Delete class="size-3.5" />
-								Remove
-							</button>
+								<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs tabular-nums text-neutral-900">
+									{d.id.slice(0, 8)}
+								</span>
+								<button
+									class="btn-alert px-2.5 py-2"
+									onclick={() => removeDevice(d.id)}
+									aria-label="Remove device"
+									title="Remove device"
+								>
+									<Delete class="size-4" />
+								</button>
+							</div>
+							<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+								<div class="flex items-center gap-2">
+									<span class="text-xs text-neutral-900">Channels</span>
+									<div class="flex items-center overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100">
+										<button
+											class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
+											disabled={(d.channels ?? 2) <= 1}
+											onclick={() => setChannels(d.id, (d.channels ?? 2) - 1)}
+											aria-label="Fewer channels"
+										>
+											&minus;
+										</button>
+										<input
+											class="h-7 w-14 border-x border-neutral-400 bg-transparent text-center font-mono text-sm tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+											type="number"
+											min="1"
+											max="256"
+											value={d.channels ?? 2}
+											onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)}
+										/>
+										<button
+											class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
+											disabled={(d.channels ?? 2) >= 256}
+											onclick={() => setChannels(d.id, (d.channels ?? 2) + 1)}
+											aria-label="More channels"
+										>
+											+
+										</button>
+									</div>
+								</div>
+								<div class="flex items-center gap-1">
+									{#each [2, 8, 16, 32, 64] as preset (preset)}
+										<button
+											class={[
+												'rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums transition-colors',
+												(d.channels ?? 2) === preset
+													? 'border-neutral-800 bg-neutral-600 text-theme'
+													: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
+											]}
+											onclick={() => setChannels(d.id, preset)}
+										>
+											{preset}
+										</button>
+									{/each}
+								</div>
+								<span class="ml-auto text-[11px] text-neutral-800">
+									Appears as input + output &middot; up to 256 channels
+								</span>
+							</div>
 						</li>
 					{/each}
 				</ul>

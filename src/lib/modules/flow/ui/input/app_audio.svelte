@@ -86,15 +86,6 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}
-		{#if data.bundleId && !missing}
-			<InputMeter
-				nodeId={id}
-				channelCount={channelCount}
-				split={expanded}
-				stereoGroups={data.stereoGroups ?? []}
-				{onToggleGroup}
-			/>
-		{/if}
 		<Slider
 			label="Volume"
 			value={volumePct}
@@ -106,5 +97,14 @@
 			ticks={[25, 50, 75]}
 			onChange={setVolume}
 		/>
+		{#if data.bundleId && !missing}
+			<InputMeter
+				nodeId={id}
+				channelCount={channelCount}
+				split={expanded}
+				stereoGroups={data.stereoGroups ?? []}
+				{onToggleGroup}
+			/>
+		{/if}
 	</div>
 </Wrapper>

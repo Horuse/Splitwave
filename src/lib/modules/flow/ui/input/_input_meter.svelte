@@ -3,6 +3,11 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
 	import { channelColor, channelLabel, handleStyle } from '$lib/modules/flow/utils';
+	import { Link } from '$lib/components/icons';
+	import MeterBar from '$lib/components/meter_bar.svelte';
+
+	const METER_GRADIENT =
+		'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
 
 	let {
 		nodeId,
@@ -105,18 +110,13 @@
 				{channelLabel(i, rows.length)}
 			</span>
 			<div class={['relative flex items-center', split && '-mr-4 pr-4']}>
-				<div class="relative h-2 flex-1 overflow-hidden rounded-sm bg-neutral-300">
-					<div
-						class="absolute inset-0"
-						style="
-                   background: linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%);
-                   clip-path: inset(0 {100 - dbToPct(db)}% 0 0);
-                "
-					></div>
-					{#if isFinite(hold) && dbToPct(hold) > 0}
-						<div class="absolute inset-y-0 w-px bg-white" style="left: {dbToPct(hold)}%;"></div>
-					{/if}
-				</div>
+				<MeterBar
+					class="h-2 flex-1 rounded-sm"
+					ghost
+					pct={dbToPct(db)}
+					gradient={METER_GRADIENT}
+					hold={isFinite(hold) ? dbToPct(hold) : null}
+				/>
 				{#if split}
 					<Handle
 						type="source"
@@ -138,16 +138,22 @@
 					<button
 						type="button"
 						class={[
-							'nodrag nopan flex h-3.5 items-center rounded-full border px-1 font-mono text-[7px] leading-none transition-colors',
+							'nodrag nopan flex size-4 items-center justify-center rounded-full border transition-colors',
 							grouped
 								? 'border-neutral-900 bg-neutral-900 text-white'
-								: 'border-neutral-300 bg-neutral-100 text-neutral-400 hover:bg-neutral-200'
+								: 'border-neutral-300 bg-neutral-100 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900'
 						]}
 						title={grouped ? 'Unlink stereo pair' : `Link ch${lower}+ch${lower + 1} as stereo`}
 						onclick={() => onToggleGroup(lower)}
 					>
-						{grouped ? 'stereo' : 'link'}
+						<Link class="size-2.5" />
 					</button>
+					<span
+						class={[
+							'pointer-events-none -mr-1.25 -my-2.25 z-5 w-1.5 self-stretch rounded-r-2xl border-y border-r transition-opacity',
+							grouped ? 'border-neutral-900 opacity-100' : 'opacity-0'
+						]}
+					></span>
 					{#if grouped}
 						<Handle
 							type="source"

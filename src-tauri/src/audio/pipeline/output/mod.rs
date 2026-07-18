@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
 use crate::audio::clock::{ClockSource, SystemClockTicker};
+use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
 use crate::audio::streams;
@@ -113,7 +114,9 @@ impl Drop for RecorderWorker {
 pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     sample_rate: u32,
+    channels: usize,
     graph: OutputGraph,
+    meter: MeterHandle,
 ) -> AppResult<(SpeakerWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -125,6 +128,7 @@ pub(super) fn spawn_speaker_worker(
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             worker.run(stop_thread, pacing, |block| {
+                update_meter(&meter, block, channels);
                 streams::bulk_push(&mut producer, block);
                 Ok(())
             });

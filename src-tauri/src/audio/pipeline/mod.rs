@@ -97,6 +97,9 @@ struct SpeakerState {
     sig: OutputSig,
     ctrl: WorkerCtrl,
     dead: Arc<AtomicBool>,
+    // Output-tap level meter, re-registered into `meters` each reconcile so the
+    // meter thread emits it. Persists across graph swaps (worker keeps running).
+    meter: MeterHandle,
 }
 
 struct RecorderState {
@@ -813,7 +816,9 @@ impl ActivePipeline {
                         self.speakers.remove(&out.id);
                     }
                     let sample_rate = spec.sample_rate;
-                    let (handle, ctrl, dead) = start_speaker_stream(&out.id, spec, og, &app)?;
+                    let meter = MeterHandle::new(out.id.clone());
+                    let (handle, ctrl, dead) =
+                        start_speaker_stream(&out.id, spec, og, meter.clone(), &app)?;
                     self.speakers.insert(
                         out.id.clone(),
                         SpeakerState {
@@ -822,6 +827,7 @@ impl ActivePipeline {
                             sig: new_sig,
                             ctrl,
                             dead,
+                            meter,
                         },
                     );
                 }
@@ -911,6 +917,12 @@ impl ActivePipeline {
             edges = graph.edges.len(),
             "pipeline reconciled"
         );
+
+        // Output-tap meters live on the speaker workers; surface them to the
+        // meter thread alongside input/effect meters.
+        for (id, s) in &self.speakers {
+            self.meters.insert(id.clone(), s.meter.clone());
+        }
 
         // Respawn the meter tick thread so it picks up new/changed
         // handles. The old thread (if any) was dropped by `teardown_*` /

@@ -2,9 +2,9 @@
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { channelColor, channelLabel, handleStyle } from '$lib/modules/flow/utils';
-	import { Link } from '$lib/components/icons';
+	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import MeterBar from '$lib/components/meter_bar.svelte';
+	import StereoBracket from '../_stereo_bracket.svelte';
 
 	const METER_GRADIENT =
 		'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
@@ -13,15 +13,19 @@
 		nodeId,
 		channelCount = 0,
 		split = false,
+		side = 'source',
 		stereoGroups = [],
 		onToggleGroup
 	}: {
 		nodeId: string;
 		channelCount?: number;
 		split?: boolean;
+		side?: 'source' | 'target';
 		stereoGroups?: number[];
 		onToggleGroup?: (lower: number) => void;
 	} = $props();
+
+	let isSource = $derived(side === 'source');
 
 	const DB_FLOOR = -60;
 	const PEAK_FALL_DB_PER_SEC = 30;
@@ -101,15 +105,17 @@
 	});
 </script>
 
-<div class="flex w-full flex-col gap-1" aria-label="Live input level">
+<div class="flex w-full flex-col gap-1" aria-label="Live level">
 	{#each rows as i (i)}
 		{@const db = displays[i] ?? -Infinity}
 		{@const hold = holds[i] ?? -Infinity}
-		<div class="grid grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5">
-			<span class="text-right font-mono text-[8px] leading-none" style="color:{channelColor(i)}">
-				{channelLabel(i, rows.length)}
-			</span>
-			<div class={['relative flex items-center', split && '-mr-4 pr-4']}>
+		<div class={['grid items-center gap-x-1.5', isSource ? 'grid-cols-[minmax(2px,max-content)_1fr]' : 'grid-cols-[1fr_minmax(2px,max-content)]']}>
+			{#if isSource}
+				<span class="text-right font-mono text-[8px] leading-none" style="color:{channelColor(i)}">
+					{channelLabel(i, rows.length)}
+				</span>
+			{/if}
+			<div class="relative flex items-center">
 				<MeterBar
 					class="h-2 flex-1 rounded-sm"
 					ghost
@@ -118,52 +124,31 @@
 					hold={isFinite(hold) ? dbToPct(hold) : null}
 				/>
 				{#if split}
-					<Handle
-						type="source"
-						id={`ch${i + 1}`}
-						position={Position.Right}
-						class="handle"
-						style={handleStyle(channelColor(i))}
-					/>
+					{#if isSource}
+						<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
+						<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
+					{:else}
+						<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
+						<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
+					{/if}
 				{/if}
 			</div>
+			{#if !isSource}
+				<span class="text-left font-mono text-[8px] leading-none" style="color:{channelColor(i)}">
+					{channelLabel(i, rows.length)}
+				</span>
+			{/if}
 		</div>
 
 		{#if split && onToggleGroup && i < rows.length - 1}
-			{@const lower = i + 1}
-			{@const grouped = isGrouped(lower)}
-			<div class="grid grid-cols-[minmax(2px,max-content)_1fr] items-center gap-x-1.5">
-				<div></div>
-				<div class="relative -mr-4 flex min-h-4 items-center justify-end gap-1 pr-4">
-					<button
-						type="button"
-						class={[
-							'nodrag nopan flex size-4 items-center justify-center rounded-full border transition-colors',
-							grouped
-								? 'border-neutral-900 bg-neutral-900 text-white'
-								: 'border-neutral-300 bg-neutral-100 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900'
-						]}
-						title={grouped ? 'Unlink stereo pair' : `Link ch${lower}+ch${lower + 1} as stereo`}
-						onclick={() => onToggleGroup(lower)}
-					>
-						<Link class="size-2.5" />
-					</button>
-					<span
-						class={[
-							'pointer-events-none -mr-1.25 -my-2.25 z-5 w-1.5 self-stretch rounded-r-2xl border-y border-r transition-opacity',
-							grouped ? 'border-neutral-900 opacity-100' : 'opacity-0'
-						]}
-					></span>
-					{#if grouped}
-						<Handle
-							type="source"
-							id={`st${lower}`}
-							position={Position.Right}
-							class="handle"
-							style={handleStyle('#a3a3a3')}
-						/>
-					{/if}
-				</div>
+			<div class={['grid items-center gap-x-1.5', isSource ? 'grid-cols-[minmax(2px,max-content)_1fr]' : 'grid-cols-[1fr_minmax(2px,max-content)]']}>
+				{#if isSource}
+					<div></div>
+					<StereoBracket {side} lower={i + 1} grouped={isGrouped(i + 1)} onToggle={onToggleGroup} />
+				{:else}
+					<StereoBracket {side} lower={i + 1} grouped={isGrouped(i + 1)} onToggle={onToggleGroup} />
+					<div></div>
+				{/if}
 			</div>
 		{/if}
 	{/each}

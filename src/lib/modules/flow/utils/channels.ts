@@ -46,6 +46,14 @@ export function handleStyle(color: string): string {
 	return `background:${color} !important;border:1px solid ${edge} !important;--tw-ring-color:${edge}`;
 }
 
+// Nudge a handle from the padded content edge onto the node's outer border
+// (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
+// desynced the visible dot from its clickable connection target.
+export function handleEdgeStyle(color: string, side: 'source' | 'target'): string {
+	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
+	return `${handleStyle(color)};${edge}`;
+}
+
 // A stereo group is stored as the 1-based lower channel it pairs with the next.
 
 export function groupLowerOf(groups: number[], ch1: number): number | null {

@@ -58,6 +58,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     node_id: &str,
     spec: SpeakerResolved,
     graph: OutputGraph,
+    meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
     let device_name = spec
@@ -137,7 +138,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let producer = producer_holder.expect("loop sets producer on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    let (worker_handle, ctrl) =
+        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
     Ok((
         SpeakerHandle { _stream: stream, _worker: worker_handle },
         ctrl,

@@ -6,7 +6,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import InputMeter from '../input/_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 	import { Refresh, Speaker } from '$lib/components/icons';
@@ -168,17 +168,14 @@
 					onChange={setVolumePct}
 				/>
 			{/if}
-		{/if}
-
-		{#if expanded}
-			<div class="mt-1">
-				<ChannelHandles
-					count={channelCount}
-					side="target"
-					stereoGroups={data.stereoGroups ?? []}
-					{onToggleGroup}
-				/>
-			</div>
+			<InputMeter
+				nodeId={id}
+				side="target"
+				channelCount={channelCount}
+				split={expanded}
+				stereoGroups={data.stereoGroups ?? []}
+				{onToggleGroup}
+			/>
 		{/if}
 	</div>
 </Wrapper>

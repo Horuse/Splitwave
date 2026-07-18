@@ -36,6 +36,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     _node_id: &str,
     spec: SpeakerResolved,
     graph: OutputGraph,
+    meter: crate::audio::effects::MeterHandle,
     _app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
@@ -49,7 +50,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     };
     let playback = crate::audio::playback::Playback::start(&spec.node_id, fill)?;
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    let (worker_handle, ctrl) =
+        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
     Ok((
         SpeakerHandle { _playback: playback, _worker: worker_handle },
         ctrl,

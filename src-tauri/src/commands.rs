@@ -1,4 +1,5 @@
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Sender};
+use std::time::Duration;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
@@ -15,6 +16,38 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 const STATE_EVENT: &str = "audio://state";
+
+/// Opening or closing devices legitimately costs hundreds of ms. Past this the
+/// audio thread is wedged -- typically a CoreAudio call into a device that
+/// disappeared mid-reconfigure -- and every later request would queue behind it.
+const AUDIO_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Sends a command to the audio thread and waits for its reply off the main
+/// thread. Tauri runs sync commands on the main thread, so waiting there froze
+/// the whole webview for as long as the reconfigure took.
+async fn audio_request<T, F>(tx: Sender<Command>, make: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(Sender<T>) -> Command + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        tx.send(make(reply_tx))
+            .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
+        match reply_rx.recv_timeout(AUDIO_REPLY_TIMEOUT) {
+            Ok(v) => Ok(v),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(AppError::Stream(format!(
+                "audio thread did not respond within {}s",
+                AUDIO_REPLY_TIMEOUT.as_secs()
+            ))),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(AppError::Stream("audio thread reply lost".into()))
+            }
+        }
+    })
+    .await
+    .map_err(|_| AppError::Stream("audio request task failed".into()))?
+}
 
 #[tauri::command]
 pub fn list_input_devices() -> AppResult<Vec<DeviceInfo>> {
@@ -58,25 +91,21 @@ pub fn check_capture_permission() -> CapturePermission {
 }
 
 #[tauri::command]
-pub fn start_pipeline(
+pub async fn start_pipeline(
     graph: GraphSpec,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> AppResult<()> {
     info!(nodes = graph.nodes.len(), "starting pipeline");
     let valid = graph.validate()?;
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::Start {
-            graph: valid,
-            app: app.clone(),
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    let result = reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?;
+    let tx = state.audio_tx.clone();
+    let spawned = app.clone();
+    let result = audio_request(tx, move |reply| Command::Start {
+        graph: valid,
+        app: spawned,
+        reply,
+    })
+    .await?;
     if result.is_ok() {
         info!("pipeline started");
         let _ = app.emit(STATE_EVENT, json!({ "kind": "started" }));
@@ -85,23 +114,18 @@ pub fn start_pipeline(
 }
 
 #[tauri::command]
-pub fn update_effect(
+pub async fn update_effect(
     node_id: String,
     data: serde_json::Value,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::UpdateEffect {
-            node_id,
-            data,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::UpdateEffect {
+        node_id,
+        data,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -121,117 +145,86 @@ pub fn set_device_volume(kind: DeviceKind, name: String, scalar: f32) -> AppResu
 }
 
 #[tauri::command]
-pub fn reconcile_pipeline(
+pub async fn reconcile_pipeline(
     graph: GraphSpec,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> AppResult<()> {
     info!(nodes = graph.nodes.len(), "reconciling pipeline");
     let valid = graph.validate()?;
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::Reconcile {
-            graph: valid,
-            app,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::Reconcile {
+        graph: valid,
+        app,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
-pub fn seek_audio_file(
+pub async fn seek_audio_file(
     node_id: String,
     frame: i64,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::SeekAudioFile {
-            node_id,
-            frame,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::SeekAudioFile {
+        node_id,
+        frame,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
-pub fn set_audio_file_loop(
+pub async fn set_audio_file_loop(
     node_id: String,
     enabled: bool,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::SetAudioFileLoop {
-            node_id,
-            enabled,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::SetAudioFileLoop {
+        node_id,
+        enabled,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
-pub fn set_audio_file_paused(
+pub async fn set_audio_file_paused(
     node_id: String,
     paused: bool,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::SetAudioFilePaused {
-            node_id,
-            paused,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::SetAudioFilePaused {
+        node_id,
+        paused,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
-pub fn set_input_volume(
+pub async fn set_input_volume(
     node_id: String,
     scalar: f32,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::SetInputVolume {
-            node_id,
-            scalar,
-            reply: reply_tx,
-        })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::SetInputVolume {
+        node_id,
+        scalar,
+        reply,
+    })
+    .await?
 }
 
 #[tauri::command]
-pub fn is_pipeline_running(state: State<'_, AppState>) -> AppResult<bool> {
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::IsRunning { reply: reply_tx })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))
+pub async fn is_pipeline_running(state: State<'_, AppState>) -> AppResult<bool> {
+    let tx = state.audio_tx.clone();
+    audio_request(tx, |reply| Command::IsRunning { reply }).await
 }
 
 #[tauri::command]
@@ -250,22 +243,31 @@ pub fn uninstall_virtual_driver() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
+pub async fn apply_virtual_devices(
+    devices: Vec<VirtualDeviceConfig>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     info!(count = devices.len(), "applying virtual devices");
-    virtual_device::apply_virtual_devices(devices)
+    // Reloading the driver yanks its devices out of CoreAudio. A pipeline still
+    // holding one wedges the audio thread mid-call, so tear it down first and
+    // let the user restart once the new device set is published.
+    let tx = state.audio_tx.clone();
+    audio_request(tx, |reply| Command::Stop { reply })
+        .await
+        .and_then(|r| r)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
+    tauri::async_runtime::spawn_blocking(move || virtual_device::apply_virtual_devices(devices))
+        .await
+        .map_err(|_| "virtual device task failed".to_string())?
 }
 
 #[tauri::command]
-pub fn stop_pipeline(state: State<'_, AppState>, app: AppHandle) -> AppResult<()> {
+pub async fn stop_pipeline(state: State<'_, AppState>, app: AppHandle) -> AppResult<()> {
     info!("stopping pipeline");
-    let (reply_tx, reply_rx) = mpsc::channel();
-    state
-        .audio_tx
-        .send(Command::Stop { reply: reply_tx })
-        .map_err(|_| AppError::Stream("audio thread is gone".into()))?;
-    let result = reply_rx
-        .recv()
-        .map_err(|_| AppError::Stream("audio thread reply lost".into()))?;
+    let tx = state.audio_tx.clone();
+    let result = audio_request(tx, |reply| Command::Stop { reply }).await?;
     if result.is_ok() {
         info!("pipeline stopped");
         let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));

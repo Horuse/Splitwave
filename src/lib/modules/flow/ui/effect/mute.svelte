@@ -29,8 +29,6 @@
 	hasOutput
 	channelIo
 	nodeId={id}
-	channels={data.channels as number}
-	channelsExpanded={data.channelsExpanded as boolean}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}
 >

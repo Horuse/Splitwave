@@ -12,14 +12,12 @@
 	let {
 		nodeId,
 		channelCount = 0,
-		split = false,
 		side = 'source',
 		stereoGroups = [],
 		onToggleGroup
 	}: {
 		nodeId: string;
 		channelCount?: number;
-		split?: boolean;
 		side?: 'source' | 'target';
 		stereoGroups?: number[];
 		onToggleGroup?: (lower: number) => void;
@@ -123,14 +121,12 @@
 					gradient={METER_GRADIENT}
 					hold={isFinite(hold) ? dbToPct(hold) : null}
 				/>
-				{#if split}
-					{#if isSource}
-						<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
-						<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
-					{:else}
-						<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
-						<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
-					{/if}
+				{#if isSource}
+					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
+					<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
+				{:else}
+					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
+					<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
 				{/if}
 			</div>
 			{#if !isSource}
@@ -140,7 +136,7 @@
 			{/if}
 		</div>
 
-		{#if split && onToggleGroup && i < rows.length - 1}
+		{#if onToggleGroup && i < rows.length - 1}
 			<div class={['grid items-center gap-x-1.5', isSource ? 'grid-cols-[minmax(2px,max-content)_1fr]' : 'grid-cols-[1fr_minmax(2px,max-content)]']}>
 				{#if isSource}
 					<div></div>

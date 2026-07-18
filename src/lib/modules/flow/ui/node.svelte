@@ -1,13 +1,11 @@
 <script lang="ts">
 	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
-	import { Handle, Position, useSvelteFlow } from '@xyflow/svelte';
+	import { Handle, Position } from '@xyflow/svelte';
 	import { PREVIEW_CTX } from '../utils';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
-	const flow = useSvelteFlow();
-	const MAX_CH = 16;
 
 	export interface InputHandleConfig {
 		id: string;
@@ -25,12 +23,10 @@
 		outputLabel?: string;
 		bypassed?: boolean;
 		onBypass?: () => void;
-		// When set, shows a split/mix toggle + counter that exposes N per-channel
-		// input (left) and output (right) handles. Requires `nodeId`.
+		// When set, the node exposes per-channel handles that grow with the cables
+		// wired into it instead of a single bus handle. Requires `nodeId`.
 		channelIo?: boolean;
 		nodeId?: string;
-		channels?: number;
-		channelsExpanded?: boolean;
 		children?: Snippet;
 	}
 
@@ -46,35 +42,10 @@
 		onBypass,
 		channelIo = false,
 		nodeId,
-		channels,
-		channelsExpanded = false,
 		children
 	}: Props = $props();
 
-	let chCount = $derived(Math.min(Math.max(channels ?? 2, 2), MAX_CH));
-	let chExpanded = $derived(channelIo && channelsExpanded);
-
-	function toggleChannels() {
-		if (!nodeId) return;
-		const next = !channelsExpanded;
-		if (!next) {
-			const orphaned = flow
-				.getEdges()
-				.filter(
-					(e) =>
-						(e.source === nodeId || e.target === nodeId) &&
-						(e.sourceHandle?.startsWith('ch') || e.targetHandle?.startsWith('ch'))
-				)
-				.map((e) => ({ id: e.id }));
-			if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		}
-		flow.updateNodeData(nodeId, { channelsExpanded: next });
-	}
-
-	function setChannels(n: number) {
-		if (!nodeId) return;
-		flow.updateNodeData(nodeId, { channels: Math.min(Math.max(n, 2), MAX_CH) });
-	}
+	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
 
 	const ACCENT_TEXT = {
 		input: 'text-emerald-600 dark:text-emerald-400',
@@ -109,38 +80,6 @@
 			{label}
 		</span>
 		<div class="flex items-center gap-1">
-			{#if channelIo && !isPreview}
-				{#if chExpanded}
-					<div class="flex items-center gap-0.5">
-						<button
-							type="button"
-							class="nodrag nopan flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
-							disabled={chCount <= 2}
-							onclick={() => setChannels(chCount - 1)}>-</button
-						>
-						<span class="w-3 text-center font-mono text-[9px] tabular-nums text-neutral-900">{chCount}</span>
-						<button
-							type="button"
-							class="nodrag nopan flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
-							disabled={chCount >= MAX_CH}
-							onclick={() => setChannels(chCount + 1)}>+</button
-						>
-					</div>
-				{/if}
-				<button
-					type="button"
-					class={[
-						'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
-						chExpanded
-							? 'border-neutral-900 bg-neutral-900 text-white'
-							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-					]}
-					title="Split into per-channel handles"
-					onclick={toggleChannels}
-				>
-					{chExpanded ? 'mix' : 'split'}
-				</button>
-			{/if}
 			{#if onBypass}
 				<button
 					type="button"
@@ -163,15 +102,15 @@
 		{@render children?.()}
 	</div>
 
-	{#if chExpanded}
+	{#if chExpanded && nodeId}
 		<div class="mt-2 flex justify-between gap-2">
 			{#if hasInput}
-				<ChannelHandles count={chCount} side="target" />
+				<ChannelHandles {nodeId} side="target" />
 			{:else}
 				<div></div>
 			{/if}
 			{#if hasOutput}
-				<ChannelHandles count={chCount} side="source" />
+				<ChannelHandles {nodeId} side="source" />
 			{/if}
 		</div>
 	{/if}

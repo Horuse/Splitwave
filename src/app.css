@@ -244,7 +244,7 @@
 }
 
 .handle {
-    @apply !size-2 rounded-full !bg-neutral-200 border-neutral-400 border
+    @apply size-2! rounded-full z-50 bg-neutral-200! border-neutral-400 border
 }
 
 /* Animated dashed wire from a meter bar / label to its channel handle. Color is

@@ -156,8 +156,6 @@
 	hasOutput
 	channelIo
 	nodeId={id}
-	channels={data.channels as number}
-	channelsExpanded={data.channelsExpanded as boolean}
 >
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">

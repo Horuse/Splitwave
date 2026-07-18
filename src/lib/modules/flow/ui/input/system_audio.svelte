@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -22,6 +22,7 @@
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
 
 	const flow = useSvelteFlow();
+	const updateNodeInternals = useUpdateNodeInternals();
 
 	let permission = $state<CapturePermission | null>(null);
 	let checking = $state(false);
@@ -77,14 +78,16 @@
 
 	// System Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
-	const expanded = true;
 
 	function onToggleGroup(lower: number) {
 		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+		// Toggling a pair swaps handles without changing node height, so xyflow's
+		// resize observer never fires and the new handle stays unconnectable.
+		updateNodeInternals(id);
 	}
 </script>
 
-<Wrapper label="System Audio" accent="input" icon={SoundWave} hasOutput={!expanded}>
+<Wrapper label="System Audio" accent="input" icon={SoundWave}>
 	<div class="flex w-64 flex-col gap-3">
 		{#if showBanner}
 			<div class={[
@@ -154,7 +157,6 @@
 		<InputMeter
 			nodeId={id}
 			channelCount={channelCount}
-			split={expanded}
 			stereoGroups={data.stereoGroups ?? []}
 			{onToggleGroup}
 		/>

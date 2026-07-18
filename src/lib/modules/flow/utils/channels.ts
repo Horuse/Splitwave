@@ -54,6 +54,60 @@ export function handleEdgeStyle(color: string, side: 'source' | 'target'): strin
 	return `${handleStyle(color)};${edge}`;
 }
 
+// An unwired slot reads as an outline, not a channel: no fill, dashed border.
+export function handleFreeStyle(side: 'source' | 'target'): string {
+	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
+	return `background:transparent !important;border:1px dashed #a3a3a3 !important;${edge}`;
+}
+
+export interface Slot {
+	id: string;
+	ch: number;
+	width: number;
+	occupied: boolean;
+}
+
+export function parseHandle(handle: string): { ch: number; width: number } | null {
+	const st = /^st(\d+)$/.exec(handle);
+	if (st) return { ch: Number(st[1]), width: 2 };
+	const ch = /^ch(\d+)$/.exec(handle);
+	if (ch) return { ch: Number(ch[1]), width: 1 };
+	return null;
+}
+
+// Slots a node shows, derived from the handles currently wired into it. A
+// removed cable leaves its slot free in place rather than renumbering the live
+// ones below it -- a shift would silently reroute audio to another channel.
+// `trailing` appends the one free slot that lets the target side grow.
+export function deriveSlots(occupiedHandles: string[], trailing: boolean): Slot[] {
+	const widths = new Map<number, number>();
+	for (const h of occupiedHandles) {
+		const p = parseHandle(h);
+		if (!p) continue;
+		widths.set(p.ch, Math.max(widths.get(p.ch) ?? 0, p.width));
+	}
+
+	let end = 0;
+	for (const [ch, w] of widths) end = Math.max(end, ch + w - 1);
+
+	const slots: Slot[] = [];
+	for (let ch = 1; ch <= end; ) {
+		const w = widths.get(ch);
+		if (w === undefined) {
+			slots.push({ id: `ch${ch}`, ch, width: 1, occupied: false });
+			ch += 1;
+			continue;
+		}
+		slots.push({ id: w === 2 ? `st${ch}` : `ch${ch}`, ch, width: w, occupied: true });
+		ch += w;
+	}
+
+	if (trailing) {
+		slots.push({ id: `ch${end + 1}`, ch: end + 1, width: 1, occupied: false });
+	}
+	return slots;
+}
+
 // A stereo group is stored as the 1-based lower channel it pairs with the next.
 
 export function groupLowerOf(groups: number[], ch1: number): number | null {

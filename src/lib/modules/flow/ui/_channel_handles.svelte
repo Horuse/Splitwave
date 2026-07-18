@@ -1,40 +1,59 @@
 <script lang="ts">
-	import { Handle, Position } from '@xyflow/svelte';
-	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
-	import StereoBracket from './_stereo_bracket.svelte';
+	import { untrack } from 'svelte';
+	import { Handle, Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
+	import {
+		channelColor,
+		deriveSlots,
+		handleEdgeStyle,
+		handleFreeStyle
+	} from '$lib/modules/flow/utils';
 
 	interface Props {
-		count: number;
+		nodeId: string;
 		side: 'source' | 'target';
-		stereoGroups?: number[];
-		onToggleGroup?: (lower: number) => void;
 	}
-	let { count, side, stereoGroups = [], onToggleGroup }: Props = $props();
+	let { nodeId, side }: Props = $props();
 
-	let indices = $derived(Array.from({ length: count }, (_, i) => i));
+	const updateNodeInternals = useUpdateNodeInternals();
+	// A node's id is fixed for the component's lifetime; the hook takes a value.
+	const incoming = useNodeConnections({ id: untrack(() => nodeId), handleType: 'target' });
+
 	let isSource = $derived(side === 'source');
+	// Both sides key off the incoming cables: a channel only has an output once
+	// something feeds it, so only the target side trails a free slot to grow on.
+	let occupied = $derived(
+		incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
+	);
+	let slots = $derived(deriveSlots(occupied, !isSource).filter((s) => !isSource || s.occupied));
 
-	function isGrouped(lower: number): boolean {
-		return stereoGroups.includes(lower);
-	}
+	// xyflow caches handle bounds and only remeasures on a resize; a slot that
+	// appears without changing node height would stay unconnectable otherwise.
+	$effect(() => {
+		slots.length;
+		updateNodeInternals(nodeId);
+	});
 </script>
 
 <div class="flex flex-col gap-0.5">
-	{#each indices as i (i)}
-		<div class={['relative flex min-h-4 items-center gap-1', isSource && 'justify-end']}>
-			{#if isSource}
-				<span class="font-mono text-[9px]" style="color:{channelColor(i)}">{channelLabel(i, count)}</span>
-				<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
-				<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
-			{:else}
-				<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
-				<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
-				<span class="font-mono text-[9px]" style="color:{channelColor(i)}">{channelLabel(i, count)}</span>
+	{#each slots as slot (slot.id)}
+		{@const color = channelColor(slot.ch - 1)}
+		<div
+			class={['relative flex items-center gap-1', isSource && 'justify-end']}
+			style="min-height:{slot.width}rem"
+		>
+			{#if slot.occupied}
+				<div
+					class="wire pointer-events-none absolute top-1/2 -translate-y-1/2"
+					style="{isSource ? 'right' : 'left'}:-1rem; width:1rem; color:{color}"
+				></div>
 			{/if}
+			<Handle
+				type={side}
+				id={slot.id}
+				position={isSource ? Position.Right : Position.Left}
+				class="handle"
+				style={slot.occupied ? handleEdgeStyle(color, side) : handleFreeStyle(side)}
+			/>
 		</div>
-
-		{#if onToggleGroup && i < count - 1}
-			<StereoBracket {side} lower={i + 1} grouped={isGrouped(i + 1)} onToggle={onToggleGroup} />
-		{/if}
 	{/each}
 </div>

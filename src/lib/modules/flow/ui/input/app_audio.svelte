@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -15,6 +15,7 @@
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
 
 	const flow = useSvelteFlow();
+	const updateNodeInternals = useUpdateNodeInternals();
 
 	let refreshing = $state(false);
 
@@ -62,14 +63,16 @@
 
 	// App Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
-	const expanded = true;
 
 	function onToggleGroup(lower: number) {
 		flow.updateNodeData(id, { stereoGroups: toggleGroup(data.stereoGroups ?? [], lower) });
+		// Toggling a pair swaps handles without changing node height, so xyflow's
+		// resize observer never fires and the new handle stays unconnectable.
+		updateNodeInternals(id);
 	}
 </script>
 
-<Wrapper label="App Audio" accent="input" icon={Apps} hasOutput={!expanded}>
+<Wrapper label="App Audio" accent="input" icon={Apps}>
 	<div class="flex w-64 flex-col gap-3">
 		<div class="flex items-center w-full gap-1">
 			<Combobox class="w-full" {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
@@ -101,7 +104,6 @@
 			<InputMeter
 				nodeId={id}
 				channelCount={channelCount}
-				split={expanded}
 				stereoGroups={data.stereoGroups ?? []}
 				{onToggleGroup}
 			/>

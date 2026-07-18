@@ -152,8 +152,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
 		category: 'monitor',
-		label: 'LUFS Meter',
-		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS.',
+		label: 'Loudness',
+		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
 		component: LufsMeter,
 		defaultData: { target: -14 }
 	}),

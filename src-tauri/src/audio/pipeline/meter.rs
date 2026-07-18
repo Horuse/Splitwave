@@ -110,6 +110,7 @@ pub(super) fn spawn_meter_thread(
                             "integrated": snap.integrated,
                             "tpL": snap.tp_l,
                             "tpR": snap.tp_r,
+                            "lra": snap.lra,
                         }),
                     );
                 }

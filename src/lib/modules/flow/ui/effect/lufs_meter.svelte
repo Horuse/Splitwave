@@ -54,16 +54,27 @@
 	let holdM = $state(LUFS_SILENT);
 	let holdS = $state(LUFS_SILENT);
 	let holdI = $state(LUFS_SILENT);
+	let tpMax = $state(LUFS_SILENT);
+	let lra = $state(0);
 
 	interface LufsTick {
 		nodeId: string;
 		momentary: number;
 		shortterm: number;
 		integrated: number;
+		tpL: number;
+		tpR: number;
+		lra: number;
 	}
 
 	function format(v: number): string {
 		return v <= LUFS_SILENT ? '−∞' : v.toFixed(1);
+	}
+
+	// Peak-to-loudness style ratios; both operands must be valid, else no reading.
+	function ratio(peak: number, loud: number): string {
+		if (peak <= LUFS_SILENT || loud <= LUFS_SILENT) return '—';
+		return (peak - loud).toFixed(1);
 	}
 
 	function targetDelta(integrated: number, target: number | null | undefined): string | null {
@@ -85,6 +96,7 @@
 		holdM = LUFS_SILENT;
 		holdS = LUFS_SILENT;
 		holdI = LUFS_SILENT;
+		tpMax = LUFS_SILENT;
 	}
 
 	let unlisten: UnlistenFn | undefined;
@@ -101,6 +113,8 @@
 			holdM = Math.max(holdM, momentary);
 			holdS = Math.max(holdS, shortterm);
 			holdI = Math.max(holdI, integrated);
+			tpMax = Math.max(tpMax, p.tpL, p.tpR);
+			lra = p.lra;
 		});
 	});
 
@@ -110,7 +124,7 @@
 	});
 </script>
 
-<Wrapper label="LUFS Meter" accent="effect" hasInput hasOutput>
+<Wrapper label="Loudness" accent="effect" hasInput hasOutput>
 	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			<!-- LUFS block: M / S / I -->
@@ -181,6 +195,23 @@
 				<div class="h-3 text-center text-[8px] leading-3 font-semibold {targetClass(integrated, data.target)}" style="width: {BAR_W * 3}px;">
 					{targetDelta(integrated, data.target) ?? ''}
 				</div>
+			</div>
+
+			<!-- Program stats -->
+			<div class="flex flex-col gap-1" style="width: {BAR_W * 2}px;">
+				{#each [
+					{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) },
+					{ label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) },
+					{ label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) },
+					{ label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }
+				] as stat (stat.label)}
+					<div class="flex flex-col rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
+						<span class="text-[7px] leading-none text-neutral-500">{stat.label}</span>
+						<span class="tabular-nums text-[11px] leading-tight font-semibold text-neutral-900">
+							{stat.val}<span class="ml-0.5 text-[7px] font-normal text-neutral-400">{stat.unit}</span>
+						</span>
+					</div>
+				{/each}
 			</div>
 		</div>
 

@@ -835,7 +835,9 @@ impl ActivePipeline {
                     path,
                     sample_rate,
                     format,
+                    channels,
                 } => {
+                    og.set_out_channels(channels as usize);
                     if let Some(state) = self.recorders.get_mut(&out.id) {
                         if state.sample_rate == sample_rate {
                             state.ctrl.send_graph(og)?;
@@ -853,6 +855,7 @@ impl ActivePipeline {
                         path,
                         sample_rate,
                         format,
+                        channels,
                         og,
                         app.clone(),
                     )?;

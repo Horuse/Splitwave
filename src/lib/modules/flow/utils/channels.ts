@@ -75,7 +75,7 @@ export function parseHandle(handle: string): number | null {
 }
 
 // A removed cable frees its slot in place; renumbering would reroute live audio.
-export function deriveSlots(occupiedHandles: string[], trailing: boolean): Slot[] {
+export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = Infinity): Slot[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
 		const ch = parseHandle(h);
@@ -87,7 +87,7 @@ export function deriveSlots(occupiedHandles: string[], trailing: boolean): Slot[
 	for (let ch = 1; ch <= end; ch++) {
 		slots.push({ id: `ch${ch}`, ch, occupied: taken.has(ch) });
 	}
-	if (trailing) {
+	if (trailing && end < max) {
 		slots.push({ id: `ch${end + 1}`, ch: end + 1, occupied: false });
 	}
 	return slots;

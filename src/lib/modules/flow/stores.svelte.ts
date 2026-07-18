@@ -26,3 +26,6 @@ class ChannelSelection {
 }
 
 export const channelSelection = new ChannelSelection();
+
+/** Target-side channel ceiling per node. Slots alone do not stop a multi-channel drag. */
+export const channelCaps = new Map<string, number>();

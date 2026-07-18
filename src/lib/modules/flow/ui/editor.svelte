@@ -44,7 +44,7 @@
 		Refresh,
 		Rewind
 	} from '$lib/components/icons';
-	import { channelSelection } from '../stores.svelte';
+	import { channelCaps, channelSelection } from '../stores.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
@@ -87,7 +87,10 @@
 			const taken = current
 				.filter((e) => e.target === seed.target && e.id !== seed.id)
 				.map((e) => e.targetHandle ?? '');
-			const run = freeRunFrom(taken, dropped, armed.length);
+			// The target may refuse the whole set: mono recording takes one channel.
+			const cap = channelCaps.get(seed.target) ?? Infinity;
+			const run = freeRunFrom(taken, dropped, armed.length).filter((ch) => ch <= cap);
+			if (run.length === 0) return;
 			const seedIdx = armed.indexOf(seedCh);
 
 			const added: XyEdge[] = [];
@@ -95,7 +98,7 @@
 				e.id === seed.id ? { ...e, targetHandle: `ch${run[seedIdx]}` } : e
 			);
 			armed.forEach((ch, i) => {
-				if (i === seedIdx) return;
+				if (i === seedIdx || run[i] === undefined) return;
 				added.push({
 					id: createId(),
 					source: seed.source,

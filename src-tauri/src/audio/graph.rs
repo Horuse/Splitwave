@@ -229,6 +229,18 @@ impl Default for RecordingFormat {
     }
 }
 
+impl RecordingFormat {
+    /// LAME and the plain Opus encoder are two-channel; FLAC and AAC cap by spec.
+    pub fn max_channels(self) -> u16 {
+        match self {
+            RecordingFormat::Mp3 { .. } | RecordingFormat::Opus { .. } => 2,
+            RecordingFormat::Flac { .. } => 8,
+            RecordingFormat::Aac { .. } => 48,
+            RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. } => 512,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -238,6 +250,12 @@ pub struct FileRecordingData {
     pub format: RecordingFormat,
     #[serde(default)]
     pub allow_overwrite: bool,
+    #[serde(default = "default_two")]
+    pub channels: u16,
+}
+
+fn default_two() -> u16 {
+    2
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -458,7 +476,7 @@ pub enum InputSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputSpec {
     Speaker { device_id: String },
-    FileRecording { file_path: String, format: RecordingFormat },
+    FileRecording { file_path: String, format: RecordingFormat, channels: u16 },
     NetSender {
         node_id: String,
         target: SocketAddr,
@@ -783,9 +801,17 @@ impl GraphSpec {
                     if !data.allow_overwrite && path.exists() {
                         return Err(choose_file_err(&n.id, "file already exists"));
                     }
+                    let max = data.format.max_channels();
+                    if data.channels == 0 || data.channels > max {
+                        return Err(AppError::Validation(format!(
+                            "recording node {} asks for {} channels; format allows 1..{max}",
+                            n.id, data.channels
+                        )));
+                    }
                     OutputSpec::FileRecording {
                         file_path,
                         format: data.format,
+                        channels: data.channels,
                     }
                 }
                 NodeKind::NetSender => {

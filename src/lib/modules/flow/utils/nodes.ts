@@ -98,7 +98,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		defaultData: {
 			filePath: null,
 			format: { kind: 'wav', bitDepth: 'f32' },
-			allowOverwrite: false
+			allowOverwrite: false,
+			channels: 2
 		}
 	}),
 	gain: entry<'gain'>({

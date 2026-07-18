@@ -27,6 +27,7 @@
 		// wired into it instead of a single bus handle. Requires `nodeId`.
 		channelIo?: boolean;
 		nodeId?: string;
+		maxChannels?: number;
 		children?: Snippet;
 	}
 
@@ -42,6 +43,7 @@
 		onBypass,
 		channelIo = false,
 		nodeId,
+		maxChannels,
 		children
 	}: Props = $props();
 
@@ -105,7 +107,7 @@
 	{#if chExpanded && nodeId}
 		<div class="mt-2 flex justify-between gap-2">
 			{#if hasInput}
-				<ChannelHandles {nodeId} side="target" />
+				<ChannelHandles {nodeId} side="target" max={maxChannels} />
 			{:else}
 				<div></div>
 			{/if}

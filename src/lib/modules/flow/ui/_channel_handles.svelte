@@ -7,13 +7,14 @@
 		handleEdgeStyle,
 		handleFreeStyle
 	} from '$lib/modules/flow/utils';
-	import { channelSelection } from '$lib/modules/flow/stores.svelte';
+	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
 		nodeId: string;
 		side: 'source' | 'target';
+		max?: number;
 	}
-	let { nodeId, side }: Props = $props();
+	let { nodeId, side, max = Infinity }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
@@ -24,7 +25,15 @@
 	let occupied = $derived(
 		incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
 	);
-	let slots = $derived(deriveSlots(occupied, !isSource).filter((s) => !isSource || s.occupied));
+	let slots = $derived(
+		deriveSlots(occupied, !isSource, max).filter((s) => !isSource || s.occupied)
+	);
+
+	$effect(() => {
+		if (isSource) return;
+		channelCaps.set(nodeId, max);
+		return () => channelCaps.delete(nodeId);
+	});
 
 	// xyflow remeasures handles only on resize; a slot added at equal height would not connect.
 	$effect(() => {

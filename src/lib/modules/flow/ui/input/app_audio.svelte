@@ -71,7 +71,7 @@
 			<Combobox class="w-full" {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
 			<button
 				type="button"
-				class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
+				class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
 				title="Refresh applications"
 				disabled={refreshing}
 				onclick={refresh}

@@ -16,9 +16,10 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
-	import { Folder } from '$lib/components/icons';
+	import { Folder, FolderOpen } from '$lib/components/icons';
 	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
@@ -410,29 +411,31 @@
 			{basename(data.filePath)}
 		</div>
 		<div class="flex gap-1">
-			<button class="button-main primary rounded-lg nodrag nopan flex-1 py-1 text-xs" onclick={chooseFile}>
-				Choose file…
+			<button
+				type="button"
+				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
+				onclick={chooseFile}
+			>
+				<Folder class="size-3.5" />
+				Choose file
 			</button>
 			<Tooltip text="Reveal the recording in Finder">
 				<button
 					type="button"
-					class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
+					class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
 					disabled={!data.filePath}
 					onclick={revealFolder}
 				>
-					<Folder class="h-3.5 w-3.5" />
+					<FolderOpen class="size-3.5" />
 				</button>
 			</Tooltip>
 		</div>
-		<label class="nodrag nopan flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-700">
-			<input
-				type="checkbox"
-				class="accent-neutral-900"
-				checked={data.allowOverwrite}
-				onchange={(e) => flow.updateNodeData(id, { allowOverwrite: e.currentTarget.checked })}
-			/>
-			Allow overwrite
-		</label>
+		<Toggle
+			size="sm"
+			label="Allow overwrite"
+			checked={data.allowOverwrite}
+			onChange={(v) => flow.updateNodeData(id, { allowOverwrite: v })}
+		/>
 
 		<SegmentedButtons
 			options={FORMATS}

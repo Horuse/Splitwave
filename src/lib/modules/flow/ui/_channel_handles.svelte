@@ -58,14 +58,10 @@
 		{@const color = channelColor(slot.ch - 1)}
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
 		<div
-			class="relative flex min-h-4 items-center gap-1"
+			class="relative flex min-h-4 items-center"
 			class:justify-end={isSource}
 			onmousedowncapture={(e) => onArm(e, slot.ch)}
 		>
-			<div
-				class="wire pointer-events-none absolute top-1/2 -translate-y-1/2"
-				style="{isSource ? 'right' : 'left'}:-1rem; width:1rem; color:{color}"
-			></div>
 			<Handle
 				type={side}
 				id={slot.id}

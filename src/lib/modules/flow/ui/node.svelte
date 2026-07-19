@@ -108,8 +108,8 @@
 		</div>
 	</div>
 
-	<!-- Socket rows carry no width, so flanking columns cost only the gap. -->
-	<div class="flex items-start gap-2">
+	<!-- Socket columns take no width; a gap here would inset the content. -->
+	<div class="flex items-start">
 		{#if chExpanded && nodeId && hasInput}
 			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
 		{/if}

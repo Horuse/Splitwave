@@ -170,16 +170,22 @@ impl BroadcastRx {
         backoff: Duration,
     ) {
         self.apply_commands();
-        for slot in self.slots.iter_mut() {
-            let Some(p) = slot else { continue };
+        for i in 0..self.slots.len() {
             let mut written = 0;
             while written < samples.len() {
                 if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
                     return;
                 }
+                let Some(p) = self.slots[i].as_mut() else { break };
+                // A consumer that went away leaves its ring full forever.
+                if p.is_abandoned() {
+                    break;
+                }
                 let avail = p.slots();
                 if avail == 0 {
                     thread::sleep(backoff);
+                    // The removal queued by a torn-down output only lands here.
+                    self.apply_commands();
                     continue;
                 }
                 let take = avail.min(samples.len() - written);

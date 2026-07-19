@@ -4,6 +4,7 @@
 	import Header from '$lib/components/layout/header.svelte';
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 
 	const isWindows = platform() === 'windows';
 
@@ -82,29 +83,12 @@
 			</div>
 
 			{#each [{ key: 'animated' as const, label: 'Animate cables', hint: 'Marching dashes along every connection. Runs a CSS animation per edge.' }, { key: 'pins' as const, label: 'Connector pins', hint: 'Draws a plug at each end of a cable.' }] as row (row.key)}
-				<button
-					type="button"
-					onclick={() => toggle(row.key)}
-					class="flex items-center justify-between gap-4 rounded-xl border border-neutral-400 bg-neutral-100 p-3 text-left transition-colors hover:bg-neutral-200"
-				>
-					<span class="flex flex-col">
-						<span class="text-xs font-medium text-theme">{row.label}</span>
-						<span class="text-[11px] text-neutral-900">{row.hint}</span>
-					</span>
-					<span
-						class={[
-							'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-							edgeSettings[row.key] ? 'bg-neutral-900' : 'bg-neutral-400'
-						]}
-					>
-						<span
-							class={[
-								'absolute top-0.5 size-4 rounded-full bg-background transition-all',
-								edgeSettings[row.key] ? 'left-4.5' : 'left-0.5'
-							]}
-						></span>
-					</span>
-				</button>
+				<Toggle
+					checked={edgeSettings[row.key]}
+					label={row.label}
+					hint={row.hint}
+					onChange={() => toggle(row.key)}
+				/>
 			{/each}
 		</section>
 

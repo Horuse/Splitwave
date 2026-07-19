@@ -7,6 +7,7 @@
 	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
@@ -35,11 +36,6 @@
 			permission.kind === 'screenrecording' &&
 			permission.state !== 'allowed'
 	);
-
-	function onToggle(e: Event) {
-		const checked = (e.currentTarget as HTMLInputElement).checked;
-		flow.updateNodeData(id, { excludeCurrentApp: checked });
-	}
 
 	async function refreshPermission() {
 		checking = true;
@@ -126,15 +122,12 @@
 			</div>
 		{/if}
 		{#if isMac}
-			<label class="nodrag nopan flex items-center gap-2 text-xs text-neutral-1000">
-				<input
-					type="checkbox"
-					class="nodrag nopan rounded"
-					checked={data.excludeCurrentApp ?? true}
-					onchange={onToggle}
-				/>
-				Exclude this app (avoid feedback)
-			</label>
+			<Toggle
+				size="sm"
+				label="Exclude this app"
+				checked={data.excludeCurrentApp ?? true}
+				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })}
+			/>
 		{/if}
 		<Slider
 			label="Volume"

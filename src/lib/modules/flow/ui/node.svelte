@@ -17,6 +17,7 @@
 		label: string;
 		accent?: 'input' | 'output' | 'effect';
 		icon?: Component<{ class?: ClassValue; title?: string }>;
+		badge?: Snippet;
 		hasInput?: boolean;
 		hasOutput?: boolean;
 		inputs?: InputHandleConfig[];
@@ -39,6 +40,7 @@
 		label,
 		accent = 'effect',
 		icon: NodeIcon,
+		badge,
 		hasInput = false,
 		hasOutput = false,
 		inputs,
@@ -90,6 +92,7 @@
 			{label}
 		</span>
 		<div class="flex items-center gap-1">
+			{#if badge}{@render badge()}{/if}
 			{#if onBypass}
 				<button
 					type="button"

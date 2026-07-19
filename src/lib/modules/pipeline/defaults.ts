@@ -3,11 +3,11 @@ import type { NodeDataMap, NodeKind } from './types';
 /** Lives here rather than in the flow registry so migrations can reach it
  * without importing Svelte components. */
 export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
-	microphone: { deviceId: null, channelsExpanded: false },
+	microphone: { deviceId: null },
 	systemAudio: { excludeCurrentApp: true, volume: 1 },
 	appAudio: { bundleId: null, volume: 1 },
 	audioFile: { filePath: null, loopEnabled: false, volume: 1, autoStart: true },
-	speaker: { deviceId: null, channelsExpanded: false },
+	speaker: { deviceId: null },
 	fileRecording: {
 		filePath: null,
 		format: { kind: 'wav', bitDepth: 'f32' },

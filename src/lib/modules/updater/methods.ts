@@ -2,7 +2,6 @@ import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { LazyStore } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
-import { getVersion } from '@tauri-apps/api/app';
 import { updaterStore } from './stores.svelte';
 
 const PREFS_FILE = 'updater_prefs.json';
@@ -56,18 +55,6 @@ async function diagnoseError(e: unknown): Promise<string> {
 	}
 }
 
-function majorOf(version: string): number {
-	return Number(version.split('.')[0]?.replace(/[^0-9]/g, '') ?? 0);
-}
-
-/** A major bump can leave saved pipelines unrunnable, so the user confirms first. */
-export async function isBreakingUpdate(toVersion: string): Promise<boolean> {
-	try {
-		return majorOf(toVersion) > majorOf(await getVersion());
-	} catch {
-		return false;
-	}
-}
 
 export async function installUpdate(): Promise<void> {
 	const s = updaterStore.state;

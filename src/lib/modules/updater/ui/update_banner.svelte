@@ -1,27 +1,9 @@
 <script lang="ts">
 	import { updaterStore } from '../stores.svelte';
-	import { installUpdate, isBreakingUpdate, skipVersion } from '../methods';
+	import { installUpdate, skipVersion } from '../methods';
 	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
-	import { modalManager } from '$lib/modules/overlay/modal';
-	import { getVersion } from '@tauri-apps/api/app';
-	import BreakingModal from './breaking_modal.svelte';
 
-	// A major bump can clear connections the migration cannot map; confirm first.
-	async function confirmThenInstall() {
-		if (s.phase !== 'available') return;
-		const version = s.update.version;
-		if (await isBreakingUpdate(version)) {
-			const current = await getVersion().catch(() => '');
-			const ok = await modalManager.open<boolean>('Breaking update', BreakingModal, {
-				canClose: true,
-				version,
-				current
-			});
-			if (!ok) return;
-		}
-		await installUpdate();
-	}
 
 	let s = $derived(updaterStore.state);
 
@@ -106,7 +88,7 @@
 				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
 					Later
 				</button>
-				<button type="button" class="button-main green rounded-lg" onclick={confirmThenInstall}>
+				<button type="button" class="button-main green rounded-lg" onclick={installUpdate}>
 					Install &amp; restart
 				</button>
 			{:else if s.phase === 'error'}

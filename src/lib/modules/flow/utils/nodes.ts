@@ -261,7 +261,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',
-		category: 'effect',
+		category: 'network',
 		label: 'WebRTC',
 		description:
 			'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
@@ -271,7 +271,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	netReceiver: entry<'netReceiver'>({
 		kind: 'netReceiver',
-		category: 'input',
+		category: 'network',
 		label: 'Net Receiver',
 		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
 		component: NetReceiver,
@@ -280,7 +280,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	netSender: entry<'netSender'>({
 		kind: 'netSender',
-		category: 'output',
+		category: 'network',
 		label: 'Net Sender',
 		description: 'Send audio over UDP to a direct IP target (Opus or raw PCM).',
 		component: NetSender,
@@ -295,13 +295,14 @@ export const nodeTypes: NodeTypes = Object.fromEntries(
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'effect', 'monitor', 'output'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
-	effect: 'Effects',
+	output: 'Outputs',
 	monitor: 'Monitors',
-	output: 'Outputs'
+	network: 'Network',
+	effect: 'Effects'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

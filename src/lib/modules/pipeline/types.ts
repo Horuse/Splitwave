@@ -33,7 +33,7 @@ export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';
 
-export type NodeCategory = 'input' | 'output' | 'effect' | 'monitor';
+export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect';
 
 // xyflow requires node data to satisfy `Record<string, unknown>`; intersecting
 // gives generated types that constraint without us redeclaring fields.

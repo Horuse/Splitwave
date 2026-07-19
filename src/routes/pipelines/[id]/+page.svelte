@@ -9,9 +9,11 @@
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
+	import { isOutdated } from '$lib/modules/pipeline/version';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
+	let stale = $state(false);
 
 	$effect(() => {
 		const id = page.params.id;
@@ -23,6 +25,8 @@
 			const p = await pipelineMethods.get(id);
 			if (!p) {
 				notFound = true;
+			} else if (isOutdated(p)) {
+				stale = true;
 			} else {
 				pipeline = p;
 			}
@@ -79,6 +83,19 @@
 <div class="flex h-[calc(100vh-40px)] w-full">
 	{#if notFound}
 		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
+	{:else if stale}
+		<div class="flex w-full flex-col items-start gap-4 p-8">
+			<div class="warning-block max-w-xl">
+				<span class="font-semibold">This pipeline was saved by an earlier build.</span>
+				<span>
+					Channel routing changed, and the old wiring cannot be remapped without guessing where
+					each cable was meant to land. Rather than reroute your audio silently, the pipeline is
+					left untouched and cannot be opened or run.
+				</span>
+				<span>Create a new pipeline and rewire it, then delete this one from the list.</span>
+			</div>
+			<a href="/" class="button-main primary rounded-lg text-sm">Back to pipelines</a>
+		</div>
 	{:else if pipeline}
 		<Flow.ui.Flow {pipeline} />
 	{:else}

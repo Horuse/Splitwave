@@ -4,6 +4,9 @@
 	import { errorStore } from '$lib/modules/error';
 	import { updaterStore } from '$lib/modules/updater';
 	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
+	import { modalManager } from '$lib/modules/overlay/modal';
+	import { BreakingModal } from '$lib/modules/updater/ui';
+	import { getVersion } from '@tauri-apps/api/app';
 
 	let open = $state(false);
 
@@ -60,6 +63,15 @@
 		};
 	}
 
+	async function fakeBreakingUpdate() {
+		const current = await getVersion().catch(() => '0.5.0');
+		await modalManager.open('Breaking update', BreakingModal, {
+			canClose: true,
+			current,
+			version: `${Number(current.split('.')[0]) + 1}.0.0`
+		});
+	}
+
 	function fakeUpdateError() {
 		updaterStore.state = { phase: 'error', message: 'signature verification failed' };
 	}
@@ -81,6 +93,7 @@
 				<MenuSection label="Updater" />
 				<MenuItem label="Update available" onclick={fakeUpdateAvailable} />
 				<MenuItem label="Downloading 30%" onclick={fakeDownloading} />
+				<MenuItem label="Breaking update warning" onclick={fakeBreakingUpdate} />
 				<MenuItem label="Update error" onclick={fakeUpdateError} />
 				<MenuSeparator />
 				<MenuItem label="Clear all" onclick={clearAll} />

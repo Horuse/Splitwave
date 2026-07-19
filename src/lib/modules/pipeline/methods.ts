@@ -1,5 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 import type { Pipeline } from './types';
+import { PIPELINE_VERSION } from './version';
 
 const STORE_FILE = 'pipelines.json';
 const KEY_PREFIX = 'pipeline:';
@@ -15,7 +16,15 @@ export interface Snapshot {
 export const methods = {
 	emptyPipeline(id: string, name: string): Pipeline {
 		const now = Date.now();
-		return { id, name, nodes: [], edges: [], createdAt: now, updatedAt: now };
+		return {
+			id,
+			name,
+			nodes: [],
+			edges: [],
+			createdAt: now,
+			updatedAt: now,
+			version: PIPELINE_VERSION
+		};
 	},
 
 	async list(): Promise<Pipeline[]> {
@@ -31,7 +40,7 @@ export const methods = {
 	},
 
 	async save(p: Pipeline): Promise<void> {
-		await store.set(KEY_PREFIX + p.id, p);
+		await store.set(KEY_PREFIX + p.id, { ...p, version: PIPELINE_VERSION });
 		await store.save();
 	},
 

@@ -120,4 +120,6 @@ export interface Pipeline {
 	edges: PipelineEdge[];
 	createdAt: number;
 	updatedAt: number;
+	/** Schema version; absent means pre-versioning, see `pipeline/migrations`. */
+	version?: number;
 }

@@ -12,6 +12,7 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import type { NodeKind, Pipeline } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -620,6 +621,7 @@
 			onnodedragstart={closeContextMenu}
 			onselectionstart={closeContextMenu}
 			onmovestart={closeContextMenu}
+			snapGrid={appSettings.snapToGrid ? [appSettings.gridSize, appSettings.gridSize] : undefined}
 			fitView
 		>
 			<Background patternClass="fill-neutral-200"/>

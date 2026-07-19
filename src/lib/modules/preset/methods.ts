@@ -43,6 +43,19 @@ export const methods = {
 		return preset;
 	},
 
+	/** User presets across every kind, newest first. Factory ones are omitted:
+	 * they cannot be renamed or deleted. */
+	async listMine(): Promise<Preset[]> {
+		return (await userPresets()).sort((a, b) => b.createdAt - a.createdAt);
+	},
+
+	async rename(id: string, name: string): Promise<void> {
+		const preset = await store.get<Preset>(KEY_PREFIX + id);
+		if (!preset) return;
+		await store.set(KEY_PREFIX + id, { ...preset, name });
+		await store.save();
+	},
+
 	async remove(id: string): Promise<void> {
 		await store.delete(KEY_PREFIX + id);
 		await store.save();

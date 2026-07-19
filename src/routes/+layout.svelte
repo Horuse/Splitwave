@@ -8,6 +8,7 @@
 	import { installErrorHandlers } from '$lib/modules/error';
 	import { ErrorModal } from '$lib/modules/error/ui';
 	import { checkForUpdates } from '$lib/modules/updater';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { UpdateBanner } from '$lib/modules/updater/ui';
 	import { DebugPanel } from '$lib/modules/debug';
 	import { loadAppInfo } from '$lib/modules/app_info';
@@ -55,7 +56,7 @@
 		loadAppInfo().catch(() => {});
 		audioStore.init().catch(() => {});
 		pipelineStore.refresh().catch(() => {});
-		checkForUpdates(true).catch(() => {});
+		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => { unlistenMenu = fn; })
 			.catch(() => {});

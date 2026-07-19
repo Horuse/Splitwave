@@ -5,6 +5,7 @@
 	import type { NoiseGateNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { NoiseGate } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
@@ -78,6 +79,7 @@
 
 <Wrapper
 	label="Noise Gate"
+	icon={NoiseGate}
 	accent="effect"
 	hasInput
 	hasOutput

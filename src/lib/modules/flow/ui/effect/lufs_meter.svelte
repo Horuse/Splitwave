@@ -4,6 +4,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LufsMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
+	import { Gauge } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import MeterBar from '$lib/components/meter_bar.svelte';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
@@ -124,7 +125,7 @@
 	});
 </script>
 
-<Wrapper label="Loudness" accent="effect" hasInput hasOutput channelIo nodeId={id} wide>
+<Wrapper label="Loudness" icon={Gauge} accent="effect" hasInput hasOutput channelIo nodeId={id} wide>
 	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			<!-- LUFS block: M / S / I -->

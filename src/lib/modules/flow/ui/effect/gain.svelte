@@ -3,6 +3,7 @@
 	import type { GainNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Trending } from '$lib/components/icons';
 	import Slider from './_slider.svelte';
 
 	type GainNodeType = Node<GainNodeData, 'gain'>;
@@ -31,6 +32,7 @@
 
 <Wrapper
 	label="Gain"
+	icon={Trending}
 	accent="effect"
 	hasInput
 	hasOutput

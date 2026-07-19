@@ -3,6 +3,7 @@
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { SpeakerMute } from '$lib/components/icons';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
 	let { id, data }: NodeProps<MuteNodeType> = $props();
@@ -24,6 +25,7 @@
 
 <Wrapper
 	label="Mute"
+	icon={SpeakerMute}
 	accent="effect"
 	hasInput
 	hasOutput

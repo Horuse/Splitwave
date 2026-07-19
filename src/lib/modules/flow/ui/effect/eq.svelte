@@ -3,6 +3,7 @@
 	import type { EqNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Sliders } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 
@@ -174,6 +175,7 @@
 
 <Wrapper
 	label="EQ"
+	icon={Sliders}
 	accent="effect"
 	hasInput
 	hasOutput

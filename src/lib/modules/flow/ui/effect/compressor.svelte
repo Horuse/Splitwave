@@ -3,6 +3,7 @@
 	import type { CompressorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Compressor } from '$lib/components/icons';
 	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
 	import { PresetBar } from '$lib/modules/preset/ui';
@@ -77,6 +78,7 @@
 
 <Wrapper
 	label="Compressor"
+	icon={Compressor}
 	accent="effect"
 	hasInput
 	hasOutput

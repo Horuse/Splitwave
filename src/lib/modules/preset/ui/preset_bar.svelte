@@ -40,7 +40,9 @@
 		);
 	}
 
-	let active = $derived(presets.find((p) => p.id === selectedId && matches(p)) ?? presets.find(matches));
+	let active = $derived(
+		presets.find((p) => p.id === selectedId && matches(p)) ?? presets.find(matches)
+	);
 	let options = $derived(
 		presets.map((p) => ({ value: p.id, label: p.builtin ? p.name : `${p.name} *` }))
 	);
@@ -54,6 +56,7 @@
 
 	async function save() {
 		const name = await modalManager.open<string>('Save preset', SavePresetModal, {
+			size: 'sm',
 			taken: presets.filter((p) => !p.builtin).map((p) => p.name)
 		});
 		if (!name) return;
@@ -72,7 +75,7 @@
 
 <div class="nodrag nopan flex items-center gap-1">
 	<Combobox
-		options={options}
+		{options}
 		value={active?.id ?? null}
 		placeholder="— Preset —"
 		emptyHint="No presets"

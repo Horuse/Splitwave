@@ -3,6 +3,7 @@
 	import type { ReverbNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Reverb } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
@@ -75,6 +76,7 @@
 
 <Wrapper
 	label="Reverb"
+	icon={Reverb}
 	accent="effect"
 	hasInput
 	hasOutput

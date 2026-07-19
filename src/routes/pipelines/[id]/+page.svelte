@@ -50,10 +50,14 @@
 	}
 </script>
 
-<Toaster position="bottom-end" containerClassName="mr-72" toastOptions={{
-	duration: 5000,
-	className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!',
-}} />
+<Toaster
+	position="bottom-end"
+	containerClassName="mr-72"
+	toastOptions={{
+		duration: 5000,
+		className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!'
+	}}
+/>
 
 <Header>
 	{#snippet left()}
@@ -86,10 +90,13 @@
 	{:else if stale}
 		<div class="flex w-full flex-col items-start gap-4 p-8">
 			<div class="warning-block max-w-xl">
-				<span class="font-semibold">This pipeline was saved by a newer version of Splitwave.</span>
+				<span class="font-semibold"
+					>This pipeline was saved by a newer version of Splitwave.</span
+				>
 				<span>
-					Its layout is not known to this build, so opening it would mean guessing at routing this
-					version cannot represent. It is left untouched and can still be deleted.
+					Its layout is not known to this build, so opening it would mean guessing at
+					routing this version cannot represent. It is left untouched and can still be
+					deleted.
 				</span>
 				<span>Update Splitwave to open it.</span>
 			</div>

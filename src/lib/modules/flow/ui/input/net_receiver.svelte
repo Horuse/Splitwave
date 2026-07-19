@@ -13,6 +13,7 @@
 	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { formatRate, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
+	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
@@ -83,7 +84,7 @@
 
 </script>
 
-<Wrapper label="Net Receiver" accent="input" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
+<Wrapper label="Net Receiver" icon={ArrowDownload} accent="input" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
 	<div class="nodrag nopan flex w-44 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">

@@ -17,7 +17,7 @@
 	}: ModalBaseProps & Props = $props();
 </script>
 
-<div class="flex flex-col gap-4 p-5">
+<div class="flex flex-col gap-4 px-5 py-4">
 	<p class="text-sm text-neutral-1100">{message}</p>
 
 	<div class="flex justify-end gap-2">

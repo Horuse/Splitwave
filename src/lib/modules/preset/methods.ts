@@ -25,7 +25,11 @@ export const methods = {
 		return [...FACTORY_PRESETS.filter((p) => p.kind === kind), ...mine];
 	},
 
-	async create<K extends PresetKind>(kind: K, name: string, data: PresetData<K>): Promise<Preset<K>> {
+	async create<K extends PresetKind>(
+		kind: K,
+		name: string,
+		data: PresetData<K>
+	): Promise<Preset<K>> {
 		const preset: Preset<K> = {
 			id: createId(),
 			kind,

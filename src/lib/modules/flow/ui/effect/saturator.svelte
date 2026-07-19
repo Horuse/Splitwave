@@ -3,6 +3,7 @@
 	import type { SaturatorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Saturator } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
@@ -70,6 +71,7 @@
 
 <Wrapper
 	label="Saturator"
+	icon={Saturator}
 	accent="effect"
 	hasInput
 	hasOutput

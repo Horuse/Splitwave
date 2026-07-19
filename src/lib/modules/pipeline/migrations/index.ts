@@ -15,10 +15,7 @@ export const MIGRATIONS: Migration[] = [{ to: 1, migrate: migrateChannelRouting 
 export function migrate(pipeline: Pipeline): Pipeline {
 	const from = versionOf(pipeline);
 	if (from >= PIPELINE_VERSION) return pipeline;
-	const migrated = MIGRATIONS.filter((m) => m.to > from).reduce(
-		(p, m) => m.migrate(p),
-		pipeline
-	);
+	const migrated = MIGRATIONS.filter((m) => m.to > from).reduce((p, m) => m.migrate(p), pipeline);
 	return { ...migrated, version: PIPELINE_VERSION };
 }
 

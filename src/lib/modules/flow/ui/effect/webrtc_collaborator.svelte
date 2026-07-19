@@ -17,6 +17,7 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
+	import { PeopleTeam } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
 
@@ -281,7 +282,7 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" accent="effect" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="WebRTC" icon={PeopleTeam} accent="effect" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">

@@ -16,7 +16,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
-	import { Folder, FolderOpen } from '$lib/components/icons';
+	import { Folder, FolderOpen, FileRecord } from '$lib/components/icons';
 	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
@@ -402,7 +402,7 @@
 	);
 </script>
 
-<Wrapper label="File Recording" accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
+<Wrapper label="File Recording" icon={FileRecord} accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"

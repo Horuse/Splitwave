@@ -56,6 +56,8 @@
 	$effect(() => {
 		audioMethods.netReceiverListen(id, data.port).catch(() => {});
 	});
+
+	onDestroy(() => audioMethods.netReceiverRelease(id).catch(() => {}));
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {

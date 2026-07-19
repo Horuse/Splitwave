@@ -374,6 +374,11 @@ pub fn net_receiver_listen(node_id: String, port: u16) {
     crate::audio::netaudio::receiver::get_or_create(&node_id, port);
 }
 
+#[tauri::command]
+pub fn net_receiver_release(node_id: String) {
+    crate::audio::netaudio::receiver::release(&node_id);
+}
+
 /// Direct-IP receive stats: cumulative bytes, packets, and lost packets
 /// (windowed into a recent loss ratio / rate on the frontend).
 #[tauri::command]

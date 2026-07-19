@@ -59,6 +59,15 @@ fn registry() -> &'static Mutex<HashMap<String, Arc<NetReceiver>>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Drops a receiver and frees its port. Without this the socket outlives the
+/// node, since binding is no longer tied to the pipeline's lifetime.
+pub fn release(node_id: &str) {
+    let mut reg = registry().lock().unwrap();
+    if let Some(r) = reg.remove(node_id) {
+        r.stop();
+    }
+}
+
 /// Returns the receiver for `node_id`, binding the socket on first use. A port
 /// change tears the old socket down and rebinds.
 pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {

@@ -155,6 +155,9 @@ export const methods = {
 	/** Binds the receive port so an unrouted node can still report its stream. */
 	netReceiverListen: (nodeId: string, port: number): Promise<void> =>
 		invoke('net_receiver_listen', { nodeId, port }),
+	/** Frees the receive port when the node goes away. */
+	netReceiverRelease: (nodeId: string): Promise<void> =>
+		invoke('net_receiver_release', { nodeId }),
 	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
 	netReceiverStats: (
 		nodeId: string

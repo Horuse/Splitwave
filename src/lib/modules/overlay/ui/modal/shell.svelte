@@ -3,7 +3,7 @@
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 
-	export type ModalSize = 'sm' | 'md' | 'lg';
+	export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
 	interface Props {
 		title?: string;
@@ -34,7 +34,8 @@
 	const WIDTH = {
 		sm: 'max-w-sm',
 		md: 'max-w-lg',
-		lg: 'max-w-2xl'
+		lg: 'max-w-2xl',
+		xl: 'max-w-4xl'
 	} as const;
 
 	function onBackdrop() {

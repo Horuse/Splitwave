@@ -16,19 +16,6 @@ export interface Snapshot {
 }
 
 export const methods = {
-	emptyPipeline(id: string, name: string): Pipeline {
-		const now = Date.now();
-		return {
-			id,
-			name,
-			nodes: [],
-			edges: [],
-			createdAt: now,
-			updatedAt: now,
-			version: PIPELINE_VERSION
-		};
-	},
-
 	async list(): Promise<Pipeline[]> {
 		const entries = await store.entries<Pipeline>();
 		return entries

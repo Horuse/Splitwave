@@ -1,18 +1,28 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
-    import { createId } from '@paralleldrive/cuid2';
     import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
     import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
     import { modalManager } from '$lib/modules/overlay/modal';
     import { ConfirmModal } from '$lib/modules/overlay/ui';
     import { relativeTime } from '$lib/utils/time';
     import { isFromFuture } from '$lib/modules/pipeline/migrations';
+    import { TEMPLATES, instantiate } from '$lib/modules/template';
+    import { TemplateModal } from '$lib/modules/template/ui';
 
     async function createPipeline() {
-        const id = createId();
-        const p = pipelineMethods.emptyPipeline(id, `Pipeline ${pipelineStore.pipelines.length + 1}`);
+        const templateId = await modalManager.open<string>('New pipeline', TemplateModal, {
+            size: 'xl',
+            description: 'Start from a wired-up layout, or an empty canvas.'
+        });
+        if (!templateId) return;
+
+        const template = TEMPLATES.find((t) => t.id === templateId);
+        if (!template) return;
+
+        const name = `Pipeline ${pipelineStore.pipelines.length + 1}`;
+        const p = instantiate(template, name);
         await pipelineStore.save(p);
-        await goto(`/pipelines/${id}`);
+        await goto(`/pipelines/${p.id}`);
     }
 
     async function remove(id: string, name: string, event: Event) {
@@ -124,7 +134,7 @@
                         </div>
                         <div class="text-xs text-neutral-900">
                             {#if stale}
-                                Saved by an earlier build - cannot be opened or run. Delete it to clear.
+                                Saved by a newer version - update Splitwave to open it.
                             {:else}
                                 {p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
                             {/if}

@@ -5,6 +5,8 @@
 	import Wrapper from '../node.svelte';
 	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 
 	type CompressorNodeType = Node<CompressorNodeData, 'compressor'>;
 	let { id, data }: NodeProps<CompressorNodeType> = $props();
@@ -13,6 +15,11 @@
 
 	function patch<K extends keyof CompressorNodeData>(key: K, value: CompressorNodeData[K]) {
 		const p = { [key]: value } as Partial<CompressorNodeData>;
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
+	}
+
+	function applyPreset(p: PresetData<'compressor'>) {
 		flow.updateNodeData(id, p);
 		audioMethods.updateEffect(id, p).catch(() => {});
 	}
@@ -80,6 +87,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex flex-col gap-2">
+		<PresetBar kind="compressor" {data} onApply={applyPreset} />
+
 		<div class="flex flex-col gap-1 w-52 nowheel nodrag">
 			<svg
 				width="100%"

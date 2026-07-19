@@ -3,6 +3,8 @@
 	import type { NoiseSuppressorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
@@ -12,6 +14,11 @@
 
 	function patch<K extends keyof NoiseSuppressorNodeData>(key: K, value: NoiseSuppressorNodeData[K]) {
 		const p = { [key]: value } as Partial<NoiseSuppressorNodeData>;
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
+	}
+
+	function applyPreset(p: PresetData<'noiseSuppressor'>) {
 		flow.updateNodeData(id, p);
 		audioMethods.updateEffect(id, p).catch(() => {});
 	}
@@ -44,6 +51,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex w-52 flex-col gap-1.5">
+		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
+
 		<p class="text-[10px] leading-tight text-neutral-400">
 			DeepFilterNet speech denoise. 48 kHz only.
 		</p>

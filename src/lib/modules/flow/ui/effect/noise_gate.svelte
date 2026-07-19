@@ -5,6 +5,8 @@
 	import type { NoiseGateNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 
 	type NoiseGateNodeType = Node<NoiseGateNodeData, 'noiseGate'>;
@@ -14,6 +16,11 @@
 
 	function patch<K extends keyof NoiseGateNodeData>(key: K, value: NoiseGateNodeData[K]) {
 		const p = { [key]: value } as Partial<NoiseGateNodeData>;
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
+	}
+
+	function applyPreset(p: PresetData<'noiseGate'>) {
 		flow.updateNodeData(id, p);
 		audioMethods.updateEffect(id, p).catch(() => {});
 	}
@@ -81,6 +88,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex flex-col gap-2">
+		<PresetBar kind="noiseGate" {data} onApply={applyPreset} />
+
 		<div class="flex gap-3 items-end nowheel nodrag">
 			<svg
 				width={W}

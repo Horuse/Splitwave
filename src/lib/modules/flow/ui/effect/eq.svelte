@@ -3,7 +3,8 @@
 	import type { EqNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Combobox } from '$lib/modules/form/ui';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();
@@ -25,21 +26,6 @@
 	const CURVE_H = 70;
 	const POINTS = 200;
 
-	const PRESETS: Record<string, number[]> = {
-		Flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-		'Bass Boost': [6, 5, 4, 2, 0, 0, 0, 0, 0, 0],
-		'Treble Boost': [0, 0, 0, 0, 0, 0, 2, 4, 5, 6],
-		Vocal: [-4, -3, -1, 1, 3, 4, 4, 2, 0, -2],
-		Podcast: [-6, -4, -2, 0, 2, 3, 4, 3, 1, -1],
-		Rock: [4, 3, 1, -1, -1, 1, 3, 4, 5, 5],
-		Pop: [-1, 0, 1, 2, 3, 2, 0, -1, -1, -2],
-		Jazz: [3, 2, 1, 1, -1, -1, 0, 1, 2, 3],
-		Classical: [4, 3, 2, 0, 0, 0, -1, -1, -2, -3],
-		Electronic: [4, 3, 1, 0, -2, 1, 0, 1, 3, 4]
-	};
-
-	const presetOptions = Object.keys(PRESETS).map((name) => ({ value: name, label: name }));
-
 	function patchGains(gains: number[]) {
 		const patch = { gainsDb: gains };
 		flow.updateNodeData(id, patch);
@@ -58,19 +44,9 @@
 		patchGains(next);
 	}
 
-	function applyPreset(name: string | null) {
-		if (!name || !(name in PRESETS)) return;
-		patchGains(PRESETS[name].slice());
+	function applyPreset(p: PresetData<'eq'>) {
+		patchGains(p.gainsDb.slice());
 	}
-
-	function matchingPresetName(gains: number[]): string | null {
-		for (const [name, p] of Object.entries(PRESETS)) {
-			if (gains.every((g, i) => Math.abs(g - p[i]) < 0.05)) return name;
-		}
-		return null;
-	}
-
-	let selectedPreset = $derived(matchingPresetName(data.gainsDb));
 
 	// LR4 magnitudes — matches the Rust splitter so the curve shows true output.
 	function lr4LpfMag(f: number, fc: number): number {
@@ -207,12 +183,7 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex w-72 flex-col gap-1.5">
-		<Combobox
-			options={presetOptions}
-			value={selectedPreset}
-			placeholder="Custom"
-			onChange={applyPreset}
-		/>
+		<PresetBar kind="eq" {data} onApply={applyPreset} />
 
 		<svg
 			viewBox="0 0 {CURVE_W} {CURVE_H}"

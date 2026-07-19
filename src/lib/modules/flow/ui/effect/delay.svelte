@@ -3,6 +3,8 @@
 	import type { DelayNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 
 	type DelayNodeType = Node<DelayNodeData, 'delay'>;
@@ -18,6 +20,11 @@
 
 	function pctFmt(v: number): string {
 		return `${Math.round(v * 100)}%`;
+	}
+
+	function applyPreset(p: PresetData<'delay'>) {
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
@@ -57,6 +64,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex flex-col gap-2">
+		<PresetBar kind="delay" {data} onApply={applyPreset} />
+
 		<div class="nowheel nodrag">
 			<svg
 				width={W}

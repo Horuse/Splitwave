@@ -309,10 +309,7 @@ pub struct EqData {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
-pub struct LevelMeterData {
-    pub channels: u32,
-    pub channels_expanded: bool,
-}
+pub struct LevelMeterData {}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
@@ -322,10 +319,7 @@ pub struct LufsMeterData {}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
-pub struct WaveformData {
-    pub channels: u32,
-    pub channels_expanded: bool,
-}
+pub struct WaveformData {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -152,6 +152,9 @@ export const methods = {
 		nodeId: string
 	): Promise<Record<string, { pingMs: number; packets: number; lost: number }>> =>
 		invoke('webrtc_peer_stats', { nodeId }),
+	/** Binds the receive port so an unrouted node can still report its stream. */
+	netReceiverListen: (nodeId: string, port: number): Promise<void> =>
+		invoke('net_receiver_listen', { nodeId, port }),
 	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
 	netReceiverStats: (
 		nodeId: string

@@ -453,9 +453,6 @@ struct IncomingEdge {
     src_idx: usize,
     source_handle: Option<String>,
     target_handle: Option<String>,
-    /// `Some(off)` places this input at channel `off` (monitors stack their
-    /// inputs side by side instead of summing them onto shared channels).
-    stack_ch: Option<usize>,
     delay: Option<DelayLine>,
 }
 
@@ -753,12 +750,11 @@ impl OutputGraph {
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     let route = edge.target_handle.as_deref().and_then(target_route);
-                    match (edge.stack_ch, &mut edge.delay, route) {
-                        (Some(off), _, _) => add_block_at(src, &mut eff.out_buf, off),
-                        (None, Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
-                        (None, None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
-                        (None, None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
-                        (None, None, None) => add_mapped(src, &mut eff.out_buf),
+                    match (&mut edge.delay, route) {
+                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
+                        (None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
+                        (None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
+                        (None, None) => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -930,11 +926,10 @@ pub(super) fn build_output_graph(
                 let pw = 2;
                 let mut handle_bufs = Vec::with_capacity(handles.len());
                 let mut wire_keys = Vec::with_capacity(handles.len());
-                // A net channel carries a stereo pair, matching the sender's rings.
                 for h in handles {
                     let Some(ch) = parse_ch(&h) else { continue };
                     wire_keys.push((ch - 1).to_string());
-                    handle_bufs.push((h, vec![0.0; DSP_BLOCK_FRAMES * pw]));
+                    handle_bufs.push((h, vec![0.0; DSP_BLOCK_FRAMES]));
                 }
                 id_to_index.insert(id.clone(), nodes.len());
                 nodes.push(DagNode::Producer(ProducerState {
@@ -1095,46 +1090,15 @@ pub(super) fn build_output_graph(
                 .filter_map(|h| parse_stereo(h).map(|a| a + 1).or_else(|| parse_ch(h)))
                 .max()
                 .unwrap_or(0);
-            // Monitors in `mix` mode stack each input onto its own channel; in
-            // `split` mode they route each `chK` input to channel k like any
-            // other per-channel node. Everything else sums its inputs by channel.
-            let (is_analyzer, split, declared_ch) = match &effect.spec {
-                EffectSpec::LevelMeter(d) => {
-                    (true, d.channels_expanded, d.channels as usize)
-                }
-                EffectSpec::Waveform(d) => (true, d.channels_expanded, d.channels as usize),
-                _ => (false, false, 0),
-            };
-            let stack = is_analyzer && !split;
-            let edge_w = |i: usize, sh: &Option<String>| -> usize {
-                match sh.as_deref() {
-                    Some(h) if tap_handle_width(h).is_some() => {
-                        nodes[i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
-                    }
-                    _ => node_channels[i],
-                }
-            };
-            let eff_channels = if stack {
-                main_upstream
-                    .iter()
-                    .map(|(i, s, _)| edge_w(*i, s))
-                    .sum::<usize>()
-                    .max(1)
-            } else if split {
-                target_w.max(declared_ch).max(1)
-            } else {
-                upstream_w.max(target_w).max(tap_w).max(1)
-            };
+            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
             let make_edge = |src_idx: usize,
                              source_handle: Option<String>,
-                             target_handle: Option<String>,
-                             stack_ch: Option<usize>| {
+                             target_handle: Option<String>| {
                 let pad = max_upstream - node_latencies[src_idx];
                 IncomingEdge {
                     src_idx,
                     source_handle,
                     target_handle,
-                    stack_ch,
                     delay: if pad > 0 {
                         Some(DelayLine::new(pad, node_channels[src_idx]))
                     } else {
@@ -1142,23 +1106,13 @@ pub(super) fn build_output_graph(
                     },
                 }
             };
-            let mut stack_off = 0;
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
-                .map(|(i, s, t)| {
-                    let stack_at = if stack {
-                        let cur = stack_off;
-                        stack_off += edge_w(i, &s);
-                        Some(cur)
-                    } else {
-                        None
-                    };
-                    make_edge(i, s, t, stack_at)
-                })
+                .map(|(i, s, t)| make_edge(i, s, t))
                 .collect();
             let sidechain: Vec<IncomingEdge> = side_upstream
                 .into_iter()
-                .map(|(i, s, t)| make_edge(i, s, t, None))
+                .map(|(i, s, t)| make_edge(i, s, t))
                 .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
@@ -1188,7 +1142,7 @@ pub(super) fn build_output_graph(
             let channel_bufs: Vec<(String, Vec<f32>)> =
                 if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
                     (1..=(*channels).clamp(1, MAX_NET_CH))
-                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES]))
                         .collect()
                 } else {
                     Vec::new()
@@ -1265,7 +1219,6 @@ pub(super) fn build_output_graph(
                     src_idx: idx,
                     source_handle,
                     target_handle,
-                    stack_ch: None,
                     delay: if pad > 0 {
                         Some(DelayLine::new(pad, node_channels[idx]))
                     } else {
@@ -1280,7 +1233,7 @@ pub(super) fn build_output_graph(
         let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
         let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);
         for c in 1..=n {
-            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]));
+            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES]));
             let (prod, cons) = RingBuffer::<f32>::new(crate::audio::netaudio::SEND_RING);
             send_producers.push(prod);
             send_consumers.push(cons);

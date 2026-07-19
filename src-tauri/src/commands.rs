@@ -367,6 +367,13 @@ pub struct NetReceiverStats {
     pub channels: u32,
 }
 
+/// The DAG only binds receivers reachable from an output, so an unrouted node
+/// could never report the stream it would carry.
+#[tauri::command]
+pub fn net_receiver_listen(node_id: String, port: u16) {
+    crate::audio::netaudio::receiver::get_or_create(&node_id, port);
+}
+
 /// Direct-IP receive stats: cumulative bytes, packets, and lost packets
 /// (windowed into a recent loss ratio / rate on the frontend).
 #[tauri::command]

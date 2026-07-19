@@ -104,22 +104,18 @@
 		</div>
 	</div>
 
-	<div class={[bypassed && 'opacity-40']}>
-		{@render children?.()}
-	</div>
-
-	{#if chExpanded && nodeId}
-		<div class="mt-2 flex justify-between gap-2">
-			{#if hasInput}
-				<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
-			{:else}
-				<div></div>
-			{/if}
-			{#if hasOutput}
-				<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />
-			{/if}
+	<!-- Socket rows carry no width, so flanking columns cost only the gap. -->
+	<div class="flex items-start gap-2">
+		{#if chExpanded && nodeId && hasInput}
+			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
+		{/if}
+		<div class={['min-w-0 flex-1', bypassed && 'opacity-40']}>
+			{@render children?.()}
 		</div>
-	{/if}
+		{#if chExpanded && nodeId && hasOutput}
+			<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />
+		{/if}
+	</div>
 
 	{#if !isPreview && !chExpanded}
 		{#if inputs && inputs.length > 0}

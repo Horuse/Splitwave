@@ -52,6 +52,10 @@
 	const MAX_CHANNELS = 255;
 	// Highest wire index the sender has actually delivered.
 	let received = $state(0);
+
+	$effect(() => {
+		audioMethods.netReceiverListen(id, data.port).catch(() => {});
+	});
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {

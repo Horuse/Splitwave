@@ -478,6 +478,8 @@
 
 	let lastRoutingSig = untrack(routingSignature);
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
+	// No teardown on re-run: node measurement re-fires this effect constantly and
+	// would cancel the pending reconcile before it ever reaches the backend.
 	$effect(() => {
 		const sig = routingSignature();
 		if (sig === lastRoutingSig) return;
@@ -496,7 +498,6 @@
 				}
 			});
 		}, 400);
-		return () => clearTimeout(restartTimer);
 	});
 
 	// The Tauri WebView (and historic browser behavior) treats Backspace outside

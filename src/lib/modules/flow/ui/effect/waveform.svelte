@@ -2,10 +2,11 @@
 	import { getContext } from 'svelte';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
-	import { useSvelteFlow, Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
 	import { Add, Minus } from '$lib/components/icons';
 	import { PREVIEW_CTX, channelColor, channelLabel } from '$lib/modules/flow/utils';
+	import ChannelHandles from '../_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -236,7 +237,11 @@
 		</div>
 	</div>
 
-	<div bind:this={waveWrap} class="nowheel min-h-0 flex-1 px-2 pb-2 overflow-hidden">
+	<div class="flex min-h-0 flex-1 items-start px-4 pb-2">
+		{#if !isPreview}
+			<ChannelHandles nodeId={id} side="target" />
+		{/if}
+		<div bind:this={waveWrap} class="nowheel min-w-0 flex-1 self-stretch overflow-hidden">
 		<!--
 			viewBox ties the coordinate system to W×H (ResizeObserver-tracked).
 			SVG itself renders at native device pixel density — no DPR math needed.
@@ -285,10 +290,9 @@
 				{/if}
 			{/each}
 		</svg>
+		</div>
+		{#if !isPreview}
+			<ChannelHandles nodeId={id} side="source" />
+		{/if}
 	</div>
-
-	{#if !isPreview}
-		<Handle type="target" position={Position.Left} class="handle" />
-		<Handle type="source" position={Position.Right} class="handle" />
-	{/if}
 </div>

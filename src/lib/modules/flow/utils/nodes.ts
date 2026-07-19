@@ -148,7 +148,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Level Meter',
 		description: 'Live L/R peak + RMS meter. Works standalone or anywhere in a chain.',
 		component: LevelMeter,
-		defaultData: { channels: 2, channelsExpanded: false }
+		defaultData: {}
 	}),
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
@@ -164,7 +164,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Waveform',
 		description: 'Live waveform — filled min/max envelope for L and R channels.',
 		component: Waveform,
-		defaultData: { segs: 4, channels: 2, channelsExpanded: false }
+		defaultData: { segs: 4 }
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',

@@ -150,6 +150,7 @@ pub fn run() {
             commands::webrtc_leave_room,
             commands::webrtc_peer_pings,
             commands::webrtc_peer_stats,
+            commands::net_receiver_listen,
             commands::net_receiver_stats,
             commands::net_sender_stats,
             commands::webrtc_set_identity,

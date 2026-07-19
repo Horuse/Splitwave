@@ -124,7 +124,7 @@
 	});
 </script>
 
-<Wrapper label="Loudness" accent="effect" hasInput hasOutput>
+<Wrapper label="Loudness" accent="effect" hasInput hasOutput channelIo nodeId={id}>
 	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			<!-- LUFS block: M / S / I -->

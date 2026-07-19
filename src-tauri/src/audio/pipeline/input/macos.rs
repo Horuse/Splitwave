@@ -3,20 +3,37 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::info;
 
 use crate::audio::device::{self, DeviceKind};
+use crate::audio::effects::MeterHandle;
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 use super::super::native::native_config;
 use super::super::STATE_EVENT;
-use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
+use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
-/// ScreenCaptureKit always delivers interleaved stereo by configuration.
-const SCK_CHANNELS: usize = 2;
+/// The graph downstream is laid out from the format resolved before the capture
+/// started. A tap follows the default output device, so switching it between
+/// resolve and start shifts the rate; surface that instead of feeding the graph
+/// mistimed audio.
+const CAPTURE_CHANNELS: u32 = 2;
+
+fn check_capture_format(
+    capture: &crate::audio::capture::Capture,
+    expected_rate: u32,
+) -> AppResult<()> {
+    if capture.sample_rate() != expected_rate || capture.channels() != CAPTURE_CHANNELS {
+        return Err(AppError::Stream(format!(
+            "capture format changed while starting: expected {expected_rate} Hz / {CAPTURE_CHANNELS} ch, got {} Hz / {} ch",
+            capture.sample_rate(),
+            capture.channels()
+        )));
+    }
+    Ok(())
+}
 
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
     match &inp.spec {
@@ -32,11 +49,11 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             })
         }
         InputSpec::SystemAudio { exclude_current_app } => Ok(ResolvedInput::SystemAudio {
-            sample_rate: SCK_SR,
+            sample_rate: crate::audio::capture::capture_rate(),
             exclude_current_app: *exclude_current_app,
         }),
         InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
-            sample_rate: SCK_SR,
+            sample_rate: crate::audio::capture::capture_rate(),
             bundle_id: bundle_id.clone(),
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
@@ -50,6 +67,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    meter: Option<MeterHandle>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -73,7 +91,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 sample_format,
                 src_channels,
                 bridge,
-                None,
+                meter,
                 err_cb,
             )?;
             Ok(InputHandle::Cpal(stream))
@@ -82,29 +100,21 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             sample_rate,
             exclude_current_app,
         } => {
-            info!(
-                sample_rate,
-                exclude_current_app, "starting system-audio capture (ScreenCaptureKit)"
-            );
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
                 sample_rate,
-                SCK_CHANNELS as u32,
                 bridge,
             )?;
+            check_capture_format(&capture, sample_rate)?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AppAudio {
             sample_rate,
             bundle_id,
         } => {
-            info!(sample_rate, %bundle_id, "starting app-audio capture (ScreenCaptureKit)");
-            let capture = crate::audio::capture::Capture::start_app(
-                &bundle_id,
-                sample_rate,
-                SCK_CHANNELS as u32,
-                bridge,
-            )?;
+            let capture =
+                crate::audio::capture::Capture::start_app(&bundle_id, sample_rate, bridge)?;
+            check_capture_format(&capture, sample_rate)?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {

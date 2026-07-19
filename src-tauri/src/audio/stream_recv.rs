@@ -16,26 +16,26 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::resample::StereoResamplerOut;
+use crate::audio::resample::MultiResamplerOut;
 use crate::audio::streams::bulk_push;
 
-/// Decoded network audio is always carried at 48 kHz stereo.
+/// Decoded network audio is always carried at 48 kHz, one channel per stream.
 pub const SR: u32 = 48_000;
 /// Output frames produced per block; must equal the DSP worker's block size.
 pub const OUT_BLOCK_FRAMES: usize = 1024;
-/// Per-consumer, per-channel 48 kHz jitter ring (~1 s stereo) -- headroom for a
+/// Per-consumer, per-channel 48 kHz jitter ring (~2 s mono) -- headroom for a
 /// deep adaptive target plus a burst after a latency spike.
 pub const CONSUMER_RING: usize = 96_000;
 
-/// Adaptive jitter-buffer target (samples stereo at 48 kHz): the fill the drift
+/// Adaptive jitter-buffer target (mono samples at 48 kHz): the fill the drift
 /// loop steers toward and the buffer primes to. Starts moderate, grows when the
 /// network under-delivers (a latency spike drains it), shrinks slowly during
 /// sustained calm -- so a periodic spike is absorbed after the first occurrence.
-const TARGET_INIT: usize = 5_760; // ~60 ms
-const TARGET_MIN: usize = 3_840; // ~40 ms
-const TARGET_MAX: usize = 38_400; // ~400 ms
-const TARGET_GROW: usize = 4_800; // +50 ms on underrun
-const TARGET_SHRINK: usize = 960; // -10 ms per calm window
+const TARGET_INIT: usize = 2_880; // ~60 ms
+const TARGET_MIN: usize = 1_920; // ~40 ms
+const TARGET_MAX: usize = 19_200; // ~400 ms
+const TARGET_GROW: usize = 2_400; // +50 ms on underrun
+const TARGET_SHRINK: usize = 480; // -10 ms per calm window
 const CALM_WINDOW: u32 = 480; // ~10 s at ~21 ms/block
 
 /// Proportional gain: backlog error (samples) -> ratio correction. A varying
@@ -80,7 +80,7 @@ pub fn broadcast_push(broadcast: &ChannelBroadcast, samples: &[f32]) {
 /// fixed-output resampler (48 kHz -> consumer rate) whose ratio tracks drift.
 pub struct PlaybackTap {
     consumer: Consumer<f32>,
-    resampler: StereoResamplerOut,
+    resampler: MultiResamplerOut,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
@@ -106,8 +106,8 @@ impl PlaybackTap {
         target: Arc<AtomicU32>,
     ) -> Self {
         let base_ratio = rate as f64 / SR as f64;
-        let resampler = StereoResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES)
-            .expect("stereo resampler init");
+        let resampler = MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1)
+            .expect("mono resampler init");
         Self {
             consumer,
             resampler,
@@ -117,10 +117,10 @@ impl PlaybackTap {
             drift,
             target,
             in_buf: Vec::with_capacity(4096),
-            scratch: Vec::with_capacity(OUT_BLOCK_FRAMES * 2),
+            scratch: Vec::with_capacity(OUT_BLOCK_FRAMES),
             valid: 0,
             primed: false,
-            last_block: vec![0.0; OUT_BLOCK_FRAMES * 2],
+            last_block: vec![0.0; OUT_BLOCK_FRAMES],
             gap: false,
         }
     }
@@ -131,7 +131,7 @@ impl PlaybackTap {
 
     /// Input samples the next resample will consume (reflects the current ratio).
     fn need_in(&self) -> usize {
-        self.resampler.input_frames_next() * 2
+        self.resampler.input_frames_next()
     }
 
     /// Produce one output block into `scratch` (valid = its length), resampling
@@ -160,11 +160,10 @@ impl PlaybackTap {
 
         // Safety net only (abnormal burst): the drift loop normally keeps the
         // ring near target. Generous headroom -- sender catch-up bursts after a
-        // scheduler stall are legitimate and must not get spliced. Even sample
-        // count so channels stay aligned.
+        // scheduler stall are legitimate and must not get spliced.
         let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
         if self.consumer.slots() > hard_cap {
-            let drop = (self.consumer.slots() - target) & !1;
+            let drop = self.consumer.slots() - target;
             if let Ok(chunk) = self.consumer.read_chunk(drop) {
                 chunk.commit_all();
                 // The discard is a splice; fade back in over the next block.
@@ -195,11 +194,9 @@ impl PlaybackTap {
         if self.gap {
             // Recovery: fade the real audio in over this block so the join off
             // the concealed tail has no step.
-            let frames = self.scratch.len() / 2;
-            for (i, fr) in self.scratch.chunks_mut(2).enumerate() {
-                let g = (i as f32 + 1.0) / frames as f32;
-                fr[0] *= g;
-                fr[1] *= g;
+            let frames = self.scratch.len();
+            for (i, s) in self.scratch.iter_mut().enumerate() {
+                *s *= (i as f32 + 1.0) / frames as f32;
             }
             self.gap = false;
         }
@@ -221,11 +218,9 @@ impl PlaybackTap {
         self.gap = true;
         self.scratch.clear();
         self.scratch.extend_from_slice(&self.last_block);
-        let frames = self.scratch.len() / 2;
-        for (i, fr) in self.scratch.chunks_mut(2).enumerate() {
-            let g = 1.0 - (i as f32 + 1.0) / frames as f32;
-            fr[0] *= g;
-            fr[1] *= g;
+        let frames = self.scratch.len();
+        for (i, s) in self.scratch.iter_mut().enumerate() {
+            *s *= 1.0 - (i as f32 + 1.0) / frames as f32;
         }
         self.valid = self.scratch.len();
         self.valid
@@ -347,9 +342,10 @@ impl ChannelReceiver {
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
     /// Real-time consumers also adapt the buffer depth and drift ratio here.
     pub fn mix_block(&self, mix: &mut [f32]) {
-        let out_frames = mix.len() / 2;
+        // The node's width is whatever its graph resolved to, not always stereo.
+        let width = (mix.len() / OUT_BLOCK_FRAMES).max(1);
         // The playback resamplers are built for exactly OUT_BLOCK_FRAMES output.
-        debug_assert_eq!(out_frames, OUT_BLOCK_FRAMES);
+        debug_assert_eq!(mix.len() / width, OUT_BLOCK_FRAMES);
         let Ok(mut taps) = self.taps.try_lock() else {
             // Map briefly locked for registration: hold the last mix rather than
             // emit a silent click.
@@ -366,7 +362,7 @@ impl ChannelReceiver {
             // Drive from the emptiest channel so no channel is left to underrun;
             // one shared ratio keeps channels phase-coherent.
             let mut min_backlog = usize::MAX;
-            let mut need = OUT_BLOCK_FRAMES * 2;
+            let mut need = OUT_BLOCK_FRAMES;
             for tap in taps.values() {
                 min_backlog = min_backlog.min(tap.backlog());
                 need = tap.need_in();
@@ -375,10 +371,13 @@ impl ChannelReceiver {
                 self.control(min_backlog, need);
             }
         }
+        // Channels are mono; a wider mix gets each one centred across it.
         for tap in taps.values_mut() {
-            let n = tap.fill_block(out_frames);
-            for (d, &v) in mix[..n].iter_mut().zip(tap.scratch[..n].iter()) {
-                *d += v;
+            let n = tap.fill_block(OUT_BLOCK_FRAMES).min(OUT_BLOCK_FRAMES);
+            for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
+                for s in frame.iter_mut() {
+                    *s += v;
+                }
             }
         }
         let mut held = self.last_mix.borrow_mut();
@@ -439,10 +438,17 @@ impl ChannelReceiver {
     /// Copy one channel's already-resampled scratch into `out`.
     pub fn channel(&self, key: &str, out: &mut [f32]) {
         out.fill(0.0);
-        if let Ok(taps) = self.taps.try_lock() {
-            if let Some(tap) = taps.get(key) {
-                let n = tap.valid.min(out.len());
-                out[..n].copy_from_slice(&tap.scratch[..n]);
+        let Ok(taps) = self.taps.try_lock() else { return };
+        let Some(tap) = taps.get(key) else { return };
+        let src = &tap.scratch[..tap.valid];
+        // Taps are mono; a wider destination gets the channel centred across it.
+        let width = out.len() / OUT_BLOCK_FRAMES;
+        if width <= 1 {
+            let n = src.len().min(out.len());
+            out[..n].copy_from_slice(&src[..n]);
+        } else {
+            for (frame, &v) in out.chunks_mut(width).zip(src.iter()) {
+                frame.fill(v);
             }
         }
     }
@@ -451,11 +457,13 @@ impl ChannelReceiver {
     pub fn prefix_mix(&self, prefix: &str, out: &mut [f32]) {
         out.fill(0.0);
         if let Ok(taps) = self.taps.try_lock() {
+            let width = (out.len() / OUT_BLOCK_FRAMES).max(1);
             for (key, tap) in taps.iter() {
                 if key.starts_with(prefix) {
-                    let n = tap.valid.min(out.len());
-                    for (d, &v) in out[..n].iter_mut().zip(tap.scratch[..n].iter()) {
-                        *d += v;
+                    for (frame, &v) in out.chunks_mut(width).zip(tap.scratch[..tap.valid].iter()) {
+                        for s in frame.iter_mut() {
+                            *s += v;
+                        }
                     }
                 }
             }

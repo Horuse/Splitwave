@@ -2,10 +2,16 @@
 pub struct VirtualDeviceConfig {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_channels")]
+    pub channels: u32,
+}
+
+fn default_channels() -> u32 {
+    2
 }
 
 // Bump with any driver bundle change; keep in sync with Info.plist CFBundleVersion.
-pub const DRIVER_VERSION: u32 = 2;
+pub const DRIVER_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -3,7 +3,7 @@
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type {
 		AiffBitDepth,
 		FileRecordingNodeData,
@@ -16,8 +16,10 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
-	import { Folder } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { Folder, FolderOpen } from '$lib/components/icons';
+	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
+	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
@@ -95,6 +97,85 @@
 	onDestroy(() => {
 		unlisten?.();
 		unlistenChoose?.();
+	});
+
+	// Mirrors `RecordingFormat::max_channels`; the encoder rejects anything wider.
+	function maxChannelsFor(fmt: RecordingFormat): number {
+		if (fmt.kind === 'mp3' || fmt.kind === 'opus') return 2;
+		if (fmt.kind === 'flac') return 8;
+		if (fmt.kind === 'aac') return 48;
+		return 512;
+	}
+
+	const FORMATS = [
+		{ value: 'wav' as const, label: 'WAV' },
+		{ value: 'flac' as const, label: 'FLAC' },
+		{ value: 'aiff' as const, label: 'AIFF' },
+		{ value: 'opus' as const, label: 'Opus' },
+		{ value: 'mp3' as const, label: 'MP3' },
+		{ value: 'aac' as const, label: 'AAC' }
+	];
+
+	let maxChannels = $derived(maxChannelsFor(data.format));
+
+	let CHANNEL_MODES = $derived([
+		{ value: 'mono' as const, label: 'Mono' },
+		{ value: 'stereo' as const, label: 'Stereo' },
+		{ value: 'multi' as const, label: 'Multi', disabled: maxChannels <= 2 }
+	]);
+
+	type ChannelMode = 'mono' | 'stereo' | 'multi';
+	let channelMode = $derived<ChannelMode>(
+		data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : 'multi'
+	);
+
+	let channelLabel = $derived(
+		data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : `${data.channels} ch`
+	);
+
+	function setChannelMode(mode: ChannelMode) {
+		const target = mode === 'mono' ? 1 : mode === 'stereo' ? 2 : Math.max(3, data.channels);
+		dropEdgesAbove(Math.min(target, maxChannels));
+		flow.updateNodeData(id, { channels: Math.min(target, maxChannels) });
+	}
+
+	function dropEdgesAbove(cap: number) {
+		const orphaned = flow
+			.getEdges()
+			.filter((e) => {
+				if (e.target !== id) return false;
+				const ch = e.targetHandle ? parseHandle(e.targetHandle) : null;
+				return ch !== null && ch > cap;
+			})
+			.map((e) => ({ id: e.id }));
+		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
+	}
+	const wired = useNodeConnections({ id, handleType: 'target' });
+	let wiredChannels = $derived(
+		wired.current.reduce((n, c) => {
+			const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+			return ch === null ? n : Math.max(n, ch);
+		}, 0)
+	);
+
+	// Mono and stereo pin the encoder width; multi lets the cables drive it.
+	let slotCap = $derived(
+		channelMode === 'mono' ? 1 : channelMode === 'stereo' ? 2 : maxChannels
+	);
+
+	$effect(() => {
+		if (channelMode !== 'multi') return;
+		const next = Math.max(3, Math.min(wiredChannels, maxChannels));
+		if (next !== untrack(() => data.channels)) flow.updateNodeData(id, { channels: next });
+	});
+
+	// A narrower format strands cables it cannot carry.
+	$effect(() => {
+		const cap = slotCap;
+		untrack(() => {
+			dropEdgesAbove(cap);
+			if (data.channels > cap) flow.updateNodeData(id, { channels: cap });
+		});
 	});
 
 	function extension(fmt: RecordingFormat): string {
@@ -321,7 +402,7 @@
 	);
 </script>
 
-<Wrapper label="File Recording" accent="output" hasInput>
+<Wrapper label="File Recording" accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"
@@ -330,186 +411,101 @@
 			{basename(data.filePath)}
 		</div>
 		<div class="flex gap-1">
-			<button class="button-main primary rounded-lg nodrag nopan flex-1 py-1 text-xs" onclick={chooseFile}>
-				Choose file…
+			<button
+				type="button"
+				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
+				onclick={chooseFile}
+			>
+				<Folder class="size-3.5" />
+				Choose file
 			</button>
 			<Tooltip text="Reveal the recording in Finder">
 				<button
 					type="button"
-					class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-40"
+					class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
 					disabled={!data.filePath}
 					onclick={revealFolder}
 				>
-					<Folder class="h-3.5 w-3.5" />
+					<FolderOpen class="size-3.5" />
 				</button>
 			</Tooltip>
 		</div>
-		<label class="nodrag nopan flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-700">
-			<input
-				type="checkbox"
-				class="accent-neutral-900"
-				checked={data.allowOverwrite}
-				onchange={(e) => flow.updateNodeData(id, { allowOverwrite: e.currentTarget.checked })}
-			/>
-			Allow overwrite
-		</label>
+		<Toggle
+			size="sm"
+			label="Allow overwrite"
+			checked={data.allowOverwrite}
+			onChange={(v) => flow.updateNodeData(id, { allowOverwrite: v })}
+		/>
 
-		<div class="nodrag nopan grid grid-cols-6 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-			{#each [{ k: 'wav' as const, label: 'WAV' }, { k: 'flac' as const, label: 'FLAC' }, { k: 'aiff' as const, label: 'AIFF' }, { k: 'opus' as const, label: 'Opus' }, { k: 'mp3' as const, label: 'MP3' }, { k: 'aac' as const, label: 'AAC' }] as fmt (fmt.k)}
-				<button
-					type="button"
-					onclick={() => setFormatKind(fmt.k)}
-					class={[
-						'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-						data.format.kind === fmt.k
-							? 'bg-neutral-900 text-white'
-							: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-					]}
-				>
-					{fmt.label}
-				</button>
-			{/each}
-		</div>
+		<SegmentedButtons
+			options={FORMATS}
+			value={data.format.kind}
+			onSelect={setFormatKind}
+			columns={3}
+		/>
+
+		<SegmentedButtons
+			label="Channels"
+			note={maxChannels >= 512 ? 'no limit' : `max ${maxChannels}`}
+			options={CHANNEL_MODES}
+			value={channelMode}
+			onSelect={setChannelMode}
+		/>
 
 		{#if data.format.kind === 'wav'}
-			<div class="nodrag nopan grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each WAV_BIT_DEPTHS as bd (bd.value)}
-					<button
-						type="button"
-						onclick={() => setWavBitDepth(bd.value)}
-						class={[
-							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-							data.format.kind === 'wav' && data.format.bitDepth === bd.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						<span class="font-mono text-[10px] tabular-nums">{bd.label}</span>
-						<span class="text-[8px] opacity-70">{bd.sub}</span>
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				options={WAV_BIT_DEPTHS.map((b) => ({ value: b.value, label: b.label, subtitle: b.sub }))}
+				value={data.format.bitDepth}
+				onSelect={setWavBitDepth}
+			/>
 		{:else if data.format.kind === 'flac'}
-			<div class="nodrag nopan grid grid-cols-2 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each FLAC_BIT_DEPTHS as bd (bd.value)}
-					<button
-						type="button"
-						onclick={() => setFlacBitDepth(bd.value)}
-						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.format.kind === 'flac' && data.format.bitDepth === bd.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{bd.label}
-					</button>
-				{/each}
-			</div>
-			<div class="nodrag nopan grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each FLAC_COMPRESSIONS as c (c.value)}
-					<button
-						type="button"
-						onclick={() => setFlacCompression(c.value)}
-						class={[
-							'rounded-sm py-0.5 text-[10px] leading-none transition-colors',
-							data.format.kind === 'flac' && data.format.compression === c.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{c.label}
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				options={FLAC_BIT_DEPTHS}
+				value={data.format.bitDepth}
+				onSelect={setFlacBitDepth}
+			/>
+			<SegmentedButtons
+				options={FLAC_COMPRESSIONS}
+				value={data.format.compression}
+				onSelect={setFlacCompression}
+			/>
 		{:else if data.format.kind === 'opus'}
-			<div class="nodrag nopan grid grid-cols-5 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each OPUS_BITRATE_PRESETS as p (p.kbps)}
-					<button
-						type="button"
-						onclick={() => setOpusBitrate(p.kbps * 1000)}
-						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.format.kind === 'opus' && data.format.bitrate === p.kbps * 1000
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{p.label}
-					</button>
-				{/each}
-			</div>
-			<div class="text-center font-mono text-[9px] text-neutral-600">kbps</div>
-			<div class="nodrag nopan grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each OPUS_APPLICATIONS as a (a.value)}
-					<button
-						type="button"
-						onclick={() => setOpusApplication(a.value)}
-						class={[
-							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-							data.format.kind === 'opus' && data.format.application === a.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						<span class="text-[10px]">{a.label}</span>
-						<span class="text-[8px] opacity-70">{a.sub}</span>
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				label="Bitrate"
+				note="kbps"
+				options={OPUS_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
+				value={data.format.bitrate}
+				onSelect={setOpusBitrate}
+			/>
+			<SegmentedButtons
+				options={OPUS_APPLICATIONS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
+				value={data.format.application}
+				onSelect={setOpusApplication}
+			/>
 		{:else if data.format.kind === 'mp3'}
-			<div class="nodrag nopan grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each MP3_BITRATE_PRESETS as p (p.kbps)}
-					<button
-						type="button"
-						onclick={() => setMp3Bitrate(p.kbps)}
-						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.format.kind === 'mp3' && data.format.bitrateKbps === p.kbps
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{p.label}
-					</button>
-				{/each}
-			</div>
-			<div class="text-center font-mono text-[9px] text-neutral-600">kbps · CBR</div>
+			<SegmentedButtons
+				label="Bitrate"
+				note="kbps"
+				options={MP3_BITRATE_PRESETS.map((p) => ({ value: p.kbps, label: p.label }))}
+				value={data.format.bitrateKbps}
+				onSelect={setMp3Bitrate}
+			/>
+			<div class="text-center font-mono text-[9px] text-neutral-600">CBR</div>
 		{:else if data.format.kind === 'aac'}
-			<div class="nodrag nopan grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each AAC_BITRATE_PRESETS as p (p.kbps)}
-					<button
-						type="button"
-						onclick={() => setAacBitrate(p.kbps * 1000)}
-						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.format.kind === 'aac' && data.format.bitrate === p.kbps * 1000
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{p.label}
-					</button>
-				{/each}
-			</div>
-			<div class="text-center font-mono text-[9px] text-neutral-600">kbps · M4A</div>
+			<SegmentedButtons
+				label="Bitrate"
+				note="kbps"
+				options={AAC_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
+				value={data.format.bitrate}
+				onSelect={setAacBitrate}
+			/>
+			<div class="text-center font-mono text-[9px] text-neutral-600">M4A</div>
 		{:else}
-			<div class="nodrag nopan grid grid-cols-2 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each AIFF_BIT_DEPTHS as bd (bd.value)}
-					<button
-						type="button"
-						onclick={() => setAiffBitDepth(bd.value)}
-						class={[
-							'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-							data.format.kind === 'aiff' && data.format.bitDepth === bd.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						{bd.label}
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				options={AIFF_BIT_DEPTHS}
+				value={data.format.bitDepth}
+				onSelect={setAiffBitDepth}
+			/>
 			<div class="text-center font-mono text-[9px] text-neutral-600">PCM big-endian</div>
 		{/if}
 
@@ -520,7 +516,7 @@
 			<span class="text-neutral-1000 tabular-nums">{formatDuration(durationSec)}</span>
 		</div>
 		<div class="flex justify-between text-[10px] text-neutral-900">
-			<span>{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)} · stereo</span>
+			<span>{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)} · {channelLabel}</span>
 			<span class="font-mono tabular-nums">{formatSize(estSize)}</span>
 		</div>
 		{#if dirty}

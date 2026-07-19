@@ -1,6 +1,13 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import {
+		useNodeConnections,
+		useSvelteFlow,
+		Handle,
+		Position,
+		type Node,
+		type NodeProps
+	} from '@xyflow/svelte';
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
 	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -10,17 +17,33 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
+	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
 	let { id, data }: NodeProps<WebRtcNodeType> = $props();
 
 	const flow = useSvelteFlow();
 
-	const MAX_CHANNELS = 10;
-	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
-	let inputs = $derived(
-		Array.from({ length: channelCount }, (_, i) => ({ id: `ch${i + 1}`, label: `in ${i + 1}` }))
+	const MAX_CHANNELS = 255;
+	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'target' });
+	let channelCount = $derived(
+		Math.max(
+			1,
+			wired.current.reduce((n, c) => {
+				const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+				return ch === null ? n : Math.max(n, ch);
+			}, 0)
+		)
 	);
+
+	// Peers are told how many channels to expect, so it tracks the cables.
+	$effect(() => {
+		const next = Math.min(channelCount, MAX_CHANNELS);
+		if (next === untrack(() => data.channels)) return;
+		flow.updateNodeData(id, { channels: next });
+		pushIdentity(untrack(() => data.name) ?? '', next);
+	});
 
 	let roomCode = $state('');
 	let joinInput = $state('');
@@ -58,26 +81,6 @@
 				data.opusApplication
 			)
 			.catch(() => {});
-	}
-
-	function addChannel() {
-		if (channelCount >= MAX_CHANNELS) return;
-		const next = channelCount + 1;
-		flow.updateNodeData(id, { channels: next });
-		pushIdentity(data.name ?? '', next);
-	}
-
-	function removeChannel() {
-		if (channelCount <= 1) return;
-		const handle = `ch${channelCount}`;
-		const orphaned = flow
-			.getEdges()
-			.filter((e) => e.target === id && e.targetHandle === handle)
-			.map((e) => ({ id: e.id }));
-		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		const next = channelCount - 1;
-		flow.updateNodeData(id, { channels: next });
-		pushIdentity(data.name ?? '', next);
 	}
 
 	function setName(name: string) {
@@ -278,7 +281,7 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" accent="effect">
+<Wrapper label="WebRTC" accent="effect" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">
@@ -291,102 +294,36 @@
 			/>
 		</div>
 
-		<!-- inputs -->
-		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
-			<div class="flex items-center gap-1">
-				<button
-					type="button"
-					class="flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-800 hover:bg-neutral-200 disabled:opacity-40"
-					disabled={channelCount <= 1}
-					onclick={removeChannel}
-				>
-					-
-				</button>
-				<span class="w-4 text-center font-mono text-[10px] tabular-nums text-neutral-900">{channelCount}</span>
-				<button
-					type="button"
-					class="flex h-4 w-4 items-center justify-center rounded border border-neutral-400 bg-neutral-100 font-mono text-[11px] leading-none text-neutral-800 hover:bg-neutral-200 disabled:opacity-40"
-					disabled={channelCount >= MAX_CHANNELS}
-					onclick={addChannel}
-				>
-					+
-				</button>
-			</div>
-		</div>
-
-		<!-- per-channel inputs (left handles) -->
-		{#each inputs as ch (ch.id)}
-			<div class="relative -ml-4 flex min-h-3 items-center gap-1 pl-4">
-				<Handle type="target" id={ch.id} position={Position.Left} class="handle" />
-				<span class="font-mono text-[9px] text-neutral-500">{ch.label}</span>
-			</div>
-		{/each}
 
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each CODECS as c (c.value)}
-					<button
-						type="button"
-						onclick={() => setCodec(c.value)}
-						class={[
-							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-							(data.codec ?? 'opus') === c.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						<span class="font-mono text-[10px]">{c.label}</span>
-						<span class="text-[8px] opacity-70">{c.sub}</span>
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
+				value={data.codec}
+				onSelect={setCodec}
+			/>
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<div class="grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-					{#each BITRATES as b (b.bps)}
-						<button
-							type="button"
-							onclick={() => setBitrate(b.bps)}
-							class={[
-								'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-								data.opusBitrate === b.bps
-									? 'bg-neutral-900 text-white'
-									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-							]}
-						>
-							{b.label}
-						</button>
-					{/each}
-				</div>
+				<SegmentedButtons
+					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
+					value={data.opusBitrate}
+					onSelect={setBitrate}
+				/>
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-				<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-					{#each APPS as a (a.value)}
-						<button
-							type="button"
-							onclick={() => setApp(a.value)}
-							class={[
-								'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-								data.opusApplication === a.value
-									? 'bg-neutral-900 text-white'
-									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-							]}
-						>
-							<span class="font-mono text-[10px]">{a.label}</span>
-							<span class="text-[8px] opacity-70">{a.sub}</span>
-						</button>
-					{/each}
-				</div>
+				<SegmentedButtons
+					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
+					value={data.opusApplication}
+					onSelect={setApp}
+				/>
 			</div>
 		{/if}
 
@@ -465,15 +402,21 @@
 		{#if phase !== 'idle' || peers.length > 0}
 			<hr class="border-neutral-300" />
 			{#if phase !== 'idle'}
-				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
 					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
-					<Handle type="source" id="mixed" position={Position.Right} class="handle" />
+					<Handle
+						type="source"
+						id="mixed"
+						position={Position.Right}
+						class="handle"
+						style={handleEdgeStyle('#a3a3a3', 'source')}
+					/>
 				</div>
 			{/if}
 			{#each peers as peer (peer.peerId)}
 				<!-- peer header + this peer's full mix -->
-				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-700">
 						{peer.name || peer.peerId.slice(0, 10)}
 					</span>
@@ -503,17 +446,26 @@
 							x
 						</button>
 					</div>
-					<Handle type="source" id={`peer:${peer.peerId}`} position={Position.Right} class="handle" />
+					<Handle
+						type="source"
+						id={`peer:${peer.peerId}`}
+						position={Position.Right}
+						class="handle"
+						style={handleEdgeStyle('#a3a3a3', 'source')}
+					/>
 				</div>
 				<!-- per-channel outputs for this peer -->
 				{#each peer.channels as c (c)}
-					<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
-						<span class="shrink-0 font-mono text-[9px] text-neutral-400">in {c + 1}</span>
+					<div class="relative flex min-h-5 items-center justify-end gap-1">
+						<span class="shrink-0 font-mono text-[9px]" style="color:{channelColor(c)}">
+							{channelLabel(c, peer.channels.length)}
+						</span>
 						<Handle
 							type="source"
 							id={`peer:${peer.peerId}:${c}`}
 							position={Position.Right}
 							class="handle"
+							style={handleEdgeStyle(channelColor(c), 'source')}
 						/>
 					</div>
 				{/each}

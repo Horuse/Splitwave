@@ -17,7 +17,6 @@ use crate::error::{AppError, AppResult};
 /// 20 ms @ 48 kHz — WebRTC default; best quality/latency trade-off.
 const FRAME_SAMPLES: usize = 960;
 const SAMPLE_RATE: u32 = 48_000;
-const CHANNELS_U8: u8 = 2;
 /// libopus recommends ≤4000 bytes per non-multistream packet.
 const MAX_PACKET_BYTES: usize = 4000;
 
@@ -28,11 +27,13 @@ pub struct OpusRecorder {
 	granule: u64,
 	pending: Vec<f32>,
 	encode_buf: Vec<u8>,
+	channels: u16,
 }
 
 impl OpusRecorder {
 	pub fn create(
 		path: &Path,
+		channels: u16,
 		application: OpusApplication,
 		bitrate_bps: u32,
 	) -> AppResult<Self> {
@@ -41,7 +42,8 @@ impl OpusRecorder {
 			OpusApplication::Voip => OpusApp::Voip,
 			OpusApplication::LowDelay => OpusApp::LowDelay,
 		};
-		let mut encoder = Encoder::new(SAMPLE_RATE, Channels::Stereo, opus_app)
+		let layout = if channels == 1 { Channels::Mono } else { Channels::Stereo };
+		let mut encoder = Encoder::new(SAMPLE_RATE, layout, opus_app)
 			.map_err(|e| AppError::Stream(format!("opus init: {e}")))?;
 		encoder
 			.set_bitrate(Bitrate::Bits(bitrate_bps.clamp(6_000, 510_000) as i32))
@@ -58,7 +60,7 @@ impl OpusRecorder {
 		let mut writer = PacketWriter::new(BufWriter::new(file));
 		let serial = generate_serial();
 
-		write_opus_head(&mut writer, serial, lookahead)?;
+		write_opus_head(&mut writer, serial, channels as u8, lookahead)?;
 		write_opus_tags(&mut writer, serial)?;
 
 		Ok(Self {
@@ -66,8 +68,9 @@ impl OpusRecorder {
 			encoder,
 			serial,
 			granule: 0,
-			pending: Vec::with_capacity(FRAME_SAMPLES * 2 * 2),
+			pending: Vec::with_capacity(FRAME_SAMPLES * 2 * channels as usize),
 			encode_buf: vec![0u8; MAX_PACKET_BYTES],
+			channels,
 		})
 	}
 
@@ -85,11 +88,10 @@ impl OpusRecorder {
 }
 
 impl AudioEncoder for OpusRecorder {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()> {
-		debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
 		self.pending.extend_from_slice(samples);
 
-		let frame_interleaved = FRAME_SAMPLES * 2;
+		let frame_interleaved = FRAME_SAMPLES * self.channels as usize;
 		while self.pending.len() >= frame_interleaved {
 			// Borrow checker: take frame as owned slice copy to release pending borrow.
 			let frame: Vec<f32> = self.pending[..frame_interleaved].to_vec();
@@ -110,13 +112,14 @@ impl AudioEncoder for OpusRecorder {
 		let Self {
 			mut writer,
 			mut encoder,
+			channels: _,
 			serial,
 			mut granule,
 			pending,
 			mut encode_buf,
 		} = *self;
 
-		let frame_interleaved = FRAME_SAMPLES * 2;
+		let frame_interleaved = FRAME_SAMPLES * self.channels as usize;
 		if !pending.is_empty() {
 			let mut padded = pending;
 			padded.resize(frame_interleaved, 0.0);
@@ -145,12 +148,13 @@ impl AudioEncoder for OpusRecorder {
 fn write_opus_head<W: Write>(
 	writer: &mut PacketWriter<'_, W>,
 	serial: u32,
+	channels: u8,
 	pre_skip: u16,
 ) -> AppResult<()> {
 	let mut buf = Vec::with_capacity(19);
 	buf.extend_from_slice(b"OpusHead");
 	buf.push(1); // version
-	buf.push(CHANNELS_U8);
+	buf.push(channels);
 	buf.extend_from_slice(&pre_skip.to_le_bytes());
 	buf.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
 	buf.extend_from_slice(&0i16.to_le_bytes()); // output gain Q7.8 = 0 dB

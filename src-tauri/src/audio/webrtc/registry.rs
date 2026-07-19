@@ -88,7 +88,7 @@ pub async fn leave_room(node_id: &str) {
 pub fn set_identity(node_id: &str, name: String, channels: u32, codec: NetCodec) {
     if let Some(session) = get(node_id) {
         *session.local_name.lock().unwrap() = name;
-        session.local_channels.store(channels.clamp(1, 10), Ordering::Relaxed);
+        session.local_channels.store(channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32), Ordering::Relaxed);
         session.set_codec(codec);
     }
 }

@@ -6,7 +6,7 @@ use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;
 
 use crate::audio::graph::NoiseSuppressorData;
-use crate::audio::resample::StereoResampler;
+use crate::audio::resample::MultiResampler;
 
 use super::util::load_f32;
 use super::{Effect, EffectControl};
@@ -62,8 +62,8 @@ unsafe impl Send for SendModel {}
 // Resamples the output-rate signal to 48k for the model and back. Present only
 // when the output rate isn't already 48k.
 struct Resample {
-    down: StereoResampler,
-    up: StereoResampler,
+    down: MultiResampler,
+    up: MultiResampler,
     down_in: VecDeque<f32>,
     up_in: VecDeque<f32>,
     chunk: Vec<f32>,
@@ -154,8 +154,8 @@ impl ModelState {
         let resample = if output_sr == MODEL_SR {
             None
         } else {
-            let down = StereoResampler::new(output_sr, MODEL_SR, DOWN_CHUNK);
-            let up = StereoResampler::new(MODEL_SR, output_sr, hop);
+            let down = MultiResampler::new(output_sr, MODEL_SR, DOWN_CHUNK, 2);
+            let up = MultiResampler::new(MODEL_SR, output_sr, hop, 2);
             match (down, up) {
                 (Ok(down), Ok(up)) => Some(Resample {
                     down,

@@ -11,7 +11,6 @@ use super::AudioEncoder;
 use crate::audio::graph::AiffBitDepth;
 use crate::error::{AppError, AppResult};
 
-const CHANNELS: u16 = 2;
 const HEADER_SIZE: u64 = 54;
 const OFFSET_FORM_SIZE: u64 = 4;
 const OFFSET_NUM_FRAMES: u64 = 22;
@@ -20,22 +19,35 @@ const OFFSET_SSND_SIZE: u64 = 42;
 pub struct AiffRecorder {
 	inner: BufWriter<File>,
 	samples_per_channel: u64,
+	channels: u16,
 	bit_depth: AiffBitDepth,
 	dither: Xorshift,
+	frame: Vec<u8>,
 }
 
 impl AiffRecorder {
-	pub fn create(path: &Path, sample_rate: u32, bit_depth: AiffBitDepth) -> AppResult<Self> {
+	pub fn create(
+		path: &Path,
+		sample_rate: u32,
+		channels: u16,
+		bit_depth: AiffBitDepth,
+	) -> AppResult<Self> {
 		let file = File::create(path)
 			.map_err(|e| AppError::Stream(format!("create {}: {e}", path.display())))?;
 		let mut inner = BufWriter::new(file);
-		write_header(&mut inner, sample_rate, bit_depth, 0)
+		write_header(&mut inner, sample_rate, channels, bit_depth, 0)
 			.map_err(|e| AppError::Stream(format!("write aiff header: {e}")))?;
+		let bps = match bit_depth {
+			AiffBitDepth::I16 => 2,
+			AiffBitDepth::I24 => 3,
+		};
 		Ok(Self {
 			inner,
 			samples_per_channel: 0,
+			channels,
 			bit_depth,
 			dither: Xorshift::seed(0x9e3779b97f4a7c15),
+			frame: vec![0; channels as usize * bps],
 		})
 	}
 
@@ -52,18 +64,17 @@ impl AiffRecorder {
 			AiffBitDepth::I24 => (8_388_607.0_f32, -8_388_608.0_f32),
 		};
 		let bps = self.bytes_per_sample();
-		let mut buf = [0u8; 8];
-		for pair in samples.chunks_exact(2) {
-			for (i, &s) in pair.iter().enumerate() {
+		let n = self.channels as usize;
+		for frame in samples.chunks_exact(n) {
+			for (i, &s) in frame.iter().enumerate() {
 				let dithered = s * max + self.dither.tpdf();
 				let q = dithered.clamp(min, max).round() as i32;
 				let be = q.to_be_bytes();
-				// `i32::to_be_bytes` = [MSB, ..., LSB]; for i16 we need the last
-				// 2 bytes, for i24 the last 3.
-				buf[i * bps..(i + 1) * bps].copy_from_slice(&be[4 - bps..4]);
+				// `i32::to_be_bytes` = [MSB, ..., LSB]; i16 needs the last 2, i24 the last 3.
+				self.frame[i * bps..(i + 1) * bps].copy_from_slice(&be[4 - bps..4]);
 			}
 			self.inner
-				.write_all(&buf[..bps * 2])
+				.write_all(&self.frame[..bps * n])
 				.map_err(|e| AppError::Stream(format!("write aiff: {e}")))?;
 		}
 		Ok(())
@@ -71,10 +82,9 @@ impl AiffRecorder {
 }
 
 impl AudioEncoder for AiffRecorder {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()> {
-		debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
 		self.write_pcm(samples)?;
-		self.samples_per_channel += (samples.len() / 2) as u64;
+		self.samples_per_channel += (samples.len() / self.channels as usize) as u64;
 		Ok(())
 	}
 
@@ -84,7 +94,7 @@ impl AudioEncoder for AiffRecorder {
 			.map_err(|e| AppError::Stream(format!("flush aiff: {e}")))?;
 
 		let bps = self.bytes_per_sample() as u64;
-		let data_size = self.samples_per_channel * (CHANNELS as u64) * bps;
+		let data_size = self.samples_per_channel * (self.channels as u64) * bps;
 		let ssnd_body = 8u64.saturating_add(data_size);
 		let form_size = (HEADER_SIZE - 8).saturating_add(data_size);
 		// AIFF chunk sizes are u32 — saturate (≈6 h of 24-bit stereo at 48 k).
@@ -118,6 +128,7 @@ impl AudioEncoder for AiffRecorder {
 fn write_header(
 	w: &mut impl Write,
 	sample_rate: u32,
+	channels: u16,
 	bit_depth: AiffBitDepth,
 	num_frames: u32,
 ) -> std::io::Result<()> {
@@ -126,7 +137,7 @@ fn write_header(
 		AiffBitDepth::I24 => 24,
 	};
 	let bps = (bits / 8) as u32;
-	let data_size = num_frames.saturating_mul((CHANNELS as u32) * bps);
+	let data_size = num_frames.saturating_mul((channels as u32) * bps);
 	let form_size = (HEADER_SIZE as u32 - 8).saturating_add(data_size);
 	let ssnd_size = 8u32.saturating_add(data_size);
 
@@ -136,7 +147,7 @@ fn write_header(
 
 	w.write_all(b"COMM")?;
 	w.write_all(&18u32.to_be_bytes())?;
-	w.write_all(&(CHANNELS as i16).to_be_bytes())?;
+	w.write_all(&(channels as i16).to_be_bytes())?;
 	w.write_all(&num_frames.to_be_bytes())?;
 	w.write_all(&(bits as i16).to_be_bytes())?;
 	w.write_all(&sample_rate_to_extended_80(sample_rate))?;

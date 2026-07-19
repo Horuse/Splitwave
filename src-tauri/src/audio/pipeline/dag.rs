@@ -12,21 +12,23 @@ use crate::audio::effects::{
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
 use crate::audio::netaudio::packet::Format;
-use crate::audio::resample::StereoResampler;
+use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
 use crate::audio::streams::bulk_push;
 use crate::error::{AppError, AppResult};
 
-/// Ring buffer length (in stereo f32 samples) per bridge. Sized for ~500 ms
-/// of stereo audio at 96 kHz so the worker can ride out longer source pauses
-/// (SCK silent gaps, scheduler hiccups) without overflowing the FAST source's
-/// ring while waiting on a SLOW one.
-pub(super) const RING_CAPACITY: usize = 96_000;
+/// Ring buffer length in frames per source; multiplied by the source's channel
+/// count at build time. ~500 ms at 96 kHz so the worker rides out longer source
+/// pauses (SCK silent gaps, scheduler hiccups, capture-clock drift) without
+/// overflowing the FAST source's ring while waiting on a SLOW one.
+pub(super) const RING_CAPACITY_FRAMES: usize = 48_000;
 
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
 
 pub(super) const DSP_BLOCK_FRAMES: usize = 1024;
+
+const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;
 
 /// How long a source can go without delivering before the availability-paced
 /// worker stops waiting on it. SCK in normal operation delivers every ~20 ms,
@@ -109,8 +111,9 @@ impl StagingRing {
 
 /// One node in an output's DAG. `Source` reads from a ring + resamples,
 /// `Effect` sums its upstreams' buffers and runs DSP, `Producer` emits
-/// network-received audio on named channel handles. All expose a stereo
-/// `out_buf` of `DSP_BLOCK_FRAMES * 2` samples that downstream nodes consume.
+/// network-received audio on named channel handles. Each exposes an
+/// interleaved `out_buf` of `DSP_BLOCK_FRAMES * node_channels` that downstream
+/// nodes consume.
 enum DagNode {
     Source(SourceState),
     Effect(EffectState),
@@ -134,7 +137,8 @@ impl DagNode {
         let (handle_bufs, out_buf) = match self {
             DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
             DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
-            DagNode::Source(_) | DagNode::Consumer(_) => return self.out_buf(),
+            DagNode::Source(s) => (&s.handle_bufs, &s.out_buf),
+            DagNode::Consumer(_) => return self.out_buf(),
         };
         match handle {
             Some(h) => handle_bufs
@@ -149,8 +153,9 @@ impl DagNode {
 
 struct SourceState {
     label: String,
+    channels: usize,
     consumer: Consumer<f32>,
-    resampler: Option<StereoResampler>,
+    resampler: Option<MultiResampler>,
     input_staging: Vec<f32>,
     out_pending: StagingRing,
     chunk_tmp: Vec<f32>,
@@ -167,6 +172,11 @@ struct SourceState {
     drain: Option<Arc<AtomicU64>>,
     last_drain_gen: u64,
     meter: Option<MeterHandle>,
+    // Per-channel taps ("chK") drawn off this source.
+    handle_bufs: Vec<(String, Vec<f32>)>,
+    // Counts samples zero-filled on genuine mid-stream underrun (ring ran dry
+    // while streaming). A non-RT tick thread reads it to surface xruns.
+    xrun: Arc<AtomicU64>,
 }
 
 impl SourceState {
@@ -191,6 +201,15 @@ impl SourceState {
         have >= self.input_samples_per_block
     }
 
+    /// Taps are filled at the end of `fill_block`, so an early return would
+    /// leave them looping their last block -- a buzz at the block rate.
+    fn silence(&mut self) {
+        self.out_buf.fill(0.0);
+        for (_, buf) in self.handle_bufs.iter_mut() {
+            buf.fill(0.0);
+        }
+    }
+
     fn fill_block(&mut self) {
         if let Some(p) = &self.paused {
             if p.load(Ordering::SeqCst) {
@@ -202,7 +221,7 @@ impl SourceState {
                 }
                 self.input_staging.clear();
                 self.out_pending.clear();
-                self.out_buf.fill(0.0);
+                self.silence();
                 return;
             }
         }
@@ -218,7 +237,7 @@ impl SourceState {
                 }
                 self.input_staging.clear();
                 self.out_pending.clear();
-                self.out_buf.fill(0.0);
+                self.silence();
                 return;
             }
         }
@@ -228,7 +247,8 @@ impl SourceState {
             let high = self.input_samples_per_block * SOURCE_BACKLOG_HIGH_BLOCKS;
             if have > high {
                 let low = self.input_samples_per_block * SOURCE_BACKLOG_LOW_BLOCKS;
-                let drop = (have - low) & !1;
+                let excess = have - low;
+                let drop = excess - excess % self.channels;
                 if let Ok(chunk) = self.consumer.read_chunk(drop) {
                     chunk.commit_all();
                 }
@@ -242,6 +262,12 @@ impl SourceState {
                 // Ring empty too -- zero-fill the rest (real underrun).
                 for s in &mut self.out_buf[written..] {
                     *s = 0.0;
+                }
+                // A stalled/paused source silences by design; only a source that
+                // is actively streaming and ran dry mid-block is a real xrun.
+                if !self.is_stalled() {
+                    self.xrun
+                        .fetch_add((need - written) as u64, Ordering::Relaxed);
                 }
                 break;
             }
@@ -257,13 +283,31 @@ impl SourceState {
             }
         }
         if let Some(m) = &self.meter {
-            update_meter(m, &self.out_buf);
+            update_meter(m, &self.out_buf, self.channels);
+        }
+        if !self.handle_bufs.is_empty() {
+            let w = self.channels;
+            for (h, buf) in self.handle_bufs.iter_mut() {
+                if let Some(a) = parse_stereo(h) {
+                    let c0 = (a - 1).min(w - 1);
+                    let c1 = a.min(w - 1);
+                    for f in 0..DSP_BLOCK_FRAMES {
+                        buf[f * 2] = self.out_buf[f * w + c0];
+                        buf[f * 2 + 1] = self.out_buf[f * w + c1];
+                    }
+                } else {
+                    let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
+                    for f in 0..DSP_BLOCK_FRAMES {
+                        buf[f] = self.out_buf[f * w + c];
+                    }
+                }
+            }
         }
     }
 
     fn try_refill_one_chunk(&mut self) {
         if let Some(rs) = &mut self.resampler {
-            let needed = rs.chunk_in() * 2;
+            let needed = rs.chunk_in() * self.channels;
             // Bulk read what we still need (one rtrb reservation instead of
             // one atomic op per sample -- RT-friendly).
             let want = needed - self.input_staging.len();
@@ -291,7 +335,7 @@ impl SourceState {
             self.input_staging.drain(..needed);
         } else {
             self.chunk_tmp.clear();
-            let want = RESAMPLE_CHUNK * 2;
+            let want = RESAMPLE_CHUNK * self.channels;
             let avail = self.consumer.slots().min(want);
             if avail > 0 {
                 if let Ok(chunk) = self.consumer.read_chunk(avail) {
@@ -303,9 +347,9 @@ impl SourceState {
                 }
             }
         }
-        // Even-count guarantee (don't half a frame).
-        let frames = self.chunk_tmp.len() / 2;
-        self.chunk_tmp.truncate(frames * 2);
+        // Whole-frame guarantee (don't split a frame across channels).
+        let frames = self.chunk_tmp.len() / self.channels;
+        self.chunk_tmp.truncate(frames * self.channels);
         if !self.chunk_tmp.is_empty() {
             if !self.first_data_logged {
                 info!(source = %self.label, "source online");
@@ -317,16 +361,64 @@ impl SourceState {
 }
 
 struct EffectState {
-    effect: RuntimeEffect,
+    // One instance per stereo pair; each carries its own DSP state but shares
+    // the parameter atomics. `effects[0]` alone for width <= 2.
+    effects: Vec<RuntimeEffect>,
+    // Analyzers (level meter) read the whole N-wide buffer at once instead of
+    // being split into stereo pairs, so they report every channel.
+    full_width: bool,
     bypass: Arc<AtomicBool>,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
+    // Scratch for deinterleaving one pair out of a >2-wide buffer.
+    pair_main: Vec<f32>,
+    pair_side: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
     // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
     // summed by target handle and pushed to the matching send ring.
     channel_bufs: Vec<(String, Vec<f32>)>,
+}
+
+impl EffectState {
+    /// Run the effect chain over `out_buf`. Width <= 2 processes in place; wider
+    /// buffers are split into stereo pairs, each through its own instance so
+    /// per-channel filter state never bleeds across pairs.
+    fn run(&mut self, frames: usize) {
+        let w = self.out_buf.len() / frames;
+        if self.full_width || w == 2 {
+            let sc = self.sidechain_buf.as_deref();
+            self.effects[0].process_with_sidechain(&mut self.out_buf, sc, frames);
+            return;
+        }
+        for p in 0..self.effects.len() {
+            let (c0, c1) = (2 * p, 2 * p + 1);
+            for f in 0..frames {
+                let base = f * w;
+                self.pair_main[f * 2] = self.out_buf[base + c0];
+                self.pair_main[f * 2 + 1] = if c1 < w { self.out_buf[base + c1] } else { 0.0 };
+            }
+            let sc = if let Some(scb) = self.sidechain_buf.as_ref() {
+                for f in 0..frames {
+                    let base = f * w;
+                    self.pair_side[f * 2] = scb[base + c0];
+                    self.pair_side[f * 2 + 1] = if c1 < w { scb[base + c1] } else { 0.0 };
+                }
+                Some(self.pair_side.as_slice())
+            } else {
+                None
+            };
+            self.effects[p].process_with_sidechain(&mut self.pair_main, sc, frames);
+            for f in 0..frames {
+                let base = f * w;
+                self.out_buf[base + c0] = self.pair_main[f * 2];
+                if c1 < w {
+                    self.out_buf[base + c1] = self.pair_main[f * 2 + 1];
+                }
+            }
+        }
+    }
 }
 
 /// A source with no graph inputs that emits network-received audio: `out_buf`
@@ -336,13 +428,16 @@ struct ProducerState {
     receiver: ChannelReceiver,
     out_buf: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
+    /// Wire channel index per `handle_bufs` entry; the tap map is keyed by the
+    /// index the sender stamped, not by the `chN` handle the UI draws.
+    wire_keys: Vec<String>,
 }
 
 impl ProducerState {
     fn process(&mut self) {
         self.receiver.mix_block(&mut self.out_buf);
-        for (handle, buf) in self.handle_bufs.iter_mut() {
-            self.receiver.channel(handle, buf);
+        for ((_, buf), key) in self.handle_bufs.iter_mut().zip(&self.wire_keys) {
+            self.receiver.channel(key, buf);
         }
     }
 
@@ -372,36 +467,172 @@ struct IncomingEdge {
 struct TerminalEdge {
     src_idx: usize,
     source_handle: Option<String>,
+    /// `Some((off, width))` routes this edge to a physical output block: width 1
+    /// (`chK`) downmixes to mono at `off`, width 2 (`stA`) places a stereo pair.
+    route: Option<(usize, usize)>,
     delay: Option<DelayLine>,
+}
+
+/// Parse a `chK` handle into its 1-based channel number.
+#[inline]
+fn parse_ch(handle: &str) -> Option<usize> {
+    handle.strip_prefix("ch").and_then(|s| s.parse::<usize>().ok())
+}
+
+/// Parse an `stA` stereo-group handle into its 1-based lower channel; the group
+/// carries channels A and A+1.
+#[inline]
+fn parse_stereo(handle: &str) -> Option<usize> {
+    handle.strip_prefix("st").and_then(|s| s.parse::<usize>().ok())
+}
+
+/// A per-channel tap handle (`chK` mono or `stA` stereo) and its channel width.
+#[inline]
+fn tap_handle_width(handle: &str) -> Option<usize> {
+    if parse_stereo(handle).is_some() {
+        Some(2)
+    } else if parse_ch(handle).is_some() {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// Route a target handle to a `(physical channel offset, width)` block: `chK`
+/// lands on one channel, `stA` on the pair starting at A.
+#[inline]
+fn target_route(handle: &str) -> Option<(usize, usize)> {
+    if let Some(a) = parse_stereo(handle) {
+        Some((a - 1, 2))
+    } else if let Some(k) = parse_ch(handle) {
+        Some((k - 1, 1))
+    } else {
+        None
+    }
+}
+
+/// Sum `src` into `dst` mapping channel-for-channel when the two have different
+/// widths (min of the two; extra source channels dropped, extra dest channels
+/// left untouched). Widths are inferred from length: `len / DSP_BLOCK_FRAMES`.
+#[inline]
+fn add_mapped(src: &[f32], dst: &mut [f32]) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || dst_ch == 0 {
+        return;
+    }
+    if src_ch == dst_ch {
+        for (d, &s) in dst.iter_mut().zip(src.iter()) {
+            *d += s;
+        }
+        return;
+    }
+    if dst_ch == 1 {
+        let g = 1.0 / src_ch as f32;
+        for f in 0..DSP_BLOCK_FRAMES {
+            let sb = f * src_ch;
+            let mut acc = 0.0;
+            for c in 0..src_ch {
+                acc += src[sb + c];
+            }
+            dst[f] += acc * g;
+        }
+        return;
+    }
+    if src_ch == 1 {
+        // Mono upmix: a single-channel source feeds every destination channel.
+        for f in 0..DSP_BLOCK_FRAMES {
+            let v = src[f];
+            let db = f * dst_ch;
+            for c in 0..dst_ch {
+                dst[db + c] += v;
+            }
+        }
+        return;
+    }
+    let n = src_ch.min(dst_ch);
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let db = f * dst_ch;
+        for c in 0..n {
+            dst[db + c] += src[sb + c];
+        }
+    }
+}
+
+/// Add `src` (downmixed to mono) into a single physical channel `ch` of `dst`.
+#[inline]
+fn add_to_channel(src: &[f32], dst: &mut [f32], ch: usize) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || ch >= dst_ch {
+        return;
+    }
+    let g = 1.0 / src_ch as f32;
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let mut acc = 0.0;
+        for c in 0..src_ch {
+            acc += src[sb + c];
+        }
+        dst[f * dst_ch + ch] += acc * g;
+    }
+}
+
+/// Place `src`'s channels into `dst` starting at channel `off`. Distinct offsets
+/// leave inputs side by side; `dst` is zeroed each block so this is a copy.
+#[inline]
+fn add_block_at(src: &[f32], dst: &mut [f32], off: usize) {
+    let src_ch = src.len() / DSP_BLOCK_FRAMES;
+    let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+    if src_ch == 0 || off >= dst_ch {
+        return;
+    }
+    let n = src_ch.min(dst_ch - off);
+    for f in 0..DSP_BLOCK_FRAMES {
+        let sb = f * src_ch;
+        let db = f * dst_ch + off;
+        for c in 0..n {
+            dst[db + c] += src[sb + c];
+        }
+    }
 }
 
 struct DelayLine {
     buf: Box<[f32]>,
     pos: usize,
+    channels: usize,
 }
 
 impl DelayLine {
-    fn new(delay_frames: usize) -> Self {
+    fn new(delay_frames: usize, channels: usize) -> Self {
         Self {
-            buf: vec![0.0; delay_frames * 2].into_boxed_slice(),
+            buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
             pos: 0,
+            channels,
         }
     }
 
     fn process_and_add(&mut self, input: &[f32], dst: &mut [f32]) {
         let cap = self.buf.len();
         if cap == 0 {
-            for (d, &v) in dst.iter_mut().zip(input.iter()) {
-                *d += v;
-            }
+            add_mapped(input, dst);
             return;
         }
+        let src_ch = self.channels;
+        let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
+        let n = src_ch.min(dst_ch);
+        let frames = input.len() / src_ch;
         let mut pos = self.pos;
-        for (i, &v) in input.iter().enumerate() {
-            let delayed = self.buf[pos];
-            self.buf[pos] = v;
-            dst[i] += delayed;
-            pos = if pos + 1 == cap { 0 } else { pos + 1 };
+        for f in 0..frames {
+            for c in 0..src_ch {
+                let delayed = self.buf[pos];
+                self.buf[pos] = input[f * src_ch + c];
+                if c < n {
+                    dst[f * dst_ch + c] += delayed;
+                }
+                pos = if pos + 1 == cap { 0 } else { pos + 1 };
+            }
         }
         self.pos = pos;
     }
@@ -411,6 +642,9 @@ impl DelayLine {
 /// terminal edges whose buffers get summed into the final output.
 pub(super) struct OutputGraph {
     sample_rate: u32,
+    /// Interleaved channel width of `process_block`'s output. Stereo unless a
+    /// speaker sets it to the device's channel count.
+    out_channels: usize,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
 }
@@ -418,6 +652,14 @@ pub(super) struct OutputGraph {
 impl OutputGraph {
     pub(super) fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    pub(super) fn out_channels(&self) -> usize {
+        self.out_channels
+    }
+
+    pub(super) fn set_out_channels(&mut self, channels: usize) {
+        self.out_channels = channels;
     }
 
     /// True if every source has enough buffered input to produce one full
@@ -437,7 +679,7 @@ impl OutputGraph {
         true
     }
 
-    /// Fill `output` (must be `DSP_BLOCK_FRAMES * 2` long) with one block of
+    /// Fill `output` (`DSP_BLOCK_FRAMES * out_channels` long) with one block of
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
         for node in &mut self.nodes {
@@ -468,11 +710,7 @@ impl OutputGraph {
                     };
                     match &mut edge.delay {
                         Some(d) => d.process_and_add(src, buf),
-                        None => {
-                            for (dst, sv) in buf.iter_mut().zip(src.iter()) {
-                                *dst += *sv;
-                            }
-                        }
+                        None => add_mapped(src, buf),
                     }
                 }
                 for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
@@ -503,18 +741,14 @@ impl OutputGraph {
                         };
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, buf),
-                            None => {
-                                for (dst, sv) in buf.iter_mut().zip(src.iter()) {
-                                    *dst += *sv;
-                                }
-                            }
+                            None => add_mapped(src, buf),
                         }
                     }
-                    eff.effect.push_channel_inputs(&eff.channel_bufs);
+                    eff.effects[0].push_channel_inputs(&eff.channel_bufs);
                     // out_buf becomes the global mix (every peer, every channel).
-                    eff.effect
+                    eff.effects[0]
                         .process_with_sidechain(&mut eff.out_buf, None, DSP_BLOCK_FRAMES);
-                    eff.effect
+                    eff.effects[0]
                         .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
                     continue;
                 }
@@ -523,13 +757,12 @@ impl OutputGraph {
                 }
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                    match &mut edge.delay {
-                        Some(d) => d.process_and_add(src, &mut eff.out_buf),
-                        None => {
-                            for (dst, sv) in eff.out_buf.iter_mut().zip(src.iter()) {
-                                *dst += *sv;
-                            }
-                        }
+                    let route = edge.target_handle.as_deref().and_then(target_route);
+                    match (&mut edge.delay, route) {
+                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
+                        (None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
+                        (None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
+                        (None, None) => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -541,21 +774,31 @@ impl OutputGraph {
                             head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                         match &mut edge.delay {
                             Some(d) => d.process_and_add(src, sc_buf),
-                            None => {
-                                for (dst, sv) in sc_buf.iter_mut().zip(src.iter()) {
-                                    *dst += *sv;
-                                }
-                            }
+                            None => add_mapped(src, sc_buf),
                         }
                     }
                 }
                 if !eff.bypass.load(Ordering::Relaxed) {
-                    let sc_slice = eff.sidechain_buf.as_deref();
-                    eff.effect
-                        .process_with_sidechain(&mut eff.out_buf, sc_slice, DSP_BLOCK_FRAMES);
+                    eff.run(DSP_BLOCK_FRAMES);
                 }
-                eff.effect
+                eff.effects[0]
                     .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
+                let w = eff.out_buf.len() / DSP_BLOCK_FRAMES;
+                for (h, buf) in eff.handle_bufs.iter_mut() {
+                    if let Some(a) = parse_stereo(h) {
+                        let c0 = (a - 1).min(w - 1);
+                        let c1 = a.min(w - 1);
+                        for f in 0..DSP_BLOCK_FRAMES {
+                            buf[f * 2] = eff.out_buf[f * w + c0];
+                            buf[f * 2 + 1] = eff.out_buf[f * w + c1];
+                        }
+                    } else if let Some(k) = parse_ch(h) {
+                        let c = (k - 1).min(w - 1);
+                        for f in 0..DSP_BLOCK_FRAMES {
+                            buf[f] = eff.out_buf[f * w + c];
+                        }
+                    }
+                }
             }
         }
         for s in output.iter_mut() {
@@ -564,13 +807,11 @@ impl OutputGraph {
         for terminal in &mut self.terminals {
             let src =
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
-            match &mut terminal.delay {
-                Some(d) => d.process_and_add(src, output),
-                None => {
-                    for (dst, sv) in output.iter_mut().zip(src.iter()) {
-                        *dst += *sv;
-                    }
-                }
+            match (&mut terminal.delay, terminal.route) {
+                (Some(d), _) => d.process_and_add(src, output),
+                (None, Some((off, 1))) => add_to_channel(src, output, off),
+                (None, Some((off, _))) => add_block_at(src, output, off),
+                (None, None) => add_mapped(src, output),
             }
         }
     }
@@ -584,6 +825,7 @@ pub(super) struct BuiltOutputGraph {
     pub lufs: Vec<LufsHandle>,
     pub gr_handles: Vec<GrHandle>,
     pub scopes: Vec<WaveformHandle>,
+    pub xruns: Vec<(String, Arc<AtomicU64>)>,
 }
 
 /// Build the per-output DAG: walk backward from `output_id`, topo-sort the
@@ -602,6 +844,7 @@ pub(super) fn build_output_graph(
     realtime: bool,
     valid: &ValidGraph,
     input_native_sr: &HashMap<String, u32>,
+    input_native_channels: &HashMap<String, u32>,
     producer_pairs: &mut Vec<(String, Producer<f32>)>,
     registry: &mut EffectRegistry,
     input_volumes: &HashMap<String, Arc<AtomicU32>>,
@@ -667,7 +910,10 @@ pub(super) fn build_output_graph(
     let mut lufs: Vec<LufsHandle> = Vec::new();
     let mut gr_handles: Vec<GrHandle> = Vec::new();
     let mut scopes: Vec<WaveformHandle> = Vec::new();
+    let mut xruns: Vec<(String, Arc<AtomicU64>)> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
+    // Per-node channel width; effects inherit the max width of their upstreams.
+    let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
 
     for id in &topo {
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
@@ -685,17 +931,23 @@ pub(super) fn build_output_graph(
                     .collect();
                 handles.sort();
                 handles.dedup();
-                let handle_bufs = handles
-                    .into_iter()
-                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
-                    .collect();
+                let pw = 2;
+                let mut handle_bufs = Vec::with_capacity(handles.len());
+                let mut wire_keys = Vec::with_capacity(handles.len());
+                for h in handles {
+                    let Some(ch) = parse_ch(&h) else { continue };
+                    wire_keys.push((ch - 1).to_string());
+                    handle_bufs.push((h, vec![0.0; DSP_BLOCK_FRAMES]));
+                }
                 id_to_index.insert(id.clone(), nodes.len());
                 nodes.push(DagNode::Producer(ProducerState {
                     receiver,
-                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                    out_buf: vec![0.0; DSP_BLOCK_FRAMES * pw],
                     handle_bufs,
+                    wire_keys,
                 }));
                 node_latencies.push(0);
+                node_channels.push(pw);
                 continue;
             }
             // File sources are paced by backpressure; dropping backlog plays fast.
@@ -704,31 +956,61 @@ pub(super) fn build_output_graph(
             let input_sr = *input_native_sr
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
-            let (producer, consumer) = RingBuffer::<f32>::new(RING_CAPACITY);
+            let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;
+            // Scale by channels to keep the buffered span constant in time; at
+            // high channel counts a smaller cushion starves on capture-clock drift.
+            let (producer, consumer) =
+                RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * source_channels);
             producer_pairs.push((id.clone(), producer));
-
+            let mut ch_handles: Vec<String> = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.clone())
+                .filter(|h| tap_handle_width(h).is_some())
+                .collect();
+            ch_handles.sort();
+            ch_handles.dedup();
+            let source_handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
+                .into_iter()
+                .map(|h| {
+                    let w = tap_handle_width(&h).unwrap_or(1);
+                    (h, vec![0.0; DSP_BLOCK_FRAMES * w])
+                })
+                .collect();
             let resampler = if input_sr == output_sr {
                 None
             } else {
-                Some(StereoResampler::new(input_sr, output_sr, RESAMPLE_CHUNK)?)
+                Some(MultiResampler::new(input_sr, output_sr, RESAMPLE_CHUNK, source_channels)?)
             };
             let out_max = resampler.as_ref().map(|r| r.out_max()).unwrap_or(RESAMPLE_CHUNK);
             // x4 headroom: one chunk draining + one in-flight + alignment slack.
-            let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * 2;
+            let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * source_channels;
             let input_frames_per_block = (DSP_BLOCK_FRAMES as u64 * input_sr as u64
                 + output_sr as u64
                 - 1)
                 / output_sr as u64;
-            let input_samples_per_block = (input_frames_per_block as usize) * 2;
+            let input_samples_per_block = (input_frames_per_block as usize) * source_channels;
 
+            let kind = match &input.spec {
+                InputSpec::Microphone { device_id } => format!("mic:{device_id}"),
+                InputSpec::SystemAudio { .. } => "system-audio".to_string(),
+                InputSpec::AppAudio { bundle_id } => format!("app:{bundle_id}"),
+                InputSpec::AudioFile { file_path } => format!("file:{file_path}"),
+                InputSpec::NetReceiver { port } => format!("net:{port}"),
+            };
+            let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
+            let xrun = Arc::new(AtomicU64::new(0));
+            xruns.push((label.clone(), xrun.clone()));
             let source = SourceState {
-                label: format!("{id}@{input_sr}->{output_sr}"),
+                label,
+                channels: source_channels,
                 consumer,
                 resampler,
-                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * 2 + 8),
+                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * source_channels + 8),
                 out_pending: StagingRing::with_capacity(staging_cap),
-                chunk_tmp: Vec::with_capacity(out_max * 2),
-                out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                chunk_tmp: Vec::with_capacity(out_max * source_channels),
+                out_buf: vec![0.0; DSP_BLOCK_FRAMES * source_channels],
                 input_samples_per_block,
                 realtime: source_realtime,
                 last_pop_at: Instant::now(),
@@ -741,10 +1023,13 @@ pub(super) fn build_output_graph(
                 drain: input_drain.get(id).cloned(),
                 last_drain_gen: 0,
                 meter: input_meters.get(id).cloned(),
+                handle_bufs: source_handle_bufs,
+                xrun,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
+            node_channels.push(source_channels);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
             let build = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
             if let Some(c) = build.control {
@@ -785,16 +1070,50 @@ pub(super) fn build_output_graph(
                 .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
-            let make_edge =
-                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
-                    let pad = max_upstream - node_latencies[src_idx];
-                    IncomingEdge {
-                        src_idx,
-                        source_handle,
-                        target_handle,
-                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+            // Width is the max of: upstream widths, any `chK` target channel fed
+            // in, and any `chK` output tap drawn off this effect.
+            // A chK source handle carries exactly its tapped channel (mono), so
+            // the edge width is the tap buffer's, not the source node's full width.
+            let upstream_w = main_upstream
+                .iter()
+                .map(|(i, sh, _)| match sh.as_deref() {
+                    Some(h) if tap_handle_width(h).is_some() => {
+                        nodes[*i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
                     }
-                };
+                    _ => node_channels[*i],
+                })
+                .max()
+                .unwrap_or(2);
+            let target_w = main_upstream
+                .iter()
+                .filter_map(|(_, _, t)| t.as_deref().and_then(target_route))
+                .map(|(off, w)| off + w)
+                .max()
+                .unwrap_or(0);
+            let tap_w = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.as_deref())
+                .filter_map(|h| parse_stereo(h).map(|a| a + 1).or_else(|| parse_ch(h)))
+                .max()
+                .unwrap_or(0);
+            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            let make_edge = |src_idx: usize,
+                             source_handle: Option<String>,
+                             target_handle: Option<String>| {
+                let pad = max_upstream - node_latencies[src_idx];
+                IncomingEdge {
+                    src_idx,
+                    source_handle,
+                    target_handle,
+                    delay: if pad > 0 {
+                        Some(DelayLine::new(pad, node_channels[src_idx]))
+                    } else {
+                        None
+                    },
+                }
+            };
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
                 .map(|(i, s, t)| make_edge(i, s, t))
@@ -806,50 +1125,70 @@ pub(super) fn build_output_graph(
             let sidechain_buf = if sidechain.is_empty() {
                 None
             } else {
-                Some(vec![0.0; DSP_BLOCK_FRAMES * 2])
+                Some(vec![0.0; DSP_BLOCK_FRAMES * eff_channels])
             };
-            // Built from the edges actually drawn off this node's `peer:<id>`
-            // handles, so a stale handle simply yields silence.
-            let handle_bufs: Vec<(String, Vec<f32>)> =
-                if matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
-                    let mut handles: Vec<String> = valid
-                        .edges
-                        .iter()
-                        .filter(|e| &e.from == id)
-                        .filter_map(|e| e.source_handle.clone())
-                        .filter(|h| h.starts_with("peer:"))
-                        .collect();
-                    handles.sort();
-                    handles.dedup();
-                    handles
-                        .into_iter()
-                        .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * 2]))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+            // Output taps drawn off this effect: WebRTC `peer:<id>` mixes plus
+            // generic `chK` per-channel taps. A stale handle just yields silence.
+            let is_webrtc = matches!(effect.spec, EffectSpec::WebRtcBridge { .. });
+            let mut handle_ids: Vec<String> = valid
+                .edges
+                .iter()
+                .filter(|e| &e.from == id)
+                .filter_map(|e| e.source_handle.clone())
+                .filter(|h| tap_handle_width(h).is_some() || (is_webrtc && h.starts_with("peer:")))
+                .collect();
+            handle_ids.sort();
+            handle_ids.dedup();
+            let handle_bufs: Vec<(String, Vec<f32>)> = handle_ids
+                .into_iter()
+                .map(|h| {
+                    let w = tap_handle_width(&h).unwrap_or(2);
+                    (h, vec![0.0; DSP_BLOCK_FRAMES * w])
+                })
+                .collect();
             // One input buffer per WebRTC send channel, keyed "ch1".."chN".
             let channel_bufs: Vec<(String, Vec<f32>)> =
                 if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
-                    (1..=(*channels).clamp(1, 10))
-                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]))
+                    (1..=(*channels).clamp(1, MAX_NET_CH))
+                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES]))
                         .collect()
                 } else {
                     Vec::new()
                 };
+            // Analyzers read all channels at once; WebRTC bridge is single.
+            // Everything else runs one instance per stereo pair.
+            let full_width = matches!(
+                effect.spec,
+                EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_)
+            );
+            let pairs = if full_width || matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+                1
+            } else {
+                eff_channels.div_ceil(2)
+            };
+            let mut effects = Vec::with_capacity(pairs);
             let own = build.effect.latency_frames();
+            effects.push(build.effect);
+            for _ in 1..pairs {
+                let extra = instantiate_effect(&effect.spec, id, output_sr, realtime, registry);
+                effects.push(extra.effect);
+            }
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
-                effect: build.effect,
+                effects,
+                full_width,
                 bypass,
                 incoming,
                 sidechain,
-                out_buf: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                out_buf: vec![0.0; DSP_BLOCK_FRAMES * eff_channels],
                 sidechain_buf,
+                pair_main: vec![0.0; DSP_BLOCK_FRAMES * 2],
+                pair_side: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 handle_bufs,
                 channel_bufs,
             }));
             node_latencies.push(max_upstream + own);
+            node_channels.push(eff_channels);
         }
     }
 
@@ -888,17 +1227,21 @@ pub(super) fn build_output_graph(
                     src_idx: idx,
                     source_handle,
                     target_handle,
-                    delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                    delay: if pad > 0 {
+                        Some(DelayLine::new(pad, node_channels[idx]))
+                    } else {
+                        None
+                    },
                 }
             })
             .collect();
 
-        let n = channels.clamp(1, 10) as usize;
+        let n = channels.clamp(1, MAX_NET_CH) as usize;
         let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
         let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
         let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);
         for c in 1..=n {
-            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]));
+            channel_bufs.push((format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES]));
             let (prod, cons) = RingBuffer::<f32>::new(crate::audio::netaudio::SEND_RING);
             send_producers.push(prod);
             send_consumers.push(cons);
@@ -926,6 +1269,7 @@ pub(super) fn build_output_graph(
         return Ok(BuiltOutputGraph {
             graph: OutputGraph {
                 sample_rate: output_sr,
+                out_channels: 2,
                 nodes,
                 terminals: Vec::new(),
             },
@@ -935,35 +1279,41 @@ pub(super) fn build_output_graph(
             lufs,
             gr_handles,
             scopes,
+            xruns,
         });
     }
 
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<(usize, Option<String>)> = valid
+            let upstream: Vec<(usize, Option<String>, Option<(usize, usize)>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
                 .filter_map(|e| {
-                    id_to_index
-                        .get(&e.from)
-                        .copied()
-                        .map(|idx| (idx, e.source_handle.clone()))
+                    id_to_index.get(&e.from).copied().map(|idx| {
+                        let route = e.target_handle.as_deref().and_then(target_route);
+                        (idx, e.source_handle.clone(), route)
+                    })
                 })
                 .collect();
             let max_upstream = upstream
                 .iter()
-                .map(|(i, _)| node_latencies[*i])
+                .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
             upstream
                 .into_iter()
-                .map(|(src_idx, source_handle)| {
+                .map(|(src_idx, source_handle, route)| {
                     let pad = max_upstream - node_latencies[src_idx];
                     TerminalEdge {
                         src_idx,
                         source_handle,
-                        delay: if pad > 0 { Some(DelayLine::new(pad)) } else { None },
+                        route,
+                        delay: if pad > 0 {
+                            Some(DelayLine::new(pad, node_channels[src_idx]))
+                        } else {
+                            None
+                        },
                     }
                 })
                 .collect()
@@ -974,6 +1324,7 @@ pub(super) fn build_output_graph(
     Ok(BuiltOutputGraph {
         graph: OutputGraph {
             sample_rate: output_sr,
+            out_channels: 2,
             nodes,
             terminals,
         },
@@ -983,6 +1334,7 @@ pub(super) fn build_output_graph(
         lufs,
         gr_handles,
         scopes,
+        xruns,
     })
 }
 
@@ -1016,4 +1368,40 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
         .filter(|i| reachable.contains(&i.id))
         .map(|i| i.id.as_str())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_mapped, DSP_BLOCK_FRAMES};
+
+    #[test]
+    fn add_mapped_maps_by_channel() {
+        // 4->2: first two channels pass, rest dropped.
+        let mut src = vec![0.0; DSP_BLOCK_FRAMES * 4];
+        for f in 0..DSP_BLOCK_FRAMES {
+            for c in 0..4 {
+                src[f * 4 + c] = c as f32 + 1.0;
+            }
+        }
+        let mut dst = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        add_mapped(&src, &mut dst);
+        assert_eq!(dst[0], 1.0);
+        assert_eq!(dst[1], 2.0);
+
+        // 2->1: mono downmix is the mean.
+        let mut stereo = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        for f in 0..DSP_BLOCK_FRAMES {
+            stereo[f * 2] = 1.0;
+            stereo[f * 2 + 1] = 3.0;
+        }
+        let mut mono = vec![0.0; DSP_BLOCK_FRAMES];
+        add_mapped(&stereo, &mut mono);
+        assert!((mono[0] - 2.0).abs() < 1e-6);
+
+        // equal width: straight sum-in.
+        let src = vec![0.5; DSP_BLOCK_FRAMES * 3];
+        let mut dst = vec![0.25; DSP_BLOCK_FRAMES * 3];
+        add_mapped(&src, &mut dst);
+        assert!((dst[0] - 0.75).abs() < 1e-6);
+    }
 }

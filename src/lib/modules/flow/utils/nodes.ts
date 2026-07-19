@@ -55,7 +55,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Microphone',
 		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
 		component: Microphone,
-		defaultData: { deviceId: null }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
@@ -87,7 +87,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Speaker',
 		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
 		component: Speaker,
-		defaultData: { deviceId: null }
+		defaultData: { deviceId: null, channelsExpanded: false }
 	}),
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',
@@ -98,7 +98,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		defaultData: {
 			filePath: null,
 			format: { kind: 'wav', bitDepth: 'f32' },
-			allowOverwrite: false
+			allowOverwrite: false,
+			channels: 2
 		}
 	}),
 	gain: entry<'gain'>({
@@ -152,8 +153,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
 		category: 'monitor',
-		label: 'LUFS Meter',
-		description: 'EBU R128 loudness meter — Momentary / Short-term / Integrated LUFS.',
+		label: 'Loudness',
+		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
 		component: LufsMeter,
 		defaultData: { target: -14 }
 	}),

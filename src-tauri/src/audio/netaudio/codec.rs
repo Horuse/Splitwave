@@ -28,7 +28,7 @@ pub struct ChannelEncoder {
 impl ChannelEncoder {
     pub fn new(format: Format, bitrate: u32, application: opus::Application) -> Self {
         let opus = if format == Format::Opus {
-            match opus::Encoder::new(SR, opus::Channels::Stereo, application) {
+            match opus::Encoder::new(SR, opus::Channels::Mono, application) {
                 Ok(mut e) => {
                     if let Err(err) = e.set_bitrate(opus::Bitrate::Bits(bitrate as i32)) {
                         warn!(error = %err, "set opus bitrate failed");
@@ -85,7 +85,7 @@ pub struct ChannelDecoder {
 
 impl ChannelDecoder {
     pub fn new() -> Self {
-        let opus = opus::Decoder::new(SR, opus::Channels::Stereo)
+        let opus = opus::Decoder::new(SR, opus::Channels::Mono)
             .map_err(|e| warn!(error = %e, "opus decoder init failed"))
             .ok();
         Self { opus, pcm: vec![0.0; OPUS_FRAME_SAMPLES] }
@@ -97,7 +97,7 @@ impl ChannelDecoder {
     pub fn conceal(&mut self, out: &mut Vec<f32>) {
         if let Some(dec) = self.opus.as_mut() {
             if let Ok(n) = dec.decode_float(&[], &mut self.pcm, false) {
-                out.extend_from_slice(&self.pcm[..n * 2]);
+                out.extend_from_slice(&self.pcm[..n]);
             }
         }
     }
@@ -108,7 +108,7 @@ impl ChannelDecoder {
             Format::Opus => {
                 if let Some(dec) = self.opus.as_mut() {
                     match dec.decode_float(payload, &mut self.pcm, false) {
-                        Ok(n) => out.extend_from_slice(&self.pcm[..n * 2]),
+                        Ok(n) => out.extend_from_slice(&self.pcm[..n]),
                         Err(e) => warn!(error = %e, "opus decode failed"),
                     }
                 }

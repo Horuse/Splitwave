@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
-	import { ChevronDown } from '$lib/components/icons';
+	import { Add, ChevronDown } from '$lib/components/icons';
 
 	interface Option {
 		value: string;
@@ -15,6 +15,10 @@
 		placeholder?: string;
 		emptyHint?: string;
 		onChange: (v: string | null) => void;
+		class?: string;
+		/** Footer action pinned below the list, e.g. a shortcut to create a missing option. */
+		actionLabel?: string;
+		onAction?: () => void;
 	}
 
 	let {
@@ -22,7 +26,10 @@
 		value,
 		placeholder = '— Select —',
 		emptyHint = 'No matches',
-		onChange
+		onChange,
+		class: ClassName,
+		actionLabel,
+		onAction
 	}: Props = $props();
 
 	let open = $state(false);
@@ -85,7 +92,7 @@
 	});
 </script>
 
-<div bind:this={containerEl} class="relative min-w-0">
+<div bind:this={containerEl} class="relative min-w-0 {ClassName}">
 	<button
 		type="button"
 		class="nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
@@ -150,6 +157,19 @@
 					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint}</li>
 				{/if}
 			</ul>
+			{#if actionLabel && onAction}
+				<button
+					type="button"
+					class="nodrag nopan flex w-full items-center gap-1.5 border-t border-neutral-300 bg-neutral-100 px-2 py-1.5 text-left text-xs font-medium text-neutral-1000 hover:bg-neutral-200"
+					onclick={() => {
+						closePanel();
+						onAction();
+					}}
+				>
+					<Add class="size-3.5 shrink-0" />
+					<span class="truncate">{actionLabel}</span>
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>

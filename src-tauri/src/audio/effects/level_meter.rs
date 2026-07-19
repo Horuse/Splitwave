@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::audio::graph::LevelMeterData;
@@ -10,21 +10,22 @@ pub struct LevelMeterEffect {
     handle: MeterHandle,
 }
 
+/// Upper bound on metered channels; sizes the fixed atomic arrays so metering
+/// never allocates on the RT path.
+pub const MAX_METER_CHANNELS: usize = 64;
+
 #[derive(Clone)]
 pub struct MeterHandle {
     pub node_id: String,
-    pub peak_l: Arc<AtomicU32>,
-    pub peak_r: Arc<AtomicU32>,
-    pub rms_l: Arc<AtomicU32>,
-    pub rms_r: Arc<AtomicU32>,
+    channels: Arc<AtomicUsize>,
+    peaks: Arc<Vec<AtomicU32>>,
+    rms: Arc<Vec<AtomicU32>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MeterSnapshot {
-    pub peak_l: f32,
-    pub peak_r: f32,
-    pub rms_l: f32,
-    pub rms_r: f32,
+    pub peaks: Vec<f32>,
+    pub rms: Vec<f32>,
 }
 
 /// Peak fall-off per tick — prevents transients from latching the meter.
@@ -34,28 +35,25 @@ impl MeterHandle {
     pub fn new(node_id: String) -> Self {
         Self {
             node_id,
-            peak_l: Arc::new(AtomicU32::new(0)),
-            peak_r: Arc::new(AtomicU32::new(0)),
-            rms_l: Arc::new(AtomicU32::new(0)),
-            rms_r: Arc::new(AtomicU32::new(0)),
+            channels: Arc::new(AtomicUsize::new(0)),
+            peaks: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
+            rms: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
         }
     }
 
-    /// Snapshot current values and decay the peak — called from the engine's
+    /// Snapshot current values and decay the peaks — called from the engine's
     /// tick thread.
     pub fn snapshot_and_decay(&self) -> MeterSnapshot {
-        let pl = load_f32(&self.peak_l);
-        let pr = load_f32(&self.peak_r);
-        let rl = load_f32(&self.rms_l);
-        let rr = load_f32(&self.rms_r);
-        store_f32(&self.peak_l, pl * METER_PEAK_DECAY);
-        store_f32(&self.peak_r, pr * METER_PEAK_DECAY);
-        MeterSnapshot {
-            peak_l: pl,
-            peak_r: pr,
-            rms_l: rl,
-            rms_r: rr,
+        let n = self.channels.load(Ordering::Relaxed).min(MAX_METER_CHANNELS);
+        let mut peaks = Vec::with_capacity(n);
+        let mut rms = Vec::with_capacity(n);
+        for c in 0..n {
+            let p = load_f32(&self.peaks[c]);
+            store_f32(&self.peaks[c], p * METER_PEAK_DECAY);
+            peaks.push(p);
+            rms.push(load_f32(&self.rms[c]));
         }
+        MeterSnapshot { peaks, rms }
     }
 }
 
@@ -78,41 +76,39 @@ impl LevelMeterEffect {
 impl Effect for LevelMeterEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        update_meter(&self.handle, &samples[..frames * 2]);
+        let channels = if frames == 0 { 0 } else { samples.len() / frames };
+        update_meter(&self.handle, &samples[..frames * channels.max(1)], channels);
     }
 }
 
-/// `stereo` is interleaved L/R f32; odd-length truncates the trailing half-frame.
-pub fn update_meter(handle: &MeterHandle, stereo: &[f32]) {
-    let frames = stereo.len() / 2;
+/// Meter `channels`-wide interleaved f32. Peaks accumulate (max) since the last
+/// tick; RMS is per-block. RT-safe: fixed stack scratch, no allocation.
+pub fn update_meter(handle: &MeterHandle, interleaved: &[f32], channels: usize) {
+    let channels = channels.min(MAX_METER_CHANNELS);
+    if channels == 0 {
+        return;
+    }
+    let frames = interleaved.len() / channels;
     if frames == 0 {
         return;
     }
-    let stereo = &stereo[..frames * 2];
-    let mut peak_l = 0.0f32;
-    let mut peak_r = 0.0f32;
-    let mut sum_l_sq = 0.0f64;
-    let mut sum_r_sq = 0.0f64;
-    for frame in stereo.chunks_exact(2) {
-        let l = frame[0];
-        let r = frame[1];
-        let al = l.abs();
-        let ar = r.abs();
-        if al > peak_l {
-            peak_l = al;
+    let mut peak = [0.0f32; MAX_METER_CHANNELS];
+    let mut sum_sq = [0.0f64; MAX_METER_CHANNELS];
+    for f in 0..frames {
+        let base = f * channels;
+        for c in 0..channels {
+            let v = interleaved[base + c];
+            let a = v.abs();
+            if a > peak[c] {
+                peak[c] = a;
+            }
+            sum_sq[c] += (v as f64) * (v as f64);
         }
-        if ar > peak_r {
-            peak_r = ar;
-        }
-        sum_l_sq += (l as f64) * (l as f64);
-        sum_r_sq += (r as f64) * (r as f64);
     }
-    let existing_l = load_f32(&handle.peak_l);
-    let existing_r = load_f32(&handle.peak_r);
-    store_f32(&handle.peak_l, existing_l.max(peak_l));
-    store_f32(&handle.peak_r, existing_r.max(peak_r));
-    let rms_l = (sum_l_sq / frames as f64).sqrt() as f32;
-    let rms_r = (sum_r_sq / frames as f64).sqrt() as f32;
-    store_f32(&handle.rms_l, rms_l);
-    store_f32(&handle.rms_r, rms_r);
+    handle.channels.store(channels, Ordering::Relaxed);
+    for c in 0..channels {
+        let existing = load_f32(&handle.peaks[c]);
+        store_f32(&handle.peaks[c], existing.max(peak[c]));
+        store_f32(&handle.rms[c], (sum_sq[c] / frames as f64).sqrt() as f32);
+    }
 }

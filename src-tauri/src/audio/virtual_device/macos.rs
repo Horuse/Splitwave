@@ -71,9 +71,10 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
     );
     for d in &devices {
         plist.push_str(&format!(
-            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t</dict>\n",
+            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t</dict>\n",
             xml_escape(&d.id),
-            xml_escape(&d.name)
+            xml_escape(&d.name),
+            d.channels.clamp(1, 256)
         ));
     }
     plist.push_str("</array>\n</plist>\n");

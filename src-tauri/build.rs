@@ -16,7 +16,7 @@ fn main() {
 fn compile_swift_static_lib() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let native_dir = manifest_dir.join("native");
-    let swift_sources: Vec<PathBuf> = ["SCKAudioCapture.swift", "AACEncoder.swift"]
+    let swift_sources: Vec<PathBuf> = ["SCKAudioCapture.swift", "CATapCapture.swift", "AACEncoder.swift"]
         .iter()
         .map(|n| native_dir.join(n))
         .filter(|p| p.exists())

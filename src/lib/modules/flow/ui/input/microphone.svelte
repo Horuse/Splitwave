@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { goto } from '$app/navigation';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -8,7 +9,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
-	import { Refresh } from '$lib/components/icons';
+	import { Mic, Refresh } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -16,6 +17,7 @@
 	let { id, data }: NodeProps<MicrophoneNodeType> = $props();
 
 	const flow = useSvelteFlow();
+	const updateNodeInternals = useUpdateNodeInternals();
 
 	let refreshing = $state(false);
 	let info = $state<NativeDeviceInfo | null>(null);
@@ -109,15 +111,27 @@
 	}
 
 	let gainPct = $derived(gain === null ? 0 : gain * 100);
+
+	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+	// Always per-channel: a multi-channel device exposes one output handle per
+	// channel; mono stays a single handle.
 </script>
 
-<Wrapper label="Microphone" accent="input" hasOutput>
+<Wrapper label="Microphone" accent="input" icon={Mic}>
 	<div class="flex w-50 flex-col gap-3">
-		<div class="flex items-center gap-1">
-			<Combobox {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} />
+		<div class="flex items-center w-full gap-1">
+			<Combobox
+				class="w-full"
+				{options}
+				value={data.deviceId ?? null}
+				placeholder="— Select microphone —"
+				onChange={setDevice}
+				actionLabel="Add virtual device"
+				onAction={() => goto('/virtual-devices')}
+			/>
 			<button
 				type="button"
-				class="nodrag nopan flex h-7 w-7 shrink-0 items-center justify-center rounded border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
+				class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
 				title="Refresh devices"
 				disabled={refreshing}
 				onclick={refresh}
@@ -150,7 +164,10 @@
 					onChange={setGainPct}
 				/>
 			{/if}
-			<InputMeter nodeId={id} />
+			<InputMeter
+				nodeId={id}
+				channelCount={channelCount}
+			/>
 		{/if}
 	</div>
 </Wrapper>

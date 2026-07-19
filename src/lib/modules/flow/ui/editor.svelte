@@ -19,14 +19,20 @@
 		DND_MIME,
 		defaultDataFor,
 		emitNodeAction,
+		freeRunFrom,
 		fromXyEdges,
 		fromXyNodes,
 		nodeTypes,
+		parseHandle,
 		registry,
 		toXyEdges,
 		toXyNodes
 	} from '../utils';
 	import Sidebar from './sidebar.svelte';
+	import ChannelEdge from './_channel_edge.svelte';
+	import ConnectionLine from './_connection_line.svelte';
+	import EdgeRectSelect from './_edge_rect_select.svelte';
+	const edgeTypes = { channel: ChannelEdge };
 	import {
 		Backspace,
 		Copy,
@@ -38,6 +44,8 @@
 		Refresh,
 		Rewind
 	} from '$lib/components/icons';
+	import { channelCaps, channelSelection } from '../stores.svelte';
+	import { edgeSettings } from '../edge_settings.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
@@ -55,6 +63,58 @@
 		const n = toXyNodes(pipeline.nodes);
 		return sanitizeEdges(n, toXyEdges(pipeline.edges));
 	}));
+
+	// Fresh edges only: an already-wired armed channel would re-fire the fan-out.
+	// Not `onbeforeconnect` -- xyflow 1.5.2 throws on pointer-up when it is set.
+	let seenEdgeIds = new Set<string>(untrack(() => edges.map((e) => e.id)));
+	$effect(() => {
+		const current = edges;
+		const armed = channelSelection.channels;
+		const from = channelSelection.nodeId;
+
+		untrack(() => {
+			const fresh = current.filter((e) => !seenEdgeIds.has(e.id));
+			seenEdgeIds = new Set(current.map((e) => e.id));
+			if (!from || armed.length < 2 || fresh.length === 0) return;
+
+			const seed = fresh.find((e) => {
+				const ch = e.sourceHandle ? parseHandle(e.sourceHandle) : null;
+				return e.source === from && ch !== null && armed.includes(ch);
+			});
+			const seedCh = seed?.sourceHandle ? parseHandle(seed.sourceHandle) : null;
+			if (!seed?.targetHandle || seedCh === null) return;
+
+			const dropped = parseHandle(seed.targetHandle) ?? 1;
+			const taken = current
+				.filter((e) => e.target === seed.target && e.id !== seed.id)
+				.map((e) => e.targetHandle ?? '');
+			// The target may refuse the whole set: mono recording takes one channel.
+			const cap = channelCaps.get(seed.target) ?? Infinity;
+			const run = freeRunFrom(taken, dropped, armed.length).filter((ch) => ch <= cap);
+			if (run.length === 0) return;
+			const seedIdx = armed.indexOf(seedCh);
+
+			const added: XyEdge[] = [];
+			const retargeted = current.map((e) =>
+				e.id === seed.id ? { ...e, targetHandle: `ch${run[seedIdx]}` } : e
+			);
+			armed.forEach((ch, i) => {
+				if (i === seedIdx || run[i] === undefined) return;
+				added.push({
+					id: createId(),
+					source: seed.source,
+					sourceHandle: `ch${ch}`,
+					target: seed.target,
+					targetHandle: `ch${run[i]}`,
+					animated: edgeSettings.animated,
+					type: 'channel'
+				});
+			});
+			edges = [...retargeted, ...added];
+			added.forEach((e) => seenEdgeIds.add(e.id));
+			channelSelection.clear();
+		});
+	});
 
 	type MenuItem = {
 		label: string;
@@ -401,32 +461,16 @@
 		lastSnapshotAt = Date.now() - SNAPSHOT_MIN_SPACING_MS - 1;
 	});
 
-	// Auto-restart on routing changes only — effect params flow through
-	// update_effect live, no restart needed.
+	// Every node's data (minus canvas geometry) and every edge with its handles.
+	// The backend reconcile classifies the resend, so a live-param-only change is
+	// a no-op there and needs no field-by-field gate here.
 	function routingSignature(): string {
 		return JSON.stringify({
-			nodes: nodes.map((n) => {
-				const d = n.data as Record<string, unknown>;
-				return {
-					id: n.id,
-					type: n.type,
-					deviceId: d.deviceId ?? null,
-					bundleId: d.bundleId ?? null,
-					filePath: d.filePath ?? null,
-					excludeCurrentApp: d.excludeCurrentApp ?? null,
-					// Direct-IP / codec config is structural (rebuilds the send/receive
-					// path), not a live-updatable effect param, so a change must restart.
-					targetIp: d.targetIp ?? null,
-					port: d.port ?? null,
-					channels: d.channels ?? null,
-					codec: d.codec ?? null,
-					opusBitrate: d.opusBitrate ?? null,
-					opusApplication: d.opusApplication ?? null
-				};
-			}),
+			nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
 			edges: edges.map((e) => ({
 				id: e.id,
 				source: e.source,
+				sourceHandle: e.sourceHandle ?? null,
 				target: e.target,
 				targetHandle: e.targetHandle ?? null
 			}))
@@ -435,6 +479,8 @@
 
 	let lastRoutingSig = untrack(routingSignature);
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
+	// No teardown on re-run: node measurement re-fires this effect constantly and
+	// would cancel the pending reconcile before it ever reaches the backend.
 	$effect(() => {
 		const sig = routingSignature();
 		if (sig === lastRoutingSig) return;
@@ -453,7 +499,6 @@
 				}
 			});
 		}, 400);
-		return () => clearTimeout(restartTimer);
 	});
 
 	// The Tauri WebView (and historic browser behavior) treats Backspace outside
@@ -465,6 +510,11 @@
 		const tag = t?.tagName?.toLowerCase();
 		const inField =
 			tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable;
+
+		if (e.key === 'Escape' && channelSelection.nodeId) {
+			channelSelection.clear();
+			return;
+		}
 
 		if (e.key === 'Backspace' || e.key === 'Delete') {
 			if (inField) return;
@@ -547,7 +597,7 @@
 
 <div class="flex h-full w-full">
 	<div
-		class="flex-1"
+		class="relative flex-1"
 		role="region"
 		aria-label="Flow editor"
 		ondragover={onDragOver}
@@ -559,7 +609,9 @@
 			bind:nodes
 			bind:edges
 			{nodeTypes}
-			defaultEdgeOptions={{ animated: true }}
+			{edgeTypes}
+			defaultEdgeOptions={{ animated: edgeSettings.animated, type: 'channel' }}
+			connectionLineComponent={ConnectionLine}
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}
 			onedgecontextmenu={onEdgeContextMenu}
@@ -572,7 +624,17 @@
 		>
 			<Background patternClass="fill-neutral-200"/>
 			<Controls />
+			<EdgeRectSelect />
 		</SvelteFlow>
+
+		{#if channelSelection.channels.length > 0}
+			<div
+				class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm"
+			>
+				<span class="font-mono tabular-nums">{channelSelection.channels.length}</span>
+				channels armed &mdash; drag any one to connect them all, Esc to clear
+			</div>
+		{/if}
 	</div>
 	<Sidebar />
 </div>

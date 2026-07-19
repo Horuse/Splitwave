@@ -26,6 +26,7 @@ pub(super) use platform::{resolve_input, start_input_stream};
 
 /// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
 /// the device side so no resampling happens on capture delivery.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(super) const SCK_SR: u32 = 48_000;
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
@@ -64,6 +65,7 @@ pub(super) enum ResolvedInput {
     },
     AudioFile {
         sample_rate: u32,
+        channels: u32,
         path: PathBuf,
     },
 }
@@ -80,6 +82,17 @@ impl ResolvedInput {
             ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
         }
     }
+
+    /// Channel count this input broadcasts. Only cpal devices carry their
+    /// native count; every other source path emits stereo.
+    pub(super) fn native_channels(&self) -> u32 {
+        match self {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
+            ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
+            _ => 2,
+        }
+    }
 }
 
 /// Shared file probe -- both platforms resolve audio files identically.
@@ -88,6 +101,7 @@ pub(super) fn resolve_audio_file(file_path: &str) -> AppResult<ResolvedInput> {
     let info = probe_audio_file(&path)?;
     Ok(ResolvedInput::AudioFile {
         sample_rate: info.sample_rate,
+        channels: info.channels,
         path,
     })
 }

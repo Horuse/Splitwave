@@ -38,6 +38,8 @@
 	accent="effect"
 	hasInput
 	hasOutput
+	channelIo
+	nodeId={id}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}
 >

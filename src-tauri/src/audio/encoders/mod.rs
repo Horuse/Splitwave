@@ -23,7 +23,7 @@ pub use opus::OpusRecorder;
 pub use wav::WavRecorder;
 
 pub trait AudioEncoder: Send {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()>;
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()>;
 	fn flush(&mut self) -> AppResult<()>;
 	fn finalize(self: Box<Self>) -> AppResult<()>;
 }
@@ -31,11 +31,18 @@ pub trait AudioEncoder: Send {
 pub fn build_encoder(
 	path: &Path,
 	sample_rate: u32,
+	channels: u16,
 	format: RecordingFormat,
 ) -> AppResult<Box<dyn AudioEncoder>> {
+	let max = format.max_channels();
+	if channels == 0 || channels > max {
+		return Err(crate::error::AppError::Validation(format!(
+			"{channels} channels requested; this format allows 1..{max}"
+		)));
+	}
 	match format {
 		RecordingFormat::Wav { bit_depth } => {
-			Ok(Box::new(WavRecorder::create(path, sample_rate, bit_depth)?))
+			Ok(Box::new(WavRecorder::create(path, sample_rate, channels, bit_depth)?))
 		}
 		RecordingFormat::Flac {
 			bit_depth,
@@ -43,26 +50,28 @@ pub fn build_encoder(
 		} => Ok(Box::new(FlacRecorder::create(
 			path,
 			sample_rate,
+			channels,
 			bit_depth,
 			compression,
 		)?)),
 		RecordingFormat::Opus {
 			bitrate,
 			application,
-		} => Ok(Box::new(OpusRecorder::create(path, application, bitrate)?)),
+		} => Ok(Box::new(OpusRecorder::create(path, channels, application, bitrate)?)),
 		RecordingFormat::Mp3 { bitrate_kbps } => Ok(Box::new(Mp3Recorder::create(
 			path,
 			sample_rate,
+			channels,
 			bitrate_kbps,
 		)?)),
 		RecordingFormat::Aac { bitrate } => {
 			#[cfg(target_os = "macos")]
 			{
-				Ok(Box::new(AacRecorder::create(path, sample_rate, bitrate)?))
+				Ok(Box::new(AacRecorder::create(path, sample_rate, channels, bitrate)?))
 			}
 			#[cfg(not(target_os = "macos"))]
 			{
-				let _ = (path, sample_rate, bitrate);
+				let _ = (path, sample_rate, channels, bitrate);
 				Err(crate::error::AppError::Stream(
 					"AAC recording is macOS-only".into(),
 				))
@@ -71,6 +80,7 @@ pub fn build_encoder(
 		RecordingFormat::Aiff { bit_depth } => Ok(Box::new(AiffRecorder::create(
 			path,
 			sample_rate,
+			channels,
 			bit_depth,
 		)?)),
 	}

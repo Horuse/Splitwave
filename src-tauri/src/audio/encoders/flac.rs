@@ -25,6 +25,7 @@ impl FlacRecorder {
 	pub fn create(
 		path: &Path,
 		sample_rate: u32,
+		channels: u16,
 		bit_depth: FlacBitDepth,
 		compression: FlacCompression,
 	) -> AppResult<Self> {
@@ -37,7 +38,7 @@ impl FlacRecorder {
 			FlacCompression::Default => FlacOptions::default(),
 			FlacCompression::Best => FlacOptions::best(),
 		};
-		let writer = FlacSampleWriter::create(path, options, sample_rate, bps, 2, None)
+		let writer = FlacSampleWriter::create(path, options, sample_rate, bps, channels as u8, None)
 			.map_err(|e| AppError::Stream(format!("flac create {}: {e}", path.display())))?;
 		let max_sample = ((1u32 << (bps - 1)) - 1) as f32;
 		let min_sample = -((1u32 << (bps - 1)) as f32);
@@ -52,8 +53,7 @@ impl FlacRecorder {
 }
 
 impl AudioEncoder for FlacRecorder {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()> {
-		debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
 		self.scratch.clear();
 		if self.scratch.capacity() < samples.len() {
 			self.scratch.reserve(samples.len() - self.scratch.capacity());

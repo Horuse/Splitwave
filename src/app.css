@@ -244,5 +244,29 @@
 }
 
 .handle {
-    @apply !size-2 border-0 rounded-full !border-neutral-500 !bg-neutral-200 ring-[1px] !ring-neutral-500
+    @apply size-2! rounded-full z-50 bg-neutral-200! border-neutral-400 border
+}
+
+/* Preview dashes in the edge-shape picker; mirrors xyflow's dashdraw. */
+.edge-icon-dash {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+}
+
+/* Armed for a multi-channel drag, not a drag of its own. */
+.handle-armed {
+    @apply ring-2 ring-neutral-900 ring-offset-1
+}
+
+/* Animated dashed wire from a meter bar / label to its channel handle. Color is
+   inherited from `currentColor`; `.wire-rev` flips the travel direction. */
+.wire {
+    height: 1px;
+    background-image: repeating-linear-gradient(to right, currentColor 0 3px, transparent 3px 8px);
+    background-size: 8px 1px;
+}
+.wire-y {
+    width: 1px;
+    background-image: repeating-linear-gradient(to bottom, currentColor 0 3px, transparent 3px 8px);
+    background-size: 1px 8px;
 }

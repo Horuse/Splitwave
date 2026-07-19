@@ -4,8 +4,8 @@ import type {
 	AudioApplication,
 	AudioDevice,
 	AudioStateEvent,
+	CapturePermission,
 	NativeDeviceInfo,
-	PermissionState,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus
@@ -22,8 +22,8 @@ export const methods = {
 		invoke<Record<string, string>>('get_app_icons', { bundleIds }),
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> =>
 		invoke<NativeDeviceInfo>('device_info', { kind, name }),
-	checkScreenRecordingPermission: (): Promise<PermissionState> =>
-		invoke<PermissionState>('check_screen_recording_permission'),
+	checkCapturePermission: (): Promise<CapturePermission> =>
+		invoke<CapturePermission>('check_capture_permission'),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
 		invoke('start_pipeline', { graph }),
@@ -152,10 +152,16 @@ export const methods = {
 		nodeId: string
 	): Promise<Record<string, { pingMs: number; packets: number; lost: number }>> =>
 		invoke('webrtc_peer_stats', { nodeId }),
+	/** Binds the receive port so an unrouted node can still report its stream. */
+	netReceiverListen: (nodeId: string, port: number): Promise<void> =>
+		invoke('net_receiver_listen', { nodeId, port }),
+	/** Frees the receive port when the node goes away. */
+	netReceiverRelease: (nodeId: string): Promise<void> =>
+		invoke('net_receiver_release', { nodeId }),
 	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
 	netReceiverStats: (
 		nodeId: string
-	): Promise<{ bytes: number; packets: number; lost: number } | null> =>
+	): Promise<{ bytes: number; packets: number; lost: number; channels: number } | null> =>
 		invoke('net_receiver_stats', { nodeId }),
 	/** Direct-IP send stats, or null when the node isn't running. */
 	netSenderStats: (

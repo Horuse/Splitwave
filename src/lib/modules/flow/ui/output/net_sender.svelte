@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
-	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { formatRate } from '$lib/components/format';
+	import { parseHandle } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
+	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
 	let { id, data }: NodeProps<NetSenderNodeType> = $props();
@@ -32,11 +34,20 @@
 	}, 1000);
 	onDestroy(() => clearInterval(interval));
 
-	const MAX_CHANNELS = 10;
-	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
-	let inputs = $derived(
-		Array.from({ length: channelCount }, (_, i) => ({ id: `ch${i + 1}`, label: `in ${i + 1}` }))
+	const MAX_CHANNELS = 255;
+	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'target' });
+	let wiredChannels = $derived(
+		wired.current.reduce((n, c) => {
+			const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+			return ch === null ? n : Math.max(n, ch);
+		}, 0)
 	);
+
+	// The sender opens one send ring per channel, so it tracks the cables.
+	$effect(() => {
+		const next = Math.max(1, Math.min(wiredChannels, MAX_CHANNELS));
+		if (next !== untrack(() => data.channels)) flow.updateNodeData(id, { channels: next });
+	});
 
 	function setTargetIp(value: string) {
 		flow.updateNodeData(id, { targetIp: value.trim() });
@@ -45,21 +56,6 @@
 	function setPort(value: string) {
 		const port = Math.max(1, Math.min(65535, Math.floor(Number(value)) || 0));
 		flow.updateNodeData(id, { port });
-	}
-
-	function addChannel() {
-		if (channelCount < MAX_CHANNELS) flow.updateNodeData(id, { channels: channelCount + 1 });
-	}
-
-	function removeChannel() {
-		if (channelCount <= 1) return;
-		const handle = `ch${channelCount}`;
-		const orphaned = flow
-			.getEdges()
-			.filter((e) => e.target === id && e.targetHandle === handle)
-			.map((e) => ({ id: e.id }));
-		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		flow.updateNodeData(id, { channels: channelCount - 1 });
 	}
 
 	const CODECS: { value: NetCodec; label: string; sub: string }[] = [
@@ -94,7 +90,7 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" accent="output">
+<Wrapper label="Net Sender" accent="output" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- target -->
 		<div class="flex flex-col gap-0.5">
@@ -118,38 +114,6 @@
 			/>
 		</div>
 
-		<!-- inputs -->
-		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
-			<div class="flex items-center gap-1">
-				<button
-					type="button"
-					class="nodrag nopan button-main secondary flex h-4 w-4 items-center justify-center rounded p-0 font-mono text-[11px] leading-none"
-					disabled={channelCount <= 1}
-					onclick={removeChannel}
-				>
-					-
-				</button>
-				<span class="w-4 text-center font-mono text-[10px] tabular-nums text-neutral-900">{channelCount}</span>
-				<button
-					type="button"
-					class="nodrag nopan button-main secondary flex h-4 w-4 items-center justify-center rounded p-0 font-mono text-[11px] leading-none"
-					disabled={channelCount >= MAX_CHANNELS}
-					onclick={addChannel}
-				>
-					+
-				</button>
-			</div>
-		</div>
-
-		<!-- per-channel inputs (left handles) -->
-		{#each inputs as ch (ch.id)}
-			<div class="relative -ml-4 flex min-h-3 items-center gap-1 pl-4">
-				<Handle type="target" id={ch.id} position={Position.Left} class="handle" />
-				<span class="font-mono text-[9px] text-neutral-500">{ch.label}</span>
-			</div>
-		{/each}
-
 		<!-- throughput -->
 		<div class="flex items-center justify-between">
 			<span class="font-mono text-[9px] text-neutral-500">Sending</span>
@@ -161,67 +125,32 @@
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-				{#each CODECS as c (c.value)}
-					<button
-						type="button"
-						onclick={() => setCodec(c.value)}
-						class={[
-							'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-							data.codec === c.value
-								? 'bg-neutral-900 text-white'
-								: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-						]}
-					>
-						<span class="font-mono text-[10px]">{c.label}</span>
-						<span class="text-[8px] opacity-70">{c.sub}</span>
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
+				value={data.codec}
+				onSelect={setCodec}
+			/>
 		</div>
 
 		{#if data.codec === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<div class="grid grid-cols-4 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-					{#each BITRATES as b (b.bps)}
-						<button
-							type="button"
-							onclick={() => setBitrate(b.bps)}
-							class={[
-								'rounded-sm py-0.5 font-mono text-[10px] leading-none transition-colors',
-								data.opusBitrate === b.bps
-									? 'bg-neutral-900 text-white'
-									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-							]}
-						>
-							{b.label}
-						</button>
-					{/each}
-				</div>
+				<SegmentedButtons
+					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
+					value={data.opusBitrate}
+					onSelect={setBitrate}
+				/>
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-				<div class="grid grid-cols-3 gap-[2px] rounded-sm border border-neutral-300 p-[2px]">
-					{#each APPS as a (a.value)}
-						<button
-							type="button"
-							onclick={() => setApp(a.value)}
-							class={[
-								'flex flex-col items-center rounded-sm py-0.5 leading-none transition-colors',
-								data.opusApplication === a.value
-									? 'bg-neutral-900 text-white'
-									: 'bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-							]}
-						>
-							<span class="font-mono text-[10px]">{a.label}</span>
-							<span class="text-[8px] opacity-70">{a.sub}</span>
-						</button>
-					{/each}
-				</div>
+				<SegmentedButtons
+					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
+					value={data.opusApplication}
+					onSelect={setApp}
+				/>
 			</div>
 		{/if}
 	</div>

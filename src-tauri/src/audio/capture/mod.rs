@@ -1,7 +1,11 @@
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::SckCapture as Capture;
+mod macos_backend;
+#[cfg(target_os = "macos")]
+mod macos_tap;
+#[cfg(target_os = "macos")]
+pub use macos_backend::{capture_rate, uses_taps, Capture};
 
 #[cfg(target_os = "linux")]
 mod linux;

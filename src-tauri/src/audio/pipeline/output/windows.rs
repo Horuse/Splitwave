@@ -14,7 +14,7 @@ use crate::error::AppResult;
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
+use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -47,6 +47,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     node_id: &str,
     spec: SpeakerResolved,
     graph: OutputGraph,
+    meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
     let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
@@ -60,9 +61,10 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
-    let fill = move |stereo_out: &mut [f32], _frames: usize| {
-        streams::bulk_pop(&mut consumer, stereo_out);
+    let (producer, mut consumer) =
+        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
+    let fill = move |out: &mut [f32], _frames: usize| {
+        streams::bulk_pop(&mut consumer, out);
     };
     let app_err = app.clone();
     let dead_cb = dead.clone();
@@ -81,7 +83,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         err_cb,
     )?;
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    let (worker_handle, ctrl) =
+        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
     Ok((
         SpeakerHandle {
             _stream: stream,

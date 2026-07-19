@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import type { PermissionState } from '$lib/modules/audio/types';
+	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
+	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	// Screen-recording permission and self-exclusion are macOS/ScreenCaptureKit
-	// only; Linux (PipeWire) and Windows (WASAPI loopback) need neither.
+	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
+	// loopback) need it neither.
 	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
 	const isPreview = getContext(PREVIEW_CTX) === true;
 	const isMac = isPreview || platform() === 'macos';
@@ -21,21 +23,26 @@
 	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
 
 	const flow = useSvelteFlow();
+	const updateNodeInternals = useUpdateNodeInternals();
 
-	let permission = $state<PermissionState | null>(null);
+	let permission = $state<CapturePermission | null>(null);
 	let checking = $state(false);
 
-	function onToggle(e: Event) {
-		const checked = (e.currentTarget as HTMLInputElement).checked;
-		flow.updateNodeData(id, { excludeCurrentApp: checked });
-	}
+	// Core Audio process taps have no preflight API: the grant is requested on
+	// the first capture and a refusal surfaces as a pipeline error. Only the
+	// ScreenCaptureKit path (macOS < 14.4) can be checked up front.
+	let showBanner = $derived(
+		permission !== null &&
+			permission.kind === 'screenrecording' &&
+			permission.state !== 'allowed'
+	);
 
 	async function refreshPermission() {
 		checking = true;
 		try {
-			permission = await audioMethods.checkScreenRecordingPermission();
+			permission = await audioMethods.checkCapturePermission();
 		} catch {
-			permission = 'unknown';
+			permission = { kind: 'none', state: 'unknown' };
 		} finally {
 			checking = false;
 		}
@@ -64,33 +71,36 @@
 	}
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	// System Audio capture is stereo; expose one output handle per channel.
+	const channelCount = 2;
 </script>
 
-<Wrapper label="System Audio" accent="input" hasOutput>
+<Wrapper label="System Audio" accent="input" icon={SoundWave}>
 	<div class="flex w-64 flex-col gap-3">
-		{#if isMac && permission !== 'allowed'}
+		{#if showBanner}
 			<div class={[
 				'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
-				permission === 'denied' && 'border-red-300 bg-red-50 text-red-700',
-				(permission === 'unknown' || permission === null) && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
+				permission?.state === 'denied' && 'border-red-300 bg-red-50 text-red-700',
+				permission?.state === 'unknown' && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
 			]}>
 				<span class="flex items-center gap-1.5">
 					<span
 						class={[
 							'inline-block h-2 w-2 rounded-full',
-							permission === 'denied' && 'bg-red-500',
-							(permission === 'unknown' || permission === null) && 'bg-neutral-500'
+							permission?.state === 'denied' && 'bg-red-500',
+							permission?.state === 'unknown' && 'bg-neutral-500'
 						]}
 					></span>
 					<span>
-						{#if permission === 'denied'}
+						{#if permission?.state === 'denied'}
 							Screen Recording denied
 						{:else}
 							Checking permission…
 						{/if}
 					</span>
 				</span>
-				{#if permission === 'denied'}
+				{#if permission?.state === 'denied'}
 					<button
 						type="button"
 						class="nodrag nopan shrink-0 rounded border border-red-400 bg-red-100 px-1.5 py-0.5 hover:bg-red-200"
@@ -112,17 +122,13 @@
 			</div>
 		{/if}
 		{#if isMac}
-			<label class="nodrag nopan flex items-center gap-2 text-xs text-neutral-1000">
-				<input
-					type="checkbox"
-					class="nodrag nopan rounded"
-					checked={data.excludeCurrentApp ?? true}
-					onchange={onToggle}
-				/>
-				Exclude this app (avoid feedback)
-			</label>
+			<Toggle
+				size="sm"
+				label="Exclude this app"
+				checked={data.excludeCurrentApp ?? true}
+				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })}
+			/>
 		{/if}
-		<InputMeter nodeId={id} />
 		<Slider
 			label="Volume"
 			value={volumePct}
@@ -133,6 +139,10 @@
 			defaultValue={100}
 			ticks={[25, 50, 75]}
 			onChange={setVolume}
+		/>
+		<InputMeter
+			nodeId={id}
+			channelCount={channelCount}
 		/>
 	</div>
 </Wrapper>

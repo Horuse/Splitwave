@@ -30,6 +30,7 @@
     import { audioStore } from '$lib/modules/audio/stores.svelte';
     import { methods as audioMethods } from '$lib/modules/audio/methods';
     import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
+    import { Add, Delete, Play, SoundWave, Stop } from '$lib/components/icons';
     import { platform } from '@tauri-apps/plugin-os';
 
     const isWindows = platform() === 'windows';
@@ -64,6 +65,8 @@
             {#if !isWindows}
                 <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
             {/if}
+
+                <a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
         </div>
     {/snippet}
 </Header>
@@ -77,15 +80,23 @@
         <h1 class="text-2xl font-semibold">Pipelines</h1>
 
         <button
-                class="button-main primary p-6 py-2"
+                class="button-main primary gap-1.5 p-6 py-2"
                 onclick={createPipeline}
         >
+            <Add class="size-4" />
             New pipeline
         </button>
     </div>
 
     {#if pipelineStore.pipelines.length === 0}
-        <p class="text-sm text-theme">No pipelines yet. Create one to get started.</p>
+        <div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-16">
+            <SoundWave class="size-10 text-neutral-600" />
+            <p class="text-sm text-neutral-900">No pipelines yet. Create one to get started.</p>
+            <button class="button-main primary gap-1.5 py-1.5" onclick={createPipeline}>
+                <Add class="size-4" />
+                New pipeline
+            </button>
+        </div>
     {:else}
         <ul class="flex flex-col gap-4">
             {#each pipelineStore.pipelines as p (p.id)}
@@ -117,8 +128,10 @@
                             {#if busy === p.id}
                                 …
                             {:else if audioStore.isRunning && audioStore.runningPipelineId === p.id}
+                                <Stop class="size-3.5" />
                                 Stop
                             {:else}
+                                <Play class="size-3.5" />
                                 Activate
                             {/if}
                         </button>
@@ -127,6 +140,7 @@
                                 onclick={(e) => remove(p.id, p.name, e)}
                                 aria-label="Delete pipeline"
                         >
+                            <Delete class="size-3.5" />
                             Delete
                         </button>
                     </div>

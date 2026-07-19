@@ -8,25 +8,29 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::mem::MaybeUninit;
 use std::path::Path;
 
-use mp3lame_encoder::{max_required_buffer_size, Builder, FlushNoGap, InterleavedPcm};
+use mp3lame_encoder::{max_required_buffer_size, Builder, FlushNoGap, InterleavedPcm, MonoPcm};
 
 use super::AudioEncoder;
 use crate::error::{AppError, AppResult};
-
-const CHANNELS_U8: u8 = 2;
 
 pub struct Mp3Recorder {
 	encoder: mp3lame_encoder::Encoder,
 	file: BufWriter<File>,
 	out_buf: Vec<u8>,
+	channels: u16,
 }
 
 impl Mp3Recorder {
-	pub fn create(path: &Path, sample_rate: u32, bitrate_kbps: u32) -> AppResult<Self> {
+	pub fn create(
+		path: &Path,
+		sample_rate: u32,
+		channels: u16,
+		bitrate_kbps: u32,
+	) -> AppResult<Self> {
 		let mut builder = Builder::new()
 			.ok_or_else(|| AppError::Stream("mp3 builder init failed".into()))?;
 		builder
-			.set_num_channels(CHANNELS_U8)
+			.set_num_channels(channels as u8)
 			.map_err(|e| AppError::Stream(format!("mp3 channels: {e:?}")))?;
 		builder
 			.set_sample_rate(sample_rate)
@@ -53,6 +57,7 @@ impl Mp3Recorder {
 			encoder,
 			file,
 			out_buf: Vec::with_capacity(8192),
+			channels,
 		})
 	}
 
@@ -64,17 +69,18 @@ impl Mp3Recorder {
 }
 
 impl AudioEncoder for Mp3Recorder {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()> {
-		debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
-		let frames = samples.len() / 2;
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
+		let frames = samples.len() / self.channels as usize;
 		let needed = max_required_buffer_size(frames);
 		self.out_buf.clear();
 		self.ensure_capacity(needed);
 		let spare: &mut [MaybeUninit<u8>] = self.out_buf.spare_capacity_mut();
-		let written = self
-			.encoder
-			.encode(InterleavedPcm(samples), spare)
-			.map_err(|e| AppError::Stream(format!("mp3 encode: {e:?}")))?;
+		let written = if self.channels == 1 {
+			self.encoder.encode(MonoPcm(samples), spare)
+		} else {
+			self.encoder.encode(InterleavedPcm(samples), spare)
+		}
+		.map_err(|e| AppError::Stream(format!("mp3 encode: {e:?}")))?;
 		// SAFETY: `encode` initialised exactly `written` bytes via libmp3lame.
 		unsafe { self.out_buf.set_len(written) };
 		self.file

@@ -37,7 +37,7 @@ mod worker;
 
 use dag::{build_output_graph, inputs_feeding_output, OutputGraph};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
-use meter::{spawn_meter_thread, MeterTickThread};
+use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
     resolve_output, start_monitor_worker, start_net_sender_worker, start_recorder_worker,
     start_speaker_stream, RecorderWorker, ResolvedOutput, SpeakerHandle,
@@ -73,11 +73,15 @@ pub struct ActivePipeline {
     gr_handles: HashMap<String, GrHandle>,
     scopes: HashMap<String, WaveformHandle>,
     meter_thread: Option<MeterTickThread>,
+    /// Per-source underrun counters, rebuilt each reconcile alongside the graphs.
+    xrun_handles: Vec<(String, Arc<AtomicU64>)>,
+    xrun_thread: Option<XrunTickThread>,
 }
 
 struct InputState {
     _handle: InputHandle,
     sample_rate: u32,
+    channels: u32,
     bridge_tx: BroadcastTx,
     bridges_by_output: HashMap<String, Vec<usize>>,
     volume: Arc<AtomicU32>,
@@ -93,6 +97,9 @@ struct SpeakerState {
     sig: OutputSig,
     ctrl: WorkerCtrl,
     dead: Arc<AtomicBool>,
+    // Output-tap level meter, re-registered into `meters` each reconcile so the
+    // meter thread emits it. Persists across graph swaps (worker keeps running).
+    meter: MeterHandle,
 }
 
 struct RecorderState {
@@ -135,11 +142,20 @@ impl ActivePipeline {
             gr_handles: HashMap::new(),
             scopes: HashMap::new(),
             meter_thread: None,
+            xrun_handles: Vec::new(),
+            xrun_thread: None,
         }
     }
 
     /// Diff `graph` against the running pipeline; only touch what changed.
     pub fn reconcile(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
+        // Param-only resend: nothing structural changed, so leave every worker
+        // (and the meter thread) running untouched.
+        if self.is_structurally_current(graph) {
+            self.current = Some(graph.clone());
+            return Ok(());
+        }
+
         for state in self.inputs.values_mut() {
             state.bridge_tx.drain_discarded();
         }
@@ -242,6 +258,8 @@ impl ActivePipeline {
         self.net_senders.clear();
         self.monitor = None;
         self.meter_thread = None;
+        self.xrun_handles.clear();
+        self.xrun_thread = None;
         self.effect_controls.clear();
         self.effect_bypasses.clear();
         // Input meters live with their inputs and survive this teardown;
@@ -330,9 +348,11 @@ impl ActivePipeline {
             }
         }
 
-        // Drop the meter tick thread -- it captured a stale snapshot. The
-        // new one is spawned at the tail of `apply_full`.
+        // Drop the meter / xrun tick threads -- they captured stale snapshots.
+        // Fresh ones are spawned at the tail of `apply_full`.
         self.meter_thread = None;
+        self.xrun_handles.clear();
+        self.xrun_thread = None;
 
         // Inputs whose spec changed (or vanished) drop here. Consumers
         // listed them in `OutputSig.inputs`, so spec change => sig change
@@ -371,6 +391,44 @@ impl ActivePipeline {
         }
 
         Ok(())
+    }
+
+    /// True when `graph` differs from the running pipeline only in live params:
+    /// every input spec, output key, and structural output sig is unchanged.
+    /// Lets `reconcile` no-op a param-only resend without disturbing workers or
+    /// the meter thread (params already flowed through `update_effect`).
+    fn is_structurally_current(&self, graph: &ValidGraph) -> bool {
+        let Some(current) = &self.current else {
+            return false;
+        };
+        let cur_inputs: HashMap<&str, &InputSpec> =
+            current.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
+        let new_inputs: HashMap<&str, &InputSpec> =
+            graph.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
+        if cur_inputs != new_inputs {
+            return false;
+        }
+
+        let mut new_keys: Vec<String> = graph.outputs.iter().map(|o| o.id.clone()).collect();
+        if monitor_mode(graph) {
+            new_keys.push(MONITOR_KEY.to_string());
+        }
+        let new_set: HashSet<String> = new_keys.iter().cloned().collect();
+
+        let mut running: HashSet<String> = HashSet::new();
+        running.extend(self.speakers.keys().cloned());
+        running.extend(self.recorders.keys().cloned());
+        running.extend(self.net_senders.keys().cloned());
+        if self.monitor.is_some() {
+            running.insert(MONITOR_KEY.to_string());
+        }
+        if running != new_set {
+            return false;
+        }
+
+        new_keys
+            .iter()
+            .all(|key| self.current_output_sig(key) == Some(&compute_output_sig(graph, key)))
     }
 
     fn current_output_sig(&self, id: &str) -> Option<&OutputSig> {
@@ -428,6 +486,7 @@ impl ActivePipeline {
         let monitor_mode = monitor_mode(graph);
 
         let mut input_native_sr: HashMap<String, u32> = HashMap::new();
+        let mut input_native_channels: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
             // NetReceiver has no capture device; it produces at the output rate
@@ -437,9 +496,11 @@ impl ActivePipeline {
             }
             if let Some(state) = self.inputs.get(&inp.id) {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
+                input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
                 let resolved = resolve_input(inp)?;
                 input_native_sr.insert(inp.id.clone(), resolved.sample_rate());
+                input_native_channels.insert(inp.id.clone(), resolved.native_channels());
                 input_runtime.insert(inp.id.clone(), resolved);
             }
         }
@@ -556,6 +617,7 @@ impl ActivePipeline {
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
                 &input_native_sr,
+                &input_native_channels,
                 &mut my_pairs,
                 &mut self.effect_registry,
                 &input_volumes,
@@ -584,6 +646,7 @@ impl ActivePipeline {
             for s in built.scopes {
                 self.scopes.insert(s.node_id.clone(), s);
             }
+            self.xrun_handles.extend(built.xruns);
             output_graphs.insert(out.id.clone(), built.graph);
         }
 
@@ -603,6 +666,7 @@ impl ActivePipeline {
                     false,
                     graph,
                     &input_native_sr,
+                    &input_native_channels,
                     &mut my_pairs,
                     &mut self.effect_registry,
                     &input_volumes,
@@ -628,6 +692,7 @@ impl ActivePipeline {
                 for s in built.scopes {
                     self.scopes.insert(s.node_id.clone(), s);
                 }
+                self.xrun_handles.extend(built.xruns);
                 monitor_graph = Some(built.graph);
             }
         }
@@ -649,6 +714,7 @@ impl ActivePipeline {
                     AppError::Validation(format!("input runtime missing for {input_id}"))
                 })?;
                 let sample_rate = resolved.sample_rate();
+                let channels = resolved.native_channels();
                 let meter = new_input_meters.remove(&input_id)
                     .unwrap_or_else(|| MeterHandle::new(input_id.clone()));
                 self.meters.insert(input_id.clone(), meter);
@@ -664,12 +730,14 @@ impl ActivePipeline {
                     let slot = bridge_tx.add(prod)?;
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
-                let handle = start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), &app)?;
+                let handle =
+                    start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), None, &app)?;
                 self.inputs.insert(
                     input_id,
                     InputState {
                         _handle: handle,
                         sample_rate,
+                        channels,
                         bridge_tx,
                         bridges_by_output,
                         volume,
@@ -678,6 +746,47 @@ impl ActivePipeline {
                     },
                 );
             }
+        }
+
+        // Inputs that resolved but feed nothing: start their capture anyway so
+        // the level meter runs. The capture meters directly (no DAG source).
+        // File inputs are skipped -- don't auto-play an unrouted file.
+        let unrouted: Vec<String> = input_runtime.keys().cloned().collect();
+        for input_id in unrouted {
+            if self.inputs.contains_key(&input_id) {
+                continue;
+            }
+            let resolved = input_runtime.remove(&input_id).unwrap();
+            if matches!(resolved, ResolvedInput::AudioFile { .. }) {
+                continue;
+            }
+            let sample_rate = resolved.sample_rate();
+            let channels = resolved.native_channels();
+            let meter = new_input_meters
+                .remove(&input_id)
+                .unwrap_or_else(|| MeterHandle::new(input_id.clone()));
+            self.meters.insert(input_id.clone(), meter.clone());
+            let volume = new_input_volumes
+                .remove(&input_id)
+                .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+            let paused = new_input_paused.remove(&input_id);
+            let drain = new_input_drain.remove(&input_id);
+            let (bridge_tx, bridge_rx) = broadcast_channel();
+            let handle =
+                start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), Some(meter), &app)?;
+            self.inputs.insert(
+                input_id,
+                InputState {
+                    _handle: handle,
+                    sample_rate,
+                    channels,
+                    bridge_tx,
+                    bridges_by_output: HashMap::new(),
+                    volume,
+                    paused,
+                    drain,
+                },
+            );
         }
 
         // Hot-swap the new sub-graph into an existing worker when
@@ -690,10 +799,11 @@ impl ActivePipeline {
             let resolved = output_runtime.remove(&out.id).ok_or_else(|| {
                 AppError::Validation(format!("output runtime missing for {}", out.id))
             })?;
-            let og = output_graphs.remove(&out.id).unwrap();
+            let mut og = output_graphs.remove(&out.id).unwrap();
             let new_sig = compute_output_sig(graph, &out.id);
             match resolved {
                 ResolvedOutput::Speaker(spec) => {
+                    og.set_out_channels(spec.out_channels);
                     if let Some(state) = self.speakers.get_mut(&out.id) {
                         if state.sample_rate == spec.sample_rate {
                             state.ctrl.send_graph(og)?;
@@ -706,7 +816,9 @@ impl ActivePipeline {
                         self.speakers.remove(&out.id);
                     }
                     let sample_rate = spec.sample_rate;
-                    let (handle, ctrl, dead) = start_speaker_stream(&out.id, spec, og, &app)?;
+                    let meter = MeterHandle::new(out.id.clone());
+                    let (handle, ctrl, dead) =
+                        start_speaker_stream(&out.id, spec, og, meter.clone(), &app)?;
                     self.speakers.insert(
                         out.id.clone(),
                         SpeakerState {
@@ -715,6 +827,7 @@ impl ActivePipeline {
                             sig: new_sig,
                             ctrl,
                             dead,
+                            meter,
                         },
                     );
                 }
@@ -722,7 +835,9 @@ impl ActivePipeline {
                     path,
                     sample_rate,
                     format,
+                    channels,
                 } => {
+                    og.set_out_channels(channels as usize);
                     if let Some(state) = self.recorders.get_mut(&out.id) {
                         if state.sample_rate == sample_rate {
                             state.ctrl.send_graph(og)?;
@@ -740,6 +855,7 @@ impl ActivePipeline {
                         path,
                         sample_rate,
                         format,
+                        channels,
                         og,
                         app.clone(),
                     )?;
@@ -805,6 +921,12 @@ impl ActivePipeline {
             "pipeline reconciled"
         );
 
+        // Output-tap meters live on the speaker workers; surface them to the
+        // meter thread alongside input/effect meters.
+        for (id, s) in &self.speakers {
+            self.meters.insert(id.clone(), s.meter.clone());
+        }
+
         // Respawn the meter tick thread so it picks up new/changed
         // handles. The old thread (if any) was dropped by `teardown_*` /
         // `prepare_for_reconcile`.
@@ -816,6 +938,12 @@ impl ActivePipeline {
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
             Some(spawn_meter_thread(app, meters_snapshot, lufs_snapshot, gr_snapshot, scopes_snapshot))
+        };
+
+        self.xrun_thread = if self.xrun_handles.is_empty() {
+            None
+        } else {
+            Some(spawn_xrun_thread(self.xrun_handles.clone()))
         };
 
         Ok(())

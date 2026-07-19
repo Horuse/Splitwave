@@ -27,7 +27,12 @@ pub struct AacRecorder {
 unsafe impl Send for AacRecorder {}
 
 impl AacRecorder {
-	pub fn create(path: &Path, sample_rate: u32, bitrate_bps: u32) -> AppResult<Self> {
+	pub fn create(
+		path: &Path,
+		sample_rate: u32,
+		channels: u16,
+		bitrate_bps: u32,
+	) -> AppResult<Self> {
 		let path_str = path
 			.to_str()
 			.ok_or_else(|| AppError::Stream(format!("invalid path: {}", path.display())))?;
@@ -37,7 +42,7 @@ impl AacRecorder {
 			ba_aac_create(
 				cpath.as_ptr(),
 				sample_rate as i32,
-				2,
+				channels as i32,
 				bitrate_bps as i32,
 			)
 		};
@@ -52,7 +57,7 @@ impl AacRecorder {
 }
 
 impl AudioEncoder for AacRecorder {
-	fn write_stereo(&mut self, samples: &[f32]) -> AppResult<()> {
+	fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
 		debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
 		let frames = (samples.len() / 2) as i32;
 		if frames == 0 {

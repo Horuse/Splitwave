@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { getContext, type Snippet } from 'svelte';
+	import { getContext, type Component, type Snippet } from 'svelte';
+	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
 	import { PREVIEW_CTX } from '../utils';
+	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -14,26 +16,51 @@
 	interface Props {
 		label: string;
 		accent?: 'input' | 'output' | 'effect';
+		icon?: Component<{ class?: ClassValue; title?: string }>;
 		hasInput?: boolean;
 		hasOutput?: boolean;
 		inputs?: InputHandleConfig[];
 		outputLabel?: string;
 		bypassed?: boolean;
 		onBypass?: () => void;
+		// When set, the node exposes per-channel handles that grow with the cables
+		// wired into it instead of a single bus handle. Requires `nodeId`.
+		channelIo?: boolean;
+		nodeId?: string;
+		maxChannels?: number;
+		minChannels?: number;
+		/** Meters widen with every channel, so they opt out of the node width cap. */
+		wide?: boolean;
+		selfGrowing?: boolean;
 		children?: Snippet;
 	}
 
 	let {
 		label,
 		accent = 'effect',
+		icon: NodeIcon,
 		hasInput = false,
 		hasOutput = false,
 		inputs,
 		outputLabel,
 		bypassed,
 		onBypass,
+		channelIo = false,
+		nodeId,
+		maxChannels,
+		minChannels,
+		wide = false,
+		selfGrowing = false,
 		children
 	}: Props = $props();
+
+	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
+
+	const ACCENT_TEXT = {
+		input: 'text-emerald-600 dark:text-emerald-400',
+		output: 'text-sky-600 dark:text-sky-400',
+		effect: 'text-violet-600 dark:text-violet-400'
+	} as const;
 
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
@@ -51,44 +78,63 @@
 
 <div
 	class={[
-		'min-w-32 max-w-80 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
+		'min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
+		!wide && 'max-w-80'
 	]}
 >
 	<div class="mb-2 flex items-center justify-between gap-2">
-		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+			{#if NodeIcon}
+				<NodeIcon class={['size-3 shrink-0', ACCENT_TEXT[accent]]} />
+			{/if}
 			{label}
 		</span>
-		{#if onBypass}
-			<button
-				type="button"
-				class={[
-					'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
-					bypassed
-						? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
-						: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-				]}
-				title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
-				onclick={onBypass}
-			>
-				{bypassed ? 'BYP' : 'ON'}
-			</button>
+		<div class="flex items-center gap-1">
+			{#if onBypass}
+				<button
+					type="button"
+					class={[
+						'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
+						bypassed
+							? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
+							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
+					]}
+					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+					onclick={onBypass}
+				>
+					{bypassed ? 'BYP' : 'ON'}
+				</button>
+			{/if}
+		</div>
+	</div>
+
+	<!-- Socket columns take no width; a gap here would inset the content. -->
+	<div class="flex items-start">
+		{#if chExpanded && nodeId && hasInput}
+			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
+		{/if}
+		<div class={['min-w-0 flex-1', bypassed && 'opacity-40']}>
+			{@render children?.()}
+		</div>
+		{#if chExpanded && nodeId && hasOutput}
+			<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />
 		{/if}
 	</div>
 
-	<div class={[bypassed && 'opacity-40']}>
-		{@render children?.()}
-	</div>
+	<!-- Named inputs (a sidechain) sit outside the channel columns, so they
+	     survive alongside them. -->
+	{#if !isPreview && inputs}
+		{#each inputs as h (h.id)}
+			<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
+				{#if h.label}
+					<span class={labelClasses(h.position)}>{h.label}</span>
+				{/if}
+			</Handle>
+		{/each}
+	{/if}
 
-	{#if !isPreview}
-		{#if inputs && inputs.length > 0}
-			{#each inputs as h (h.id)}
-				<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
-					{#if h.label}
-						<span class={labelClasses(h.position)}>{h.label}</span>
-					{/if}
-				</Handle>
-			{/each}
-		{:else if hasInput}
+	{#if !isPreview && !chExpanded}
+		{#if !inputs && hasInput}
 			<Handle type="target" class="handle" position={Position.Left} />
 		{/if}
 		{#if hasOutput}

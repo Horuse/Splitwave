@@ -103,6 +103,8 @@ pub enum NodeCategory {
 #[ts(export)]
 pub struct MicrophoneData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub channels_expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -148,6 +150,8 @@ pub struct AudioFileData {
 #[ts(export)]
 pub struct SpeakerData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub channels_expanded: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
@@ -225,6 +229,18 @@ impl Default for RecordingFormat {
     }
 }
 
+impl RecordingFormat {
+    /// LAME and the plain Opus encoder are two-channel; FLAC and AAC cap by spec.
+    pub fn max_channels(self) -> u16 {
+        match self {
+            RecordingFormat::Mp3 { .. } | RecordingFormat::Opus { .. } => 2,
+            RecordingFormat::Flac { .. } => 8,
+            RecordingFormat::Aac { .. } => 48,
+            RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. } => 512,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -234,6 +250,12 @@ pub struct FileRecordingData {
     pub format: RecordingFormat,
     #[serde(default)]
     pub allow_overwrite: bool,
+    #[serde(default = "default_two")]
+    pub channels: u16,
+}
+
+fn default_two() -> u16 {
+    2
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -448,7 +470,7 @@ pub enum InputSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputSpec {
     Speaker { device_id: String },
-    FileRecording { file_path: String, format: RecordingFormat },
+    FileRecording { file_path: String, format: RecordingFormat, channels: u16 },
     NetSender {
         node_id: String,
         target: SocketAddr,
@@ -632,12 +654,20 @@ impl GraphSpec {
                         | NodeKind::WebRtcCollaborator
                 )
         });
-        let keep: HashSet<&str> = reachable_from_inputs
+        let routed: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)
             .copied()
             .collect();
+        // Keep unrouted input nodes too, so their capture + level meter run
+        // before they're wired anywhere; unresolvable ones drop in resolve_inputs.
+        let mut keep = routed.clone();
+        for n in &self.nodes {
+            if n.kind.category() == NodeCategory::Input {
+                keep.insert(n.id.as_str());
+            }
+        }
 
-        let inputs = self.resolve_inputs(&keep)?;
+        let inputs = self.resolve_inputs(&keep, &routed)?;
         let outputs = self.resolve_outputs(&keep)?;
         let effects = self.resolve_effects(&keep)?;
 
@@ -665,13 +695,22 @@ impl GraphSpec {
         })
     }
 
-    fn resolve_inputs(&self, keep: &HashSet<&str>) -> AppResult<Vec<ValidInput>> {
+    /// `routed` are inputs on a real path to a terminal — they must resolve or
+    /// validation fails. `keep` may also include unrouted inputs (kept so their
+    /// capture + level meter run); if one of those fails to resolve (e.g. no
+    /// device selected yet) it's dropped silently rather than failing the graph.
+    fn resolve_inputs(
+        &self,
+        keep: &HashSet<&str>,
+        routed: &HashSet<&str>,
+    ) -> AppResult<Vec<ValidInput>> {
         let mut result = Vec::new();
         for n in &self.nodes {
             if n.kind.category() != NodeCategory::Input || !keep.contains(n.id.as_str()) {
                 continue;
             }
-            let (spec, volume, auto_start) = match n.kind {
+            let resolved = (|| -> AppResult<(InputSpec, f32, bool)> {
+                Ok(match n.kind {
                 NodeKind::Microphone => {
                     let data: MicrophoneData = parse(&n.data, "Microphone")?;
                     let spec = InputSpec::Microphone {
@@ -711,6 +750,12 @@ impl GraphSpec {
                     (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
                 }
                 _ => unreachable!(),
+                })
+            })();
+            let (spec, volume, auto_start) = match resolved {
+                Ok(v) => v,
+                Err(e) if routed.contains(n.id.as_str()) => return Err(e),
+                Err(_) => continue,
             };
             result.push(ValidInput {
                 id: n.id.clone(),
@@ -750,9 +795,17 @@ impl GraphSpec {
                     if !data.allow_overwrite && path.exists() {
                         return Err(choose_file_err(&n.id, "file already exists"));
                     }
+                    let max = data.format.max_channels();
+                    if data.channels == 0 || data.channels > max {
+                        return Err(AppError::Validation(format!(
+                            "recording node {} asks for {} channels; format allows 1..{max}",
+                            n.id, data.channels
+                        )));
+                    }
                     OutputSpec::FileRecording {
                         file_path,
                         format: data.format,
+                        channels: data.channels,
                     }
                 }
                 NodeKind::NetSender => {
@@ -765,7 +818,7 @@ impl GraphSpec {
                     OutputSpec::NetSender {
                         node_id: n.id.clone(),
                         target: SocketAddr::new(ip, data.port),
-                        channels: data.channels.clamp(1, 10),
+                        channels: data.channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
                         codec: data.codec,
                         opus_bitrate: data.opus_bitrate,
                         opus_application: data.opus_application,
@@ -870,7 +923,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
                 node_id: n.id.clone(),
                 opus_bitrate: data.opus_bitrate,
                 opus_application: data.opus_application,
-                channels: data.channels.clamp(1, 10),
+                channels: data.channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

@@ -4,39 +4,18 @@
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { onNodeAction } from '$lib/modules/flow/utils';
+	import { DataBar } from '$lib/components/icons';
+	import MeterBar from '$lib/components/meter_bar.svelte';
+	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
-	let { id }: NodeProps<LevelMeterNodeType> = $props();
-
-	let targetPeakL = 0;
-	let targetPeakR = 0;
-	let targetRmsL = 0;
-	let targetRmsR = 0;
-
-	let displayPeakL = $state(-Infinity);
-	let displayPeakR = $state(-Infinity);
-	let displayRmsL = $state(-Infinity);
-	let displayRmsR = $state(-Infinity);
-
-	let holdPeakL = $state(-Infinity);
-	let holdPeakR = $state(-Infinity);
-	let holdTimeL = 0;
-	let holdTimeR = 0;
-
-	let maxPeakL = $state(-Infinity);
-	let maxPeakR = $state(-Infinity);
-
-	let clipL = $state(false);
-	let clipR = $state(false);
-
-	let hoverDb = $state<number | null>(null);
-	let hoverY = $state(0);
+	let { id, data }: NodeProps<LevelMeterNodeType> = $props();
 
 	const DB_FLOOR = -60;
 	const PEAK_FALL_DB_PER_SEC = 20;
 	const HOLD_TIME_MS = 1500;
 	const HOLD_FALL_DB_PER_SEC = 20;
+	const BAR_W = 30;
 
 	const minorTicks = Array.from({ length: 60 }, (_, i) => -i);
 	const minorTickPos = minorTicks.map((db) => ({ db, pct: dbToPct(db), major: db % 3 === 0 }));
@@ -49,15 +28,24 @@
 
 	interface MeterTick {
 		nodeId: string;
-		peakL: number;
-		peakR: number;
-		rmsL: number;
-		rmsR: number;
+		peaks: number[];
+		rms: number[];
 	}
 
+	let targetPeaks: number[] = [];
+	let targetRms: number[] = [];
+
+	let displayPeaks = $state<number[]>([]);
+	let displayRms = $state<number[]>([]);
+	let holdPeaks = $state<number[]>([]);
+	let holdTimes: number[] = [];
+	let maxPeaks = $state<number[]>([]);
+	let clips = $state<boolean[]>([]);
+
+	let channelCount = $derived(Math.max(displayPeaks.length, 1));
+
 	function ampToDb(amp: number): number {
-		if (amp <= 1e-6) return -Infinity;
-		return 20 * Math.log10(amp);
+		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
 	}
 
 	function dbToPct(db: number): number {
@@ -73,96 +61,82 @@
 		return isFinite(db) && db > DB_FLOOR ? db.toFixed(1) : '−∞';
 	}
 
-	function maxBgClass(maxL: number, maxR: number): string {
-		const m = Math.max(maxL, maxR);
-		if (!isFinite(m)) return 'bg-neutral-200  text-neutral-300';
-		if (m >= -1) return 'bg-red-500/50 !text-red-700 dark:!text-red-300';
-		if (m >= -6) return 'bg-yellow-500/90 border-black/10 !text-yellow-700';
-		return 'bg-neutral-200 text-neutral-400';
+	function hoverLabel(pct: number): string {
+		return pctToDb(pct).toFixed(1);
 	}
 
-	function handleBarHover(e: MouseEvent) {
-		const el = e.currentTarget as HTMLElement;
-		const rect = el.getBoundingClientRect();
-		// rect is in screen pixels; el.offsetHeight is in CSS pixels (pre-transform).
-		// Dividing by the scale converts screen pixels to local CSS pixels so that
-		// `top: hoverY` lands exactly on the cursor when the canvas is zoomed.
-		const scale = rect.height / el.offsetHeight;
-		const y = (e.clientY - rect.top) / scale;
-		const pct = Math.max(0, Math.min(100, 100 - (y / el.offsetHeight) * 100));
-		hoverDb = pctToDb(pct);
-		hoverY = y;
-	}
-
-	function clearHover() {
-		hoverDb = null;
+	function dbTextClass(db: number): string {
+		if (!isFinite(db) || db <= DB_FLOOR) return 'text-neutral-400';
+		if (db >= -1) return 'text-red-500';
+		if (db >= -6) return 'text-amber-500';
+		return 'text-neutral-700';
 	}
 
 	let unlisten: UnlistenFn | undefined;
+	let unlistenReset: (() => void) | undefined;
 	let rafId: number | undefined;
 	let lastFrame = 0;
+
+	function fall(target: number, current: number, dt: number): number {
+		return target > current
+			? target
+			: Math.max(target, DB_FLOOR, current - PEAK_FALL_DB_PER_SEC * dt);
+	}
 
 	function tick(now: number) {
 		const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.1) : 0;
 		lastFrame = now;
-
-		const tPeakL = ampToDb(targetPeakL);
-		const tPeakR = ampToDb(targetPeakR);
-		const tRmsL = ampToDb(targetRmsL);
-		const tRmsR = ampToDb(targetRmsR);
-
-		// Floor the fall at DB_FLOOR; target is -Infinity on silence, so without
-		// this the readout drifts to absurd values (-1840 dB) over time.
-		const nextPeakL = tPeakL > displayPeakL
-			? tPeakL : Math.max(tPeakL, DB_FLOOR, displayPeakL - PEAK_FALL_DB_PER_SEC * dt);
-		if (nextPeakL !== displayPeakL) displayPeakL = nextPeakL;
-
-		const nextPeakR = tPeakR > displayPeakR
-			? tPeakR : Math.max(tPeakR, DB_FLOOR, displayPeakR - PEAK_FALL_DB_PER_SEC * dt);
-		if (nextPeakR !== displayPeakR) displayPeakR = nextPeakR;
-
-		const nextRmsL = tRmsL > displayRmsL
-			? tRmsL : Math.max(tRmsL, DB_FLOOR, displayRmsL - PEAK_FALL_DB_PER_SEC * dt);
-		if (nextRmsL !== displayRmsL) displayRmsL = nextRmsL;
-
-		const nextRmsR = tRmsR > displayRmsR
-			? tRmsR : Math.max(tRmsR, DB_FLOOR, displayRmsR - PEAK_FALL_DB_PER_SEC * dt);
-		if (nextRmsR !== displayRmsR) displayRmsR = nextRmsR;
-
-		if (tPeakL > holdPeakL) {
-			holdPeakL = tPeakL;
-			holdTimeL = now;
-		} else if (now - holdTimeL > HOLD_TIME_MS) {
-			const next = Math.max(tPeakL, holdPeakL - HOLD_FALL_DB_PER_SEC * dt);
-			if (next !== holdPeakL) holdPeakL = next;
+		const n = targetPeaks.length;
+		const nextPeaks = new Array(n);
+		const nextRms = new Array(n);
+		const nextHolds = new Array(n);
+		const nextMax = new Array(n);
+		const nextClips = new Array(n);
+		for (let i = 0; i < n; i++) {
+			const tp = ampToDb(targetPeaks[i]);
+			const tr = ampToDb(targetRms[i] ?? 0);
+			nextPeaks[i] = fall(tp, displayPeaks[i] ?? -Infinity, dt);
+			nextRms[i] = fall(tr, displayRms[i] ?? -Infinity, dt);
+			const h = holdPeaks[i] ?? -Infinity;
+			if (tp > h) {
+				nextHolds[i] = tp;
+				holdTimes[i] = now;
+			} else if (now - (holdTimes[i] ?? 0) > HOLD_TIME_MS) {
+				nextHolds[i] = Math.max(tp, h - HOLD_FALL_DB_PER_SEC * dt);
+			} else {
+				nextHolds[i] = h;
+			}
+			nextMax[i] = Math.max(maxPeaks[i] ?? -Infinity, tp);
+			nextClips[i] = (clips[i] ?? false) || targetPeaks[i] >= 1.0;
 		}
-		if (tPeakR > holdPeakR) {
-			holdPeakR = tPeakR;
-			holdTimeR = now;
-		} else if (now - holdTimeR > HOLD_TIME_MS) {
-			const next = Math.max(tPeakR, holdPeakR - HOLD_FALL_DB_PER_SEC * dt);
-			if (next !== holdPeakR) holdPeakR = next;
-		}
-
-		if (tPeakL > maxPeakL) maxPeakL = tPeakL;
-		if (tPeakR > maxPeakR) maxPeakR = tPeakR;
-
-		if (targetPeakL >= 1.0 && !clipL) clipL = true;
-		if (targetPeakR >= 1.0 && !clipR) clipR = true;
-
+		displayPeaks = nextPeaks;
+		displayRms = nextRms;
+		holdPeaks = nextHolds;
+		maxPeaks = nextMax;
+		clips = nextClips;
 		rafId = requestAnimationFrame(tick);
 	}
 
-	let unlistenReset: (() => void) | undefined;
+	function resetPeaks() {
+		holdPeaks = holdPeaks.map(() => -Infinity);
+		maxPeaks = maxPeaks.map(() => -Infinity);
+		clips = clips.map(() => false);
+	}
+
+	function handleBarKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+			e.preventDefault();
+			resetPeaks();
+		}
+	}
+
 	onMount(async () => {
 		unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
 		unlisten = await listen<MeterTick>('audio://meter', (event) => {
 			const p = event.payload;
 			if (p.nodeId !== id) return;
-			targetPeakL = p.peakL;
-			targetPeakR = p.peakR;
-			targetRmsL = p.rmsL;
-			targetRmsR = p.rmsR;
+			targetPeaks = p.peaks;
+			targetRms = p.rms;
 		});
 		rafId = requestAnimationFrame(tick);
 	});
@@ -172,108 +146,68 @@
 		unlistenReset?.();
 		if (rafId) cancelAnimationFrame(rafId);
 	});
-
-	function resetPeaks() {
-		holdPeakL = -Infinity;
-		holdPeakR = -Infinity;
-		maxPeakL = -Infinity;
-		maxPeakR = -Infinity;
-		clipL = false;
-		clipR = false;
-	}
-
-	function handleBarKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
-			e.preventDefault();
-			resetPeaks();
-		}
-	}
 </script>
 
-<Wrapper label="Level Meter" accent="effect" hasInput hasOutput>
+<Wrapper
+	label="Level Meter"
+	accent="effect"
+	icon={DataBar}
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	wide
+>
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">
 			<div class="flex flex-col gap-0.5">
-				<div class="flex h-2 w-16 overflow-hidden rounded-sm border border-neutral-300">
-					{#each [{ c: clipL, lab: 'L' }, { c: clipR, lab: 'R' }] as item, i (i)}
+				<!-- Clip row -->
+				<div class="flex h-2 overflow-hidden rounded-sm border border-neutral-300" style="width: {channelCount * BAR_W}px;">
+					{#each clips as c, i (i)}
 						<button
 							type="button"
-							class="flex-1 transition-colors {item.c
-                         ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]'
-                         : 'bg-neutral-200'} {i === 0 ? 'border-r border-neutral-300' : ''}"
+							class="flex-1 transition-colors {c ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]' : 'bg-neutral-200'} {i > 0 ? 'border-l border-neutral-300' : ''}"
 							onclick={resetPeaks}
-							aria-label="Clip {item.lab} (click to reset)"
+							aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"
 						></button>
 					{/each}
 				</div>
 
+				<!-- Bars -->
 				<div
-					class="relative flex h-72 w-16 cursor-crosshair overflow-hidden rounded-sm border border-neutral-300"
-					style="--bar-h: 288px;"
-					onmousemove={handleBarHover}
-					onmouseleave={clearHover}
+					class="relative flex h-72 cursor-crosshair overflow-hidden rounded-sm border border-neutral-300"
+					style="width: {channelCount * BAR_W}px; --bar-h: 288px;"
 					onclick={resetPeaks}
 					onkeydown={handleBarKey}
 					role="button"
 					tabindex="0"
 					aria-label="Level meter — click to reset peaks, hover to read level"
 				>
-					{#each [{ p: displayPeakL, r: displayRmsL, h: holdPeakL }, { p: displayPeakR, r: displayRmsR, h: holdPeakR }] as ch, i (i)}
-						<div class="relative flex-1 {i === 0 ? 'border-r border-neutral-300' : ''}">
-							<div
-								class="absolute inset-0 opacity-30 dark:brightness-[0.2]"
-								style="background: {METER_GRADIENT};"
-							></div>
-							<div
-								class="absolute right-0 bottom-0 left-0"
-								style="height: {dbToPct(ch.p)}%;
-                                background: {METER_GRADIENT};
-                                background-size: 100% var(--bar-h);
-                                background-position: bottom;
-                                background-repeat: no-repeat;"
-							></div>
-							<div
-								class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay"
-								style="bottom: {dbToPct(ch.r)}%;"
-							></div>
-							{#if isFinite(ch.h) && ch.h > DB_FLOOR}
-								<div
-									class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]"
-									style="bottom: calc({dbToPct(ch.h)}% - 1px);"
-								></div>
-							{/if}
-						</div>
-					{/each}
-
-					{#if hoverDb !== null}
-						<div
-							class="pointer-events-none absolute right-0 left-0 z-10 h-px bg-cyan-400"
-							style="top: {hoverY}px;"
+					{#each displayPeaks as p, i (i)}
+						<MeterBar
+							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
+							orientation="vertical"
+							gradient={METER_GRADIENT}
+							ghost
+							hover
+							{hoverLabel}
+							pct={dbToPct(p)}
 						>
-                      <span
-						  class="absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight text-white"
-	                      style="top: {hoverY < 12 ? '2px' : '-10px'};"
-					  >
-                         {hoverDb.toFixed(1)}
-                      </span>
-						</div>
-					{/if}
+							<div class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;"></div>
+							{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
+								<div class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]" style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);"></div>
+							{/if}
+						</MeterBar>
+					{/each}
 				</div>
 			</div>
 
-			<div
-				class="relative h-72 w-8 font-mono text-[9px] text-neutral-900 select-none"
-				style="margin-top: 12px;"
-			>
+			<!-- dB scale -->
+			<div class="relative h-72 w-8 font-mono text-[9px] text-neutral-900 select-none" style="margin-top: 10px;">
 				{#each minorTickPos as t (t.db)}
-					<div
-						class="absolute left-0 flex items-center"
-						style="bottom: {t.pct}%; height: 1px;"
-					>
+					<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
 						<div class="shrink-0 bg-neutral-700 {t.major ? 'w-2' : 'w-1'}" style="height: 1px;"></div>
-						{#if t.major}
-							<span class="ml-0.5 mb-px leading-none">{t.db}</span>
-						{/if}
+						{#if t.major}<span class="ml-0.5 mb-px leading-none">{t.db}</span>{/if}
 					</div>
 				{/each}
 				<div class="absolute bottom-0 left-2.5 leading-none">dB</div>
@@ -281,29 +215,27 @@
 		</div>
 
 		<!-- Live dB readout -->
-		<div class="flex w-16 overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100">
-			{#each [{ db: displayPeakL, label: 'L' }, { db: displayPeakR, label: 'R' }] as ch, i (i)}
-				<div class="flex flex-1 flex-col items-center py-0.5 {i === 0 ? 'border-r border-neutral-300' : ''}">
-					<span class="text-[7px] text-neutral-400 leading-none">{ch.label}</span>
-					<span class="font-mono tabular-nums text-[8px] leading-tight {!isFinite(ch.db) || ch.db <= DB_FLOOR ? 'text-neutral-400' : ch.db >= -1 ? 'text-red-500' : ch.db >= -6 ? 'text-amber-500' : 'text-neutral-700'}">
-						{formatDb(ch.db)}
-					</span>
+		<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {channelCount * BAR_W}px;">
+			{#each displayPeaks as db, i (i)}
+				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
+					<span class="text-[7px] leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
+					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>
 				</div>
 			{/each}
 		</div>
 
+		<!-- Max peak readout -->
 		<button
 			type="button"
 			onclick={resetPeaks}
 			title="Reset peaks"
-			class="flex w-16 overflow-hidden rounded-sm border border-neutral-300 transition-colors hover:opacity-80 {maxBgClass(maxPeakL, maxPeakR)}"
+			class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-200 transition-colors hover:opacity-80"
+			style="width: {channelCount * BAR_W}px;"
 		>
-			{#each [{ db: maxPeakL, label: 'L' }, { db: maxPeakR, label: 'R' }] as ch, i (i)}
-				<div class="flex flex-1 flex-col items-center py-0.5 {i === 0 ? 'border-r border-neutral-300' : ''}">
-					<span class="text-[7px] leading-none">{ch.label}</span>
-					<span class="font-mono tabular-nums text-[8px] leading-tight">
-						{formatDb(ch.db)}
-					</span>
+			{#each maxPeaks as db, i (i)}
+				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
+					<span class="text-[7px] leading-none text-neutral-500">{channelLabel(i, channelCount)}</span>
+					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>
 				</div>
 			{/each}
 		</button>

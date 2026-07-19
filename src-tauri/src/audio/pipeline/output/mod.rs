@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
 use crate::audio::clock::{ClockSource, SystemClockTicker};
+use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
 use crate::audio::streams;
@@ -36,8 +37,10 @@ pub(super) use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
 
-// 32k f32 samples = ~340 ms @ 48 kHz stereo; absorbs cpal/scheduler jitter.
-pub(super) const SPEAKER_RING_CAPACITY: usize = 32_768;
+// Ring length in frames; multiplied by the device channel count at open so the
+// buffered span stays ~340 ms @ 48 kHz at any channel count, absorbing cpal /
+// scheduler jitter and output-clock drift.
+pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 16_384;
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
@@ -45,6 +48,7 @@ pub(super) enum ResolvedOutput {
         path: PathBuf,
         sample_rate: u32,
         format: RecordingFormat,
+        channels: u16,
     },
     // The DAG produces at 48 kHz; the sender's send rings are wired inside
     // `build_output_graph`, so nothing device-specific to resolve here.
@@ -69,10 +73,15 @@ pub(super) fn resolve_output(
         OutputSpec::Speaker { device_id } => {
             Ok(ResolvedOutput::Speaker(platform::resolve_speaker(device_id)?))
         }
-        OutputSpec::FileRecording { file_path, format } => Ok(ResolvedOutput::File {
+        OutputSpec::FileRecording {
+            file_path,
+            format,
+            channels,
+        } => Ok(ResolvedOutput::File {
             path: PathBuf::from(file_path),
             sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
             format: *format,
+            channels: *channels,
         }),
         OutputSpec::NetSender { .. } => Ok(ResolvedOutput::NetSender),
     }
@@ -111,7 +120,9 @@ impl Drop for RecorderWorker {
 pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     sample_rate: u32,
+    channels: usize,
     graph: OutputGraph,
+    meter: MeterHandle,
 ) -> AppResult<(SpeakerWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -123,6 +134,7 @@ pub(super) fn spawn_speaker_worker(
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             worker.run(stop_thread, pacing, |block| {
+                update_meter(&meter, block, channels);
                 streams::bulk_push(&mut producer, block);
                 Ok(())
             });
@@ -193,6 +205,7 @@ pub(super) fn start_recorder_worker(
     path: PathBuf,
     sample_rate: u32,
     format: RecordingFormat,
+    channels: u16,
     graph: OutputGraph,
     app: AppHandle,
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
@@ -207,7 +220,7 @@ pub(super) fn start_recorder_worker(
             // Inside the worker thread so slow encoder init (libopus,
             // libmp3lame, AVAudioFile) doesn't stagger recorder starts.
             let encoder: Box<dyn AudioEncoder> =
-                match build_encoder(&path, sample_rate, format) {
+                match build_encoder(&path, sample_rate, channels, format) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!(node = %node_id, error = %e, "recorder init failed");
@@ -234,8 +247,8 @@ pub(super) fn start_recorder_worker(
             let mut encoder = encoder;
 
             worker.run(stop_thread, pacing, |block| {
-                encoder.write_stereo(block)?;
-                frames_written += (block.len() / 2) as u64;
+                encoder.write_interleaved(block)?;
+                frames_written += (block.len() / channels as usize) as u64;
 
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
                     if let Err(e) = encoder.flush() {

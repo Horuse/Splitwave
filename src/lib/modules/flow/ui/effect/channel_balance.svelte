@@ -3,6 +3,7 @@
 	import type { ChannelBalanceNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import Slider from './_slider.svelte';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
@@ -56,6 +57,8 @@
 	accent="effect"
 	hasInput
 	hasOutput
+	channelIo
+	nodeId={id}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}
 >
@@ -113,10 +116,7 @@
 			>
 				Center
 			</button>
-			<label class="nodrag nopan flex items-center gap-1">
-				<input type="checkbox" bind:checked={linked} />
-				Link inverse
-			</label>
+			<Toggle size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />
 		</div>
 	</div>
 </Wrapper>

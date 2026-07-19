@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY};
+use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -58,6 +58,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     node_id: &str,
     spec: SpeakerResolved,
     graph: OutputGraph,
+    meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
     let device_name = spec
@@ -98,9 +99,10 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, mut consumer) = RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY);
-        let fill = move |stereo_out: &mut [f32], _frames: usize| {
-            streams::bulk_pop(&mut consumer, stereo_out);
+        let (producer, mut consumer) =
+            RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
+        let fill = move |out: &mut [f32], _frames: usize| {
+            streams::bulk_pop(&mut consumer, out);
         };
         let app_err = app.clone();
         let dead_cb = dead.clone();
@@ -136,7 +138,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let producer = producer_holder.expect("loop sets producer on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(producer, spec.sample_rate, graph)?;
+    let (worker_handle, ctrl) =
+        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
     Ok((
         SpeakerHandle { _stream: stream, _worker: worker_handle },
         ctrl,

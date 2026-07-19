@@ -31,6 +31,9 @@ pub struct LufsHandle {
     /// inter-sample peaks invisible to a sample-domain meter.
     pub tp_l: Arc<AtomicU32>,
     pub tp_r: Arc<AtomicU32>,
+    /// Loudness range (LU) per EBU R128 — statistical spread of short-term
+    /// loudness across the program.
+    pub lra: Arc<AtomicU32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +43,7 @@ pub struct LufsSnapshot {
     pub integrated: f32,
     pub tp_l: f32,
     pub tp_r: f32,
+    pub lra: f32,
 }
 
 impl LufsHandle {
@@ -50,11 +54,16 @@ impl LufsHandle {
             integrated: load_f32(&self.integrated),
             tp_l: load_f32(&self.tp_l),
             tp_r: load_f32(&self.tp_r),
+            lra: load_f32(&self.lra),
         }
     }
 }
 
-const LUFS_MODE: Mode = Mode::I.union(Mode::M).union(Mode::S).union(Mode::TRUE_PEAK);
+const LUFS_MODE: Mode = Mode::I
+    .union(Mode::M)
+    .union(Mode::S)
+    .union(Mode::LRA)
+    .union(Mode::TRUE_PEAK);
 
 impl LufsMeterEffect {
     pub fn new(_d: LufsMeterData, node_id: String, sample_rate: u32) -> (Self, LufsHandle) {
@@ -66,6 +75,7 @@ impl LufsMeterEffect {
             integrated: Arc::new(AtomicU32::new(LUFS_SILENT.to_bits())),
             tp_l: Arc::new(AtomicU32::new(LUFS_SILENT.to_bits())),
             tp_r: Arc::new(AtomicU32::new(LUFS_SILENT.to_bits())),
+            lra: Arc::new(AtomicU32::new(LUFS_SILENT.to_bits())),
         };
         (
             Self {
@@ -112,6 +122,8 @@ impl Effect for LufsMeterEffect {
         if self.frames_since_global >= self.sample_rate as usize {
             let i = ebu.loudness_global().unwrap_or(f64::NEG_INFINITY);
             store_f32(&self.handle.integrated, sanitize_lufs(i));
+            let lra = ebu.loudness_range().unwrap_or(0.0);
+            store_f32(&self.handle.lra, lra as f32);
             self.frames_since_global = 0;
         }
     }

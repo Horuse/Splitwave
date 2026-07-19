@@ -21,6 +21,17 @@ fn clean_label(name: &str) -> String {
     name.replace(['"', '\''], "")
 }
 
+// PipeWire channel map. Standard names for mono/stereo; generic AUX for wider
+// layouts so any channel count is accepted.
+fn positions(channels: u32) -> String {
+    let list: Vec<String> = match channels.clamp(1, 256) {
+        1 => vec!["MONO".into()],
+        2 => vec!["FL".into(), "FR".into()],
+        n => (0..n).map(|i| format!("AUX{i}")).collect(),
+    };
+    list.join(" ")
+}
+
 pub fn status() -> VirtualDriverStatus {
     // Native PipeWire (no PulseAudio/pactl dependency). Success means a session
     // is reachable, which is all we need to create null-sinks.
@@ -65,7 +76,7 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
     std::fs::write(&conf, conf_contents(&devices)).map_err(|e| format!("write conf: {e}"))?;
 
     for d in &devices {
-        create_runtime_sink(&d.id, &clean_label(&d.name))?;
+        create_runtime_sink(&d.id, &clean_label(&d.name), d.channels)?;
     }
     Ok(())
 }
@@ -81,7 +92,7 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
         out.push_str(&format!("      node.name        = \"{NODE_PREFIX}.{}\"\n", d.id));
         out.push_str(&format!("      node.description = \"{desc}\"\n"));
         out.push_str("      media.class      = Audio/Sink\n");
-        out.push_str("      audio.position   = [ FL FR ]\n");
+        out.push_str(&format!("      audio.position   = [ {} ]\n", positions(d.channels)));
         out.push_str("      object.linger    = true\n");
         out.push_str("    }\n");
         out.push_str("  }\n");
@@ -93,9 +104,10 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
 // Create the sink in the running session so it shows up immediately. The .conf
 // only takes effect on the next PipeWire start; object.linger keeps the node
 // alive after pw-cli disconnects.
-fn create_runtime_sink(id: &str, label: &str) -> Result<(), String> {
+fn create_runtime_sink(id: &str, label: &str, channels: u32) -> Result<(), String> {
     let props = format!(
-        "{{ factory.name=support.null-audio-sink node.name={NODE_PREFIX}.{id} node.description=\"{label}\" media.class=Audio/Sink audio.position=[ FL FR ] object.linger=true }}"
+        "{{ factory.name=support.null-audio-sink node.name={NODE_PREFIX}.{id} node.description=\"{label}\" media.class=Audio/Sink audio.position=[ {} ] object.linger=true }}",
+        positions(channels)
     );
     let out = Command::new("pw-cli")
         .args(["create-node", "adapter", props.as_str()])

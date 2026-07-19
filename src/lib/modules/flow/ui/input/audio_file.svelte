@@ -8,7 +8,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
-	import { Autoplay, Loop, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
+	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 
@@ -22,6 +22,7 @@
 		frames: number;
 		totalFrames: number;
 		sampleRate: number;
+		channels: number;
 		stopped: boolean;
 		paused: boolean;
 	}
@@ -29,6 +30,8 @@
 	let frames = $state(0);
 	let totalFrames = $state(0);
 	let sampleRate = $state(0);
+	// Reported by the reader once the file is open; drives the socket count.
+	let channels = $state(0);
 	let playing = $state(false);
 	let paused = $state(false);
 
@@ -44,6 +47,7 @@
 			frames = p.frames;
 			totalFrames = p.totalFrames;
 			sampleRate = p.sampleRate;
+			channels = p.channels;
 			paused = p.paused;
 			playing = !p.stopped && !p.paused;
 		});
@@ -148,6 +152,19 @@
 		return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
 	}
 
+	function formatRate(hz: number): string {
+		return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)} kHz` : `${hz} Hz`;
+	}
+
+	function extension(p: string | null): string {
+		const i = p?.lastIndexOf('.') ?? -1;
+		return i > 0 ? (p as string).slice(i + 1).toUpperCase() : '';
+	}
+
+	let channelLabel = $derived(
+		channels <= 1 ? 'mono' : channels === 2 ? 'stereo' : `${channels} ch`
+	);
+
 	let currentSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 	let totalSec = $derived(sampleRate > 0 ? totalFrames / sampleRate : 0);
 	let canControl = $derived(audioStore.isRunning && !!data.filePath);
@@ -165,7 +182,17 @@
 	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
-<Wrapper label="Audio File" accent="input" hasOutput>
+<Wrapper
+	label="Audio File"
+	accent="input"
+	icon={MusicNote}
+	hasOutput
+	channelIo
+	nodeId={id}
+	minChannels={channels}
+	maxChannels={channels || undefined}
+	selfGrowing
+>
 	<div class="flex w-64 flex-col gap-3">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"
@@ -174,9 +201,21 @@
 			{basename(data.filePath)}
 		</div>
 
+		{#if sampleRate > 0}
+			<div class="flex justify-between text-[10px] text-neutral-900">
+				<span class="font-mono">{formatRate(sampleRate)} · {channelLabel}</span>
+				<span class="font-mono tabular-nums">{extension(data.filePath)}</span>
+			</div>
+		{/if}
+
 		<div class="flex items-center gap-1">
-			<button class="button-main primary rounded-lg nodrag nopan flex-1 py-1 text-xs" onclick={chooseFile}>
-				Choose file...
+			<button
+				type="button"
+				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
+				onclick={chooseFile}
+			>
+				<Folder class="size-3.5" />
+				Choose file
 			</button>
 			<Tooltip text="Start playback automatically when the pipeline runs">
 				<button

@@ -1,10 +1,11 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
+use tracing::warn;
 
 use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 
@@ -13,6 +14,51 @@ const LUFS_EVENT: &str = "audio://lufs";
 const GR_EVENT: &str = "audio://gr";
 const SCOPE_EVENT: &str = "audio://scope";
 const METER_TICK: Duration = Duration::from_millis(33);
+
+const XRUN_TICK: Duration = Duration::from_millis(1000);
+
+pub(super) struct XrunTickThread {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl Drop for XrunTickThread {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+    }
+}
+
+/// Polls per-source underrun counters once a second and logs the delta. A
+/// growing count means our DSP path starved (ring ran dry mid-block); silence
+/// with a flat count points downstream to the device/driver instead.
+pub(super) fn spawn_xrun_thread(handles: Vec<(String, Arc<AtomicU64>)>) -> XrunTickThread {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    let join = thread::Builder::new()
+        .name("xrun-tick".into())
+        .spawn(move || {
+            let mut last: Vec<u64> = vec![0; handles.len()];
+            while !stop_thread.load(Ordering::SeqCst) {
+                thread::sleep(XRUN_TICK);
+                for (i, (label, counter)) in handles.iter().enumerate() {
+                    let now = counter.load(Ordering::Relaxed);
+                    let delta = now.saturating_sub(last[i]);
+                    last[i] = now;
+                    if delta > 0 {
+                        warn!(source = %label, underrun_samples = delta, "DSP underrun");
+                    }
+                }
+            }
+        })
+        .expect("spawn xrun tick thread");
+    XrunTickThread {
+        stop,
+        join: Some(join),
+    }
+}
 
 pub(super) struct MeterTickThread {
     stop: Arc<AtomicBool>,
@@ -48,10 +94,8 @@ pub(super) fn spawn_meter_thread(
                         METER_EVENT,
                         json!({
                             "nodeId": m.node_id,
-                            "peakL": snap.peak_l,
-                            "peakR": snap.peak_r,
-                            "rmsL": snap.rms_l,
-                            "rmsR": snap.rms_r,
+                            "peaks": snap.peaks,
+                            "rms": snap.rms,
                         }),
                     );
                 }
@@ -66,6 +110,7 @@ pub(super) fn spawn_meter_thread(
                             "integrated": snap.integrated,
                             "tpL": snap.tp_l,
                             "tpR": snap.tp_r,
+                            "lra": snap.lra,
                         }),
                     );
                 }
@@ -74,10 +119,19 @@ pub(super) fn spawn_meter_thread(
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {
-                    let interleaved = s.snapshot();
-                    let l: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[0]).collect();
-                    let r: Vec<f32> = interleaved.chunks_exact(2).map(|f| f[1]).collect();
-                    let _ = app.emit(SCOPE_EVENT, json!({ "nodeId": s.node_id, "l": l, "r": r }));
+                    let (interleaved, ch) = s.snapshot();
+                    let frames = interleaved.len() / ch;
+                    let mut chans: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); ch];
+                    for f in 0..frames {
+                        let base = f * ch;
+                        for c in 0..ch {
+                            chans[c].push(interleaved[base + c]);
+                        }
+                    }
+                    let _ = app.emit(
+                        SCOPE_EVENT,
+                        json!({ "nodeId": s.node_id, "channels": ch, "data": chans }),
+                    );
                 }
             }
         })

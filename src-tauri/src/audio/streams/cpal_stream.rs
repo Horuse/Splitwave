@@ -15,7 +15,6 @@ use cpal::{Sample, SampleFormat, StreamConfig};
 use tracing::error;
 
 use crate::audio::effects::{update_meter, MeterHandle};
-use crate::audio::format::{convert_to_stereo, write_stereo_to_output};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
@@ -67,14 +66,15 @@ where
                 if src_channels == 0 || data.is_empty() {
                     return;
                 }
-                let frames = data.len() / src_channels;
-                let needed = frames * 2;
+                let needed = data.len();
                 if staging.len() < needed {
                     staging.resize(needed, 0.0);
                 }
-                convert_to_stereo::<T>(data, &mut staging[..needed], src_channels);
+                for (o, &s) in staging[..needed].iter_mut().zip(data) {
+                    *o = s.to_sample::<f32>();
+                }
                 if let Some(m) = &meter {
-                    update_meter(m, &staging[..needed]);
+                    update_meter(m, &staging[..needed], src_channels);
                 }
                 bridge.broadcast(&staging[..needed]);
             },
@@ -126,8 +126,7 @@ where
     T: Sample + cpal::SizedSample + cpal::FromSample<f32> + Send + 'static,
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
-    let mut stereo_buf: Vec<f32> = vec![0.0; 16384];
-    let mut planar_out: Vec<f32> = vec![0.0; 16384];
+    let mut buf: Vec<f32> = vec![0.0; 16384];
     let stream = device
         .build_output_stream::<T, _, _>(
             config,
@@ -137,21 +136,13 @@ where
                 }
                 let total = data.len();
                 let frames = total / out_channels;
-                let stereo_needed = frames * 2;
-                if stereo_buf.len() < stereo_needed {
-                    stereo_buf.resize(stereo_needed, 0.0);
+                if buf.len() < total {
+                    buf.resize(total, 0.0);
                 }
-                if planar_out.len() < total {
-                    planar_out.resize(total, 0.0);
-                }
-
-                fill(&mut stereo_buf[..stereo_needed], frames);
-                write_stereo_to_output(
-                    &stereo_buf[..stereo_needed],
-                    &mut planar_out[..total],
-                    out_channels,
-                );
-                for (out, s) in data.iter_mut().zip(&planar_out[..total]) {
+                // `fill` supplies interleaved audio already at the device's
+                // channel width (the DSP worker produces `out_channels`-wide).
+                fill(&mut buf[..total], frames);
+                for (out, s) in data.iter_mut().zip(&buf[..total]) {
                     *out = T::from_sample(*s);
                 }
             },

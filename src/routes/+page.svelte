@@ -6,7 +6,7 @@
     import { modalManager } from '$lib/modules/overlay/modal';
     import { ConfirmModal } from '$lib/modules/overlay/ui';
     import { relativeTime } from '$lib/utils/time';
-    import { isOutdated } from '$lib/modules/pipeline/version';
+    import { isFromFuture } from '$lib/modules/pipeline/migrations';
 
     async function createPipeline() {
         const id = createId();
@@ -48,7 +48,7 @@
                 await audioMethods.stopPipeline();
             } else {
                 const p = await pipelineMethods.get(id);
-                if (!p || isOutdated(p)) return;
+                if (!p || isFromFuture(p)) return;
                 await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
             }
         } catch (e) {
@@ -101,7 +101,7 @@
     {:else}
         <ul class="flex flex-col gap-4">
             {#each pipelineStore.pipelines as p (p.id)}
-                {@const stale = isOutdated(p)}
+                {@const stale = isFromFuture(p)}
                 <li class={['flex items-center rounded-2xl transition-colors', stale ? 'bg-neutral-100' : 'bg-neutral-200 hover:bg-neutral-300']}>
                     <svelte:element
                         this={stale ? 'div' : 'a'}
@@ -115,7 +115,7 @@
                             <span class="font-medium">{p.name}</span>
                             {#if stale}
                                 <span class="rounded border border-amber-600/50 bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] text-amber-600">
-                                    old version
+                                    newer version
                                 </span>
                             {/if}
                             {#if audioStore.runningPipelineId === p.id}

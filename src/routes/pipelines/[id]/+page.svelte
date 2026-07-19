@@ -9,7 +9,7 @@
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
-	import { isOutdated } from '$lib/modules/pipeline/version';
+	import { isFromFuture } from '$lib/modules/pipeline/migrations';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
@@ -25,7 +25,7 @@
 			const p = await pipelineMethods.get(id);
 			if (!p) {
 				notFound = true;
-			} else if (isOutdated(p)) {
+			} else if (isFromFuture(p)) {
 				stale = true;
 			} else {
 				pipeline = p;
@@ -86,13 +86,12 @@
 	{:else if stale}
 		<div class="flex w-full flex-col items-start gap-4 p-8">
 			<div class="warning-block max-w-xl">
-				<span class="font-semibold">This pipeline was saved by an earlier build.</span>
+				<span class="font-semibold">This pipeline was saved by a newer version of Splitwave.</span>
 				<span>
-					Channel routing changed, and the old wiring cannot be remapped without guessing where
-					each cable was meant to land. Rather than reroute your audio silently, the pipeline is
-					left untouched and cannot be opened or run.
+					Its layout is not known to this build, so opening it would mean guessing at routing this
+					version cannot represent. It is left untouched and can still be deleted.
 				</span>
-				<span>Create a new pipeline and rewire it, then delete this one from the list.</span>
+				<span>Update Splitwave to open it.</span>
 			</div>
 			<a href="/" class="button-main primary rounded-lg text-sm">Back to pipelines</a>
 		</div>

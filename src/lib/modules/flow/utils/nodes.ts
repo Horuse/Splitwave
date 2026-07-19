@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 import type { NodeTypes } from '@xyflow/svelte';
+import { DEFAULT_NODE_DATA } from '$lib/modules/pipeline/defaults';
 import type {
 	AnyNodeData,
 	NodeCategory,
@@ -55,7 +56,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Microphone',
 		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
 		component: Microphone,
-		defaultData: { deviceId: null, channelsExpanded: false }
+		defaultData: DEFAULT_NODE_DATA['microphone']
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
@@ -63,7 +64,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'System Audio',
 		description: 'Capture everything the system is playing.',
 		component: SystemAudio,
-		defaultData: { excludeCurrentApp: true, volume: 1 }
+		defaultData: DEFAULT_NODE_DATA['systemAudio']
 	}),
 	appAudio: entry<'appAudio'>({
 		kind: 'appAudio',
@@ -71,7 +72,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'App Audio',
 		description: 'Capture audio from a single running application.',
 		component: AppAudio,
-		defaultData: { bundleId: null, volume: 1 }
+		defaultData: DEFAULT_NODE_DATA['appAudio']
 	}),
 	audioFile: entry<'audioFile'>({
 		kind: 'audioFile',
@@ -79,7 +80,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Audio File',
 		description: 'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
 		component: AudioFile,
-		defaultData: { filePath: null, loopEnabled: false, volume: 1, autoStart: true }
+		defaultData: DEFAULT_NODE_DATA['audioFile']
 	}),
 	speaker: entry<'speaker'>({
 		kind: 'speaker',
@@ -87,7 +88,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Speaker',
 		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
 		component: Speaker,
-		defaultData: { deviceId: null, channelsExpanded: false }
+		defaultData: DEFAULT_NODE_DATA['speaker']
 	}),
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',
@@ -95,12 +96,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'File Recording',
 		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy).',
 		component: FileRecording,
-		defaultData: {
-			filePath: null,
-			format: { kind: 'wav', bitDepth: 'f32' },
-			allowOverwrite: false,
-			channels: 2
-		}
+		defaultData: DEFAULT_NODE_DATA['fileRecording']
 	}),
 	gain: entry<'gain'>({
 		kind: 'gain',
@@ -108,7 +104,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Gain',
 		description: 'Linear amplitude scaling in dB.',
 		component: Gain,
-		defaultData: { gainDb: 0, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['gain']
 	}),
 	mute: entry<'mute'>({
 		kind: 'mute',
@@ -116,7 +112,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Mute',
 		description: 'Silence the signal.',
 		component: Mute,
-		defaultData: { muted: false, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['mute']
 	}),
 	channelBalance: entry<'channelBalance'>({
 		kind: 'channelBalance',
@@ -124,7 +120,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Channel Balance',
 		description: 'Separate gain for left and right channels.',
 		component: ChannelBalance,
-		defaultData: { leftGainDb: 0, rightGainDb: 0, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['channelBalance']
 	}),
 	saturator: entry<'saturator'>({
 		kind: 'saturator',
@@ -132,7 +128,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Saturator',
 		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
 		component: Saturator,
-		defaultData: { thresholdDb: -0.3, driveDb: 0, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['saturator']
 	}),
 	eq: entry<'eq'>({
 		kind: 'eq',
@@ -140,7 +136,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'EQ',
 		description: '10-band graphic EQ at ISO octave centres (32 Hz → 16 kHz).',
 		component: Eq,
-		defaultData: { gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['eq']
 	}),
 	levelMeter: entry<'levelMeter'>({
 		kind: 'levelMeter',
@@ -148,7 +144,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Level Meter',
 		description: 'Live L/R peak + RMS meter. Works standalone or anywhere in a chain.',
 		component: LevelMeter,
-		defaultData: {}
+		defaultData: DEFAULT_NODE_DATA['levelMeter']
 	}),
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
@@ -156,7 +152,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Loudness',
 		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
 		component: LufsMeter,
-		defaultData: { target: -14 }
+		defaultData: DEFAULT_NODE_DATA['lufsMeter']
 	}),
 	waveform: entry<'waveform'>({
 		kind: 'waveform',
@@ -164,7 +160,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Waveform',
 		description: 'Live waveform — filled min/max envelope for L and R channels.',
 		component: Waveform,
-		defaultData: { segs: 4 }
+		defaultData: DEFAULT_NODE_DATA['waveform']
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',
@@ -172,7 +168,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Limiter',
 		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
 		component: Limiter,
-		defaultData: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['limiter']
 	}),
 	compressor: entry<'compressor'>({
 		kind: 'compressor',
@@ -180,15 +176,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Compressor',
 		description: 'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
 		component: Compressor,
-		defaultData: {
-			thresholdDb: -18,
-			ratio: 3,
-			attackMs: 10,
-			releaseMs: 100,
-			kneeDb: 6,
-			makeupDb: 0,
-			bypassed: false
-		}
+		defaultData: DEFAULT_NODE_DATA['compressor']
 	}),
 	noiseGate: entry<'noiseGate'>({
 		kind: 'noiseGate',
@@ -196,14 +184,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Noise Gate',
 		description: 'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
 		component: NoiseGate,
-		defaultData: {
-			thresholdDb: -40,
-			rangeDb: -40,
-			attackMs: 1,
-			holdMs: 50,
-			releaseMs: 200,
-			bypassed: false
-		}
+		defaultData: DEFAULT_NODE_DATA['noiseGate']
 	}),
 	delay: entry<'delay'>({
 		kind: 'delay',
@@ -211,7 +192,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Delay',
 		description: 'Stereo delay (1-2000 ms) with feedback and dry/wet mix.',
 		component: Delay,
-		defaultData: { timeMs: 250, feedback: 0.4, mix: 0.35, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['delay']
 	}),
 	reverb: entry<'reverb'>({
 		kind: 'reverb',
@@ -219,7 +200,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Reverb',
 		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
 		component: Reverb,
-		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33, bypassed: false }
+		defaultData: DEFAULT_NODE_DATA['reverb']
 	}),
 	noiseSuppressor: entry<'noiseSuppressor'>({
 		kind: 'noiseSuppressor',
@@ -227,14 +208,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Noise Suppressor',
 		description: 'DeepFilterNet deep-learning speech denoise. Runs at 48 kHz only; off-rate signals pass through.',
 		component: NoiseSuppressor,
-		defaultData: {
-			attenuationLimitDb: 100,
-			postFilterBeta: 0,
-			minThreshDb: -10,
-			maxErbThreshDb: 30,
-			maxDfThreshDb: 20,
-			bypassed: false
-		}
+		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',
@@ -242,7 +216,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'WebRTC',
 		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
 		component: WebRtcCollaborator,
-		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '', codec: 'opus' }
+		defaultData: DEFAULT_NODE_DATA['webRtcCollaborator']
 	}),
 	netReceiver: entry<'netReceiver'>({
 		kind: 'netReceiver',
@@ -250,7 +224,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Net Receiver',
 		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
 		component: NetReceiver,
-		defaultData: { port: 5004, channels: 1 }
+		defaultData: DEFAULT_NODE_DATA['netReceiver']
 	}),
 	netSender: entry<'netSender'>({
 		kind: 'netSender',
@@ -258,14 +232,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Net Sender',
 		description: 'Send audio over UDP to a direct IP target (Opus or raw PCM).',
 		component: NetSender,
-		defaultData: {
-			targetIp: '',
-			port: 5004,
-			channels: 1,
-			codec: 'opus',
-			opusBitrate: 96000,
-			opusApplication: 'audio'
-		}
+		defaultData: DEFAULT_NODE_DATA['netSender']
 	})
 };
 
@@ -295,5 +262,7 @@ export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.r
 // Default data must not leak references to the registry copy, otherwise
 // independent nodes would share the same object.
 export function defaultDataFor(kind: NodeKind): AnyNodeData {
-	return { ...registry[kind].defaultData };
+	// Deep: nested values (an EQ's gain array) would otherwise be shared with
+	// every other node of the same kind.
+	return structuredClone(registry[kind].defaultData);
 }

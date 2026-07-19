@@ -1,6 +1,8 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 import type { Pipeline } from './types';
 import { PIPELINE_VERSION } from './version';
+import { isFromFuture, migrate } from './migrations';
+import { pruneDanglingEdges } from './sanitize';
 
 const STORE_FILE = 'pipelines.json';
 const KEY_PREFIX = 'pipeline:';
@@ -35,12 +37,17 @@ export const methods = {
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	},
 
+	/** Migrates on read; the result is only persisted once the pipeline is saved,
+	 * so opening a v0 pipeline in a build that crashes leaves the original intact. */
 	async get(id: string): Promise<Pipeline | null> {
-		return (await store.get<Pipeline>(KEY_PREFIX + id)) ?? null;
+		const stored = await store.get<Pipeline>(KEY_PREFIX + id);
+		if (!stored) return null;
+		return isFromFuture(stored) ? stored : pruneDanglingEdges(migrate(stored));
 	},
 
 	async save(p: Pipeline): Promise<void> {
-		await store.set(KEY_PREFIX + p.id, { ...p, version: PIPELINE_VERSION });
+		const clean = pruneDanglingEdges(p);
+		await store.set(KEY_PREFIX + p.id, { ...clean, version: PIPELINE_VERSION });
 		await store.save();
 	},
 

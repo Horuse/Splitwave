@@ -1,12 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Handle, Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
-	import {
-		channelColor,
-		deriveSlots,
-		handleEdgeStyle,
-		handleFreeStyle
-	} from '$lib/modules/flow/utils';
+	import { channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
@@ -67,18 +62,16 @@
 			class:justify-end={isSource}
 			onmousedowncapture={(e) => onArm(e, slot.ch)}
 		>
-			{#if slot.occupied}
-				<div
-					class="wire pointer-events-none absolute top-1/2 -translate-y-1/2"
-					style="{isSource ? 'right' : 'left'}:-1rem; width:1rem; color:{color}"
-				></div>
-			{/if}
+			<div
+				class="wire pointer-events-none absolute top-1/2 -translate-y-1/2"
+				style="{isSource ? 'right' : 'left'}:-1rem; width:1rem; color:{color}"
+			></div>
 			<Handle
 				type={side}
 				id={slot.id}
 				position={isSource ? Position.Right : Position.Left}
 				class={['handle', armed && 'handle-armed']}
-				style={slot.occupied ? handleEdgeStyle(color, side) : handleFreeStyle(side)}
+				style={handleEdgeStyle(color, side)}
 			/>
 		</div>
 	{/each}

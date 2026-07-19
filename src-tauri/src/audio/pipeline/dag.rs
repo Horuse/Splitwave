@@ -172,8 +172,7 @@ struct SourceState {
     drain: Option<Arc<AtomicU64>>,
     last_drain_gen: u64,
     meter: Option<MeterHandle>,
-    // Per-channel taps ("chK") drawn off this source, each a stereo buffer with
-    // the single physical channel duplicated L=R.
+    // Per-channel taps ("chK") drawn off this source.
     handle_bufs: Vec<(String, Vec<f32>)>,
     // Counts samples zero-filled on genuine mid-stream underrun (ring ran dry
     // while streaming). A non-RT tick thread reads it to surface xruns.
@@ -202,6 +201,15 @@ impl SourceState {
         have >= self.input_samples_per_block
     }
 
+    /// Taps are filled at the end of `fill_block`, so an early return would
+    /// leave them looping their last block -- a buzz at the block rate.
+    fn silence(&mut self) {
+        self.out_buf.fill(0.0);
+        for (_, buf) in self.handle_bufs.iter_mut() {
+            buf.fill(0.0);
+        }
+    }
+
     fn fill_block(&mut self) {
         if let Some(p) = &self.paused {
             if p.load(Ordering::SeqCst) {
@@ -213,7 +221,7 @@ impl SourceState {
                 }
                 self.input_staging.clear();
                 self.out_pending.clear();
-                self.out_buf.fill(0.0);
+                self.silence();
                 return;
             }
         }
@@ -229,7 +237,7 @@ impl SourceState {
                 }
                 self.input_staging.clear();
                 self.out_pending.clear();
-                self.out_buf.fill(0.0);
+                self.silence();
                 return;
             }
         }

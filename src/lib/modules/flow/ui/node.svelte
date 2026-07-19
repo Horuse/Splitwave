@@ -29,6 +29,8 @@
 		nodeId?: string;
 		maxChannels?: number;
 		minChannels?: number;
+		/** Meters widen with every channel, so they opt out of the node width cap. */
+		wide?: boolean;
 		selfGrowing?: boolean;
 		children?: Snippet;
 	}
@@ -47,6 +49,7 @@
 		nodeId,
 		maxChannels,
 		minChannels,
+		wide = false,
 		selfGrowing = false,
 		children
 	}: Props = $props();
@@ -75,7 +78,8 @@
 
 <div
 	class={[
-		'min-w-32 max-w-80 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
+		'min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
+		!wide && 'max-w-80'
 	]}
 >
 	<div class="mb-2 flex items-center justify-between gap-2">

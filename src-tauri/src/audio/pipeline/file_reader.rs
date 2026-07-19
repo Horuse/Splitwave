@@ -52,6 +52,7 @@ impl Drop for AudioFileReader {
 
 pub(super) struct AudioFileInfo {
     pub sample_rate: u32,
+    pub channels: u32,
     #[allow(dead_code)]
     pub total_frames: u64,
 }
@@ -78,8 +79,13 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
     let sample_rate = audio
         .sample_rate
         .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
+    let channels = audio.channels.as_ref().map(|c| c.count() as u32).unwrap_or(2).max(1);
     let total_frames = track.num_frames.unwrap_or(0);
-    Ok(AudioFileInfo { sample_rate, total_frames })
+    Ok(AudioFileInfo {
+        sample_rate,
+        channels,
+        total_frames,
+    })
 }
 
 pub(super) fn start_audio_file_reader(
@@ -124,6 +130,7 @@ struct OpenedDecoder {
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     sample_rate: u32,
+    channels: usize,
     total_frames: u64,
 }
 
@@ -139,7 +146,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
 
-    let (track_id, sample_rate, total_frames, audio_params) = {
+    let (track_id, sample_rate, channels, total_frames, audio_params) = {
         let track = format
             .default_track(TrackType::Audio)
             .ok_or_else(|| AppError::Stream("no audio track".into()))?;
@@ -152,15 +159,23 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
             .sample_rate
             .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
         let total_frames = track.num_frames.unwrap_or(0);
+        let channels = audio.channels.as_ref().map(|c| c.count()).unwrap_or(2).max(1);
         let audio_params = audio.clone();
-        (track.id, sample_rate, total_frames, audio_params)
+        (track.id, sample_rate, channels, total_frames, audio_params)
     };
 
     let decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| AppError::Stream(format!("unsupported codec: {e}")))?;
 
-    Ok(OpenedDecoder { format, decoder, track_id, sample_rate, total_frames })
+    Ok(OpenedDecoder {
+        format,
+        decoder,
+        track_id,
+        sample_rate,
+        channels,
+        total_frames,
+    })
 }
 
 fn do_seek(od: &mut OpenedDecoder, target_frame: u64) {
@@ -194,18 +209,18 @@ fn run(
 
     let mut frames_played: u64 = 0;
     let mut last_progress = Instant::now();
-    emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, false, false);
+    emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, od.channels as u32, false, false);
 
     let mut interleaved: Vec<f32> = Vec::new();
-    let mut stereo: Vec<f32> = vec![0.0f32; 4096];
+    let ch = od.channels;
+    let mut block: Vec<f32> = vec![0.0f32; 4096];
+    let mut last_frame: Vec<f32> = vec![0.0f32; ch];
     let mut last_paused_progress = Instant::now();
-    let mut last_l = 0.0f32;
-    let mut last_r = 0.0f32;
 
     loop {
         if stop.load(Ordering::SeqCst) {
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, true, false,
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, true, false,
             );
             return Ok(());
         }
@@ -219,7 +234,7 @@ fn run(
             }
             if last_paused_progress.elapsed() >= PROGRESS_INTERVAL {
                 emit_progress(
-                    app, &node_id, frames_played, od.total_frames, od.sample_rate, false, true,
+                    app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, true,
                 );
                 last_paused_progress = Instant::now();
             }
@@ -234,12 +249,12 @@ fn run(
             do_seek(&mut od, target);
             frames_played = target;
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, false, false,
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
             );
             last_progress = Instant::now();
         }
 
-        let frames_decoded = decode_next(&mut od, &mut interleaved, &mut stereo)?;
+        let frames_decoded = decode_next(&mut od, &mut interleaved, &mut block)?;
 
         if frames_decoded == 0 {
             if loop_enabled.load(Ordering::SeqCst) {
@@ -249,31 +264,31 @@ fn run(
             }
             // Fade out to avoid a hard click at end of file.
             const FADE_FRAMES: usize = 128;
-            let mut fade_buf = [0.0f32; FADE_FRAMES * 2];
+            let mut fade_buf = vec![0.0f32; FADE_FRAMES * ch];
             for f in 0..FADE_FRAMES {
                 let t = 1.0 - (f as f32 + 1.0) / FADE_FRAMES as f32;
-                fade_buf[f * 2] = last_l * t;
-                fade_buf[f * 2 + 1] = last_r * t;
+                for c in 0..ch {
+                    fade_buf[f * ch + c] = last_frame[c] * t;
+                }
             }
             bridge.broadcast_blocking(&fade_buf, stop, paused, BACKOFF_WHEN_FULL);
             info!(path = %path.display(), "audio file reached end");
             paused.store(true, Ordering::SeqCst);
             do_seek(&mut od, 0);
             frames_played = 0;
-            emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, false, true);
+            emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, od.channels as u32, false, true);
             last_progress = Instant::now();
             continue;
         }
 
-        let samples = &stereo[..frames_decoded * 2];
+        let samples = &block[..frames_decoded * ch];
         bridge.broadcast_blocking(samples, stop, paused, BACKOFF_WHEN_FULL);
         frames_played += frames_decoded as u64;
-        last_l = stereo[(frames_decoded - 1) * 2];
-        last_r = stereo[(frames_decoded - 1) * 2 + 1];
+        last_frame.copy_from_slice(&block[(frames_decoded - 1) * ch..frames_decoded * ch]);
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, false, false,
+                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
             );
             last_progress = Instant::now();
         }
@@ -283,7 +298,7 @@ fn run(
 fn decode_next(
     od: &mut OpenedDecoder,
     interleaved: &mut Vec<f32>,
-    stereo: &mut Vec<f32>,
+    out: &mut Vec<f32>,
 ) -> AppResult<usize> {
     loop {
         let packet = match od.format.next_packet() {
@@ -315,25 +330,28 @@ fn decode_next(
             continue;
         }
 
-        let channels = audio_buf.spec().channels().count().max(1);
+        let src_ch = audio_buf.spec().channels().count().max(1);
         let n_samples = audio_buf.samples_interleaved();
 
         interleaved.resize(n_samples, 0.0f32);
         audio_buf.copy_to_slice_interleaved(interleaved.as_mut_slice());
 
-        if stereo.len() < frames * 2 {
-            stereo.resize(frames * 2, 0.0);
+        // A packet may declare fewer channels than the track; pad the rest with
+        // silence so the frame stride the bridge sees never changes mid-stream.
+        let dst_ch = od.channels;
+        if out.len() < frames * dst_ch {
+            out.resize(frames * dst_ch, 0.0);
         }
-
         for f in 0..frames {
-            let base = f * channels;
-            let (l, r) = if channels == 1 {
-                (interleaved[base], interleaved[base])
-            } else {
-                (interleaved[base], interleaved[base + 1])
-            };
-            stereo[f * 2] = l;
-            stereo[f * 2 + 1] = r;
+            let src = f * src_ch;
+            let dst = f * dst_ch;
+            for c in 0..dst_ch {
+                out[dst + c] = if c < src_ch {
+                    interleaved[src + c]
+                } else {
+                    0.0
+                };
+            }
         }
 
         return Ok(frames);
@@ -350,6 +368,7 @@ fn emit_progress(
     frames: u64,
     total_frames: u64,
     sample_rate: u32,
+    channels: u32,
     stopped: bool,
     paused: bool,
 ) {
@@ -360,6 +379,7 @@ fn emit_progress(
             "frames": frames,
             "totalFrames": total_frames,
             "sampleRate": sample_rate,
+            "channels": channels,
             "stopped": stopped,
             "paused": paused,
         }),

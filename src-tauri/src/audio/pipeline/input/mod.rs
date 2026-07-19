@@ -65,6 +65,7 @@ pub(super) enum ResolvedInput {
     },
     AudioFile {
         sample_rate: u32,
+        channels: u32,
         path: PathBuf,
     },
 }
@@ -88,6 +89,7 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
+            ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
             _ => 2,
         }
     }
@@ -99,6 +101,7 @@ pub(super) fn resolve_audio_file(file_path: &str) -> AppResult<ResolvedInput> {
     let info = probe_audio_file(&path)?;
     Ok(ResolvedInput::AudioFile {
         sample_rate: info.sample_rate,
+        channels: info.channels,
         path,
     })
 }

@@ -18,7 +18,7 @@
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
-	import { parseHandle } from '$lib/modules/flow/utils';
+	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
 	let { id, data }: NodeProps<WebRtcNodeType> = $props();
@@ -402,15 +402,21 @@
 		{#if phase !== 'idle' || peers.length > 0}
 			<hr class="border-neutral-300" />
 			{#if phase !== 'idle'}
-				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
 					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
-					<Handle type="source" id="mixed" position={Position.Right} class="handle" />
+					<Handle
+						type="source"
+						id="mixed"
+						position={Position.Right}
+						class="handle"
+						style={handleEdgeStyle('#a3a3a3', 'source')}
+					/>
 				</div>
 			{/if}
 			{#each peers as peer (peer.peerId)}
 				<!-- peer header + this peer's full mix -->
-				<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
+				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-700">
 						{peer.name || peer.peerId.slice(0, 10)}
 					</span>
@@ -440,17 +446,26 @@
 							x
 						</button>
 					</div>
-					<Handle type="source" id={`peer:${peer.peerId}`} position={Position.Right} class="handle" />
+					<Handle
+						type="source"
+						id={`peer:${peer.peerId}`}
+						position={Position.Right}
+						class="handle"
+						style={handleEdgeStyle('#a3a3a3', 'source')}
+					/>
 				</div>
 				<!-- per-channel outputs for this peer -->
 				{#each peer.channels as c (c)}
-					<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
-						<span class="shrink-0 font-mono text-[9px] text-neutral-400">in {c + 1}</span>
+					<div class="relative flex min-h-5 items-center justify-end gap-1">
+						<span class="shrink-0 font-mono text-[9px]" style="color:{channelColor(c)}">
+							{channelLabel(c, peer.channels.length)}
+						</span>
 						<Handle
 							type="source"
 							id={`peer:${peer.peerId}:${c}`}
 							position={Position.Right}
 							class="handle"
+							style={handleEdgeStyle(channelColor(c), 'source')}
 						/>
 					</div>
 				{/each}

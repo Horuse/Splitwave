@@ -58,11 +58,6 @@ export function handleEdgeStyle(color: string, side: 'source' | 'target'): strin
 	return `${handleStyle(color)};${PIN_SHAPE}${edge}`;
 }
 
-export function handleFreeStyle(side: 'source' | 'target'): string {
-	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
-	return `background:transparent !important;border:1px dashed #a3a3a3 !important;${PIN_SHAPE}${edge}`;
-}
-
 export interface Slot {
 	id: string;
 	ch: number;

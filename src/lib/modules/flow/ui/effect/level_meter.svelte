@@ -156,6 +156,7 @@
 	hasOutput
 	channelIo
 	nodeId={id}
+	wide
 >
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">

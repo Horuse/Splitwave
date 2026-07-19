@@ -22,6 +22,7 @@
 		frames: number;
 		totalFrames: number;
 		sampleRate: number;
+		channels: number;
 		stopped: boolean;
 		paused: boolean;
 	}
@@ -29,6 +30,8 @@
 	let frames = $state(0);
 	let totalFrames = $state(0);
 	let sampleRate = $state(0);
+	// Reported by the reader once the file is open; drives the socket count.
+	let channels = $state(0);
 	let playing = $state(false);
 	let paused = $state(false);
 
@@ -44,6 +47,7 @@
 			frames = p.frames;
 			totalFrames = p.totalFrames;
 			sampleRate = p.sampleRate;
+			channels = p.channels;
 			paused = p.paused;
 			playing = !p.stopped && !p.paused;
 		});
@@ -165,7 +169,17 @@
 	let volumePct = $derived((data.volume ?? 1) * 100);
 </script>
 
-<Wrapper label="Audio File" accent="input" icon={MusicNote} hasOutput>
+<Wrapper
+	label="Audio File"
+	accent="input"
+	icon={MusicNote}
+	hasOutput
+	channelIo
+	nodeId={id}
+	minChannels={channels}
+	maxChannels={channels || undefined}
+	selfGrowing
+>
 	<div class="flex w-64 flex-col gap-3">
 		<div
 			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"

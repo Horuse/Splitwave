@@ -342,9 +342,10 @@ impl ChannelReceiver {
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
     /// Real-time consumers also adapt the buffer depth and drift ratio here.
     pub fn mix_block(&self, mix: &mut [f32]) {
-        let out_frames = mix.len() / 2;
+        // The node's width is whatever its graph resolved to, not always stereo.
+        let width = (mix.len() / OUT_BLOCK_FRAMES).max(1);
         // The playback resamplers are built for exactly OUT_BLOCK_FRAMES output.
-        debug_assert_eq!(out_frames, OUT_BLOCK_FRAMES);
+        debug_assert_eq!(mix.len() / width, OUT_BLOCK_FRAMES);
         let Ok(mut taps) = self.taps.try_lock() else {
             // Map briefly locked for registration: hold the last mix rather than
             // emit a silent click.
@@ -370,12 +371,13 @@ impl ChannelReceiver {
                 self.control(min_backlog, need);
             }
         }
-        // Channels are mono; the mix handle stays stereo, so each lands centred.
+        // Channels are mono; a wider mix gets each one centred across it.
         for tap in taps.values_mut() {
-            let n = tap.fill_block(out_frames).min(out_frames);
-            for (frame, &v) in mix.chunks_mut(2).zip(tap.scratch[..n].iter()) {
-                frame[0] += v;
-                frame[1] += v;
+            let n = tap.fill_block(OUT_BLOCK_FRAMES).min(OUT_BLOCK_FRAMES);
+            for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
+                for s in frame.iter_mut() {
+                    *s += v;
+                }
             }
         }
         let mut held = self.last_mix.borrow_mut();
@@ -455,11 +457,13 @@ impl ChannelReceiver {
     pub fn prefix_mix(&self, prefix: &str, out: &mut [f32]) {
         out.fill(0.0);
         if let Ok(taps) = self.taps.try_lock() {
+            let width = (out.len() / OUT_BLOCK_FRAMES).max(1);
             for (key, tap) in taps.iter() {
                 if key.starts_with(prefix) {
-                    for (frame, &v) in out.chunks_mut(2).zip(tap.scratch[..tap.valid].iter()) {
-                        frame[0] += v;
-                        frame[1] += v;
+                    for (frame, &v) in out.chunks_mut(width).zip(tap.scratch[..tap.valid].iter()) {
+                        for s in frame.iter_mut() {
+                            *s += v;
+                        }
                     }
                 }
             }

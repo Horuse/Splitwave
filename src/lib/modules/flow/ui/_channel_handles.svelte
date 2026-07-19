@@ -13,20 +13,28 @@
 		nodeId: string;
 		side: 'source' | 'target';
 		max?: number;
+		min?: number;
+		/** Sources with nothing upstream (a net receiver) grow on their own cables. */
+		selfGrowing?: boolean;
 	}
-	let { nodeId, side, max = Infinity }: Props = $props();
+	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
-	const incoming = useNodeConnections({ id: untrack(() => nodeId), handleType: 'target' });
+	const id = untrack(() => nodeId);
+	const incoming = useNodeConnections({ id, handleType: 'target' });
+	const outgoing = useNodeConnections({ id, handleType: 'source' });
 
 	let isSource = $derived(side === 'source');
-	// A channel only has an output once something feeds it, so only the target grows.
+	let grows = $derived(selfGrowing ? isSource : !isSource);
+	// A channel only has an output once something feeds it, unless it is a source.
 	let occupied = $derived(
-		incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
+		selfGrowing
+			? outgoing.current.map((c) => c.sourceHandle).filter((h): h is string => !!h)
+			: incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
 	);
 	let slots = $derived(
-		deriveSlots(occupied, !isSource, max).filter((s) => !isSource || s.occupied)
+		deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied)
 	);
 
 	$effect(() => {

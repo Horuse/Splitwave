@@ -824,7 +824,7 @@ impl GraphSpec {
                     OutputSpec::NetSender {
                         node_id: n.id.clone(),
                         target: SocketAddr::new(ip, data.port),
-                        channels: data.channels.clamp(1, 10),
+                        channels: data.channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
                         codec: data.codec,
                         opus_bitrate: data.opus_bitrate,
                         opus_application: data.opus_application,
@@ -929,7 +929,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
                 node_id: n.id.clone(),
                 opus_bitrate: data.opus_bitrate,
                 opus_application: data.opus_application,
-                channels: data.channels.clamp(1, 10),
+                channels: data.channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

@@ -30,14 +30,25 @@ pub struct NetReceiver {
     lost: AtomicU64,
 }
 
-/// `(bytes, packets, lost)` since this receiver bound its socket.
-pub fn stats(node_id: &str) -> Option<(u64, u64, u64)> {
+/// `(bytes, packets, lost, channels)` since this receiver bound its socket.
+/// `channels` is the highest wire index seen plus one, so the UI can grow its
+/// handles to whatever the sender actually transmits.
+pub fn stats(node_id: &str) -> Option<(u64, u64, u64, u32)> {
     let reg = registry().lock().unwrap();
     reg.get(node_id).map(|r| {
+        let channels = r
+            .channels
+            .lock()
+            .unwrap()
+            .keys()
+            .max()
+            .map(|&i| i as u32 + 1)
+            .unwrap_or(0);
         (
             r.bytes.load(Ordering::Relaxed),
             r.packets.load(Ordering::Relaxed),
             r.lost.load(Ordering::Relaxed),
+            channels,
         )
     })
 }

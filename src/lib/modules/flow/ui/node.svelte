@@ -28,6 +28,8 @@
 		channelIo?: boolean;
 		nodeId?: string;
 		maxChannels?: number;
+		minChannels?: number;
+		selfGrowing?: boolean;
 		children?: Snippet;
 	}
 
@@ -44,6 +46,8 @@
 		channelIo = false,
 		nodeId,
 		maxChannels,
+		minChannels,
+		selfGrowing = false,
 		children
 	}: Props = $props();
 
@@ -107,12 +111,12 @@
 	{#if chExpanded && nodeId}
 		<div class="mt-2 flex justify-between gap-2">
 			{#if hasInput}
-				<ChannelHandles {nodeId} side="target" max={maxChannels} />
+				<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
 			{:else}
 				<div></div>
 			{/if}
 			{#if hasOutput}
-				<ChannelHandles {nodeId} side="source" />
+				<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />
 			{/if}
 		</div>
 	{/if}

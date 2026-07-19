@@ -1,11 +1,19 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
-	import { useSvelteFlow, Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import {
+		useNodeConnections,
+		useSvelteFlow,
+		Handle,
+		Position,
+		type Node,
+		type NodeProps
+	} from '@xyflow/svelte';
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { formatRate, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
+	import { parseHandle } from '$lib/modules/flow/utils';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
 	let { id, data }: NodeProps<NetReceiverNodeType> = $props();
@@ -25,6 +33,7 @@
 		if (!s) {
 			loss = null;
 			rate = 0;
+			received = 0;
 			prevBytes = 0;
 			prevAt = now;
 			lossWindow.reset();
@@ -36,34 +45,39 @@
 		}
 		prevBytes = s.bytes;
 		prevAt = now;
+		received = s.channels;
 	}, POLL_MS);
 	onDestroy(() => clearInterval(interval));
 
-	const MAX_CHANNELS = 10;
-	let channelCount = $derived(Math.min(Math.max(data.channels ?? 1, 1), MAX_CHANNELS));
+	const MAX_CHANNELS = 255;
+	// Highest wire index the sender has actually delivered.
+	let received = $state(0);
+	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
+	let wiredChannels = $derived(
+		wired.current.reduce((n, c) => {
+			const ch = c.sourceHandle ? parseHandle(c.sourceHandle) : null;
+			return ch === null ? n : Math.max(n, ch);
+		}, 0)
+	);
+
+	// Slots follow the stream, falling back to the cables when nothing arrives yet.
+	let channelCount = $derived(
+		Math.max(1, Math.min(Math.max(received, wiredChannels), MAX_CHANNELS))
+	);
+
+	$effect(() => {
+		const next = channelCount;
+		if (next !== untrack(() => data.channels)) flow.updateNodeData(id, { channels: next });
+	});
 
 	function setPort(value: string) {
 		const port = Math.max(1, Math.min(65535, Math.floor(Number(value)) || 0));
 		flow.updateNodeData(id, { port });
 	}
 
-	function addChannel() {
-		if (channelCount < MAX_CHANNELS) flow.updateNodeData(id, { channels: channelCount + 1 });
-	}
-
-	function removeChannel() {
-		if (channelCount <= 1) return;
-		const handle = String(channelCount - 1);
-		const orphaned = flow
-			.getEdges()
-			.filter((e) => e.source === id && e.sourceHandle === handle)
-			.map((e) => ({ id: e.id }));
-		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
-		flow.updateNodeData(id, { channels: channelCount - 1 });
-	}
 </script>
 
-<Wrapper label="Net Receiver" accent="input">
+<Wrapper label="Net Receiver" accent="input" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
 	<div class="nodrag nopan flex w-44 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">
@@ -76,30 +90,6 @@
 				value={data.port}
 				onchange={(e) => setPort(e.currentTarget.value)}
 			/>
-		</div>
-
-		<!-- inputs -->
-		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
-			<div class="flex items-center gap-1">
-				<button
-					type="button"
-					class="nodrag nopan button-main secondary flex h-4 w-4 items-center justify-center rounded p-0 font-mono text-[11px] leading-none"
-					disabled={channelCount <= 1}
-					onclick={removeChannel}
-				>
-					-
-				</button>
-				<span class="w-4 text-center font-mono text-[10px] tabular-nums text-neutral-900">{channelCount}</span>
-				<button
-					type="button"
-					class="nodrag nopan button-main secondary flex h-4 w-4 items-center justify-center rounded p-0 font-mono text-[11px] leading-none"
-					disabled={channelCount >= MAX_CHANNELS}
-					onclick={addChannel}
-				>
-					+
-				</button>
-			</div>
 		</div>
 
 		<!-- quality + throughput -->
@@ -115,18 +105,10 @@
 
 		<hr class="border-neutral-300" />
 
-		<!-- mix output (default handle) -->
 		<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
 			<span class="truncate font-mono text-[9px] text-neutral-500">all inputs</span>
 			<span class="shrink-0 font-mono text-[9px] text-neutral-400">mix</span>
 			<Handle type="source" position={Position.Right} class="handle" />
 		</div>
-		<!-- per-input outputs -->
-		{#each Array(channelCount) as _, c (c)}
-			<div class="relative -mr-4 flex min-h-5 items-center justify-end gap-1 pr-4">
-				<span class="shrink-0 font-mono text-[9px] text-neutral-400">in {c + 1}</span>
-				<Handle type="source" id={String(c)} position={Position.Right} class="handle" />
-			</div>
-		{/each}
 	</div>
 </Wrapper>

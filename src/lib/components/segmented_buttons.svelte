@@ -48,7 +48,7 @@
 	{/if}
 
 	<div class="relative grid" style="grid-template-columns: repeat({cols}, minmax(0, 1fr));">
-		{#each options as opt (opt.label)}
+		{#each options as opt (opt.value)}
 			<button
 				type="button"
 				disabled={opt.disabled}

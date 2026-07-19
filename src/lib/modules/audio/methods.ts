@@ -155,7 +155,7 @@ export const methods = {
 	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
 	netReceiverStats: (
 		nodeId: string
-	): Promise<{ bytes: number; packets: number; lost: number } | null> =>
+	): Promise<{ bytes: number; packets: number; lost: number; channels: number } | null> =>
 		invoke('net_receiver_stats', { nodeId }),
 	/** Direct-IP send stats, or null when the node isn't running. */
 	netSenderStats: (

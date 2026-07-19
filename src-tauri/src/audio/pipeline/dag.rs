@@ -28,6 +28,8 @@ pub(super) const RESAMPLE_CHUNK: usize = 256;
 
 pub(super) const DSP_BLOCK_FRAMES: usize = 1024;
 
+const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;
+
 /// How long a source can go without delivering before the availability-paced
 /// worker stops waiting on it. SCK in normal operation delivers every ~20 ms,
 /// so 150 ms is ~7x headroom -- enough to avoid false positives on bursty
@@ -418,13 +420,16 @@ struct ProducerState {
     receiver: ChannelReceiver,
     out_buf: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
+    /// Wire channel index per `handle_bufs` entry; the tap map is keyed by the
+    /// index the sender stamped, not by the `chN` handle the UI draws.
+    wire_keys: Vec<String>,
 }
 
 impl ProducerState {
     fn process(&mut self) {
         self.receiver.mix_block(&mut self.out_buf);
-        for (handle, buf) in self.handle_bufs.iter_mut() {
-            self.receiver.channel(handle, buf);
+        for ((_, buf), key) in self.handle_bufs.iter_mut().zip(&self.wire_keys) {
+            self.receiver.channel(key, buf);
         }
     }
 
@@ -923,15 +928,20 @@ pub(super) fn build_output_graph(
                 handles.sort();
                 handles.dedup();
                 let pw = 2;
-                let handle_bufs = handles
-                    .into_iter()
-                    .map(|h| (h, vec![0.0; DSP_BLOCK_FRAMES * pw]))
-                    .collect();
+                let mut handle_bufs = Vec::with_capacity(handles.len());
+                let mut wire_keys = Vec::with_capacity(handles.len());
+                // A net channel carries a stereo pair, matching the sender's rings.
+                for h in handles {
+                    let Some(ch) = parse_ch(&h) else { continue };
+                    wire_keys.push((ch - 1).to_string());
+                    handle_bufs.push((h, vec![0.0; DSP_BLOCK_FRAMES * pw]));
+                }
                 id_to_index.insert(id.clone(), nodes.len());
                 nodes.push(DagNode::Producer(ProducerState {
                     receiver,
                     out_buf: vec![0.0; DSP_BLOCK_FRAMES * pw],
                     handle_bufs,
+                    wire_keys,
                 }));
                 node_latencies.push(0);
                 node_channels.push(pw);
@@ -1177,7 +1187,7 @@ pub(super) fn build_output_graph(
             // One input buffer per WebRTC send channel, keyed "ch1".."chN".
             let channel_bufs: Vec<(String, Vec<f32>)> =
                 if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
-                    (1..=(*channels).clamp(1, 10))
+                    (1..=(*channels).clamp(1, MAX_NET_CH))
                         .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES * 2]))
                         .collect()
                 } else {
@@ -1265,7 +1275,7 @@ pub(super) fn build_output_graph(
             })
             .collect();
 
-        let n = channels.clamp(1, 10) as usize;
+        let n = channels.clamp(1, MAX_NET_CH) as usize;
         let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
         let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
         let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);

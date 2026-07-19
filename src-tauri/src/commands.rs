@@ -364,6 +364,7 @@ pub struct NetReceiverStats {
     pub bytes: u64,
     pub packets: u64,
     pub lost: u64,
+    pub channels: u32,
 }
 
 /// Direct-IP receive stats: cumulative bytes, packets, and lost packets
@@ -371,7 +372,12 @@ pub struct NetReceiverStats {
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
     crate::audio::netaudio::receiver::stats(&node_id)
-        .map(|(bytes, packets, lost)| NetReceiverStats { bytes, packets, lost })
+        .map(|(bytes, packets, lost, channels)| NetReceiverStats {
+            bytes,
+            packets,
+            lost,
+            channels,
+        })
 }
 
 #[derive(serde::Serialize)]

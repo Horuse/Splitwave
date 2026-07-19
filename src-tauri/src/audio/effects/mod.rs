@@ -620,7 +620,7 @@ pub fn instantiate_effect(
             // ~1 s of stereo audio at the graph rate per channel; drained by the
             // encode task.
             const SEND_RING: usize = 96_000;
-            let count = channels.clamp(1, 10) as usize;
+            let count = channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32) as usize;
             let mut send_producers = Vec::with_capacity(count);
             let mut send_consumers = Vec::with_capacity(count);
             for _ in 0..count {

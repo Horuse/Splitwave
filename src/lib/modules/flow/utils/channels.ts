@@ -75,14 +75,19 @@ export function parseHandle(handle: string): number | null {
 }
 
 // A removed cable frees its slot in place; renumbering would reroute live audio.
-export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = Infinity): Slot[] {
+export function deriveSlots(
+	occupiedHandles: string[],
+	trailing: boolean,
+	max = Infinity,
+	min = 0
+): Slot[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
 		const ch = parseHandle(h);
 		if (ch !== null) taken.add(ch);
 	}
 
-	const end = taken.size === 0 ? 0 : Math.max(...taken);
+	const end = Math.min(Math.max(taken.size === 0 ? 0 : Math.max(...taken), min), max);
 	const slots: Slot[] = [];
 	for (let ch = 1; ch <= end; ch++) {
 		slots.push({ id: `ch${ch}`, ch, occupied: taken.has(ch) });

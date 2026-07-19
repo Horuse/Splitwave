@@ -72,12 +72,11 @@
 <Wrapper
 	label="Noise Gate"
 	accent="effect"
+	hasInput
 	hasOutput
-	outputLabel="OUT"
-	inputs={[
-		{ id: 'main', label: 'IN', position: 'left' },
-		{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }
-	]}
+	channelIo
+	nodeId={id}
+	inputs={[{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }]}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}
 >

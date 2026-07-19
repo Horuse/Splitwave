@@ -121,16 +121,20 @@
 		{/if}
 	</div>
 
+	<!-- Named inputs (a sidechain) sit outside the channel columns, so they
+	     survive alongside them. -->
+	{#if !isPreview && inputs}
+		{#each inputs as h (h.id)}
+			<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
+				{#if h.label}
+					<span class={labelClasses(h.position)}>{h.label}</span>
+				{/if}
+			</Handle>
+		{/each}
+	{/if}
+
 	{#if !isPreview && !chExpanded}
-		{#if inputs && inputs.length > 0}
-			{#each inputs as h (h.id)}
-				<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
-					{#if h.label}
-						<span class={labelClasses(h.position)}>{h.label}</span>
-					{/if}
-				</Handle>
-			{/each}
-		{:else if hasInput}
+		{#if !inputs && hasInput}
 			<Handle type="target" class="handle" position={Position.Left} />
 		{/if}
 		{#if hasOutput}

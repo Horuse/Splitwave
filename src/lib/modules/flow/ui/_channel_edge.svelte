@@ -1,6 +1,13 @@
 <script lang="ts">
-	import { BaseEdge, getBezierPath, type EdgeProps } from '@xyflow/svelte';
-	import { channelColor, darken, parseHandle } from '$lib/modules/flow/utils';
+	import {
+		BaseEdge,
+		getBezierPath,
+		getSmoothStepPath,
+		getStraightPath,
+		type EdgeProps
+	} from '@xyflow/svelte';
+	import { darken, handleColor } from '$lib/modules/flow/utils';
+	import { edgeSettings } from '../edge_settings.svelte';
 
 	let {
 		id,
@@ -18,21 +25,28 @@
 	const PIN_W = 3;
 	const PIN_H = 6;
 
-	let channel = $derived(sourceHandleId ? parseHandle(sourceHandleId) : null);
-	let color = $derived(channel === null ? null : channelColor(channel - 1));
+	let color = $derived(handleColor(sourceHandleId));
 
-	let path = $derived(
-		getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })[0]
-	);
+	let path = $derived.by(() => {
+		const p = { sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition };
+		switch (edgeSettings.shape) {
+			case 'straight':
+				return getStraightPath(p)[0];
+			case 'step':
+				return getSmoothStepPath({ ...p, borderRadius: 0 })[0];
+			case 'smoothstep':
+				return getSmoothStepPath(p)[0];
+			default:
+				return getBezierPath(p)[0];
+		}
+	});
 </script>
 
-{#if color === null}
-	<BaseEdge {id} {path} {markerEnd} />
-{:else}
-	<!-- BaseEdge stays underneath for xyflow's hit area and selection styling. -->
-	<BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
-	<g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
-		<path d={path} fill="none" stroke={color} stroke-width="2" />
+<!-- BaseEdge stays underneath for xyflow's hit area and selection styling. -->
+<BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
+<g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
+	<path d={path} fill="none" stroke={color} stroke-width="2" />
+	{#if edgeSettings.pins}
 		{#each [[sourceX, sourceY], [targetX, targetY]] as [x, y], end (end)}
 			<rect
 				x={x - PIN_W / 2}
@@ -45,5 +59,5 @@
 				stroke-width="0.5"
 			/>
 		{/each}
-	</g>
-{/if}
+	{/if}
+</g>

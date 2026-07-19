@@ -247,6 +247,12 @@
     @apply size-2! rounded-full z-50 bg-neutral-200! border-neutral-400 border
 }
 
+/* Preview dashes in the edge-shape picker; mirrors xyflow's dashdraw. */
+.edge-icon-dash {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+}
+
 /* Armed for a multi-channel drag, not a drag of its own. */
 .handle-armed {
     @apply ring-2 ring-neutral-900 ring-offset-1

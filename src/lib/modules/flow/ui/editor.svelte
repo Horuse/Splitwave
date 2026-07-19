@@ -45,6 +45,7 @@
 		Rewind
 	} from '$lib/components/icons';
 	import { channelCaps, channelSelection } from '../stores.svelte';
+	import { edgeSettings } from '../edge_settings.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
@@ -105,7 +106,7 @@
 					sourceHandle: `ch${ch}`,
 					target: seed.target,
 					targetHandle: `ch${run[i]}`,
-					animated: true,
+					animated: edgeSettings.animated,
 					type: 'channel'
 				});
 			});
@@ -609,7 +610,7 @@
 			bind:edges
 			{nodeTypes}
 			{edgeTypes}
-			defaultEdgeOptions={{ animated: true, type: 'channel' }}
+			defaultEdgeOptions={{ animated: edgeSettings.animated, type: 'channel' }}
 			connectionLineComponent={ConnectionLine}
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}

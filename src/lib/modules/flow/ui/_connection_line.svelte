@@ -1,9 +1,29 @@
 <script lang="ts">
-	import { getBezierPath, useConnection } from '@xyflow/svelte';
+	import {
+		getBezierPath,
+		getSmoothStepPath,
+		getStraightPath,
+		useConnection
+	} from '@xyflow/svelte';
 	import { channelColor, parseHandle } from '$lib/modules/flow/utils';
+	import { edgeSettings } from '../edge_settings.svelte';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	const connection = useConnection();
+
+	type Route = Parameters<typeof getBezierPath>[0];
+	function routeOf(p: Route): string {
+		switch (edgeSettings.shape) {
+			case 'straight':
+				return getStraightPath(p)[0];
+			case 'step':
+				return getSmoothStepPath({ ...p, borderRadius: 0 })[0];
+			case 'smoothstep':
+				return getSmoothStepPath(p)[0];
+			default:
+				return getBezierPath(p)[0];
+		}
+	}
 
 	// A custom line replaces xyflow's default path, so the dragged one is drawn here too.
 	let lines = $derived.by(() => {
@@ -36,14 +56,14 @@
 		return points.map((p) => ({
 			ch: p.ch,
 			color: p.ch === null ? '#a3a3a3' : channelColor(p.ch - 1),
-			path: getBezierPath({
+			path: routeOf({
 				sourceX: p.x,
 				sourceY: p.y,
 				sourcePosition: c.fromPosition,
 				targetX: c.to.x,
 				targetY: c.to.y,
 				targetPosition: c.toPosition
-			})[0]
+			})
 		}));
 	});
 </script>

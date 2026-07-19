@@ -64,6 +64,19 @@ export interface Slot {
 	occupied: boolean;
 }
 
+const NEUTRAL = '#a3a3a3';
+
+/** Edge colour for a source handle: per-channel handles take their channel's
+ * colour, bus and per-peer mixes stay neutral. */
+export function handleColor(handle: string | null | undefined): string {
+	if (!handle) return NEUTRAL;
+	const ch = parseHandle(handle);
+	if (ch !== null) return channelColor(ch - 1);
+	// `peer:<id>:<c>` is one channel of a peer, counted from zero.
+	const peer = /^peer:.+:(\d+)$/.exec(handle);
+	return peer ? channelColor(Number(peer[1])) : NEUTRAL;
+}
+
 export function parseHandle(handle: string): number | null {
 	const m = /^ch(\d+)$/.exec(handle);
 	return m ? Number(m[1]) : null;

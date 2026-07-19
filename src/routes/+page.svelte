@@ -65,6 +65,8 @@
             {#if !isWindows}
                 <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
             {/if}
+
+                <a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
         </div>
     {/snippet}
 </Header>

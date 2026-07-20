@@ -16,6 +16,8 @@
 		emptyHint?: string;
 		onChange: (v: string | null) => void;
 		class?: string;
+		/** Compact variant for dense node UIs. */
+		size?: 'sm' | 'md';
 		/** Footer action pinned below the list, e.g. a shortcut to create a missing option. */
 		actionLabel?: string;
 		onAction?: () => void;
@@ -27,6 +29,7 @@
 		placeholder = '— Select —',
 		emptyHint = 'No matches',
 		onChange,
+		size = 'md',
 		class: ClassName,
 		actionLabel,
 		onAction
@@ -95,7 +98,10 @@
 <div bind:this={containerEl} class="relative min-w-0 {ClassName}">
 	<button
 		type="button"
-		class="nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
+		class={[
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 text-left text-neutral-1100 hover:bg-neutral-200',
+			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
+		]}
 		onclick={() => (open ? closePanel() : openPanel())}
 	>
 		<span class="flex min-w-0 flex-1 items-center gap-1.5">

@@ -9,14 +9,7 @@
 		registry
 	} from '../utils/nodes';
 	import { Add, DataBar, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
-
-	const ACCENT_TEXT: Record<NodeCategory, string> = {
-		input: 'text-emerald-600 dark:text-emerald-400',
-		output: 'text-sky-600 dark:text-sky-400',
-		monitor: 'text-amber-600 dark:text-amber-400',
-		network: 'text-rose-600 dark:text-rose-400',
-		effect: 'text-violet-600 dark:text-violet-400'
-	};
+	import { CATEGORY_TEXT } from '../utils/accents';
 
 	const CATEGORY_ICON = {
 		input: Mic,
@@ -56,7 +49,7 @@
 				aria-label={`Jump to ${categoryLabel[category]}`}
 				class={[
 					'flex flex-1 items-center justify-center rounded-lg bg-neutral-100 py-1.5 transition-colors hover:bg-neutral-300',
-					ACCENT_TEXT[category]
+					CATEGORY_TEXT[category]
 				]}
 			>
 				<Icon class="size-4" />
@@ -79,7 +72,7 @@
 							class="group flex items-start justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 hover:bg-neutral-200"
 						>
 							<div class="flex min-w-0 items-start gap-2">
-								<node.icon class={['mt-0.5 size-4 shrink-0', ACCENT_TEXT[node.category]]} />
+								<node.icon class={['mt-0.5 size-4 shrink-0', CATEGORY_TEXT[node.category]]} />
 								<div class="flex min-w-0 flex-col">
 									<span class="text-sm font-medium text-theme">{node.label}</span>
 									<span class="text-[11px] leading-tight text-neutral-900">

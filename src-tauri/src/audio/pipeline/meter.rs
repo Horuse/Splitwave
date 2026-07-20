@@ -111,6 +111,12 @@ pub(super) fn spawn_meter_thread(
                             "tpL": snap.tp_l,
                             "tpR": snap.tp_r,
                             "lra": snap.lra,
+                            "rms": snap.rms,
+                            "noiseFloor": snap.noise_floor,
+                            "samplePeak": snap.sample_peak,
+                            "dcOffset": snap.dc_offset,
+                            "correlation": snap.correlation,
+                            "clips": snap.clips,
                         }),
                     );
                 }

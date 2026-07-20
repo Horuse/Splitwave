@@ -150,7 +150,7 @@
 
 <Wrapper
 	label="Level Meter"
-	accent="effect"
+	accent="monitor"
 	icon={DataBar}
 	hasInput
 	hasOutput

@@ -282,7 +282,7 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" icon={PeopleTeam} accent="effect" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="WebRTC" icon={PeopleTeam} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">

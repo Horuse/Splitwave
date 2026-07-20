@@ -3,6 +3,8 @@
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
 	import { PREVIEW_CTX } from '../utils';
+	import { CATEGORY_TEXT } from '../utils/accents';
+	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
@@ -15,7 +17,7 @@
 
 	interface Props {
 		label: string;
-		accent?: 'input' | 'output' | 'effect';
+		accent?: NodeCategory;
 		icon?: Component<{ class?: ClassValue; title?: string }>;
 		badge?: Snippet;
 		hasInput?: boolean;
@@ -58,12 +60,6 @@
 
 	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
 
-	const ACCENT_TEXT = {
-		input: 'text-emerald-600 dark:text-emerald-400',
-		output: 'text-sky-600 dark:text-sky-400',
-		effect: 'text-violet-600 dark:text-violet-400'
-	} as const;
-
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
 		if (p === 'top') return Position.Top;
@@ -87,7 +83,7 @@
 	<div class="mb-2 flex items-center justify-between gap-2">
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{#if NodeIcon}
-				<NodeIcon class={['size-3 shrink-0', ACCENT_TEXT[accent]]} />
+				<NodeIcon class={['size-3 shrink-0', CATEGORY_TEXT[accent]]} />
 			{/if}
 			{label}
 		</span>

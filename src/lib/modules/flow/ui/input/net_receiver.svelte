@@ -84,7 +84,7 @@
 
 </script>
 
-<Wrapper label="Net Receiver" icon={ArrowDownload} accent="input" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
+<Wrapper label="Net Receiver" icon={ArrowDownload} accent="network" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
 	<div class="nodrag nopan flex w-44 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">

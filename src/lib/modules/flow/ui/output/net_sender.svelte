@@ -91,7 +91,7 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" icon={ArrowUpload} accent="output" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- target -->
 		<div class="flex flex-col gap-0.5">

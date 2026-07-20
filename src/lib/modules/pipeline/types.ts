@@ -66,7 +66,9 @@ export type NetSenderNodeData = XyData<NetSenderData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
-export type LufsMeterNodeData = XyData<LufsMeterData & { target: number | null }>;
+export type LufsMeterNodeData = XyData<
+	LufsMeterData & { target: number | null; profile?: string }
+>;
 
 export type NodeDataMap = {
 	microphone: MicrophoneNodeData;

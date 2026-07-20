@@ -660,10 +660,14 @@ impl ActivePipeline {
             if needs_build {
                 let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
+                // Realtime: the monitor consumes live sources forever, so it must
+                // drop backlog like any other live path. Without this its ring
+                // grows unbounded whenever the DSP cannot keep up, and latency
+                // climbs for as long as the pipeline runs.
                 let built = build_output_graph(
                     None,
                     monitor_sr,
-                    false,
+                    true,
                     graph,
                     &input_native_sr,
                     &input_native_channels,
@@ -688,6 +692,9 @@ impl ActivePipeline {
                 }
                 for l in built.lufs {
                     self.lufs.insert(l.node_id.clone(), l);
+                }
+                for g in built.gr_handles {
+                    self.gr_handles.insert(g.node_id.clone(), g);
                 }
                 for s in built.scopes {
                     self.scopes.insert(s.node_id.clone(), s);

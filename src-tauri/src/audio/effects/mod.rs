@@ -482,6 +482,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::Limiter(LimiterEffect::from_state(
                         ceiling.clone(),
@@ -490,7 +495,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {
@@ -513,6 +518,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::Compressor(CompressorEffect::from_state(
                         threshold_db.clone(),
@@ -524,7 +534,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {
@@ -546,6 +556,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::NoiseGate(NoiseGateEffect::from_state(
                         threshold_db.clone(),
@@ -556,7 +571,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {

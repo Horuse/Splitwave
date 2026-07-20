@@ -136,7 +136,12 @@ pub(super) fn spawn_meter_thread(
                     }
                     let _ = app.emit(
                         SCOPE_EVENT,
-                        json!({ "nodeId": s.node_id, "channels": ch, "data": chans }),
+                        json!({
+                            "nodeId": s.node_id,
+                            "channels": ch,
+                            "data": chans,
+                            "sampleRate": s.sample_rate,
+                        }),
                     );
                 }
             }

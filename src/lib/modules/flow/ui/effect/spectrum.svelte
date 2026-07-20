@@ -22,16 +22,20 @@
 		flow.updateNodeData(id, { smoothing: v });
 	}
 
-	// Matches the engine's scope block (WAVEFORM_FRAMES); a power of two for radix-2.
-	const FFT_SIZE = 1024;
+	// The engine ships one contiguous 4096-frame window per spectrum node
+	// (SPECTRUM_FRAMES) so the low end resolves (~11.7 Hz/bin at 48 kHz) without
+	// the discontinuities that concatenating separate 1024 snapshots would cause.
+	const FFT_SIZE = 4096;
 	const BINS = FFT_SIZE / 2;
-	// Scope events carry no sample rate; the engine runs at 48 kHz, so the
-	// frequency axis is labelled against that.
-	const SAMPLE_RATE = 48_000;
+	const MAX_CH = 8; // per-channel FFTs beyond this cost more than they reveal
 	const F_MIN = 20;
-	const F_MAX = SAMPLE_RATE / 2;
 	const BARS = 80; // log-spaced across the audible range
 	const DB_FLOOR = -96;
+
+	// Monitors run at the max input rate, not always 48 kHz; the scope event
+	// carries the real rate so the frequency axis stays honest.
+	let sampleRate = $state(48_000);
+	let fMax = $derived(sampleRate / 2);
 
 	const SCALE_W = 28;
 	const TOP_PAD = 9; // headroom so the 0 dB line and its label aren't clipped
@@ -61,32 +65,32 @@
 	let plotW = $derived(Math.max(1, W - SCALE_W));
 	let plotH = $derived(Math.max(1, Hpx - AXIS_H));
 
-	// Bar band edges in bin space, log-spaced. Fixed once; bars rescale with the
-	// node rather than resampling.
-	const bandBins: [number, number][] = (() => {
+	// Bar band edges in bin space, log-spaced. Recomputed if the monitor rate
+	// changes (a graph rebuild), else stable.
+	let bandBins = $derived.by<[number, number][]>(() => {
 		const out: [number, number][] = [];
 		for (let b = 0; b < BARS; b++) {
-			const f0 = F_MIN * Math.pow(F_MAX / F_MIN, b / BARS);
-			const f1 = F_MIN * Math.pow(F_MAX / F_MIN, (b + 1) / BARS);
-			const lo = Math.max(1, Math.floor((f0 / F_MAX) * BINS));
-			const hi = Math.max(lo + 1, Math.ceil((f1 / F_MAX) * BINS));
+			const f0 = F_MIN * Math.pow(fMax / F_MIN, b / BARS);
+			const f1 = F_MIN * Math.pow(fMax / F_MIN, (b + 1) / BARS);
+			const lo = Math.max(1, Math.floor((f0 / fMax) * BINS));
+			const hi = Math.max(lo + 1, Math.ceil((f1 / fMax) * BINS));
 			out.push([lo, Math.min(hi, BINS)]);
 		}
 		return out;
-	})();
+	});
 
 	// Log-spaced 1-2-5 frequency ticks over the audible range.
-	const freqTicks: { f: number; label: string; major: boolean }[] = (() => {
+	let freqTicks = $derived.by<{ f: number; label: string; major: boolean }[]>(() => {
 		const out: { f: number; label: string; major: boolean }[] = [];
-		for (let d = 10; d <= F_MAX; d *= 10) {
+		for (let d = 10; d <= fMax; d *= 10) {
 			for (const m of [1, 2, 5]) {
 				const f = d * m;
-				if (f < F_MIN || f > F_MAX) continue;
+				if (f < F_MIN || f > fMax) continue;
 				out.push({ f, label: f >= 1000 ? `${f / 1000}k` : `${f}`, major: m === 1 });
 			}
 		}
 		return out;
-	})();
+	});
 
 	const hann = new Float32Array(FFT_SIZE);
 	for (let i = 0; i < FFT_SIZE; i++) {
@@ -95,6 +99,7 @@
 
 	const re = new Float32Array(FFT_SIZE);
 	const im = new Float32Array(FFT_SIZE);
+	const bandPeak = new Float32Array(BARS);
 	const barDb = new Float32Array(BARS).fill(DB_FLOOR);
 	let hasSignal = false;
 
@@ -135,33 +140,43 @@
 		}
 	}
 
-	function analyze(chans: number[][]) {
+	function analyze(chans: number[][], sr: number) {
 		const ch = chans.length;
 		if (ch === 0) return;
+		if (sr > 0) sampleRate = sr;
+		const cap = Math.min(ch, MAX_CH);
 		const n = Math.min(FFT_SIZE, chans[0].length);
-		for (let i = 0; i < n; i++) {
-			let s = 0;
-			for (let c = 0; c < ch; c++) s += chans[c][i] ?? 0;
-			re[i] = (s / ch) * hann[i];
-			im[i] = 0;
+		const bands = bandBins;
+		bandPeak.fill(0);
+		// Per-channel FFT combined by max: a summed mono downmix would cancel
+		// out-of-phase content and hide real energy.
+		for (let c = 0; c < cap; c++) {
+			const src = chans[c];
+			for (let i = 0; i < n; i++) {
+				re[i] = (src[i] ?? 0) * hann[i];
+				im[i] = 0;
+			}
+			for (let i = n; i < FFT_SIZE; i++) {
+				re[i] = 0;
+				im[i] = 0;
+			}
+			fft(re, im);
+			for (let b = 0; b < BARS; b++) {
+				const [lo, hi] = bands[b];
+				let peak = bandPeak[b];
+				for (let k = lo; k < hi; k++) {
+					const mag = Math.hypot(re[k], im[k]);
+					if (mag > peak) peak = mag;
+				}
+				bandPeak[b] = peak;
+			}
 		}
-		for (let i = n; i < FFT_SIZE; i++) {
-			re[i] = 0;
-			im[i] = 0;
-		}
-		fft(re, im);
 		// Higher smoothing → smaller step toward target, so bars glide instead of
 		// jittering. Rise faster than fall so transients still read.
 		const rise = 1 - 0.85 * smoothing;
 		const fall = 0.4 - 0.37 * smoothing;
 		for (let b = 0; b < BARS; b++) {
-			const [lo, hi] = bandBins[b];
-			let peak = 0;
-			for (let k = lo; k < hi; k++) {
-				const mag = Math.hypot(re[k], im[k]);
-				if (mag > peak) peak = mag;
-			}
-			const norm = peak / BINS;
+			const norm = bandPeak[b] / BINS;
 			const target = norm > 1e-7 ? Math.max(DB_FLOOR, 20 * Math.log10(norm)) : DB_FLOOR;
 			const cur = barDb[b];
 			barDb[b] = cur + (target - cur) * (target > cur ? rise : fall);
@@ -175,7 +190,7 @@
 	}
 
 	function freqX(f: number): number {
-		const t = Math.log(f / F_MIN) / Math.log(F_MAX / F_MIN);
+		const t = Math.log(f / F_MIN) / Math.log(fMax / F_MIN);
 		return SCALE_W + plotW * Math.max(0, Math.min(1, t));
 	}
 
@@ -207,6 +222,7 @@
 		nodeId: string;
 		channels: number;
 		data: number[][];
+		sampleRate: number;
 	}
 
 	let unlisten: UnlistenFn | undefined;
@@ -215,7 +231,7 @@
 		unlisten = await listen<ScopeTick>('audio://scope', (event) => {
 			const p = event.payload;
 			if (p.nodeId !== id) return;
-			analyze(p.data);
+			analyze(p.data, p.sampleRate);
 		});
 		rafId = requestAnimationFrame(frame);
 	});

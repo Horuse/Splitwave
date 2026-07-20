@@ -470,7 +470,7 @@ pub fn instantiate_effect(
                 None, None, None, None, None,
             ),
             None => {
-                let (e, handle) = WaveformEffect::new(d, node_id.to_string());
+                let (e, handle) = WaveformEffect::new(d, node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
             }
@@ -483,7 +483,7 @@ pub fn instantiate_effect(
                 None, None, None, None, None,
             ),
             None => {
-                let (e, handle) = WaveformEffect::new_for(node_id.to_string());
+                let (e, handle) = WaveformEffect::new_for(node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
             }

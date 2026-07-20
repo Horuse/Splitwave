@@ -49,6 +49,7 @@ pub enum NodeKind {
     LevelMeter,
     LufsMeter,
     Waveform,
+    Spectrum,
     Limiter,
     Compressor,
     NoiseGate,
@@ -80,6 +81,7 @@ impl NodeKind {
             | NodeKind::LevelMeter
             | NodeKind::LufsMeter
             | NodeKind::Waveform
+            | NodeKind::Spectrum
             | NodeKind::Limiter
             | NodeKind::Compressor
             | NodeKind::NoiseGate
@@ -317,6 +319,11 @@ pub struct LufsMeterData {}
 #[ts(export)]
 pub struct WaveformData {}
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct SpectrumData {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -487,6 +494,7 @@ pub enum EffectSpec {
     LevelMeter(LevelMeterData),
     LufsMeter(LufsMeterData),
     Waveform(WaveformData),
+    Spectrum(SpectrumData),
     Limiter(LimiterData),
     Compressor(CompressorData),
     NoiseGate(NoiseGateData),
@@ -518,6 +526,7 @@ impl EffectSpec {
             EffectSpec::LevelMeter(_)
             | EffectSpec::LufsMeter(_)
             | EffectSpec::Waveform(_)
+            | EffectSpec::Spectrum(_)
             | EffectSpec::WebRtcBridge { .. } => false,
         }
     }
@@ -630,6 +639,7 @@ impl GraphSpec {
                 NodeKind::LevelMeter
                     | NodeKind::LufsMeter
                     | NodeKind::Waveform
+                    | NodeKind::Spectrum
                     | NodeKind::WebRtcCollaborator
             )
         });
@@ -647,6 +657,7 @@ impl GraphSpec {
                     NodeKind::LevelMeter
                         | NodeKind::LufsMeter
                         | NodeKind::Waveform
+                        | NodeKind::Spectrum
                         | NodeKind::WebRtcCollaborator
                 )
         });
@@ -905,6 +916,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         NodeKind::LevelMeter => EffectSpec::LevelMeter(parse(&n.data, "LevelMeter")?),
         NodeKind::LufsMeter => EffectSpec::LufsMeter(parse(&n.data, "LufsMeter")?),
         NodeKind::Waveform => EffectSpec::Waveform(parse(&n.data, "Waveform")?),
+        NodeKind::Spectrum => EffectSpec::Spectrum(parse(&n.data, "Spectrum")?),
         NodeKind::Limiter => EffectSpec::Limiter(parse(&n.data, "Limiter")?),
         NodeKind::Compressor => EffectSpec::Compressor(parse(&n.data, "Compressor")?),
         NodeKind::NoiseGate => EffectSpec::NoiseGate(parse(&n.data, "NoiseGate")?),

@@ -42,6 +42,7 @@ import Eq from '../ui/effect/eq.svelte';
 import LevelMeter from '../ui/effect/level_meter.svelte';
 import LufsMeter from '../ui/effect/lufs_meter.svelte';
 import Waveform from '../ui/effect/waveform.svelte';
+import Spectrum from '../ui/effect/spectrum.svelte';
 import Limiter from '../ui/effect/limiter.svelte';
 import Compressor from '../ui/effect/compressor.svelte';
 import NoiseGate from '../ui/effect/noise_gate.svelte';
@@ -200,6 +201,15 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Waveform,
 		icon: PulseIcon,
 		defaultData: DEFAULT_NODE_DATA['waveform']
+	}),
+	spectrum: entry<'spectrum'>({
+		kind: 'spectrum',
+		category: 'monitor',
+		label: 'Spectrum',
+		description: 'Live spectrum analyzer — log-frequency FFT magnitude with a peak-hold fall-off.',
+		component: Spectrum,
+		icon: DataBarIcon,
+		defaultData: DEFAULT_NODE_DATA['spectrum']
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',

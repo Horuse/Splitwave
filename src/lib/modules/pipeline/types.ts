@@ -10,6 +10,7 @@ import type { LevelMeterData } from './generated/LevelMeterData';
 import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
 import type { WaveformData } from './generated/WaveformData';
+import type { SpectrumData } from './generated/SpectrumData';
 import type { MicrophoneData } from './generated/MicrophoneData';
 import type { NetReceiverData } from './generated/NetReceiverData';
 import type { NetSenderData } from './generated/NetSenderData';
@@ -53,6 +54,9 @@ export type EqNodeData = XyData<EqData>;
 export type LevelMeterNodeData = XyData<LevelMeterData>;
 export type LimiterNodeData = XyData<LimiterData>;
 export type WaveformNodeData = XyData<WaveformData & { segs?: number }>;
+// `smoothing` (0..1) is a FE-only display ballistic — how slowly bars rise and
+// fall — with no meaning to the engine.
+export type SpectrumNodeData = XyData<SpectrumData & { smoothing?: number }>;
 export type CompressorNodeData = XyData<CompressorData>;
 export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
@@ -85,6 +89,7 @@ export type NodeDataMap = {
 	levelMeter: LevelMeterNodeData;
 	lufsMeter: LufsMeterNodeData;
 	waveform: WaveformNodeData;
+	spectrum: SpectrumNodeData;
 	limiter: LimiterNodeData;
 	compressor: CompressorNodeData;
 	noiseGate: NoiseGateNodeData;

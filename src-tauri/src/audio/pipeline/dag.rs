@@ -1159,7 +1159,7 @@ pub(super) fn build_output_graph(
             // Everything else runs one instance per stereo pair.
             let full_width = matches!(
                 effect.spec,
-                EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_)
+                EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_) | EffectSpec::Spectrum(_)
             );
             let pairs = if full_width || matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
                 1

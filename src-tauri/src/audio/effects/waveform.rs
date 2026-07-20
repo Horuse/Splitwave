@@ -69,6 +69,12 @@ impl WaveformEffect {
     pub fn from_handle(handle: WaveformHandle) -> Self {
         Self { handle }
     }
+
+    /// Spectrum nodes capture identically to the scope; the FFT runs in the UI.
+    pub fn new_for(node_id: String) -> (Self, WaveformHandle) {
+        let handle = WaveformHandle::new(node_id);
+        (Self { handle: handle.clone() }, handle)
+    }
 }
 
 impl Effect for WaveformEffect {

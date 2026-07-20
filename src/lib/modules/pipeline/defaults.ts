@@ -22,6 +22,7 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	levelMeter: {},
 	lufsMeter: { target: -14 },
 	waveform: { segs: 4 },
+	spectrum: { smoothing: 0.5 },
 	limiter: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50, bypassed: false },
 	compressor: {
 		thresholdDb: -18,

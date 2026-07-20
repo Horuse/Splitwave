@@ -475,6 +475,19 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
             }
         },
+        // Spectrum reuses the scope's time-domain capture and SCOPE_EVENT
+        // transport; the UI runs the FFT. No distinct runtime effect is needed.
+        EffectSpec::Spectrum(_) => match registry.scopes.get(node_id) {
+            Some(handle) => mk(
+                RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
+                None, None, None, None, None,
+            ),
+            None => {
+                let (e, handle) = WaveformEffect::new_for(node_id.to_string());
+                registry.scopes.insert(node_id.to_string(), handle.clone());
+                mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
+            }
+        },
         EffectSpec::Limiter(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Limiter { ceiling, release_ms }) => {
                 let lookahead_frames =

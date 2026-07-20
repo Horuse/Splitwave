@@ -254,7 +254,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		category: 'effect',
 		label: 'Noise Suppressor',
 		description:
-			'DeepFilterNet deep-learning speech denoise. Runs at 48 kHz only; off-rate signals pass through.',
+			'DeepFilterNet deep-learning speech denoise. Model runs at 48 kHz mono; resampled and downmixed for you.',
 		component: NoiseSuppressor,
 		icon: WandIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']

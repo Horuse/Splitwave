@@ -33,7 +33,9 @@
 				<div class="flex flex-wrap items-start gap-6">
 					{#each kindsByCategory[cat] as kind (kind)}
 						{@const Comp = registry[kind].component}
-						<Comp id={createId()} data={dataFor(kind)} />
+						<div data-node-kind={kind}>
+							<Comp id={createId()} data={dataFor(kind)} />
+						</div>
 					{/each}
 				</div>
 			</section>

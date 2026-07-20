@@ -247,11 +247,18 @@ pub async fn apply_virtual_devices(
     info!(count = devices.len(), "applying virtual devices");
     // Reloading the driver yanks its devices; a pipeline holding one wedges mid-call.
     let tx = state.audio_tx.clone();
-    audio_request(tx, |reply| Command::Stop { reply })
+    let stopped = match audio_request(tx, |reply| Command::Stop { reply })
         .await
-        .and_then(|r| r)
-        .map_err(|e| e.to_string())?;
-    let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
+        .map_err(|e| e.to_string())?
+    {
+        Ok(()) => true,
+        // An idle engine already satisfies what Stop is here to guarantee.
+        Err(AppError::NotRunning) => false,
+        Err(e) => return Err(e.to_string()),
+    };
+    if stopped {
+        let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
+    }
     tauri::async_runtime::spawn_blocking(move || virtual_device::apply_virtual_devices(devices))
         .await
         .map_err(|_| "virtual device task failed".to_string())?

@@ -3,11 +3,11 @@
 	import {
 		useNodeConnections,
 		useSvelteFlow,
-		Handle,
 		Position,
 		type Node,
 		type NodeProps
 	} from '@xyflow/svelte';
+	import Handle from '../_handle.svelte';
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';

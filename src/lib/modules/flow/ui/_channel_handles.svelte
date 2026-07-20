@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Handle, Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
+	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
+	import Handle from './_handle.svelte';
 	import { channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 

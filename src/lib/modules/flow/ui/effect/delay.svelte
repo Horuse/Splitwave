@@ -32,21 +32,23 @@
 		patch('bypassed', !data.bypassed);
 	}
 
-	// Echo dots — build a list of (x, height) pairs for visible taps
-	const W = 208, H = 40;
+	// Echo taps as an impulse response — one stem per tap, height = amplitude.
+	const W = 208, H = 64;
+	const PAD = 10;
+	const TOP = 8;
+	const BASE = H - 16; // baseline sits above a band reserved for time labels
 	const MAX_WINDOW_MS = 2000;
 
-	type Tap = { x: number; h: number; opacity: number };
+	type Tap = { x: number; h: number; opacity: number; dry: boolean };
 
 	let taps = $derived((): Tap[] => {
 		const result: Tap[] = [];
-		// Dry signal at x=0
-		result.push({ x: 6, h: H * 0.85, opacity: 1 });
+		result.push({ x: PAD, h: BASE - TOP, opacity: 1, dry: true });
 		let amp = data.mix;
 		let t = data.timeMs;
 		while (amp > 0.03 && t <= MAX_WINDOW_MS) {
-			const x = (t / MAX_WINDOW_MS) * (W - 12) + 6;
-			result.push({ x, h: Math.max(3, amp * H * 0.85), opacity: amp });
+			const x = (t / MAX_WINDOW_MS) * (W - PAD * 2) + PAD;
+			result.push({ x, h: Math.max(2, amp * (BASE - TOP)), opacity: amp, dry: false });
 			amp *= data.feedback;
 			t += data.timeMs;
 		}
@@ -72,23 +74,27 @@
 			<svg
 				width={W}
 				height={H}
-				class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none"
+				class="rounded border border-neutral-300 bg-neutral-100 select-none"
 			>
-				<line x1={0} y1={H} x2={W} y2={H} stroke="currentColor" stroke-width="0.5" class="text-neutral-300" />
+				<line x1={PAD - 10} y1={BASE} x2={W - PAD + 8} y2={BASE} stroke="currentColor" stroke-width="0.75" class="text-neutral-300" />
 				{#each [500, 1000, 1500] as ms}
-					{@const tx = (ms / MAX_WINDOW_MS) * (W - 12) + 6}
-					<line x1={tx} y1={H - 3} x2={tx} y2={H} stroke="currentColor" stroke-width="0.5" class="text-neutral-400" />
-					<text x={tx} y={H - 4} font-size="6" fill="currentColor" class="text-neutral-400" text-anchor="middle">{ms}ms</text>
+					{@const tx = (ms / MAX_WINDOW_MS) * (W - PAD * 2) + PAD}
+					<line x1={tx} y1={BASE} x2={tx} y2={BASE + 3} stroke="currentColor" stroke-width="0.5" class="text-neutral-400" />
+					<text x={tx} y={H - 5} font-size="7" fill="currentColor" class="text-neutral-500" text-anchor="middle">{ms}ms</text>
 				{/each}
-				{#each taps() as tap, i}
-					<rect
-						x={tap.x - 2.5}
-						y={H - tap.h}
-						width={5}
-						height={tap.h}
-						rx="1"
-						fill="#3b82f6"
-						opacity={tap.opacity * (i === 0 ? 0.9 : 0.75)}
+				{#each taps() as tap, i (i)}
+					<line
+						x1={tap.x} y1={BASE} x2={tap.x} y2={BASE - tap.h}
+						stroke={tap.dry ? 'currentColor' : '#f59e0b'}
+						class={tap.dry ? 'text-neutral-500' : ''}
+						stroke-width={tap.dry ? 2 : 1.5}
+						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)}
+					/>
+					<circle
+						cx={tap.x} cy={BASE - tap.h} r={tap.dry ? 2.5 : 1.8}
+						fill={tap.dry ? 'currentColor' : '#f59e0b'}
+						class={tap.dry ? 'text-neutral-500' : ''}
+						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)}
 					/>
 				{/each}
 			</svg>

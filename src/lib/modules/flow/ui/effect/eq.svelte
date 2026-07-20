@@ -215,7 +215,8 @@
 		<div class="flex gap-0.5">
 			{#each FREQUENCIES as freq, i (freq)}
 				{@const gain = data.gainsDb[i] ?? 0}
-				<div class="flex flex-1 flex-col items-center gap-0.5">
+				{@const capTop = gainToFaderPct(gain)}
+				<div class="flex flex-1 flex-col items-center gap-2">
 					<input
 						type="text"
 						inputmode="decimal"
@@ -228,7 +229,7 @@
 					/>
 					<div
 						bind:this={faderEls[i]}
-						class="nodrag nopan nowheel relative h-24 w-full cursor-ns-resize rounded-sm border border-neutral-400 bg-neutral-200/60"
+						class="nodrag nopan nowheel relative h-36 w-4 cursor-ns-resize rounded-sm border border-neutral-300 bg-neutral-100"
 						style="touch-action: none;"
 						onpointerdown={(e) => onFaderPointerDown(i, e)}
 						onpointermove={(e) => onFaderPointerMove(i, e)}
@@ -243,19 +244,31 @@
 						aria-valuemax={GAIN_MAX}
 						aria-valuenow={gain}
 					>
-						<!-- Vertical rail through centre + tick marks at ±6 / ±12 dB. -->
-						<div class="pointer-events-none absolute top-1 bottom-1 left-1/2 w-px -translate-x-1/2 bg-neutral-500/60"></div>
+						<!-- Recessed travel slot the cap rides in. -->
+						<div class="pointer-events-none absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-[1px] bg-neutral-400/60"></div>
 						{#each [12, 6, -6, -12] as tick (tick)}
 							<div
-								class="pointer-events-none absolute left-1/4 -translate-y-1/2 h-px w-1/2 bg-neutral-500/30"
+								class="pointer-events-none absolute left-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
+								style="top: {gainToFaderPct(tick)}%;"
+							></div>
+							<div
+								class="pointer-events-none absolute right-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
 								style="top: {gainToFaderPct(tick)}%;"
 							></div>
 						{/each}
-						<div class="pointer-events-none absolute top-1/2 right-0.5 left-0.5 h-px -translate-y-1/2 bg-neutral-700"></div>
+						<!-- 0 dB detent. -->
+						<div class="pointer-events-none absolute top-1/2 right-1 left-1 h-px -translate-y-1/2 bg-neutral-600/70"></div>
+						<!-- Boost/cut fill from the 0 dB detent to the cap. -->
 						<div
-							class="pointer-events-none absolute right-0 left-0 h-2 -translate-y-1/2 rounded-sm bg-amber-500 shadow"
-							style="top: {gainToFaderPct(gain)}%;"
+							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2  {gain >= 0 ? 'bg-amber-500' : 'bg-sky-500'}"
+							style={gain >= 0 ? `top: ${capTop}%; bottom: 50%;` : `top: 50%; bottom: ${100 - capTop}%;`}
 						></div>
+						<!-- Physical fader cap: slightly wider than the track, with a grip line. -->
+						<div
+							class="pointer-events-none absolute left-1/2 h-2.5 w-[166%] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-neutral-500/60 bg-neutral-300"
+							style="top: {capTop}%;"
+						>
+						</div>
 					</div>
 					<span class="font-mono text-[8px] text-neutral-900">{formatFreq(freq)}</span>
 				</div>

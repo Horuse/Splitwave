@@ -54,6 +54,19 @@
 		return pts.join(' ');
 	});
 
+	// Filled area under the decay curve, closed down to the baseline.
+	let envelopeArea = $derived(() => `${envelopePath()} ${W},${H}`);
+
+	// Early reflections — a few discrete spikes riding the decay, for character.
+	let earlyReflections = $derived(() => {
+		const rt60 = 0.1 + data.roomSize * 2.9;
+		const decayRate = (6 / rt60) * (1 + data.damping * 1.5);
+		return [0.04, 0.09, 0.15, 0.22, 0.31].map((f) => {
+			const amp = Math.exp(-decayRate * f * 3);
+			return { x: 3 + f * (W - 3), h: amp * H };
+		});
+	});
+
 	// stereo width offset band
 	let widthBandPath = $derived(() => {
 		const N = 60;
@@ -94,15 +107,25 @@
 				height={H}
 				class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none"
 			>
-				<polygon
-					points={widthBandPath()}
-					fill="#3b82f6" opacity="0.12"
-				/>
+				<defs>
+					<linearGradient id="reverb-fill-{id}" x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" stop-color="#f59e0b" stop-opacity="0.45" />
+						<stop offset="100%" stop-color="#f59e0b" stop-opacity="0.05" />
+					</linearGradient>
+				</defs>
+				<polygon points={widthBandPath()} fill="#f59e0b" opacity="0.1" />
+				<polygon points={envelopeArea()} fill="url(#reverb-fill-{id})" />
+				{#each earlyReflections() as er (er.x)}
+					<line
+						x1={er.x} y1={H} x2={er.x} y2={H - er.h}
+						stroke="#f59e0b" stroke-width="1" opacity="0.55"
+					/>
+				{/each}
 				<polyline
 					points={envelopePath()}
-					fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"
+					fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round"
 				/>
-				<text x={W - 2} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-400" text-anchor="end">
+				<text x={W - 2} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-500" text-anchor="end">
 					wet {Math.round(data.mix * 100)}%
 				</text>
 			</svg>

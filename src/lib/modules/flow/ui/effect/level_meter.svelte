@@ -42,7 +42,12 @@
 	let maxPeaks = $state<number[]>([]);
 	let clips = $state<boolean[]>([]);
 
-	let channelCount = $derived(Math.max(displayPeaks.length, 1));
+	// With nothing wired in the tick arrays are empty; fall back to a single
+	// placeholder channel so the bar tracks still render their ghost background.
+	let barVals = $derived(displayPeaks.length ? displayPeaks : [-Infinity]);
+	let clipVals = $derived(clips.length ? clips : [false]);
+	let maxVals = $derived(maxPeaks.length ? maxPeaks : [-Infinity]);
+	let channelCount = $derived(barVals.length);
 
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
@@ -163,7 +168,7 @@
 			<div class="flex flex-col gap-0.5">
 				<!-- Clip row -->
 				<div class="flex h-2 overflow-hidden rounded-sm border border-neutral-300" style="width: {channelCount * BAR_W}px;">
-					{#each clips as c, i (i)}
+					{#each clipVals as c, i (i)}
 						<button
 							type="button"
 							class="flex-1 transition-colors {c ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]' : 'bg-neutral-200'} {i > 0 ? 'border-l border-neutral-300' : ''}"
@@ -183,7 +188,7 @@
 					tabindex="0"
 					aria-label="Level meter — click to reset peaks, hover to read level"
 				>
-					{#each displayPeaks as p, i (i)}
+					{#each barVals as p, i (i)}
 						<MeterBar
 							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
 							orientation="vertical"
@@ -216,7 +221,7 @@
 
 		<!-- Live dB readout -->
 		<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {channelCount * BAR_W}px;">
-			{#each displayPeaks as db, i (i)}
+			{#each barVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
 					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>
@@ -232,7 +237,7 @@
 			class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-200 transition-colors hover:opacity-80"
 			style="width: {channelCount * BAR_W}px;"
 		>
-			{#each maxPeaks as db, i (i)}
+			{#each maxVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none text-neutral-500">{channelLabel(i, channelCount)}</span>
 					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>

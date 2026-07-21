@@ -56,6 +56,7 @@ pub enum NodeKind {
     Delay,
     Reverb,
     NoiseSuppressor,
+    Declick,
     AudioFile,
     WebRtcCollaborator,
     NetReceiver,
@@ -88,6 +89,7 @@ impl NodeKind {
             | NodeKind::Delay
             | NodeKind::Reverb
             | NodeKind::NoiseSuppressor
+            | NodeKind::Declick
             | NodeKind::WebRtcCollaborator => NodeCategory::Effect,
         }
     }
@@ -297,6 +299,23 @@ pub struct SaturatorData {
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct DeclickData {
+    /// 0..1; higher flags smaller spikes as clicks.
+    pub sensitivity: f32,
+    /// Longest click span repaired, in milliseconds.
+    #[serde(default = "default_declick_width")]
+    pub max_width_ms: f32,
+    #[serde(default)]
+    pub bypassed: bool,
+}
+
+fn default_declick_width() -> f32 {
+    2.0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct EqData {
     /// One gain per ISO octave band (see `EQ_FREQUENCIES_HZ` in effects.rs).
     pub gains_db: [f32; 10],
@@ -501,6 +520,7 @@ pub enum EffectSpec {
     Delay(DelayData),
     Reverb(ReverbData),
     NoiseSuppressor(NoiseSuppressorData),
+    Declick(DeclickData),
     WebRtcBridge {
         node_id: String,
         opus_bitrate: u32,
@@ -523,6 +543,7 @@ impl EffectSpec {
             EffectSpec::Delay(d) => d.bypassed,
             EffectSpec::Reverb(d) => d.bypassed,
             EffectSpec::NoiseSuppressor(d) => d.bypassed,
+            EffectSpec::Declick(d) => d.bypassed,
             EffectSpec::LevelMeter(_)
             | EffectSpec::LufsMeter(_)
             | EffectSpec::Waveform(_)
@@ -925,6 +946,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         NodeKind::NoiseSuppressor => {
             EffectSpec::NoiseSuppressor(parse(&n.data, "NoiseSuppressor")?)
         }
+        NodeKind::Declick => EffectSpec::Declick(parse(&n.data, "Declick")?),
         NodeKind::WebRtcCollaborator => {
             let data: WebRtcCollaboratorData = parse(&n.data, "WebRtcCollaborator")?;
             EffectSpec::WebRtcBridge {

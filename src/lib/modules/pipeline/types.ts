@@ -11,6 +11,7 @@ import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
 import type { WaveformData } from './generated/WaveformData';
 import type { SpectrumData } from './generated/SpectrumData';
+import type { DeclickData } from './generated/DeclickData';
 import type { MicrophoneData } from './generated/MicrophoneData';
 import type { NetReceiverData } from './generated/NetReceiverData';
 import type { NetSenderData } from './generated/NetSenderData';
@@ -62,6 +63,7 @@ export type NoiseGateNodeData = XyData<NoiseGateData>;
 export type DelayNodeData = XyData<DelayData>;
 export type ReverbNodeData = XyData<ReverbData>;
 export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
+export type DeclickNodeData = XyData<DeclickData>;
 // `name` is a FE-only participant label shared over the ctrl channel; the
 // engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
@@ -96,6 +98,7 @@ export type NodeDataMap = {
 	delay: DelayNodeData;
 	reverb: ReverbNodeData;
 	noiseSuppressor: NoiseSuppressorNodeData;
+	declick: DeclickNodeData;
 	webRtcCollaborator: WebRtcCollaboratorNodeData;
 	netReceiver: NetReceiverNodeData;
 	netSender: NetSenderNodeData;

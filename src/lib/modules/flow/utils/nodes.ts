@@ -5,6 +5,7 @@ import { DEFAULT_NODE_DATA } from '$lib/modules/pipeline/defaults';
 import {
 	Apps as AppsIcon,
 	ArrowDownload as ArrowDownloadIcon,
+	Backspace as BackspaceIcon,
 	ArrowUpload as ArrowUploadIcon,
 	Balance as BalanceIcon,
 	Compressor as CompressorIcon,
@@ -49,6 +50,7 @@ import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
+import Declick from '../ui/effect/declick.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
@@ -268,6 +270,16 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: NoiseSuppressor,
 		icon: WandIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']
+	}),
+	declick: entry<'declick'>({
+		kind: 'declick',
+		category: 'effect',
+		label: 'Declick',
+		description:
+			'Removes short impulsive clicks and crackle — median detector replaces spikes, clean audio passes through.',
+		component: Declick,
+		icon: BackspaceIcon,
+		defaultData: DEFAULT_NODE_DATA['declick']
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',

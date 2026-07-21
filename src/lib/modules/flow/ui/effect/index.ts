@@ -12,3 +12,4 @@ export { default as NoiseGate } from './noise_gate.svelte';
 export { default as Delay } from './delay.svelte';
 export { default as Reverb } from './reverb.svelte';
 export { default as NoiseSuppressor } from './noise_suppressor.svelte';
+export { default as Declick } from './declick.svelte';

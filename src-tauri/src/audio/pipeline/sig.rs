@@ -166,6 +166,11 @@ fn structural_effect(spec: &EffectSpec) -> EffectSpec {
             d.max_df_thresh_db = 0.0;
             d.bypassed = false;
         }
+        E::Declick(d) => {
+            d.sensitivity = 0.0;
+            d.max_width_ms = 0.0;
+            d.bypassed = false;
+        }
         // No live params (or all fields structural): compared as-is.
         E::LevelMeter(_) | E::LufsMeter(_) | E::Waveform(_) | E::Spectrum(_) | E::WebRtcBridge { .. } => {}
     }

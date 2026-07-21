@@ -51,6 +51,7 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 		maxDfThreshDb: 20,
 		bypassed: false
 	},
+	declick: { sensitivity: 0.5, maxWidthMs: 2, bypassed: false },
 	webRtcCollaborator: {
 		opusBitrate: 96000,
 		opusApplication: 'voip',

@@ -15,6 +15,7 @@ use crate::audio::graph::EffectSpec;
 pub mod biquad;
 pub mod channel_balance;
 pub mod compressor;
+pub mod declick;
 pub mod delay;
 pub mod eq;
 pub mod gain;
@@ -34,6 +35,7 @@ use util::{db_to_linear, num, store_f32};
 
 use channel_balance::ChannelBalanceEffect;
 use compressor::CompressorEffect;
+use declick::DeclickEffect;
 use delay::DelayEffect;
 use eq::EqEffect;
 use gain::GainEffect;
@@ -84,6 +86,7 @@ pub enum RuntimeEffect {
     Delay(DelayEffect),
     Reverb(ReverbEffect),
     NoiseSuppressor(NoiseSuppressorEffect),
+    Declick(DeclickEffect),
     WebRtcBridge(WebRtcBridgeEffect),
 }
 
@@ -105,6 +108,7 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.latency_frames(),
             RuntimeEffect::Reverb(e) => e.latency_frames(),
             RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
+            RuntimeEffect::Declick(e) => e.latency_frames(),
             RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
         }
     }
@@ -131,6 +135,7 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.process(main, frames),
             RuntimeEffect::Reverb(e) => e.process(main, frames),
             RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
+            RuntimeEffect::Declick(e) => e.process(main, frames),
             RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
         }
     }
@@ -204,6 +209,10 @@ pub enum EffectControl {
     },
     NoiseSuppressor {
         controls: NoiseSuppressorControls,
+    },
+    Declick {
+        sensitivity: Arc<AtomicU32>,
+        max_width_ms: Arc<AtomicU32>,
     },
 }
 
@@ -310,6 +319,14 @@ impl EffectControl {
                 }
                 if let Some(v) = num(data, "maxDfThreshDb") {
                     store_f32(&controls.max_df_thresh_db, v);
+                }
+            }
+            EffectControl::Declick { sensitivity, max_width_ms } => {
+                if let Some(v) = num(data, "sensitivity") {
+                    store_f32(sensitivity, v.clamp(0.0, 1.0));
+                }
+                if let Some(v) = num(data, "maxWidthMs") {
+                    store_f32(max_width_ms, v.clamp(0.3, 5.0));
                 }
             }
         }
@@ -640,6 +657,21 @@ pub fn instantiate_effect(
                 let (e, c) = NoiseSuppressorEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
+            }
+        },
+        EffectSpec::Declick(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::Declick { sensitivity, max_width_ms }) => mk(
+                RuntimeEffect::Declick(DeclickEffect::from_state(
+                    sensitivity.clone(),
+                    max_width_ms.clone(),
+                    sample_rate,
+                )),
+                None, None, None, None, None,
+            ),
+            _ => {
+                let (e, c) = DeclickEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                mk(RuntimeEffect::Declick(e), Some(c), None, None, None, None)
             }
         },
         EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application, channels } => {

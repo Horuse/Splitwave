@@ -1,4 +1,5 @@
 import type { CompressorData } from '$lib/modules/pipeline/generated/CompressorData';
+import type { DeEsserData } from '$lib/modules/pipeline/generated/DeEsserData';
 import type { DelayData } from '$lib/modules/pipeline/generated/DelayData';
 import type { EqData } from '$lib/modules/pipeline/generated/EqData';
 import type { LimiterData } from '$lib/modules/pipeline/generated/LimiterData';
@@ -20,6 +21,7 @@ interface PresetDataMap {
 	delay: Omit<DelayData, 'bypassed'>;
 	saturator: Omit<SaturatorData, 'bypassed'>;
 	noiseSuppressor: Omit<NoiseSuppressorData, 'bypassed'>;
+	deEsser: Omit<DeEsserData, 'bypassed'>;
 }
 
 export type PresetKind = keyof PresetDataMap;

@@ -15,6 +15,7 @@ use crate::audio::graph::EffectSpec;
 pub mod biquad;
 pub mod channel_balance;
 pub mod compressor;
+pub mod de_esser;
 pub mod declick;
 pub mod delay;
 pub mod eq;
@@ -35,6 +36,7 @@ use util::{db_to_linear, num, store_f32};
 
 use channel_balance::ChannelBalanceEffect;
 use compressor::CompressorEffect;
+use de_esser::DeEsserEffect;
 use declick::DeclickEffect;
 use delay::DelayEffect;
 use eq::EqEffect;
@@ -87,6 +89,7 @@ pub enum RuntimeEffect {
     Reverb(ReverbEffect),
     NoiseSuppressor(NoiseSuppressorEffect),
     Declick(DeclickEffect),
+    DeEsser(DeEsserEffect),
     WebRtcBridge(WebRtcBridgeEffect),
 }
 
@@ -109,6 +112,7 @@ impl RuntimeEffect {
             RuntimeEffect::Reverb(e) => e.latency_frames(),
             RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
             RuntimeEffect::Declick(e) => e.latency_frames(),
+            RuntimeEffect::DeEsser(e) => e.latency_frames(),
             RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
         }
     }
@@ -136,6 +140,7 @@ impl RuntimeEffect {
             RuntimeEffect::Reverb(e) => e.process(main, frames),
             RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
             RuntimeEffect::Declick(e) => e.process(main, frames),
+            RuntimeEffect::DeEsser(e) => e.process(main, frames),
             RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
         }
     }
@@ -213,6 +218,11 @@ pub enum EffectControl {
     Declick {
         sensitivity: Arc<AtomicU32>,
         max_width_ms: Arc<AtomicU32>,
+    },
+    DeEsser {
+        frequency: Arc<AtomicU32>,
+        threshold_db: Arc<AtomicU32>,
+        ratio: Arc<AtomicU32>,
     },
 }
 
@@ -327,6 +337,17 @@ impl EffectControl {
                 }
                 if let Some(v) = num(data, "maxWidthMs") {
                     store_f32(max_width_ms, v.clamp(0.3, 5.0));
+                }
+            }
+            EffectControl::DeEsser { frequency, threshold_db, ratio } => {
+                if let Some(v) = num(data, "frequency") {
+                    store_f32(frequency, v.clamp(2000.0, 16000.0));
+                }
+                if let Some(v) = num(data, "thresholdDb") {
+                    store_f32(threshold_db, v.clamp(-80.0, 0.0));
+                }
+                if let Some(v) = num(data, "ratio") {
+                    store_f32(ratio, v.clamp(1.0, 12.0));
                 }
             }
         }
@@ -672,6 +693,22 @@ pub fn instantiate_effect(
                 let (e, c) = DeclickEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Declick(e), Some(c), None, None, None, None)
+            }
+        },
+        EffectSpec::DeEsser(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::DeEsser { frequency, threshold_db, ratio }) => mk(
+                RuntimeEffect::DeEsser(DeEsserEffect::from_state(
+                    frequency.clone(),
+                    threshold_db.clone(),
+                    ratio.clone(),
+                    sample_rate,
+                )),
+                None, None, None, None, None,
+            ),
+            _ => {
+                let (e, c) = DeEsserEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                mk(RuntimeEffect::DeEsser(e), Some(c), None, None, None, None)
             }
         },
         EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application, channels } => {

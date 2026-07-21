@@ -12,6 +12,17 @@ pub struct Biquad {
 }
 
 impl Biquad {
+    /// Copy another biquad's coefficients while keeping this one's state — lets a
+    /// filter be retuned live without a discontinuity.
+    #[inline]
+    pub(super) fn retune(&mut self, c: Biquad) {
+        self.b0 = c.b0;
+        self.b1 = c.b1;
+        self.b2 = c.b2;
+        self.a1 = c.a1;
+        self.a2 = c.a2;
+    }
+
     #[inline]
     pub(super) fn process(&mut self, x: f32) -> f32 {
         let y = self.b0 * x + self.z1;

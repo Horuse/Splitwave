@@ -51,6 +51,7 @@ import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
 import Declick from '../ui/effect/declick.svelte';
+import DeEsser from '../ui/effect/de_esser.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
@@ -280,6 +281,16 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Declick,
 		icon: BackspaceIcon,
 		defaultData: DEFAULT_NODE_DATA['declick']
+	}),
+	deEsser: entry<'deEsser'>({
+		kind: 'deEsser',
+		category: 'effect',
+		label: 'De-esser',
+		description:
+			'Tames harsh "s"/"sh" sibilance — splits off the high band and compresses only that, leaving the voice body untouched.',
+		component: DeEsser,
+		icon: SoundWaveIcon,
+		defaultData: DEFAULT_NODE_DATA['deEsser']
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',

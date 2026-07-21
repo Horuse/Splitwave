@@ -57,6 +57,7 @@ pub enum NodeKind {
     Reverb,
     NoiseSuppressor,
     Declick,
+    DeEsser,
     AudioFile,
     WebRtcCollaborator,
     NetReceiver,
@@ -90,6 +91,7 @@ impl NodeKind {
             | NodeKind::Reverb
             | NodeKind::NoiseSuppressor
             | NodeKind::Declick
+            | NodeKind::DeEsser
             | NodeKind::WebRtcCollaborator => NodeCategory::Effect,
         }
     }
@@ -316,6 +318,20 @@ fn default_declick_width() -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct DeEsserData {
+    /// Crossover / detector frequency in Hz; the band above it is de-essed.
+    pub frequency: f32,
+    /// Level (dBFS) above which the sibilant band is compressed.
+    pub threshold_db: f32,
+    /// Compression ratio applied to the sibilant band.
+    pub ratio: f32,
+    #[serde(default)]
+    pub bypassed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct EqData {
     /// One gain per ISO octave band (see `EQ_FREQUENCIES_HZ` in effects.rs).
     pub gains_db: [f32; 10],
@@ -521,6 +537,7 @@ pub enum EffectSpec {
     Reverb(ReverbData),
     NoiseSuppressor(NoiseSuppressorData),
     Declick(DeclickData),
+    DeEsser(DeEsserData),
     WebRtcBridge {
         node_id: String,
         opus_bitrate: u32,
@@ -544,6 +561,7 @@ impl EffectSpec {
             EffectSpec::Reverb(d) => d.bypassed,
             EffectSpec::NoiseSuppressor(d) => d.bypassed,
             EffectSpec::Declick(d) => d.bypassed,
+            EffectSpec::DeEsser(d) => d.bypassed,
             EffectSpec::LevelMeter(_)
             | EffectSpec::LufsMeter(_)
             | EffectSpec::Waveform(_)
@@ -947,6 +965,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
             EffectSpec::NoiseSuppressor(parse(&n.data, "NoiseSuppressor")?)
         }
         NodeKind::Declick => EffectSpec::Declick(parse(&n.data, "Declick")?),
+        NodeKind::DeEsser => EffectSpec::DeEsser(parse(&n.data, "DeEsser")?),
         NodeKind::WebRtcCollaborator => {
             let data: WebRtcCollaboratorData = parse(&n.data, "WebRtcCollaborator")?;
             EffectSpec::WebRtcBridge {

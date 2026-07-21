@@ -182,5 +182,13 @@ export const FACTORY_PRESETS: Preset[] = [
 		minThreshDb: -12,
 		maxErbThreshDb: 30,
 		maxDfThreshDb: 20
-	})
+	}),
+
+	// Frequency is where the sibilant band starts; drop threshold until the "s"
+	// stops spiking. Female/bright voices sibilate higher than male voices.
+	make('deEsser', 'Voice / Podcast', { frequency: 6500, thresholdDb: -35, ratio: 4 }),
+	make('deEsser', 'Gentle', { frequency: 7000, thresholdDb: -30, ratio: 3 }),
+	make('deEsser', 'Male Voice', { frequency: 6000, thresholdDb: -34, ratio: 4 }),
+	make('deEsser', 'Female / Bright', { frequency: 7500, thresholdDb: -38, ratio: 5 }),
+	make('deEsser', 'Aggressive', { frequency: 6000, thresholdDb: -45, ratio: 8 })
 ];

@@ -183,7 +183,7 @@ fn repair(buf: &mut [f32], cap: usize, s: u64, e: u64) {
     if s < 2 {
         return;
     }
-    let at = |k: u64| ((k % cap as u64) as usize);
+    let at = |k: u64| (k % cap as u64) as usize;
     let p0 = buf[at(s - 2)];
     let p1 = buf[at(s - 1)];
     let p2 = buf[at(e + 1)];

@@ -306,6 +306,9 @@ pub fn activate_clap(
         if !state.entries.contains_key(&path) {
             let entry =
                 unsafe { PluginEntry::load(&path) }.map_err(|e| format!("load {path}: {e}"))?;
+            // The plugin dylib may have replaced the global panic hook on load;
+            // restore ours as the outermost so crashes still get persisted.
+            crate::reinstall_panic_hook();
             state.entries.insert(path.clone(), entry);
         }
         let entry = state.entries.get(&path).expect("entry just inserted");
@@ -340,14 +343,26 @@ pub fn activate_clap(
             .map_err(|e| format!("start {plugin_id}: {e}"))?;
 
         // Restore saved state before the node goes live. A malformed blob is
-        // logged and skipped, never fatal -- the plugin keeps its defaults.
+        // logged and skipped, never fatal. Some plugins (nih-plug) *panic* on a
+        // stream they can't parse instead of erroring, so the load is caught:
+        // this runs on the UI thread, where an escaping panic kills the app.
         if let Some(b64) = &state_b64 {
             if let Some(ext) = instance.plugin_handle().get_extension::<PluginState>() {
                 match STANDARD.decode(b64) {
                     Ok(bytes) => {
-                        let mut reader = std::io::Cursor::new(bytes);
-                        if let Err(e) = ext.load(&mut instance.plugin_handle(), &mut reader) {
-                            tracing::error!(plugin_id, error = %e, "plugin state load failed");
+                        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut reader = std::io::Cursor::new(bytes);
+                            ext.load(&mut instance.plugin_handle(), &mut reader)
+                        }));
+                        match res {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::error!(plugin_id, error = %e, "plugin state load failed")
+                            }
+                            Err(_) => tracing::error!(
+                                plugin_id,
+                                "plugin state load panicked; keeping defaults"
+                            ),
                         }
                     }
                     Err(e) => tracing::error!(plugin_id, error = %e, "plugin state decode failed"),

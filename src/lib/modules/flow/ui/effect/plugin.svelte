@@ -50,7 +50,10 @@
 			path: desc?.path ?? '',
 			pluginId: desc?.pluginId ?? '',
 			name: desc?.name ?? '',
-			vendor: desc?.vendor ?? ''
+			vendor: desc?.vendor ?? '',
+			// Drop the previous plugin's state; loading it into a different plugin
+			// feeds garbage to its state parser (some plugins panic on it).
+			state: null
 		});
 	}
 

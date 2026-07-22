@@ -1,5 +1,5 @@
 <script lang="ts" generics="K extends PresetKind">
-	import { Combobox } from '$lib/modules/form/ui';
+	import { Combobox, ComboboxAction } from '$lib/modules/form/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { Delete, Add } from '$lib/components/icons';
 	import type { NodeDataMap } from '$lib/modules/pipeline/types';
@@ -73,33 +73,33 @@
 	}
 </script>
 
-<div class="nodrag nopan flex items-center gap-1">
+<div class="nodrag nopan">
 	<Combobox
 		{options}
 		value={active?.id ?? null}
 		placeholder="— Preset —"
 		emptyHint="No presets"
 		onChange={apply}
-		class="min-w-0 flex-1"
-	/>
-	<button
-		type="button"
-		class="flex size-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300"
-		onclick={save}
-		title="Save current settings as a preset"
-		aria-label="Save preset"
 	>
-		<Add class="size-3.5" />
-	</button>
-	{#if active && !active.builtin}
-		<button
-			type="button"
-			class="flex size-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300"
-			onclick={remove}
-			title="Delete this preset"
-			aria-label="Delete preset"
-		>
-			<Delete class="size-3.5" />
-		</button>
-	{/if}
+		{#snippet footer(close)}
+			<ComboboxAction
+				label="Save current settings"
+				icon={Add}
+				onclick={() => {
+					close();
+					save();
+				}}
+			/>
+			{#if active && !active.builtin}
+				<ComboboxAction
+					label="Delete this preset"
+					icon={Delete}
+					onclick={() => {
+						close();
+						remove();
+					}}
+				/>
+			{/if}
+		{/snippet}
+	</Combobox>
 </div>

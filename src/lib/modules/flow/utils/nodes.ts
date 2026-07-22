@@ -17,6 +17,7 @@ import {
 	MusicNote as MusicNoteIcon,
 	NoiseGate as NoiseGateIcon,
 	PeopleTeam as PeopleTeamIcon,
+	Plug as PlugIcon,
 	Pulse as PulseIcon,
 	FileRecord as FileRecordIcon,
 	Reverb as ReverbIcon,
@@ -52,6 +53,7 @@ import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
 import Declick from '../ui/effect/declick.svelte';
 import DeEsser from '../ui/effect/de_esser.svelte';
+import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
@@ -291,6 +293,16 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: DeEsser,
 		icon: SoundWaveIcon,
 		defaultData: DEFAULT_NODE_DATA['deEsser']
+	}),
+	plugin: entry<'plugin'>({
+		kind: 'plugin',
+		category: 'effect',
+		label: 'Plugin',
+		description:
+			'Host a third-party CLAP audio plugin as a node — scan installed plugins and route channels through it like any effect.',
+		component: Plugin,
+		icon: PlugIcon,
+		defaultData: DEFAULT_NODE_DATA['plugin']
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',

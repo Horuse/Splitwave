@@ -11,6 +11,11 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::audio::graph::EffectSpec;
+use crate::audio::plugins::PluginNode;
+
+/// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
+/// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
+const PLUGIN_MAX_BLOCK: usize = 1024;
 
 pub mod biquad;
 pub mod channel_balance;
@@ -91,6 +96,7 @@ pub enum RuntimeEffect {
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
     WebRtcBridge(WebRtcBridgeEffect),
+    HostedPlugin(PluginNode),
 }
 
 impl RuntimeEffect {
@@ -114,6 +120,7 @@ impl RuntimeEffect {
             RuntimeEffect::Declick(e) => e.latency_frames(),
             RuntimeEffect::DeEsser(e) => e.latency_frames(),
             RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
+            RuntimeEffect::HostedPlugin(e) => e.latency_frames(),
         }
     }
 
@@ -142,6 +149,7 @@ impl RuntimeEffect {
             RuntimeEffect::Declick(e) => e.process(main, frames),
             RuntimeEffect::DeEsser(e) => e.process(main, frames),
             RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process(main, frames),
         }
     }
 
@@ -737,6 +745,29 @@ pub fn instantiate_effect(
                 }),
                 None, None, None, None, None,
             )
+        }
+        EffectSpec::Plugin { ref path, ref plugin_id, .. } => {
+            // Empty path == node not yet configured: inert passthrough, not a
+            // failure. Silence is reserved for a real load error below.
+            if path.is_empty() {
+                let muted = Arc::new(AtomicBool::new(false));
+                return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
+            }
+            match crate::audio::plugins::host::activate_clap(
+                node_id,
+                path,
+                plugin_id,
+                sample_rate,
+                PLUGIN_MAX_BLOCK,
+            ) {
+                Ok(node) => mk(RuntimeEffect::HostedPlugin(node), None, None, None, None, None),
+                Err(e) => {
+                    // Surface as silence, never a passthrough that hides the failure.
+                    tracing::error!("plugin {plugin_id} failed to load: {e}");
+                    let muted = Arc::new(AtomicBool::new(true));
+                    mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None)
+                }
+            }
         }
     }
 }

@@ -19,6 +19,7 @@ import type { NetSenderData } from './generated/NetSenderData';
 import type { MuteData } from './generated/MuteData';
 import type { NoiseGateData } from './generated/NoiseGateData';
 import type { NoiseSuppressorData } from './generated/NoiseSuppressorData';
+import type { PluginData } from './generated/PluginData';
 import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
@@ -66,6 +67,9 @@ export type ReverbNodeData = XyData<ReverbData>;
 export type NoiseSuppressorNodeData = XyData<NoiseSuppressorData>;
 export type DeclickNodeData = XyData<DeclickData>;
 export type DeEsserNodeData = XyData<DeEsserData>;
+// `name` / `vendor` are FE-only display labels for the chosen plugin; the
+// engine reads only path / pluginId / bypassed from PluginData.
+export type PluginNodeData = XyData<PluginData & { name?: string; vendor?: string }>;
 // `name` is a FE-only participant label shared over the ctrl channel; the
 // engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
@@ -102,6 +106,7 @@ export type NodeDataMap = {
 	noiseSuppressor: NoiseSuppressorNodeData;
 	declick: DeclickNodeData;
 	deEsser: DeEsserNodeData;
+	plugin: PluginNodeData;
 	webRtcCollaborator: WebRtcCollaboratorNodeData;
 	netReceiver: NetReceiverNodeData;
 	netSender: NetSenderNodeData;

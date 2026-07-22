@@ -53,6 +53,7 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	},
 	declick: { sensitivity: 0.5, maxWidthMs: 2, bypassed: false },
 	deEsser: { frequency: 6500, thresholdDb: -30, ratio: 4, bypassed: false },
+	plugin: { path: '', pluginId: '', bypassed: false },
 	webRtcCollaborator: {
 		opusBitrate: 96000,
 		opusApplication: 'voip',

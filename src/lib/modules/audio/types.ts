@@ -15,6 +15,16 @@ export interface AudioApplication {
 	icon?: string | null;
 }
 
+export interface PluginDescriptor {
+	uid: string;
+	format: 'clap';
+	path: string;
+	pluginId: string;
+	name: string;
+	vendor: string;
+	version: string;
+}
+
 export interface NativeDeviceInfo {
 	sampleRate: number;
 	channels: number;

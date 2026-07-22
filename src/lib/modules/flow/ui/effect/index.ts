@@ -14,3 +14,4 @@ export { default as Reverb } from './reverb.svelte';
 export { default as NoiseSuppressor } from './noise_suppressor.svelte';
 export { default as Declick } from './declick.svelte';
 export { default as DeEsser } from './de_esser.svelte';
+export { default as Plugin } from './plugin.svelte';

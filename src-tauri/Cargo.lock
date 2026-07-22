@@ -870,6 +870,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "clack-common"
+version = "0.1.0"
+source = "git+https://github.com/prokopyl/clack.git?rev=f874e858ad576c601367b3038af5088a4e671744#f874e858ad576c601367b3038af5088a4e671744"
+dependencies = [
+ "bitflags 2.11.1",
+ "clap-sys",
+]
+
+[[package]]
+name = "clack-extensions"
+version = "0.1.0"
+source = "git+https://github.com/prokopyl/clack.git?rev=f874e858ad576c601367b3038af5088a4e671744#f874e858ad576c601367b3038af5088a4e671744"
+dependencies = [
+ "bitflags 2.11.1",
+ "clack-common",
+ "clack-host",
+ "clap-sys",
+ "raw-window-handle",
+]
+
+[[package]]
+name = "clack-host"
+version = "0.1.0"
+source = "git+https://github.com/prokopyl/clack.git?rev=f874e858ad576c601367b3038af5088a4e671744#f874e858ad576c601367b3038af5088a4e671744"
+dependencies = [
+ "clack-common",
+ "clap-sys",
+ "libloading 0.8.9",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -879,6 +911,12 @@ dependencies = [
  "libc",
  "libloading 0.8.9",
 ]
+
+[[package]]
+name = "clap-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76abbdb2907f6fd97fb6bc0b7be96b77d328f2dd9669d1075cc03369ed22154"
 
 [[package]]
 name = "cmake"
@@ -5901,6 +5939,8 @@ version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "clack-extensions",
+ "clack-host",
  "cpal",
  "cuid2",
  "deep_filter",
@@ -5922,6 +5962,7 @@ dependencies = [
  "opus",
  "pipewire",
  "png 0.17.16",
+ "raw-window-handle",
  "resvg",
  "rtrb",
  "rubato 0.16.2",

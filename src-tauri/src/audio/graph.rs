@@ -62,6 +62,7 @@ pub enum NodeKind {
     WebRtcCollaborator,
     NetReceiver,
     NetSender,
+    Plugin,
 }
 
 impl NodeKind {
@@ -92,6 +93,7 @@ impl NodeKind {
             | NodeKind::NoiseSuppressor
             | NodeKind::Declick
             | NodeKind::DeEsser
+            | NodeKind::Plugin
             | NodeKind::WebRtcCollaborator => NodeCategory::Effect,
         }
     }
@@ -481,6 +483,16 @@ pub struct NetSenderData {
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct PluginData {
+    pub path: String,
+    pub plugin_id: String,
+    #[serde(default)]
+    pub bypassed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct WebRtcCollaboratorData {
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
@@ -544,6 +556,12 @@ pub enum EffectSpec {
         opus_application: OpusApplication,
         channels: u32,
     },
+    Plugin {
+        node_id: String,
+        path: String,
+        plugin_id: String,
+        bypassed: bool,
+    },
 }
 
 impl EffectSpec {
@@ -562,6 +580,7 @@ impl EffectSpec {
             EffectSpec::NoiseSuppressor(d) => d.bypassed,
             EffectSpec::Declick(d) => d.bypassed,
             EffectSpec::DeEsser(d) => d.bypassed,
+            EffectSpec::Plugin { bypassed, .. } => *bypassed,
             EffectSpec::LevelMeter(_)
             | EffectSpec::LufsMeter(_)
             | EffectSpec::Waveform(_)
@@ -966,6 +985,15 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
         }
         NodeKind::Declick => EffectSpec::Declick(parse(&n.data, "Declick")?),
         NodeKind::DeEsser => EffectSpec::DeEsser(parse(&n.data, "DeEsser")?),
+        NodeKind::Plugin => {
+            let data: PluginData = parse(&n.data, "Plugin")?;
+            EffectSpec::Plugin {
+                node_id: n.id.clone(),
+                path: data.path,
+                plugin_id: data.plugin_id,
+                bypassed: data.bypassed,
+            }
+        }
         NodeKind::WebRtcCollaborator => {
             let data: WebRtcCollaboratorData = parse(&n.data, "WebRtcCollaborator")?;
             EffectSpec::WebRtcBridge {

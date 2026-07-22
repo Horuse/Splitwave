@@ -6,6 +6,7 @@ import type {
 	AudioStateEvent,
 	CapturePermission,
 	NativeDeviceInfo,
+	PluginDescriptor,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus
@@ -14,6 +15,13 @@ import type {
 const AUDIO_STATE_EVENT = 'audio://state';
 
 export const methods = {
+	scanPlugins: (): Promise<PluginDescriptor[]> => invoke<PluginDescriptor[]>('scan_plugins'),
+	openPluginEditor: (nodeId: string, title: string): Promise<void> =>
+		invoke('open_plugin_editor', { nodeId, title }),
+	closePluginEditor: (nodeId: string): Promise<void> =>
+		invoke('close_plugin_editor', { nodeId }),
+	onPluginEditorClosed: (cb: (nodeId: string) => void): Promise<UnlistenFn> =>
+		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),
 	listOutputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_output_devices'),
 	listAudioApplications: (): Promise<AudioApplication[]> =>

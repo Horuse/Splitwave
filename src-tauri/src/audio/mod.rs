@@ -15,6 +15,7 @@ pub mod playback;
 pub mod pw_enum;
 pub mod netaudio;
 pub mod pipeline;
+pub mod plugins;
 pub mod resample;
 pub mod signaling;
 pub mod stream_recv;

@@ -118,6 +118,9 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .manage(AppState::spawn())
         .invoke_handler(tauri::generate_handler![
+            commands::scan_plugins,
+            commands::open_plugin_editor,
+            commands::close_plugin_editor,
             commands::list_input_devices,
             commands::list_output_devices,
             commands::list_audio_applications,

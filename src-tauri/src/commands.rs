@@ -45,6 +45,40 @@ where
     .map_err(|_| AppError::Stream("audio request task failed".into()))?
 }
 
+/// Scans standard install directories for hostable plugins. Loading foreign
+/// dylibs blocks and can be slow, so it runs off the main thread.
+#[tauri::command]
+pub async fn scan_plugins() -> AppResult<Vec<crate::audio::plugins::PluginDescriptor>> {
+    tauri::async_runtime::spawn_blocking(crate::audio::plugins::scan_all)
+        .await
+        .map_err(|_| AppError::Stream("plugin scan task failed".into()))
+}
+
+#[tauri::command]
+pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()> {
+    info!(node_id, "open_plugin_editor");
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::host::open_editor(&node_id, &title)
+    })
+    .await
+    .map_err(|_| AppError::Stream("plugin editor task failed".into()))?
+    .map_err(AppError::Stream);
+    if let Err(e) = &r {
+        error!(error = %e, "open_plugin_editor failed");
+    }
+    r
+}
+
+#[tauri::command]
+pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::host::close_editor(&node_id)
+    })
+    .await
+    .map_err(|_| AppError::Stream("plugin editor task failed".into()))?
+    .map_err(AppError::Stream)
+}
+
 #[tauri::command]
 pub fn list_input_devices() -> AppResult<Vec<DeviceInfo>> {
     let devices = device::list_inputs()?;

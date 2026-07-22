@@ -13,13 +13,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::rc::Rc;
-use std::sync::{mpsc, Mutex, Once, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginState};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
 use raw_window_handle::HasWindowHandle;
@@ -70,6 +73,11 @@ pub struct SplitwaveMainThread {
 
 impl<'a> MainThreadHandler<'a> for SplitwaveMainThread {}
 
+impl HostStateImpl for SplitwaveMainThread {
+    // Persistence is pulled on demand via `save_state`, not pushed on dirty.
+    fn mark_dirty(&mut self) {}
+}
+
 impl HostTimerImpl for SplitwaveMainThread {
     fn register_timer(&mut self, period_ms: u32) -> Result<TimerId, HostError> {
         let mut st = self.timers.borrow_mut();
@@ -99,7 +107,10 @@ impl HostHandlers for SplitwaveHost {
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &SplitwaveShared) {
-        builder.register::<HostGui>().register::<HostTimer>();
+        builder
+            .register::<HostGui>()
+            .register::<HostTimer>()
+            .register::<HostStateExt>();
     }
 }
 
@@ -107,16 +118,26 @@ struct Slot {
     instance: PluginInstance<SplitwaveHost>,
     timers: Timers,
     gui_open: bool,
+    // False once the matching `PluginNode` (and its processor) is dropped from
+    // the DAG; the reclaim sweep then frees this instance.
+    alive: Arc<AtomicBool>,
+}
+
+// A retired instance kept alive until its processor leaves the outgoing DAG:
+// dropping it earlier would destroy the plugin mid-process. `alive` goes false
+// when that processor is dropped, and `reclaim_dead` frees it on the next tick.
+struct Grave {
+    // Held only for its `Drop`: retaining the entry keeps the plugin alive.
+    #[allow(dead_code)]
+    instance: PluginInstance<SplitwaveHost>,
+    alive: Arc<AtomicBool>,
 }
 
 struct HostState {
     info: HostInfo,
     entries: HashMap<String, PluginEntry>,
     instances: HashMap<String, Slot>,
-    // Instances replaced on rebuild are parked here, never dropped: their
-    // processor may still be draining in the outgoing DAG, and dropping the
-    // instance would destroy the plugin mid-process.
-    graveyard: Vec<PluginInstance<SplitwaveHost>>,
+    graveyard: Vec<Grave>,
 }
 
 fn default_state() -> HostState {
@@ -190,6 +211,42 @@ fn tick_timers() {
     });
 }
 
+/// Frees plugin instances whose processor has left the DAG (`alive == false`):
+/// graveyard entries retired by a rebuild, and live slots whose node was
+/// removed or whose pipeline stopped. Runs on the main thread, so dropping an
+/// instance here is the one safe place to destroy a plugin. Editor teardown
+/// happens first because the plugin's view is a child of our native window.
+fn reclaim_dead() {
+    HOST.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let Some(state) = slot.as_mut() else {
+            return;
+        };
+        state
+            .graveyard
+            .retain(|g| g.alive.load(Ordering::Acquire));
+
+        let dead: Vec<String> = state
+            .instances
+            .iter()
+            .filter(|(_, s)| !s.alive.load(Ordering::Acquire))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in dead {
+            if let Some(mut s) = state.instances.remove(&id) {
+                if s.gui_open {
+                    if let Some(gui) = s.instance.plugin_handle().get_extension::<PluginGui>() {
+                        gui.destroy(&mut s.instance.plugin_handle());
+                    }
+                }
+                if let Some(w) = editor_windows().lock().unwrap().remove(&id) {
+                    let _ = w.close();
+                }
+            }
+        }
+    });
+}
+
 fn ensure_ticker() {
     static TICKER: Once = Once::new();
     TICKER.call_once(|| {
@@ -198,7 +255,10 @@ fn ensure_ticker() {
             .spawn(|| loop {
                 std::thread::sleep(Duration::from_millis(16));
                 if let Some(app) = crate::app_handle() {
-                    let _ = app.run_on_main_thread(tick_timers);
+                    let _ = app.run_on_main_thread(|| {
+                        tick_timers();
+                        reclaim_dead();
+                    });
                 }
             })
             .ok();
@@ -235,6 +295,8 @@ pub fn activate_clap(
     plugin_id: &str,
     sample_rate: u32,
     max_frames: usize,
+    state_b64: Option<String>,
+    primary: bool,
 ) -> Result<PluginNode, String> {
     ensure_ticker();
     let node_id = node_id.to_string();
@@ -277,7 +339,39 @@ pub fn activate_clap(
             .start_processing()
             .map_err(|e| format!("start {plugin_id}: {e}"))?;
 
-        let node = PluginNode::new(processor, &input_channels, &output_channels, max_frames);
+        // Restore saved state before the node goes live. A malformed blob is
+        // logged and skipped, never fatal -- the plugin keeps its defaults.
+        if let Some(b64) = &state_b64 {
+            if let Some(ext) = instance.plugin_handle().get_extension::<PluginState>() {
+                match STANDARD.decode(b64) {
+                    Ok(bytes) => {
+                        let mut reader = std::io::Cursor::new(bytes);
+                        if let Err(e) = ext.load(&mut instance.plugin_handle(), &mut reader) {
+                            tracing::error!(plugin_id, error = %e, "plugin state load failed");
+                        }
+                    }
+                    Err(e) => tracing::error!(plugin_id, error = %e, "plugin state decode failed"),
+                }
+            }
+        }
+
+        let alive = Arc::new(AtomicBool::new(true));
+        let node = PluginNode::new(
+            processor,
+            &input_channels,
+            &output_channels,
+            max_frames,
+            alive.clone(),
+        );
+
+        // The monitor graph builds its own metering-only duplicate. It must not
+        // become the editor target (which would leave the GUI driving a silent
+        // instance while the audible one plays untouched), so park it in the
+        // graveyard: it lives as long as its processor, then the sweep frees it.
+        if !primary {
+            state.graveyard.push(Grave { instance, alive });
+            return Ok(node);
+        }
 
         if let Some(mut old) = state.instances.remove(&node_id) {
             if old.gui_open {
@@ -285,7 +379,10 @@ pub fn activate_clap(
                     gui.destroy(&mut old.instance.plugin_handle());
                 }
             }
-            state.graveyard.push(old.instance);
+            state.graveyard.push(Grave {
+                instance: old.instance,
+                alive: old.alive,
+            });
         }
         // A rebuild invalidates any open editor; drop its window so a reopen
         // embeds into the new instance instead of focusing a stale one.
@@ -298,11 +395,27 @@ pub fn activate_clap(
                 instance,
                 timers,
                 gui_open: false,
+                alive,
             },
         );
         Ok(node)
     })
     .and_then(|r| r)
+}
+
+/// Serializes a running plugin's state to base64, or `None` if the plugin isn't
+/// running or does not implement the state extension. Safe off the main thread.
+pub fn save_state(node_id: &str) -> Option<String> {
+    let node_id = node_id.to_string();
+    on_main(move |state| {
+        let slot = state.instances.get_mut(&node_id)?;
+        let ext = slot.instance.plugin_handle().get_extension::<PluginState>()?;
+        let mut buf = Vec::new();
+        ext.save(&mut slot.instance.plugin_handle(), &mut buf).ok()?;
+        Some(STANDARD.encode(&buf))
+    })
+    .ok()
+    .flatten()
 }
 
 /// Native host windows that plugin editors are embedded into, keyed by node id.

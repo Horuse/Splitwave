@@ -401,6 +401,9 @@ pub fn instantiate_effect(
     node_id: &str,
     sample_rate: u32,
     realtime: bool,
+    // False when building the monitor graph: a plugin instantiated there is a
+    // metering-only duplicate, not the one its editor window attaches to.
+    primary: bool,
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -746,7 +749,7 @@ pub fn instantiate_effect(
                 None, None, None, None, None,
             )
         }
-        EffectSpec::Plugin { ref path, ref plugin_id, .. } => {
+        EffectSpec::Plugin { ref path, ref plugin_id, ref state, .. } => {
             // Empty path == node not yet configured: inert passthrough, not a
             // failure. Silence is reserved for a real load error below.
             if path.is_empty() {
@@ -759,6 +762,8 @@ pub fn instantiate_effect(
                 plugin_id,
                 sample_rate,
                 PLUGIN_MAX_BLOCK,
+                state.clone(),
+                primary,
             ) {
                 Ok(node) => mk(RuntimeEffect::HostedPlugin(node), None, None, None, None, None),
                 Err(e) => {

@@ -69,6 +69,17 @@ pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()>
     r
 }
 
+/// Serializes a running plugin's state to base64 so the FE can persist it in
+/// the node's data. Returns null when the plugin isn't running or has no state.
+#[tauri::command]
+pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::host::save_state(&node_id)
+    })
+    .await
+    .unwrap_or(None))
+}
+
 #[tauri::command]
 pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
     tauri::async_runtime::spawn_blocking(move || {

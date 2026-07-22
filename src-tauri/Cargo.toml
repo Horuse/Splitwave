@@ -88,7 +88,7 @@ ndarray = "0.15"
 # CLAP plugin hosting. clack is git-only and pre-1.0; pin an exact rev because
 # it has no semver releases and warns of breaking API changes.
 clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744" }
-clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744", features = ["clack-host", "audio-ports", "gui", "timer", "raw-window-handle_06"] }
+clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744", features = ["clack-host", "audio-ports", "gui", "timer", "state", "raw-window-handle_06"] }
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]

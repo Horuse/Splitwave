@@ -1,6 +1,9 @@
 //! RT-side of a hosted plugin: the `Send` audio processor plus preallocated
 //! de-interleave scratch. Lives on the DSP worker thread.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use clack_host::prelude::*;
 
 use crate::audio::effects::Effect;
@@ -18,6 +21,15 @@ pub struct PluginNode {
     out_bufs: Vec<Vec<Vec<f32>>>,
     steady: u64,
     max_frames: usize,
+    // Cleared on drop so the host's main thread can reclaim the matching
+    // main-thread instance once its processor is gone from the DAG.
+    alive: Arc<AtomicBool>,
+}
+
+impl Drop for PluginNode {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Release);
+    }
 }
 
 fn alloc(port_channels: &[u32], max_frames: usize) -> Vec<Vec<Vec<f32>>> {
@@ -33,6 +45,7 @@ impl PluginNode {
         input_channels: &[u32],
         output_channels: &[u32],
         max_frames: usize,
+        alive: Arc<AtomicBool>,
     ) -> Self {
         Self {
             processor,
@@ -48,6 +61,7 @@ impl PluginNode {
             out_bufs: alloc(output_channels, max_frames),
             steady: 0,
             max_frames,
+            alive,
         }
     }
 }

@@ -20,6 +20,8 @@ export const methods = {
 		invoke('open_plugin_editor', { nodeId, title }),
 	closePluginEditor: (nodeId: string): Promise<void> =>
 		invoke('close_plugin_editor', { nodeId }),
+	getPluginState: (nodeId: string): Promise<string | null> =>
+		invoke<string | null>('get_plugin_state', { nodeId }),
 	onPluginEditorClosed: (cb: (nodeId: string) => void): Promise<UnlistenFn> =>
 		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),

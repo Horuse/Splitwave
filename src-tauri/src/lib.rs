@@ -121,6 +121,7 @@ pub fn run() {
             commands::scan_plugins,
             commands::open_plugin_editor,
             commands::close_plugin_editor,
+            commands::get_plugin_state,
             commands::list_input_devices,
             commands::list_output_devices,
             commands::list_audio_applications,

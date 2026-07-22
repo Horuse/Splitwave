@@ -177,9 +177,11 @@ fn structural_effect(spec: &EffectSpec) -> EffectSpec {
             d.ratio = 0.0;
             d.bypassed = false;
         }
-        // path / plugin_id are structural; bypass rides its own atomic.
-        E::Plugin { bypassed, .. } => {
+        // path / plugin_id are structural; bypass rides its own atomic, and
+        // state is applied only at instantiation so it must not force a rebuild.
+        E::Plugin { bypassed, state, .. } => {
             *bypassed = false;
+            *state = None;
         }
         // No live params (or all fields structural): compared as-is.
         E::LevelMeter(_) | E::LufsMeter(_) | E::Waveform(_) | E::Spectrum(_) | E::WebRtcBridge { .. } => {}

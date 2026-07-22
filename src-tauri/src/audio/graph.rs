@@ -488,6 +488,8 @@ pub struct PluginData {
     pub plugin_id: String,
     #[serde(default)]
     pub bypassed: bool,
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -561,6 +563,8 @@ pub enum EffectSpec {
         path: String,
         plugin_id: String,
         bypassed: bool,
+        // Base64 CLAP state blob restored on instantiation; None keeps defaults.
+        state: Option<String>,
     },
 }
 
@@ -992,6 +996,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
                 path: data.path,
                 plugin_id: data.plugin_id,
                 bypassed: data.bypassed,
+                state: data.state,
             }
         }
         NodeKind::WebRtcCollaborator => {

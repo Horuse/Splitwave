@@ -60,9 +60,17 @@
 	// instance; there is nothing to open before the pipeline starts.
 	const canOpenEditor = $derived(!!data.path && audioStore.isRunning);
 
+	// Pull the plugin's own state (edited via its GUI) into node data so it
+	// survives project reload. State is non-structural, so this never rebuilds.
+	async function captureState() {
+		const state = await audioMethods.getPluginState(id).catch(() => null);
+		if (state && state !== data.state) flow.updateNodeData(id, { state });
+	}
+
 	function toggleEditor() {
 		const next = !editorOpen;
 		editorOpen = next;
+		if (!next) captureState();
 		const call = next
 			? audioMethods.openPluginEditor(id, data.name || 'Plugin')
 			: audioMethods.closePluginEditor(id);
@@ -76,7 +84,10 @@
 		let unlisten: (() => void) | undefined;
 		audioMethods
 			.onPluginEditorClosed((closedId) => {
-				if (closedId === id) editorOpen = false;
+				if (closedId === id) {
+					editorOpen = false;
+					captureState();
+				}
 			})
 			.then((fn) => (unlisten = fn));
 		return () => unlisten?.();
@@ -105,6 +116,7 @@
 	hasInput
 	hasOutput
 	channelIo
+	selfGrowing
 	nodeId={id}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}

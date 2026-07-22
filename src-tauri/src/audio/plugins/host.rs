@@ -44,7 +44,9 @@ struct TimerState {
 
 type Timers = Rc<RefCell<TimerState>>;
 
-pub struct SplitwaveShared;
+pub struct SplitwaveShared {
+    node_id: String,
+}
 
 impl<'a> SharedHandler<'a> for SplitwaveShared {
     fn request_restart(&self) {}
@@ -54,8 +56,18 @@ impl<'a> SharedHandler<'a> for SplitwaveShared {
 
 impl HostGuiImpl for SplitwaveShared {
     fn resize_hints_changed(&self) {}
-    // The host window is sized to the plugin at embed time; just acknowledge.
-    fn request_resize(&self, _new_size: GuiSize) -> Result<(), HostError> {
+    // The plugin drives its own size (e.g. a scale button in its UI); grow the
+    // host window to match. Sizes are logical (we run with scale handled by the
+    // OS), so a LogicalSize maps 1:1.
+    fn request_resize(&self, new_size: GuiSize) -> Result<(), HostError> {
+        // Some plugins fire a 0x0 / placeholder request during init; obeying it
+        // would shrink the window to the OS minimum.
+        let Some((w, h)) = valid_gui_size(new_size.width, new_size.height) else {
+            return Ok(());
+        };
+        if let Some(win) = editor_windows().lock().unwrap().get(&self.node_id) {
+            set_content_size(win, w as f64, h as f64);
+        }
         Ok(())
     }
     fn request_show(&self) -> Result<(), HostError> {
@@ -316,8 +328,11 @@ pub fn activate_clap(
 
         let timers: Timers = Rc::new(RefCell::new(TimerState::default()));
         let timers_for_handler = timers.clone();
+        let shared_node_id = node_id.clone();
         let mut instance = PluginInstance::<SplitwaveHost>::new(
-            |_| SplitwaveShared,
+            move |_| SplitwaveShared {
+                node_id: shared_node_id,
+            },
             move |_| SplitwaveMainThread {
                 timers: timers_for_handler,
             },
@@ -441,6 +456,32 @@ fn editor_windows() -> &'static Mutex<HashMap<String, tauri::Window>> {
     WINDOWS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Sizes the window so its content area (below the title bar) is `w` x `h`
+/// logical px. The plugin view fills the content area, so the title bar's
+/// height (outer minus inner) is added -- otherwise the bar overlaps the top of
+/// the plugin and the bottom gets clipped.
+/// Standard title-bar height (logical px) used when the window reports no
+/// decoration overhead, which tao does on macOS (`outer_size == inner_size`).
+#[cfg(target_os = "macos")]
+const TITLEBAR_LOGICAL: f64 = 28.0;
+#[cfg(not(target_os = "macos"))]
+const TITLEBAR_LOGICAL: f64 = 32.0;
+
+fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let (dw, measured_dh) = match (window.inner_size(), window.outer_size()) {
+        (Ok(inner), Ok(outer)) => (
+            outer.width.saturating_sub(inner.width) as f64 / scale,
+            outer.height.saturating_sub(inner.height) as f64 / scale,
+        ),
+        _ => (0.0, 0.0),
+    };
+    // tao returns outer == inner on macOS, so the measurement is 0; fall back to
+    // the platform title-bar height so the plugin renders below the bar.
+    let dh = if measured_dh > 0.5 { measured_dh } else { TITLEBAR_LOGICAL };
+    let _ = window.set_size(tauri::LogicalSize::new(w + dw, h + dh));
+}
+
 /// Opens the plugin editor embedded in a native host window. The tested plugins
 /// only support embedded GUIs (`is_floating=false`), so the host must own the
 /// window and hand its native handle to the plugin via `set_parent`.
@@ -452,7 +493,11 @@ pub fn open_editor(node_id: &str, title: &str) -> Result<(), String> {
     }
     let window = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
         .title(if title.is_empty() { "Plugin" } else { title })
-        .inner_size(400.0, 300.0)
+        .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
+        // Always resizable with a small floor: even when a plugin reports a bad
+        // size or does not reflow, the user can enlarge the window to reveal it.
+        .resizable(true)
+        .min_inner_size(200.0, 150.0)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -474,9 +519,7 @@ pub fn open_editor(node_id: &str, title: &str) -> Result<(), String> {
         .insert(node_id.to_string(), window.clone());
 
     let info = embed_editor(node_id, window.clone())?;
-    // The plugin owns its size; only let the user resize when it says it can.
-    let _ = window.set_resizable(info.resizable);
-    let _ = window.set_size(tauri::LogicalSize::new(info.width as f64, info.height as f64));
+    set_content_size(&window, info.width as f64, info.height as f64);
     Ok(())
 }
 
@@ -487,7 +530,6 @@ pub const EDITOR_CLOSED_EVENT: &str = "plugin://editor-closed";
 struct EmbedInfo {
     width: u32,
     height: u32,
-    resizable: bool,
 }
 
 fn embed_editor(node_id: &str, window: tauri::Window) -> Result<EmbedInfo, String> {
@@ -518,7 +560,13 @@ fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result
             .map_err(|e| format!("gui create: {e}"))?;
         slot.gui_open = true;
     }
-    let _ = gui.set_scale(&mut slot.instance.plugin_handle(), 1.0);
+    // macOS/Cocoa scales for Retina itself, so the scale is always 1 there;
+    // on Win32/X11 the plugin needs the real display factor to render sharp.
+    #[cfg(target_os = "macos")]
+    let scale = 1.0;
+    #[cfg(not(target_os = "macos"))]
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let _ = gui.set_scale(&mut slot.instance.plugin_handle(), scale);
 
     let handle = window.window_handle().map_err(|e| e.to_string())?;
     let clap_window =
@@ -529,25 +577,45 @@ fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result
             .map_err(|e| format!("set_parent: {e}"))?;
     }
 
-    let resizable = gui.can_resize(&mut slot.instance.plugin_handle());
-    let size = gui
-        .get_size(&mut slot.instance.plugin_handle())
-        .map(|s| (s.width, s.height))
-        .unwrap_or((400, 300));
-    let _ = gui.set_size(
-        &mut slot.instance.plugin_handle(),
-        GuiSize {
-            width: size.0,
-            height: size.1,
-        },
-    );
+    let read = |slot: &mut Slot| {
+        slot.instance
+            .plugin_handle()
+            .get_extension::<PluginGui>()
+            .and_then(|g| g.get_size(&mut slot.instance.plugin_handle()))
+            .and_then(|s| valid_gui_size(s.width, s.height))
+    };
+    // A pre-show hint lets the plugin lay out; the authoritative size is read
+    // after show, since some plugins only finalize (or report 0x0) until then.
+    if let Some((w, h)) = read(slot) {
+        let _ = gui.set_size(
+            &mut slot.instance.plugin_handle(),
+            GuiSize { width: w, height: h },
+        );
+    }
     gui.show(&mut slot.instance.plugin_handle())
         .map_err(|e| format!("gui show: {e}"))?;
-    Ok(EmbedInfo {
-        width: size.0,
-        height: size.1,
-        resizable,
-    })
+    // A too-small report (e.g. Floe's 150x105 placeholder) is a minimum, not a
+    // usable editor size; fall back to a default and push it back so a resizable
+    // plugin actually lays out at it instead of a corner.
+    let (width, height) = read(slot)
+        .filter(|(w, h)| *w >= MIN_USABLE_SIZE.0 && *h >= MIN_USABLE_SIZE.1)
+        .unwrap_or(FALLBACK_EDITOR_SIZE);
+    let _ = gui.set_size(
+        &mut slot.instance.plugin_handle(),
+        GuiSize { width, height },
+    );
+    Ok(EmbedInfo { width, height })
+}
+
+/// Fallback editor size for plugins that report a nonsensical one.
+const FALLBACK_EDITOR_SIZE: (u32, u32) = (800, 600);
+/// Below this a reported size is treated as a placeholder/minimum, not usable.
+const MIN_USABLE_SIZE: (u32, u32) = (400, 300);
+
+/// Rejects the degenerate sizes plugins report before their view exists (0x0)
+/// or absurd values, so the window is never opened invisibly small or huge.
+fn valid_gui_size(w: u32, h: u32) -> Option<(u32, u32)> {
+    (w >= 100 && h >= 100 && w <= 8000 && h <= 8000).then_some((w, h))
 }
 
 fn unembed(state: &mut HostState, node_id: &str) {

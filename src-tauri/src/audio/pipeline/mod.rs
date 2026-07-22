@@ -468,7 +468,13 @@ fn monitor_mode(graph: &ValidGraph) -> bool {
         return true;
     }
     graph.effects.iter().any(|e| {
-        matches!(e.spec, EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) | EffectSpec::Waveform(_))
+        matches!(
+            e.spec,
+            EffectSpec::LevelMeter(_)
+                | EffectSpec::LufsMeter(_)
+                | EffectSpec::Waveform(_)
+                | EffectSpec::Spectrum(_)
+        )
     })
 }
 

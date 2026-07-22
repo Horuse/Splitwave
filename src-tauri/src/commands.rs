@@ -80,6 +80,21 @@ pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
     .unwrap_or(None))
 }
 
+/// Persisted crash reports from previous runs, cleared as they are read.
+#[tauri::command]
+pub fn take_crash_reports() -> Vec<serde_json::Value> {
+    crate::take_crash_reports()
+}
+
+/// Dev-only: panics on the main thread to exercise the crash-persistence path
+/// (a real panic, not a faked event). Crashes the app on purpose.
+#[tauri::command]
+pub fn debug_panic(app: AppHandle) {
+    let _ = app.run_on_main_thread(|| {
+        panic!("debug: intentional test panic");
+    });
+}
+
 #[tauri::command]
 pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
     tauri::async_runtime::spawn_blocking(move || {

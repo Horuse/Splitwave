@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { errorStore } from './stores.svelte';
 
@@ -8,6 +9,7 @@ interface PanicPayload {
 	backtrace: string;
 	thread: string;
 	version: string;
+	ts?: number;
 }
 
 let installed = false;
@@ -26,6 +28,23 @@ export async function installErrorHandlers(): Promise<void> {
 			at: Date.now()
 		});
 	});
+
+	// A panic that killed the app last run never delivered its live event; the
+	// backend persisted it, so surface it now.
+	invoke<PanicPayload[]>('take_crash_reports')
+		.then((reports) => {
+			for (const r of reports) {
+				errorStore.report({
+					source: 'rustPanic',
+					message: r.message,
+					stack: r.backtrace,
+					thread: r.thread,
+					at: r.ts ?? Date.now(),
+					previousRun: true
+				});
+			}
+		})
+		.catch(() => {});
 
 	window.addEventListener('error', (e) => {
 		errorStore.report({

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
+	import { invoke } from '@tauri-apps/api/core';
 	import type { Update } from '@tauri-apps/plugin-updater';
 	import { errorStore } from '$lib/modules/error';
 	import { updaterStore } from '$lib/modules/updater';
@@ -16,6 +17,12 @@
 			thread: 'dsp-worker',
 			at: Date.now()
 		});
+	}
+
+	// Real backend panic on the main thread: crashes the app to exercise crash
+	// persistence + the next-launch modal. Not a faked event.
+	function realRustCrash() {
+		invoke('debug_panic').catch(() => {});
 	}
 
 	function fakeJsError() {
@@ -77,6 +84,7 @@
 			<Menu>
 				<MenuSection label="Errors" />
 				<MenuItem label="Rust panic" onclick={fakeRustPanic} />
+				<MenuItem label="Real crash (panic)" onclick={realRustCrash} />
 				<MenuItem label="JS error" onclick={fakeJsError} />
 				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
 				<MenuSection label="Updater" />

@@ -6,6 +6,8 @@ export interface ErrorEntry {
 	stack?: string;
 	thread?: string;
 	at: number;
+	/** True when replayed from a crash that killed a previous run, not live. */
+	previousRun?: boolean;
 }
 
 class ErrorStore {

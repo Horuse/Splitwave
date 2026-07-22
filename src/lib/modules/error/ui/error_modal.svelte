@@ -74,8 +74,10 @@
 
 {#if current}
 	<ModalShell
-		title="Something went wrong"
-		titleClass="text-sm font-semibold text-red-500"
+		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
+		titleClass={current.previousRun
+			? 'text-sm font-semibold text-amber-500'
+			: 'text-sm font-semibold text-red-500'}
 		onClose={dismiss}
 	>
 		{#snippet badge()}
@@ -85,7 +87,13 @@
 		{/snippet}
 
 		<div class="flex flex-col gap-3 px-5 py-4">
-			<p class="text-xs text-neutral-900">Please report this so we can fix it.</p>
+			<p class="text-xs text-neutral-900">
+				{#if current.previousRun}
+					The app closed unexpectedly during your previous session. Reporting this helps us fix it.
+				{:else}
+					Please report this so we can fix it.
+				{/if}
+			</p>
 			<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
 			{#if current.stack}
 				<details class="group">

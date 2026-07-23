@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use rtrb::Producer;
+use rtrb::{Consumer, Producer};
 use tauri::AppHandle;
 use tracing::{info, warn};
 
@@ -35,7 +35,7 @@ mod output;
 mod sig;
 mod worker;
 
-use dag::{build_output_graph, inputs_feeding_output, OutputGraph};
+use dag::{build_output_graph, inputs_feeding_output, OutputGraph, RING_CAPACITY_FRAMES};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
@@ -304,6 +304,20 @@ impl ActivePipeline {
                 _ => Cat::Drop,
             };
             cats.insert(id.clone(), cat);
+        }
+        // A fan-out node is shared via a ring whose two ends must be rebuilt
+        // together; if any cut participant is rebuilding, bump the Full ones to
+        // GraphSwap so `apply_full` rebuilds them (and re-wires the ring) too.
+        let participants = dag::plan_cuts(new_graph, monitor_mode.then_some(MONITOR_KEY)).participants();
+        let group_dirty = participants
+            .iter()
+            .any(|id| !matches!(cats.get(id), Some(Cat::Full)));
+        if group_dirty {
+            for id in &participants {
+                if let Some(cat @ Cat::Full) = cats.get_mut(id) {
+                    *cat = Cat::GraphSwap;
+                }
+            }
         }
 
         let mut all_old: Vec<String> = Vec::new();
@@ -580,13 +594,41 @@ impl ActivePipeline {
             input_meters.insert(id.clone(), m.clone());
         }
 
+        // Fan-out plan: nodes shared across outputs (and the monitor) are
+        // computed once and read back via rings. When any participant rebuilds
+        // they all must, so producer and consumer ends of every ring are
+        // created in one pass.
+        let cut_plan = dag::plan_cuts(graph, monitor_mode.then_some(MONITOR_KEY));
+        let participants = cut_plan.participants();
+        let base_changed = |id: &str| {
+            self.current_output_sig(id) != Some(&compute_output_sig(graph, id))
+        };
+        let mut rebuild: HashSet<String> = HashSet::new();
+        for out in &graph.outputs {
+            if base_changed(&out.id) {
+                rebuild.insert(out.id.clone());
+            }
+        }
+        let group_dirty = participants.iter().any(|id| {
+            if id == MONITOR_KEY {
+                base_changed(MONITOR_KEY)
+            } else {
+                rebuild.contains(id)
+            }
+        });
+        // The monitor rebuilds via its own `needs_build` below; force the real
+        // outputs of a dirty cut group so every ring is re-wired atomically.
+        let monitor_forced = group_dirty && participants.contains(MONITOR_KEY);
+        if group_dirty {
+            rebuild.extend(participants.iter().filter(|id| *id != MONITOR_KEY).cloned());
+        }
+
         // Skip Full survivors; everything else needs a fresh sub-graph
         // (the new `OutputGraph` ships to GraphSwap workers via
         // `ctrl.send_graph`, or boots a new worker for Fresh starts).
         let mut output_runtime: HashMap<String, ResolvedOutput> = HashMap::new();
         for out in &graph.outputs {
-            let new_sig = compute_output_sig(graph, &out.id);
-            if self.current_output_sig(&out.id) == Some(&new_sig) {
+            if !rebuild.contains(&out.id) {
                 continue;
             }
             let file_sr_hint: Option<u32> = match &out.spec {
@@ -608,6 +650,13 @@ impl ActivePipeline {
         // bridges can be tracked in `InputState.bridges_by_output`.
         let mut output_graphs: HashMap<String, OutputGraph> = HashMap::new();
         let mut all_pairs: Vec<(String, String, Producer<f32>)> = Vec::new();
+        // A plugin feeding several outputs is built once per output; reset the
+        // per-reconcile claim so exactly one build owns the editor instance.
+        self.effect_registry.begin_reconcile();
+        // Ring consumers stashed by an owner build, keyed by the consuming
+        // output then node id; the consumer's build reads them as ring-sources.
+        let mut pending_cuts: HashMap<String, HashMap<String, (Consumer<f32>, u32, usize)>> =
+            HashMap::new();
         for out in &graph.outputs {
             if !output_runtime.contains_key(&out.id) {
                 continue;
@@ -617,7 +666,8 @@ impl ActivePipeline {
                 .map(|o| o.sample_rate())
                 .ok_or_else(|| AppError::Validation("missing output runtime".into()))?;
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
-            let built = build_output_graph(
+            let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
+            let mut built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
@@ -630,7 +680,25 @@ impl ActivePipeline {
                 &input_paused,
                 &input_drain,
                 &input_meters,
+                cut_leaves,
             )?;
+            // Wire publish taps for nodes this output owns and other outputs read.
+            for (node, cons) in &cut_plan.consumers {
+                if cons.is_empty() || cut_plan.owner.get(node).map(String::as_str) != Some(out.id.as_str()) {
+                    continue;
+                }
+                let Some(&(idx, width)) = built.node_meta.get(node) else {
+                    continue;
+                };
+                for o2 in cons {
+                    let (prod, consumer) = rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * width);
+                    built.graph.attach_tap(idx, prod);
+                    pending_cuts
+                        .entry(o2.clone())
+                        .or_default()
+                        .insert(node.clone(), (consumer, output_sr, width));
+                }
+            }
             for (inp_id, prod) in my_pairs {
                 all_pairs.push((out.id.clone(), inp_id, prod));
             }
@@ -659,10 +727,8 @@ impl ActivePipeline {
         let mut monitor_graph: Option<OutputGraph> = None;
         if monitor_mode {
             let new_sig = compute_output_sig(graph, MONITOR_KEY);
-            let needs_build = self
-                .monitor
-                .as_ref()
-                .map_or(true, |m| m.sig != new_sig);
+            let needs_build = monitor_forced
+                || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
             if needs_build {
                 let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
@@ -683,6 +749,7 @@ impl ActivePipeline {
                     &input_paused,
                     &input_drain,
                     &input_meters,
+                    pending_cuts.remove(MONITOR_KEY).unwrap_or_default(),
                 )?;
                 for (inp_id, prod) in my_pairs {
                     all_pairs.push((MONITOR_KEY.to_string(), inp_id, prod));

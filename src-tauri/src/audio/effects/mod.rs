@@ -388,11 +388,22 @@ pub struct EffectRegistry {
     lufs: std::collections::HashMap<String, LufsHandle>,
     gr_atomics: std::collections::HashMap<String, Arc<AtomicU32>>,
     scopes: std::collections::HashMap<String, WaveformHandle>,
+    // Plugin node ids that already claimed the editor-target (primary) instance
+    // in the current reconcile. A node feeding several real outputs is built
+    // once per output; only the first claim owns the editor, the rest are
+    // metering/duplicate instances parked in the graveyard.
+    plugin_primary_claimed: std::collections::HashSet<String>,
 }
 
 impl EffectRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Clears per-reconcile scratch. Call once before rebuilding the graphs so
+    /// the primary-instance claim is decided fresh each pass.
+    pub fn begin_reconcile(&mut self) {
+        self.plugin_primary_claimed.clear();
     }
 }
 
@@ -756,6 +767,10 @@ pub fn instantiate_effect(
                 let muted = Arc::new(AtomicBool::new(false));
                 return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
             }
+            // Only the first real-output build claims the editor target; a node
+            // fanning out to several outputs would otherwise bind the editor to
+            // whichever output was built last.
+            let primary = primary && registry.plugin_primary_claimed.insert(node_id.to_string());
             match crate::audio::plugins::host::activate_clap(
                 node_id,
                 path,

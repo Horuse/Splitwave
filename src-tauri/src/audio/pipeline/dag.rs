@@ -379,6 +379,10 @@ struct EffectState {
     // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
     // summed by target handle and pushed to the matching send ring.
     channel_bufs: Vec<(String, Vec<f32>)>,
+    // When this node fans out to several outputs it is computed once (here, in
+    // its owning output's graph) and its `out_buf` is published each block into
+    // one ring per other consuming output, which reads it via a ring-source.
+    taps: Vec<Producer<f32>>,
 }
 
 impl EffectState {
@@ -662,6 +666,14 @@ impl OutputGraph {
         self.out_channels = channels;
     }
 
+    /// Attach a publish ring to a fan-out effect node; its `out_buf` is pushed
+    /// there each block for another output's ring-source to read.
+    pub(super) fn attach_tap(&mut self, node_idx: usize, prod: Producer<f32>) {
+        if let Some(DagNode::Effect(e)) = self.nodes.get_mut(node_idx) {
+            e.taps.push(prod);
+        }
+    }
+
     /// True if every source has enough buffered input to produce one full
     /// output block without underrun. Availability-paced workers use this to
     /// gate block production.
@@ -799,6 +811,10 @@ impl OutputGraph {
                         }
                     }
                 }
+                // Publish the processed block to every consuming output's ring.
+                for prod in eff.taps.iter_mut() {
+                    bulk_push(prod, &eff.out_buf);
+                }
             }
         }
         for s in output.iter_mut() {
@@ -826,6 +842,9 @@ pub(super) struct BuiltOutputGraph {
     pub gr_handles: Vec<GrHandle>,
     pub scopes: Vec<WaveformHandle>,
     pub xruns: Vec<(String, Arc<AtomicU64>)>,
+    /// Effect node id -> (node index, channel width). Used to attach publish
+    /// taps to nodes that fan out to other outputs.
+    pub node_meta: HashMap<String, (usize, usize)>,
 }
 
 /// Build the per-output DAG: walk backward from `output_id`, topo-sort the
@@ -851,15 +870,25 @@ pub(super) fn build_output_graph(
     input_paused: &HashMap<String, Arc<AtomicBool>>,
     input_drain: &HashMap<String, Arc<AtomicU64>>,
     input_meters: &HashMap<String, MeterHandle>,
+    // Effect nodes provided by a ring instead of built here: each is computed
+    // once in its owning output's graph and read back as a ring-source. Maps
+    // node id -> (ring consumer, owner-graph sample rate, channel width).
+    mut cut_leaves: HashMap<String, (Consumer<f32>, u32, usize)>,
 ) -> AppResult<BuiltOutputGraph> {
+    let cut_leaf_ids: HashSet<String> = cut_leaves.keys().cloned().collect();
     let reachable: HashSet<String> = match output_id {
-        Some(id) => reachable_backward(id, valid),
-        None => valid
-            .inputs
-            .iter()
-            .map(|i| i.id.clone())
-            .chain(valid.effects.iter().map(|e| e.id.clone()))
-            .collect(),
+        Some(id) => reachable_backward_cut(id, valid, &cut_leaf_ids),
+        // Monitor: everything feeding an analyzer, stopping at cut nodes (whose
+        // processed output is read back from the owning output's ring).
+        None => {
+            let roots: Vec<String> = valid
+                .effects
+                .iter()
+                .filter(|e| is_analyzer(&e.spec))
+                .map(|e| e.id.clone())
+                .collect();
+            reachable_backward_from(&roots, valid, &cut_leaf_ids)
+        }
     };
 
     // Topo sort restricted to the reachable sub-graph. Inputs have indegree 0
@@ -904,6 +933,9 @@ pub(super) fn build_output_graph(
     // upstream node positions in the final Vec.
     let mut nodes: Vec<DagNode> = Vec::with_capacity(topo.len());
     let mut id_to_index: HashMap<String, usize> = HashMap::new();
+    // Effect node id -> (index in `nodes`, channel width). Lets the caller wire
+    // publish taps onto a node that fans out to other outputs' ring-sources.
+    let mut node_meta: HashMap<String, (usize, usize)> = HashMap::new();
     let mut controls: Vec<(String, EffectControl)> = Vec::new();
     let mut bypasses: Vec<(String, Arc<AtomicBool>)> = Vec::new();
     let mut meters: Vec<MeterHandle> = Vec::new();
@@ -916,6 +948,16 @@ pub(super) fn build_output_graph(
     let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
 
     for id in &topo {
+        // A fan-out node owned by an earlier output: read its published block
+        // from the ring instead of rebuilding the whole upstream chain.
+        if let Some((consumer, owner_sr, width)) = cut_leaves.remove(id) {
+            let source = ring_source(id, consumer, owner_sr, output_sr, width, realtime, valid)?;
+            id_to_index.insert(id.clone(), nodes.len());
+            nodes.push(DagNode::Source(source));
+            node_latencies.push(0);
+            node_channels.push(width);
+            continue;
+        }
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
             // NetReceiver is a network producer, not a captured source: it emits
             // per-channel outputs from a shared jitter buffer at the output rate.
@@ -1197,7 +1239,9 @@ pub(super) fn build_output_graph(
                 pair_side: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 handle_bufs,
                 channel_bufs,
+                taps: Vec::new(),
             }));
+            node_meta.insert(id.clone(), (nodes.len() - 1, eff_channels));
             node_latencies.push(max_upstream + own);
             node_channels.push(eff_channels);
         }
@@ -1291,6 +1335,7 @@ pub(super) fn build_output_graph(
             gr_handles,
             scopes,
             xruns,
+            node_meta,
         });
     }
 
@@ -1346,7 +1391,216 @@ pub(super) fn build_output_graph(
         gr_handles,
         scopes,
         xruns,
+        node_meta,
     })
+}
+
+/// Builds a `SourceState` that reads a fan-out node's published block from a
+/// ring (written at `owner_sr`) and resamples it to this graph's `output_sr`.
+/// Reuses the source machinery so per-channel taps and backlog-dropping behave
+/// exactly like a captured input.
+#[allow(clippy::too_many_arguments)]
+fn ring_source(
+    id: &str,
+    consumer: Consumer<f32>,
+    owner_sr: u32,
+    output_sr: u32,
+    channels: usize,
+    realtime: bool,
+    valid: &ValidGraph,
+) -> AppResult<SourceState> {
+    let resampler = if owner_sr == output_sr {
+        None
+    } else {
+        Some(MultiResampler::new(owner_sr, output_sr, RESAMPLE_CHUNK, channels)?)
+    };
+    let input_frames_per_block =
+        (DSP_BLOCK_FRAMES as u64 * owner_sr as u64 + output_sr as u64 - 1) / output_sr as u64;
+    let input_samples_per_block = input_frames_per_block as usize * channels;
+
+    let mut ch_handles: Vec<String> = valid
+        .edges
+        .iter()
+        .filter(|e| e.from == id)
+        .filter_map(|e| e.source_handle.clone())
+        .filter(|h| tap_handle_width(h).is_some())
+        .collect();
+    ch_handles.sort();
+    ch_handles.dedup();
+    let handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
+        .into_iter()
+        .map(|h| {
+            let w = tap_handle_width(&h).unwrap_or(1);
+            (h, vec![0.0; DSP_BLOCK_FRAMES * w])
+        })
+        .collect();
+
+    Ok(SourceState {
+        label: format!("cut:{id}"),
+        channels,
+        consumer,
+        resampler,
+        input_staging: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
+        out_pending: StagingRing::with_capacity(RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels),
+        chunk_tmp: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
+        out_buf: vec![0.0; DSP_BLOCK_FRAMES * channels],
+        input_samples_per_block,
+        realtime,
+        last_pop_at: Instant::now(),
+        first_data_logged: false,
+        volume: Arc::new(AtomicU32::new(0x3F80_0000)),
+        paused: None,
+        drain: None,
+        last_drain_gen: 0,
+        meter: None,
+        handle_bufs,
+        xrun: Arc::new(AtomicU64::new(0)),
+    })
+}
+
+/// Cross-output fan-out plan: which effect nodes are computed once and shared
+/// via rings. `owner[n]` builds node `n` and publishes it; every output in
+/// `consumers[n]` reads it back as a ring-source.
+pub(super) struct CutPlan {
+    pub owner: HashMap<String, String>,
+    pub consumers: HashMap<String, Vec<String>>,
+}
+
+impl CutPlan {
+    /// Outputs that participate in any cut (owners + consumers). When one of
+    /// them is rebuilt they must all rebuild together, so producer and consumer
+    /// ends of every ring are created in the same pass.
+    pub(super) fn participants(&self) -> HashSet<String> {
+        let mut set = HashSet::new();
+        for (node, cons) in &self.consumers {
+            if cons.is_empty() {
+                continue;
+            }
+            if let Some(o) = self.owner.get(node) {
+                set.insert(o.clone());
+            }
+            set.extend(cons.iter().cloned());
+        }
+        set
+    }
+}
+
+/// Assigns each effect node to the first output (in graph order) that can
+/// compute it, and records where later graphs must read it back via a ring.
+/// Traversal stops at nodes already owned by an earlier graph -- those become
+/// ring-source leaves -- so a shared node is computed exactly once. The monitor
+/// (identified by `monitor_key`) is treated as a final consumer, so a plugin
+/// feeding both a speaker and an analyzer is computed once, not duplicated.
+pub(super) fn plan_cuts(valid: &ValidGraph, monitor_key: Option<&str>) -> CutPlan {
+    let effect_ids: HashSet<&str> = valid.effects.iter().map(|e| e.id.as_str()).collect();
+    let mut owner: HashMap<String, String> = HashMap::new();
+    let mut consumers: HashMap<String, Vec<String>> = HashMap::new();
+
+    let mut assign = |oid: &str, starts: Vec<String>| {
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut stack = starts;
+        while let Some(m) = stack.pop() {
+            // Only effect nodes are cut; inputs already fan out via their own
+            // per-output source rings.
+            if !effect_ids.contains(m.as_str()) {
+                continue;
+            }
+            if owner.contains_key(&m) {
+                consumers.entry(m).or_default().push(oid.to_string());
+                continue;
+            }
+            if !visited.insert(m.clone()) {
+                continue;
+            }
+            for e in &valid.edges {
+                if e.to == m {
+                    stack.push(e.from.clone());
+                }
+            }
+        }
+        for m in visited {
+            owner.insert(m, oid.to_string());
+        }
+    };
+
+    for out in &valid.outputs {
+        let starts = valid
+            .edges
+            .iter()
+            .filter(|e| e.to == out.id)
+            .map(|e| e.from.clone())
+            .collect();
+        assign(&out.id, starts);
+    }
+    // Monitor last: it reaches every analyzer, so shared nodes owned by a real
+    // output are read from their ring and only monitor-only nodes stay local.
+    if let Some(mk) = monitor_key {
+        let starts = valid
+            .effects
+            .iter()
+            .filter(|e| is_analyzer(&e.spec))
+            .map(|e| e.id.clone())
+            .collect();
+        assign(mk, starts);
+    }
+
+    for v in consumers.values_mut() {
+        v.dedup();
+    }
+    CutPlan { owner, consumers }
+}
+
+/// Analyzer effects are monitor-graph roots: they render telemetry and have no
+/// audio successor, so the monitor sub-graph is everything that feeds one.
+fn is_analyzer(spec: &EffectSpec) -> bool {
+    matches!(
+        spec,
+        EffectSpec::LevelMeter(_)
+            | EffectSpec::LufsMeter(_)
+            | EffectSpec::Waveform(_)
+            | EffectSpec::Spectrum(_)
+    )
+}
+
+/// Like `reachable_backward` but does not expand through `stop` nodes: they are
+/// included as leaves (built as ring-sources) but their upstream chain is not.
+fn reachable_backward_cut(
+    output_id: &str,
+    valid: &ValidGraph,
+    stop: &HashSet<String>,
+) -> HashSet<String> {
+    let starts: Vec<String> = valid
+        .edges
+        .iter()
+        .filter(|e| e.to == output_id)
+        .map(|e| e.from.clone())
+        .collect();
+    reachable_backward_from(&starts, valid, stop)
+}
+
+/// Backward reachability from a set of start nodes (the starts are included),
+/// not expanding through `stop` nodes.
+fn reachable_backward_from(
+    starts: &[String],
+    valid: &ValidGraph,
+    stop: &HashSet<String>,
+) -> HashSet<String> {
+    let mut seen = HashSet::new();
+    let mut stack: Vec<String> = starts.to_vec();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if stop.contains(&id) {
+            continue;
+        }
+        for edge in &valid.edges {
+            if edge.to == id {
+                stack.push(edge.from.clone());
+            }
+        }
+    }
+    seen
 }
 
 /// Node ids reachable backward from `output_id`, excluding the output node itself.

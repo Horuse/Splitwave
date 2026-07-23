@@ -1073,11 +1073,10 @@ pub(super) fn build_output_graph(
             node_latencies.push(0);
             node_channels.push(source_channels);
         } else if let Some(effect) = valid.effects.iter().find(|e| &e.id == id) {
-            // Monitor-graph plugins are metering-only duplicates unless there is
-            // no real output, in which case the monitor is the only instance and
-            // must be the editor target.
-            let primary = output_id.is_some() || valid.outputs.is_empty();
-            let build = instantiate_effect(&effect.spec, id, output_sr, realtime, primary, registry);
+            // The cut plan builds each node in exactly one graph (its owner --
+            // a real output, or the monitor for analyzer-only nodes), so this
+            // build is the sole plugin instance and always the editor target.
+            let build = instantiate_effect(&effect.spec, id, output_sr, realtime, true, registry);
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
             }
@@ -1216,14 +1215,9 @@ pub(super) fn build_output_graph(
             let own = build.effect.latency_frames();
             effects.push(build.effect);
             for _ in 1..pairs {
-                let extra = instantiate_effect(
-                    &effect.spec,
-                    id,
-                    output_sr,
-                    realtime,
-                    output_id.is_some() || valid.outputs.is_empty(),
-                    registry,
-                );
+                // Extra stereo pairs are separate instances for wider audio,
+                // never the editor target.
+                let extra = instantiate_effect(&effect.spec, id, output_sr, realtime, false, registry);
                 effects.push(extra.effect);
             }
             id_to_index.insert(id.clone(), nodes.len());

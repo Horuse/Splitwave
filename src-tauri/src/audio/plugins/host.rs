@@ -22,6 +22,7 @@ use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginState};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
@@ -29,6 +30,23 @@ use raw_window_handle::HasWindowHandle;
 use tauri::Emitter;
 
 use super::node::PluginNode;
+use super::ParamRing;
+
+/// One automatable plugin parameter, sent to the frontend for the node UI.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginParamInfo {
+    pub id: u32,
+    pub name: String,
+    pub min: f64,
+    pub max: f64,
+    pub default: f64,
+    pub value: f64,
+    /// Stepped params (int/enum/toggle) render as discrete steps, not a slider.
+    pub stepped: bool,
+    /// Read-only params are shown but not editable.
+    pub read_only: bool,
+}
 
 struct TimerReg {
     id: u32,
@@ -301,6 +319,7 @@ fn port_channels(
 
 /// Loads, instantiates and activates a CLAP plugin, returning its `Send` audio
 /// node. Safe to call from any non-main thread.
+#[allow(clippy::too_many_arguments)]
 pub fn activate_clap(
     node_id: &str,
     path: &str,
@@ -309,6 +328,7 @@ pub fn activate_clap(
     max_frames: usize,
     state_b64: Option<String>,
     primary: bool,
+    param_ring: Arc<ParamRing>,
 ) -> Result<PluginNode, String> {
     ensure_ticker();
     let node_id = node_id.to_string();
@@ -391,6 +411,7 @@ pub fn activate_clap(
             &input_channels,
             &output_channels,
             max_frames,
+            param_ring.clone(),
             alive.clone(),
         );
 
@@ -446,6 +467,47 @@ pub fn save_state(node_id: &str) -> Option<String> {
     })
     .ok()
     .flatten()
+}
+
+/// Enumerates a running plugin's parameters (id, range, current value) for the
+/// node UI. Empty when the plugin isn't running or exposes no params extension.
+/// Safe off the main thread.
+pub fn get_plugin_params(node_id: &str) -> Vec<PluginParamInfo> {
+    let node_id = node_id.to_string();
+    on_main(move |state| {
+        let Some(slot) = state.instances.get_mut(&node_id) else {
+            return Vec::new();
+        };
+        let Some(ext) = slot.instance.plugin_handle().get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+        let count = ext.count(&mut slot.instance.plugin_handle());
+        let mut out = Vec::with_capacity(count as usize);
+        let mut buf = ParamInfoBuffer::default();
+        for i in 0..count {
+            let Some(info) = ext.get_info(&mut slot.instance.plugin_handle(), i, &mut buf) else {
+                continue;
+            };
+            if info.flags.contains(ParamInfoFlags::IS_HIDDEN) {
+                continue;
+            }
+            let value = ext
+                .get_value(&mut slot.instance.plugin_handle(), info.id)
+                .unwrap_or(info.default_value);
+            out.push(PluginParamInfo {
+                id: info.id.get(),
+                name: String::from_utf8_lossy(info.name).into_owned(),
+                min: info.min_value,
+                max: info.max_value,
+                default: info.default_value,
+                value,
+                stepped: info.flags.contains(ParamInfoFlags::IS_STEPPED),
+                read_only: info.flags.contains(ParamInfoFlags::IS_READONLY),
+            });
+        }
+        out
+    })
+    .unwrap_or_default()
 }
 
 /// Native host windows that plugin editors are embedded into, keyed by node id.

@@ -25,6 +25,17 @@ export interface PluginDescriptor {
 	version: string;
 }
 
+export interface PluginParam {
+	id: number;
+	name: string;
+	min: number;
+	max: number;
+	default: number;
+	value: number;
+	stepped: boolean;
+	readOnly: boolean;
+}
+
 export interface NativeDeviceInfo {
 	sampleRate: number;
 	channels: number;

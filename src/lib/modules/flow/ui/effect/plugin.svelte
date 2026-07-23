@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
-	import type { PluginDescriptor } from '$lib/modules/audio/types';
+	import type { PluginDescriptor, PluginParam } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
+	import Slider from './_slider.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import { Plug } from '$lib/components/icons';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
@@ -62,6 +64,39 @@
 	// The editor embeds a native plugin view, which needs the running audio
 	// instance; there is nothing to open before the pipeline starts.
 	const canOpenEditor = $derived(!!data.path && audioStore.isRunning);
+
+	// Automatable parameters, editable directly in the node. Opt-in (most users
+	// only need the editor). Readable only once the plugin is instantiated; a
+	// poll keeps them in sync with edits made in the plugin's own window.
+	let params = $state<PluginParam[]>([]);
+
+	async function loadParams() {
+		const fresh = (await audioMethods.getPluginParams(id).catch(() => [])).filter(
+			(p) => !p.readOnly
+		);
+		// Same parameter set: update values in place so sliders aren't recreated
+		// (and a mid-drag one isn't yanked). Otherwise swap the whole list.
+		if (params.length === fresh.length && params.every((p, i) => p.id === fresh[i].id)) {
+			for (let i = 0; i < fresh.length; i++) params[i].value = fresh[i].value;
+		} else {
+			params = fresh;
+		}
+	}
+
+	function setParam(p: PluginParam, v: number) {
+		p.value = v;
+		audioMethods.updateEffect(id, { pluginParams: { [p.id]: v } }).catch(() => {});
+	}
+
+	$effect(() => {
+		if (!data.showParams || !data.path || !audioStore.isRunning) {
+			params = [];
+			return;
+		}
+		loadParams();
+		const timer = setInterval(loadParams, 500);
+		return () => clearInterval(timer);
+	});
 
 	// Pull the plugin's own state (edited via its GUI) into node data so it
 	// survives project reload. State is non-structural, so this never rebuilds.
@@ -148,6 +183,27 @@
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>
+			<Toggle
+				size="sm"
+				label="Show parameters"
+				checked={!!data.showParams}
+				onChange={(v) => flow.updateNodeData(id, { showParams: v })}
+			/>
+			{#if data.showParams && params.length}
+				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
+					{#each params as p (p.id)}
+						<Slider
+							label={p.name}
+							value={p.value}
+							min={p.min}
+							max={p.max}
+							step={p.stepped ? 1 : p.max > p.min ? (p.max - p.min) / 100 : 0.01}
+							defaultValue={p.default}
+							onChange={(v) => setParam(p, v)}
+						/>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </Wrapper>

@@ -4,10 +4,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use clack_host::events::event_types::ParamValueEvent;
+use clack_host::events::io::EventBuffer;
+use clack_host::events::Pckn;
 use clack_host::prelude::*;
+use clack_host::utils::Cookie;
 
 use crate::audio::effects::Effect;
 use crate::audio::plugins::host::SplitwaveHost;
+use crate::audio::plugins::ParamRing;
+
+/// Upper bound on parameter changes applied per block; the UI knob rate is far
+/// below this, so the `EventBuffer` never grows past its preallocated capacity.
+const MAX_PARAM_EVENTS_PER_BLOCK: usize = 64;
 
 /// The pipeline carries interleaved stereo. Audio flows only through the
 /// plugin's main (index 0) input/output ports; other ports the plugin declares
@@ -21,6 +30,9 @@ pub struct PluginNode {
     out_bufs: Vec<Vec<Vec<f32>>>,
     steady: u64,
     max_frames: usize,
+    // UI parameter writes drained into `events` and fed to `process` each block.
+    params: Arc<ParamRing>,
+    events: EventBuffer,
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
     alive: Arc<AtomicBool>,
@@ -40,13 +52,18 @@ fn alloc(port_channels: &[u32], max_frames: usize) -> Vec<Vec<Vec<f32>>> {
 }
 
 impl PluginNode {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         processor: StartedPluginAudioProcessor<SplitwaveHost>,
         input_channels: &[u32],
         output_channels: &[u32],
         max_frames: usize,
+        params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Self {
+        // Discard any queue backlog from a previously loaded plugin on this node
+        // so a freshly instantiated plugin never receives another's param ids.
+        while params.pop().is_some() {}
         Self {
             processor,
             in_ports: AudioPorts::with_capacity(
@@ -61,6 +78,8 @@ impl PluginNode {
             out_bufs: alloc(output_channels, max_frames),
             steady: 0,
             max_frames,
+            params,
+            events: EventBuffer::with_capacity(MAX_PARAM_EVENTS_PER_BLOCK),
             alive,
         }
     }
@@ -78,8 +97,31 @@ impl Effect for PluginNode {
             in_bufs,
             out_bufs,
             steady,
+            params,
+            events,
             ..
         } = self;
+
+        // Drain UI parameter writes into events fed to the plugin this block.
+        // Global target (all ports/channels/keys), null cookie: the plugin
+        // resolves the parameter by its stable id.
+        events.clear();
+        let mut drained = 0;
+        while drained < MAX_PARAM_EVENTS_PER_BLOCK {
+            let Some((id, value)) = params.pop() else {
+                break;
+            };
+            if let Some(param_id) = ClapId::from_raw(id) {
+                events.push(&ParamValueEvent::new(
+                    0,
+                    param_id,
+                    Pckn::match_all(),
+                    value,
+                    Cookie::empty(),
+                ));
+            }
+            drained += 1;
+        }
 
         // Main input port, first two channels; silence stays in every other
         // port/channel from allocation.
@@ -112,7 +154,7 @@ impl Effect for PluginNode {
             .process(
                 &inputs,
                 &mut outputs,
-                &InputEvents::empty(),
+                &events.as_input(),
                 &mut OutputEvents::void(),
                 Some(*steady),
                 None,

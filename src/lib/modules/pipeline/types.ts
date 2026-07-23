@@ -69,7 +69,9 @@ export type DeclickNodeData = XyData<DeclickData>;
 export type DeEsserNodeData = XyData<DeEsserData>;
 // `name` / `vendor` are FE-only display labels for the chosen plugin; the
 // engine reads path / pluginId / bypassed / state from PluginData.
-export type PluginNodeData = XyData<PluginData & { name?: string; vendor?: string }>;
+export type PluginNodeData = XyData<
+	PluginData & { name?: string; vendor?: string; showParams?: boolean }
+>;
 // `name` is a FE-only participant label shared over the ctrl channel; the
 // engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;

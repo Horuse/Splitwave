@@ -232,6 +232,10 @@ pub enum EffectControl {
         threshold_db: Arc<AtomicU32>,
         ratio: Arc<AtomicU32>,
     },
+    Plugin {
+        // Shared with the RT `PluginNode`; UI param writes flow through it.
+        events: Arc<crate::audio::plugins::ParamRing>,
+    },
 }
 
 impl EffectControl {
@@ -358,6 +362,16 @@ impl EffectControl {
                     store_f32(ratio, v.clamp(1.0, 12.0));
                 }
             }
+            EffectControl::Plugin { events } => {
+                // `{ pluginParams: { "<paramId>": value } }` from the node UI.
+                if let Some(map) = data.get("pluginParams").and_then(Value::as_object) {
+                    for (id, v) in map {
+                        if let (Ok(id), Some(value)) = (id.parse::<u32>(), v.as_f64()) {
+                            events.push(id, value);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -388,6 +402,9 @@ pub struct EffectRegistry {
     lufs: std::collections::HashMap<String, LufsHandle>,
     gr_atomics: std::collections::HashMap<String, Arc<AtomicU32>>,
     scopes: std::collections::HashMap<String, WaveformHandle>,
+    // Per-plugin UI->RT parameter queue, reused across rebuilds so the control
+    // handed to the frontend keeps reaching the current `PluginNode`.
+    plugin_param_rings: std::collections::HashMap<String, Arc<crate::audio::plugins::ParamRing>>,
     // Plugin node ids that already claimed the editor-target (primary) instance
     // in the current reconcile. A node feeding several real outputs is built
     // once per output; only the first claim owns the editor, the rest are
@@ -771,6 +788,18 @@ pub fn instantiate_effect(
             // fanning out to several outputs would otherwise bind the editor to
             // whichever output was built last.
             let primary = primary && registry.plugin_primary_claimed.insert(node_id.to_string());
+            // The editor-target instance drains the persistent per-node queue
+            // (kept across rebuilds); extra stereo pairs get a throwaway queue,
+            // since an SPSC ring has a single consumer.
+            let ring = if primary {
+                registry
+                    .plugin_param_rings
+                    .entry(node_id.to_string())
+                    .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
+                    .clone()
+            } else {
+                Arc::new(crate::audio::plugins::ParamRing::new())
+            };
             match crate::audio::plugins::host::activate_clap(
                 node_id,
                 path,
@@ -779,8 +808,14 @@ pub fn instantiate_effect(
                 PLUGIN_MAX_BLOCK,
                 state.clone(),
                 primary,
+                ring.clone(),
             ) {
-                Ok(node) => mk(RuntimeEffect::HostedPlugin(node), None, None, None, None, None),
+                // Only the editor-target build publishes the control, so the UI
+                // writes reach the audible instance.
+                Ok(node) => {
+                    let control = primary.then_some(EffectControl::Plugin { events: ring });
+                    mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None)
+                }
                 Err(e) => {
                     // Surface as silence, never a passthrough that hides the failure.
                     tracing::error!("plugin {plugin_id} failed to load: {e}");

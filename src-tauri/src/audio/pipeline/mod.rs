@@ -703,7 +703,10 @@ impl ActivePipeline {
                 all_pairs.push((out.id.clone(), inp_id, prod));
             }
             for (id, control) in built.controls {
-                self.effect_controls.entry(id).or_insert(control);
+                // Overwrite, not keep-first: a rebuilt node's control carries the
+                // live handles/queue of the current instance; a stale entry would
+                // route updates to a dropped instance.
+                self.effect_controls.insert(id, control);
             }
             for (id, bypass) in built.bypasses {
                 self.effect_bypasses.entry(id).or_insert(bypass);
@@ -755,7 +758,10 @@ impl ActivePipeline {
                     all_pairs.push((MONITOR_KEY.to_string(), inp_id, prod));
                 }
                 for (id, control) in built.controls {
-                    self.effect_controls.entry(id).or_insert(control);
+                    // Overwrite, not keep-first: a rebuilt node's control carries the
+                // live handles/queue of the current instance; a stale entry would
+                // route updates to a dropped instance.
+                self.effect_controls.insert(id, control);
                 }
                 for (id, bypass) in built.bypasses {
                     self.effect_bypasses.entry(id).or_insert(bypass);

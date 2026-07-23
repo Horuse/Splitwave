@@ -5,9 +5,11 @@
 mod clap_backend;
 pub mod host;
 mod node;
+pub mod param_ring;
 pub mod scan;
 
 pub use node::PluginNode;
+pub use param_ring::ParamRing;
 
 use std::path::{Path, PathBuf};
 

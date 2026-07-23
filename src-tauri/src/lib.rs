@@ -190,6 +190,7 @@ pub fn run() {
             commands::open_plugin_editor,
             commands::close_plugin_editor,
             commands::get_plugin_state,
+            commands::get_plugin_params,
             commands::take_crash_reports,
             commands::debug_panic,
             commands::list_input_devices,

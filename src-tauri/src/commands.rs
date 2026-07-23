@@ -80,6 +80,19 @@ pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
     .unwrap_or(None))
 }
 
+/// Automatable parameters of a running plugin for the node UI. Empty when the
+/// plugin isn't running or exposes no parameters.
+#[tauri::command]
+pub async fn get_plugin_params(
+    node_id: String,
+) -> AppResult<Vec<crate::audio::plugins::host::PluginParamInfo>> {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::host::get_plugin_params(&node_id)
+    })
+    .await
+    .unwrap_or_default())
+}
+
 /// Persisted crash reports from previous runs, cleared as they are read.
 #[tauri::command]
 pub fn take_crash_reports() -> Vec<serde_json::Value> {

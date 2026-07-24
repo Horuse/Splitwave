@@ -32,6 +32,9 @@ pub struct PluginNode {
     max_frames: usize,
     // UI parameter writes drained into `events` and fed to `process` each block.
     params: Arc<ParamRing>,
+    // Per-node read position into the shared broadcast ring; every stereo pair
+    // of a wide plugin reads the same writes through its own cursor.
+    param_cursor: usize,
     events: EventBuffer,
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
@@ -61,9 +64,9 @@ impl PluginNode {
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Self {
-        // Discard any queue backlog from a previously loaded plugin on this node
-        // so a freshly instantiated plugin never receives another's param ids.
-        while params.pop().is_some() {}
+        // Start at the ring's current end so a freshly instantiated plugin
+        // never replays writes issued for a previously loaded one.
+        let param_cursor = params.cursor();
         Self {
             processor,
             in_ports: AudioPorts::with_capacity(
@@ -79,6 +82,7 @@ impl PluginNode {
             steady: 0,
             max_frames,
             params,
+            param_cursor,
             events: EventBuffer::with_capacity(MAX_PARAM_EVENTS_PER_BLOCK),
             alive,
         }
@@ -98,6 +102,7 @@ impl Effect for PluginNode {
             out_bufs,
             steady,
             params,
+            param_cursor,
             events,
             ..
         } = self;
@@ -108,7 +113,7 @@ impl Effect for PluginNode {
         events.clear();
         let mut drained = 0;
         while drained < MAX_PARAM_EVENTS_PER_BLOCK {
-            let Some((id, value)) = params.pop() else {
+            let Some((id, value)) = params.read(param_cursor) else {
                 break;
             };
             if let Some(param_id) = ClapId::from_raw(id) {

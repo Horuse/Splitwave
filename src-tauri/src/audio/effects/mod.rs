@@ -788,18 +788,14 @@ pub fn instantiate_effect(
             // fanning out to several outputs would otherwise bind the editor to
             // whichever output was built last.
             let primary = primary && registry.plugin_primary_claimed.insert(node_id.to_string());
-            // The editor-target instance drains the persistent per-node queue
-            // (kept across rebuilds); extra stereo pairs get a throwaway queue,
-            // since an SPSC ring has a single consumer.
-            let ring = if primary {
-                registry
-                    .plugin_param_rings
-                    .entry(node_id.to_string())
-                    .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
-                    .clone()
-            } else {
-                Arc::new(crate::audio::plugins::ParamRing::new())
-            };
+            // Every stereo pair shares the persistent per-node broadcast ring
+            // (kept across rebuilds); each pair reads it through its own cursor,
+            // so a UI write reaches all pairs, not just the first.
+            let ring = registry
+                .plugin_param_rings
+                .entry(node_id.to_string())
+                .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
+                .clone();
             match crate::audio::plugins::host::activate_clap(
                 node_id,
                 path,

@@ -1,7 +1,9 @@
 //! Instantiating a VST3 plugin: the two halves, their connection, and the
 //! state handshake between them.
 
-use vst3::Steinberg::Vst::{IComponent, IComponentTrait, IEditController, IEditControllerTrait};
+use vst3::Steinberg::Vst::{
+    IComponent, IComponentHandler, IComponentTrait, IEditController, IEditControllerTrait,
+};
 use vst3::Steinberg::{
     kResultOk, tresult, FIDString, IBStream, IPluginBaseTrait, IPluginFactoryTrait, TUID,
 };
@@ -11,7 +13,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use super::vst3_backend::{parse_cid, Vst3Module};
-use super::vst3_com::{host_context, MemoryStream};
+use super::vst3_com::{host_context, ComponentHandler, EditListener, MemoryStream};
+use super::host_api::PluginParamInfo;
 use super::vst3_node::{supports_f32, Vst3Node};
 use super::ParamRing;
 
@@ -24,8 +27,18 @@ pub struct Vst3Instance {
     /// Whether one object answers as both halves. It decides whether the two
     /// are connected, and must not be connected to itself.
     separate: bool,
+    /// Kept alive for the plugin, which holds only a borrowed reference to it.
+    handler: Option<ComWrapper<ComponentHandler<Box<dyn EditListener>>>>,
     /// The factory that made these lives in the module, so it outlives them.
     _module: Vst3Module,
+}
+
+/// A `String128` field as text, up to its terminator.
+fn utf16(field: &[u16]) -> String {
+    let len = field.iter().position(|c| *c == 0).unwrap_or(field.len());
+    char::decode_utf16(field[..len].iter().copied())
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
 }
 
 fn ok(result: tresult) -> bool {
@@ -75,6 +88,7 @@ impl Vst3Instance {
                 component,
                 controller,
                 separate,
+                handler: None,
                 _module: module,
             })
         }
@@ -149,6 +163,62 @@ impl Vst3Instance {
 
     pub fn parameter_count(&self) -> i32 {
         unsafe { self.controller.getParameterCount() }
+    }
+
+    /// Every automatable parameter, for the node UI. VST3 values are already
+    /// normalised, so the range is 0..1 and the plugin's own text renders the
+    /// real units.
+    pub fn params(&self) -> Vec<PluginParamInfo> {
+        use vst3::Steinberg::Vst::ParameterInfo_::ParameterFlags_::{
+            kIsHidden, kIsList, kIsProgramChange, kIsReadOnly,
+        };
+        use vst3::Steinberg::Vst::ParameterInfo;
+
+        let mut out = Vec::new();
+        // SAFETY: indices below the count the controller reports.
+        unsafe {
+            for index in 0..self.controller.getParameterCount() {
+                let mut info: ParameterInfo = std::mem::zeroed();
+                if !ok(self.controller.getParameterInfo(index, &mut info)) {
+                    continue;
+                }
+                // Hidden and program-change parameters are the plugin's own
+                // plumbing, not something a user should be handed.
+                if info.flags & (kIsHidden | kIsProgramChange) != 0 {
+                    continue;
+                }
+                out.push(PluginParamInfo {
+                    id: info.id,
+                    name: utf16(&info.title),
+                    min: 0.0,
+                    max: 1.0,
+                    default: info.defaultNormalizedValue,
+                    value: self.controller.getParamNormalized(info.id),
+                    stepped: info.stepCount > 0 || info.flags & kIsList != 0,
+                    read_only: info.flags & kIsReadOnly != 0,
+                });
+            }
+        }
+        out
+    }
+
+    /// Moves a parameter behind the plugin editor's back, so its own display
+    /// follows a change made on the node. The audio side hears it through the
+    /// ring; this is the editor's copy.
+    pub fn set_param(&self, id: u32, value: f64) {
+        unsafe { self.controller.setParamNormalized(id, value) };
+    }
+
+    /// Routes edits made inside the plugin's own window to `listener`. Without
+    /// this the plugin has no way to tell the host a control moved, and its
+    /// editor appears to do nothing.
+    pub fn listen(&mut self, listener: Box<dyn EditListener>) {
+        let handler = ComWrapper::new(ComponentHandler::new(listener));
+        if let Some(h) = handler.to_com_ptr::<IComponentHandler>() {
+            unsafe { self.controller.setComponentHandler(h.as_ptr()) };
+        }
+        // The plugin holds a borrowed reference, so the object must outlive it.
+        self.handler = Some(handler);
     }
 
     /// Configures the plugin for the pipeline's format and starts it. The
@@ -291,6 +361,97 @@ mod tests {
     use super::*;
     use crate::audio::plugins::vst3_backend::Vst3Backend;
     use crate::audio::plugins::PluginBackend;
+
+    fn first_plugin() -> Option<(Vst3Instance, String)> {
+        let plugin = Vst3Backend.scan().into_iter().next()?;
+        let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
+        Some((
+            Vst3Instance::new(module, &plugin.plugin_id).unwrap(),
+            plugin.name,
+        ))
+    }
+
+    #[test]
+    fn reports_parameters_in_normalised_form() {
+        let Some((instance, name)) = first_plugin() else {
+            return;
+        };
+        let params = instance.params();
+        assert!(!params.is_empty(), "{name} exposed no parameters");
+        for p in &params {
+            assert_eq!((p.min, p.max), (0.0, 1.0), "{} is not normalised", p.name);
+            assert!(
+                (0.0..=1.0).contains(&p.value),
+                "{} reads {} outside its own range",
+                p.name,
+                p.value
+            );
+            assert!(!p.name.is_empty(), "parameter {} has no name", p.id);
+        }
+        println!("{name}: {} visible params", params.len());
+    }
+
+    /// Host to editor: a value written by the node must be what the controller
+    /// reports back, or the plugin's own window would show something else.
+    #[test]
+    fn a_parameter_set_by_the_host_is_read_back() {
+        let Some((instance, name)) = first_plugin() else {
+            return;
+        };
+        // A stepped parameter snaps the written value to its nearest step, so
+        // it cannot show whether the write itself landed.
+        let Some(param) = instance
+            .params()
+            .into_iter()
+            .find(|p| !p.read_only && !p.stepped)
+        else {
+            panic!("{name} has no continuous writable parameter");
+        };
+        let target = if param.value > 0.5 { 0.25 } else { 0.75 };
+        instance.set_param(param.id, target);
+        let readback = unsafe { instance.controller.getParamNormalized(param.id) };
+        assert!(
+            (readback - target).abs() < 1e-6,
+            "{}: wrote {target}, read {readback}",
+            param.name
+        );
+    }
+
+    /// Editor to host: an edit inside the plugin's window must reach the ring,
+    /// which is the only path from there to the audio thread.
+    #[test]
+    fn an_edit_from_the_plugin_reaches_the_param_ring() {
+        struct ToRing(Arc<ParamRing>);
+        impl crate::audio::plugins::vst3_com::EditListener for ToRing {
+            fn param_edited(&self, id: u32, value: f64) {
+                self.0.push(id, value);
+            }
+            fn restart(&self, _flags: i32) {}
+        }
+
+        let Some((mut instance, _)) = first_plugin() else {
+            return;
+        };
+        let ring = Arc::new(ParamRing::new());
+        let mut cursor = ring.cursor();
+        instance.listen(Box::new(ToRing(ring.clone())));
+
+        // Stand in for the plugin's editor: the handler it was just given is
+        // the same object its own window would call.
+        use vst3::Steinberg::Vst::IComponentHandlerTrait;
+        let handler = instance
+            .handler
+            .as_ref()
+            .and_then(|h| h.to_com_ptr::<IComponentHandler>())
+            .unwrap();
+        unsafe {
+            handler.beginEdit(11);
+            handler.performEdit(11, 0.375);
+            handler.endEdit(11);
+        }
+
+        assert_eq!(ring.read(&mut cursor), Some((11, 0.375)));
+    }
 
     /// Audio must survive a round trip through the plugin: same length, no NaN
     /// or infinity, and the block must not be left untouched by a processor

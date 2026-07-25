@@ -383,6 +383,16 @@ pub trait EditListener {
     fn restart(&self, flags: i32);
 }
 
+impl EditListener for Box<dyn EditListener> {
+    fn param_edited(&self, id: ParamID, value: ParamValue) {
+        (**self).param_edited(id, value);
+    }
+
+    fn restart(&self, flags: i32) {
+        (**self).restart(flags);
+    }
+}
+
 pub struct ComponentHandler<L: EditListener> {
     listener: L,
 }

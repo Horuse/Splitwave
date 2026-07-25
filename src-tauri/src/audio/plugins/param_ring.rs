@@ -8,8 +8,16 @@
 //! same worker thread. Each holds its own read cursor, so every pair applies
 //! the same parameter change; a destructive SPSC queue would let the first pair
 //! consume the write and starve the rest.
+//!
+//! The queue is lock-free for readers only. Writers take `producer`, because
+//! there is more than one: the UI writes through `update_effect`, and a VST3
+//! plugin's own editor writes through `IComponentHandler::performEdit` on the
+//! main thread. Two unsynchronised writers would interleave a slot's payload
+//! with its sequence number and hand the reader a torn event. The lock never
+//! reaches the DSP worker, which only ever reads.
 
 use std::sync::atomic::{fence, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 /// Power of two so index wrap is a mask.
 const CAPACITY: usize = 512;
@@ -27,9 +35,11 @@ struct Slot {
 
 pub struct ParamRing {
     slots: Box<[Slot]>,
-    // Total writes issued by the producer (UI thread), monotonically increasing.
+    // Total writes issued, monotonically increasing.
     tail: AtomicUsize,
     mask: usize,
+    // Serialises writers. Never taken on the audio thread.
+    producer: Mutex<()>,
 }
 
 impl ParamRing {
@@ -46,6 +56,7 @@ impl ParamRing {
             slots,
             tail: AtomicUsize::new(0),
             mask: CAPACITY - 1,
+            producer: Mutex::new(()),
         }
     }
 
@@ -55,9 +66,10 @@ impl ParamRing {
         self.tail.load(Ordering::Acquire)
     }
 
-    /// UI thread. Overwrites the oldest slot; a consumer lagging past capacity
-    /// loses old writes, which the UI re-sends on the next knob move.
+    /// Any writer thread. Overwrites the oldest slot; a consumer lagging past
+    /// capacity loses old writes, which the UI re-sends on the next knob move.
     pub fn push(&self, id: u32, value: f64) {
+        let _writing = self.producer.lock().unwrap_or_else(|e| e.into_inner());
         let w = self.tail.load(Ordering::Relaxed);
         let slot = &self.slots[w & self.mask];
         slot.seq.store(WRITING, Ordering::Release);

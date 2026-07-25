@@ -191,6 +191,12 @@ impl Module {
                 let extended = factory2.as_ref().is_some_and(|f| {
                     f.getClassInfo2(index, &mut info2) == vst3::Steinberg::kResultOk
                 });
+                // Splitwave routes audio and sends no notes, so an instrument
+                // would sit silent in the graph. Mirrors the AU scan, which
+                // takes only `aufx` and `aumf`.
+                if !extended || !c_str(&info2.subCategories).split('|').any(|c| c == "Fx") {
+                    continue;
+                }
 
                 let cid = format_cid(&info.cid);
                 out.push(PluginDescriptor {
@@ -200,14 +206,10 @@ impl Module {
                     plugin_id: cid,
                     name: c_str(&info.name),
                     vendor: match c_str(&info2.vendor) {
-                        v if extended && !v.is_empty() => v,
+                        v if !v.is_empty() => v,
                         _ => factory_vendor.clone(),
                     },
-                    version: if extended {
-                        c_str(&info2.version)
-                    } else {
-                        String::new()
-                    },
+                    version: c_str(&info2.version),
                 });
             }
         }

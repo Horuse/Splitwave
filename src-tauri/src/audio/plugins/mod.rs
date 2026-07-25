@@ -17,6 +17,9 @@ pub mod vst3_com;
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
 pub mod vst3_host;
+#[allow(dead_code)]
+#[cfg(target_os = "macos")]
+pub mod vst3_node;
 pub mod host;
 pub mod host_api;
 mod node;

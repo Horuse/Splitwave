@@ -7,8 +7,13 @@ use vst3::Steinberg::{
 };
 use vst3::{ComPtr, ComWrapper, Interface};
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use super::vst3_backend::{parse_cid, Vst3Module};
 use super::vst3_com::{host_context, MemoryStream};
+use super::vst3_node::{supports_f32, Vst3Node};
+use super::ParamRing;
 
 /// A plugin's two halves. VST3 splits processing from parameter handling so a
 /// host may run them in separate processes; we always run both here, but the
@@ -145,6 +150,108 @@ impl Vst3Instance {
     pub fn parameter_count(&self) -> i32 {
         unsafe { self.controller.getParameterCount() }
     }
+
+    /// Configures the plugin for the pipeline's format and starts it. The
+    /// returned node is the only half that touches the audio thread.
+    pub fn activate(
+        &self,
+        sample_rate: u32,
+        max_frames: usize,
+        params: Arc<ParamRing>,
+        alive: Arc<AtomicBool>,
+    ) -> Result<Vst3Node, String> {
+        use vst3::Steinberg::Vst::{
+            BusDirections_::{kInput, kOutput},
+            IAudioProcessor, IAudioProcessorTrait, MediaTypes_::kAudio,
+            ProcessModes_::kRealtime, ProcessSetup, SpeakerArr::kStereo,
+            SymbolicSampleSizes_::kSample32,
+        };
+
+        let processor = self
+            .component
+            .cast::<IAudioProcessor>()
+            .ok_or("component is not an audio processor")?;
+        if !supports_f32(&processor) {
+            return Err("plugin cannot process 32-bit float".into());
+        }
+
+        // SAFETY: the setup sequence below is the order VST3 requires, and each
+        // index is below the count the plugin itself reported.
+        unsafe {
+            let ins = self.component.getBusCount(kAudio as i32, kInput as i32);
+            let outs = self.component.getBusCount(kAudio as i32, kOutput as i32);
+
+            // The pipeline is stereo, so every audio bus is asked to be stereo.
+            // A plugin that refuses cannot carry our signal, and saying so beats
+            // running it in a layout we then mis-read.
+            let mut in_arr = vec![kStereo; ins.max(0) as usize];
+            let mut out_arr = vec![kStereo; outs.max(0) as usize];
+            if !ok(processor.setBusArrangements(
+                in_arr.as_mut_ptr(),
+                ins,
+                out_arr.as_mut_ptr(),
+                outs,
+            )) {
+                return Err("plugin refused a stereo bus layout".into());
+            }
+
+            for (dir, count) in [(kInput, ins), (kOutput, outs)] {
+                for index in 0..count {
+                    self.component
+                        .activateBus(kAudio as i32, dir as i32, index, 1);
+                }
+            }
+
+            let mut setup = ProcessSetup {
+                processMode: kRealtime as i32,
+                symbolicSampleSize: kSample32 as i32,
+                maxSamplesPerBlock: max_frames as i32,
+                sampleRate: sample_rate as f64,
+            };
+            if !ok(processor.setupProcessing(&mut setup)) {
+                return Err(format!(
+                    "plugin refused {sample_rate} Hz at {max_frames} frames per block"
+                ));
+            }
+
+            if !ok(self.component.setActive(1)) {
+                return Err("plugin refused to activate".into());
+            }
+            processor.setProcessing(1);
+
+            let input_channels = self.channel_counts(kInput as i32, ins);
+            let output_channels = self.channel_counts(kOutput as i32, outs);
+
+            Ok(Vst3Node::new(
+                processor,
+                self.component.clone(),
+                &input_channels,
+                &output_channels,
+                max_frames,
+                params,
+                alive,
+            ))
+        }
+    }
+
+    /// Channels per bus, read back after the arrangement is set.
+    unsafe fn channel_counts(&self, direction: i32, count: i32) -> Vec<usize> {
+        use vst3::Steinberg::Vst::{BusInfo, MediaTypes_::kAudio};
+
+        (0..count)
+            .map(|index| {
+                let mut info: BusInfo = std::mem::zeroed();
+                if ok(self
+                    .component
+                    .getBusInfo(kAudio as i32, direction, index, &mut info))
+                {
+                    info.channelCount.max(0) as usize
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
 }
 
 /// Puts a stream back at offset zero, the position a reader expects.
@@ -184,6 +291,66 @@ mod tests {
     use super::*;
     use crate::audio::plugins::vst3_backend::Vst3Backend;
     use crate::audio::plugins::PluginBackend;
+
+    /// Audio must survive a round trip through the plugin: same length, no NaN
+    /// or infinity, and the block must not be left untouched by a processor
+    /// that silently refused to run.
+    #[test]
+    fn renders_signal_through_every_installed_plugin() {
+        const FRAMES: usize = 512;
+        const RATE: u32 = 48_000;
+
+        for plugin in Vst3Backend.scan() {
+            let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
+            let instance = Vst3Instance::new(module, &plugin.plugin_id).unwrap();
+            let params = std::sync::Arc::new(crate::audio::plugins::ParamRing::new());
+            let alive = std::sync::Arc::new(AtomicBool::new(true));
+
+            let mut node = match instance.activate(RATE, FRAMES, params.clone(), alive.clone()) {
+                Ok(node) => node,
+                Err(err) => panic!("{}: {err}", plugin.name),
+            };
+
+            // A plugin with lookahead outputs silence until its own latency has
+            // passed, so measuring the first block would prove nothing.
+            use crate::audio::effects::Effect;
+            let blocks = node.latency_frames().div_ceil(FRAMES) + 2;
+            let mut rms = 0.0;
+            for block in 0..blocks {
+                let mut samples = vec![0.0f32; FRAMES * 2];
+                for i in 0..FRAMES {
+                    let s = ((block * FRAMES + i) as f32 * 0.05).sin() * 0.5;
+                    samples[2 * i] = s;
+                    samples[2 * i + 1] = s;
+                }
+                // A parameter write in flight must be consumed, not skipped.
+                params.push(0, 0.5);
+                node.process(&mut samples, FRAMES);
+
+                assert!(
+                    samples.iter().all(|s| s.is_finite()),
+                    "{} produced a non-finite sample",
+                    plugin.name
+                );
+                rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+            }
+
+            println!(
+                "{}: out rms {rms:.4} after {blocks} blocks, latency {}",
+                plugin.name,
+                node.latency_frames()
+            );
+            assert!(
+                rms > 0.0,
+                "{} passed no audio once its latency elapsed",
+                plugin.name
+            );
+
+            crate::audio::plugins::vst3_node::deactivate(&node);
+            drop(node);
+            assert!(!alive.load(std::sync::atomic::Ordering::Acquire));
+        }
+    }
 
     /// Every installed plugin must instantiate, expose a controller, and
     /// survive teardown. Both shapes (one object or two) go through here.

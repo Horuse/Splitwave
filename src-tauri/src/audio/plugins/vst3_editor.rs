@@ -178,9 +178,17 @@ mod tests {
     use crate::audio::plugins::vst3_host::Vst3Instance;
     use crate::audio::plugins::PluginBackend;
 
+    fn skipped(what: &str) {
+        println!("SKIPPED: no vst3 plugins installed, cannot check {what}");
+    }
+
     #[test]
     fn every_installed_plugin_offers_an_nsview_editor() {
-        for plugin in Vst3Backend.scan() {
+        let installed = Vst3Backend.scan();
+        if installed.is_empty() {
+            return skipped("editor creation");
+        }
+        for plugin in installed {
             let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
             let instance = Vst3Instance::new(module, &plugin.plugin_id).unwrap();
             unsafe {
@@ -210,7 +218,7 @@ mod tests {
     #[test]
     fn a_resize_request_reaches_the_host_and_returns_to_the_plugin() {
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
-            return;
+            return skipped("editor resize requests");
         };
         let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
         let instance = Vst3Instance::new(module, &plugin.plugin_id).unwrap();

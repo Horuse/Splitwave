@@ -284,6 +284,7 @@ mod tests {
     #[test]
     fn opening_a_bundle_twice_reuses_the_same_module() {
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
+            println!("SKIPPED: no vst3 plugins installed, cannot check module reuse");
             return;
         };
         let path = std::path::Path::new(&plugin.path);
@@ -311,7 +312,12 @@ mod tests {
             assert!(parse_cid(&plugin.plugin_id).is_some());
         }
         // A machine with no VST3 plugins installed is a valid state, so the
-        // scan finding nothing is not a failure. Print for the developer.
+        // scan finding nothing is not a failure -- but it does mean this test
+        // asserted nothing, which the log should not hide.
+        if found.is_empty() {
+            println!("SKIPPED: no vst3 plugins installed, scan asserted nothing");
+            return;
+        }
         println!("found {} vst3 plugins", found.len());
         for plugin in &found {
             println!("  {} by {} [{}]", plugin.name, plugin.vendor, plugin.path);

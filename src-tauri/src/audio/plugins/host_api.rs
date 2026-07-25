@@ -169,3 +169,33 @@ pub trait PluginHost: Sync {
     /// has left the graph -- the one place a plugin may be destroyed.
     fn tick_and_reclaim(&self);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// State tagging is what stops one plugin's blob reaching another's parser.
+    /// Every format relies on it, so it is tested once here rather than thrice.
+    #[test]
+    fn a_tagged_blob_comes_back_only_to_its_owner() {
+        let tagged = tag_state("com.example.reverb", "cGF5bG9hZA==");
+        assert_eq!(untag_state("com.example.reverb", &tagged), Some("cGF5bG9hZA=="));
+        assert_eq!(untag_state("com.example.delay", &tagged), None);
+    }
+
+    /// A payload is base64 and a VST3 owner is 32 hex digits, so neither can
+    /// contain the separator: the split must take the last one regardless.
+    #[test]
+    fn an_owner_containing_the_separator_still_round_trips() {
+        let owner = "vendor|product";
+        let tagged = tag_state(owner, "Ymxvbg==");
+        assert_eq!(untag_state(owner, &tagged), Some("Ymxvbg=="));
+        assert_eq!(untag_state("vendor", &tagged), None);
+    }
+
+    #[test]
+    fn an_untagged_blob_belongs_to_nobody() {
+        assert_eq!(untag_state("com.example.reverb", "cGF5bG9hZA=="), None);
+        assert_eq!(untag_state("", ""), None);
+    }
+}

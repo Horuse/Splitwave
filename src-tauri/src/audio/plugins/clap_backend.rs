@@ -77,3 +77,49 @@ impl PluginBackend for ClapBackend {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The CLAP scan must survive whatever is installed and describe every
+    /// plugin well enough to re-resolve it later. Loading a foreign dylib is
+    /// the risky half; a bundle that misbehaves is skipped, never fatal.
+    #[test]
+    fn lists_installed_clap_plugins() {
+        let found = ClapBackend.scan();
+        if found.is_empty() {
+            println!("SKIPPED: no clap plugins installed, scan asserted nothing");
+            return;
+        }
+        for plugin in &found {
+            assert_eq!(plugin.format, PluginFormat::Clap);
+            assert!(!plugin.plugin_id.is_empty(), "{plugin:?} has no id");
+            assert!(!plugin.name.is_empty(), "{plugin:?} has no name");
+            assert!(plugin.uid.starts_with("clap:"), "{plugin:?} has a foreign uid");
+            assert!(plugin.path.ends_with(".clap"), "{plugin:?} is not a bundle");
+        }
+        println!("found {} clap plugins", found.len());
+        for plugin in &found {
+            println!("  {} by {}", plugin.name, plugin.vendor);
+        }
+    }
+
+    /// A rescan must describe the same plugins the same way, since a saved
+    /// project stores the uid and re-resolves it on load.
+    #[test]
+    fn a_rescan_is_stable() {
+        let first = ClapBackend.scan();
+        if first.is_empty() {
+            println!("SKIPPED: no clap plugins installed, cannot check rescan stability");
+            return;
+        }
+        let again = ClapBackend.scan();
+        let uids = |v: &[PluginDescriptor]| {
+            let mut ids: Vec<String> = v.iter().map(|p| p.uid.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(uids(&first), uids(&again));
+    }
+}

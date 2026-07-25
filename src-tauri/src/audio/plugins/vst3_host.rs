@@ -447,6 +447,12 @@ mod tests {
     use crate::audio::plugins::vst3_backend::Vst3Backend;
     use crate::audio::plugins::PluginBackend;
 
+    /// A test that needs an installed plugin and finds none proves nothing, and
+    /// on CI that is the normal case. Say so rather than passing quietly.
+    fn skipped(what: &str) {
+        println!("SKIPPED: no vst3 plugins installed, cannot check {what}");
+    }
+
     fn first_plugin() -> Option<(Vst3Instance, String)> {
         let plugin = Vst3Backend.scan().into_iter().next()?;
         let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
@@ -459,7 +465,7 @@ mod tests {
     #[test]
     fn reports_parameters_in_normalised_form() {
         let Some((instance, name)) = first_plugin() else {
-            return;
+            return skipped("parameter reporting");
         };
         let params = instance.params();
         assert!(!params.is_empty(), "{name} exposed no parameters");
@@ -481,7 +487,7 @@ mod tests {
     #[test]
     fn a_parameter_set_by_the_host_is_read_back() {
         let Some((instance, name)) = first_plugin() else {
-            return;
+            return skipped("host-to-editor parameter writes");
         };
         // A stepped parameter snaps the written value to its nearest step, so
         // it cannot show whether the write itself landed.
@@ -515,7 +521,7 @@ mod tests {
         }
 
         let Some((mut instance, _)) = first_plugin() else {
-            return;
+            return skipped("editor-to-host parameter edits");
         };
         let ring = Arc::new(ParamRing::new());
         let mut cursor = ring.cursor();
@@ -543,7 +549,7 @@ mod tests {
     #[test]
     fn state_survives_a_reinstantiation() {
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
-            return;
+            return skipped("state persistence");
         };
         let open = || {
             let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
@@ -574,7 +580,7 @@ mod tests {
     #[test]
     fn a_state_blob_that_is_not_ours_is_refused() {
         let Some((instance, _)) = first_plugin() else {
-            return;
+            return skipped("rejection of a foreign state blob");
         };
         assert!(instance.restore_state("no separator here").is_err());
         assert!(instance.restore_state("not base64!.also not").is_err());
@@ -588,7 +594,11 @@ mod tests {
         const FRAMES: usize = 512;
         const RATE: u32 = 48_000;
 
-        for plugin in Vst3Backend.scan() {
+        let installed = Vst3Backend.scan();
+        if installed.is_empty() {
+            return skipped("audio rendering");
+        }
+        for plugin in installed {
             let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
             let instance = Vst3Instance::new(module, &plugin.plugin_id).unwrap();
             let params = std::sync::Arc::new(crate::audio::plugins::ParamRing::new());
@@ -645,8 +655,7 @@ mod tests {
     fn instantiates_every_installed_plugin() {
         let found = Vst3Backend.scan();
         if found.is_empty() {
-            println!("no vst3 plugins installed, nothing to instantiate");
-            return;
+            return skipped("instantiation");
         }
         for plugin in found {
             let module = Vst3Module::open(std::path::Path::new(&plugin.path))

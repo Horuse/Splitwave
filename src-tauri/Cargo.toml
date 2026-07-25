@@ -91,6 +91,7 @@ ndarray = "0.15"
 clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744" }
 clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744", features = ["clack-host", "audio-ports", "gui", "timer", "state", "params", "raw-window-handle_06"] }
 raw-window-handle = "0.6"
+vst3 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.9", features = ["v0_3_44"] }
@@ -128,7 +129,11 @@ objc2 = "0.6"
 # coreaudio-rs itself moved to the objc2 crates).
 objc2-audio-toolbox = "0.3.2"
 objc2-core-audio-types = "0.3.2"
-objc2-core-foundation = { version = "0.3.2", features = ["CFData", "CFError", "CFPropertyList"] }
+objc2-core-foundation = { version = "0.3.2", features = [
+    "CFData", "CFError", "CFPropertyList",
+    # VST3 modules load as bundles: bundleEntry takes the CFBundleRef itself.
+    "CFBundle", "CFURL", "CFString",
+] }
 objc2-foundation = { version = "0.3", features = [
     "NSArray", "NSString", "NSEnumerator", "NSError", "NSObject",
     "NSObjCRuntime", "NSDictionary", "NSValue", "NSData", "NSURL",

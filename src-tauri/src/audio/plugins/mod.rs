@@ -7,6 +7,8 @@ mod au_backend;
 #[cfg(target_os = "macos")]
 pub mod au_host;
 mod clap_backend;
+#[cfg(target_os = "macos")]
+pub mod vst3_backend;
 pub mod host;
 pub mod host_api;
 mod node;
@@ -33,6 +35,8 @@ pub enum PluginFormat {
     Clap,
     #[cfg(target_os = "macos")]
     Au,
+    #[cfg(target_os = "macos")]
+    Vst3,
 }
 
 /// One instantiable plugin found by a scan. `uid` is stable across scans so the

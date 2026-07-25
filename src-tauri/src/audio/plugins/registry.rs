@@ -22,6 +22,10 @@ fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
         PluginFormat::Clap => &ClapHost,
         #[cfg(target_os = "macos")]
         PluginFormat::Au => &AuHost,
+        // No node can hold this format yet: `scan_all` does not offer VST3
+        // plugins until the host exists, so none can be selected.
+        #[cfg(target_os = "macos")]
+        PluginFormat::Vst3 => unreachable!("vst3 host not implemented"),
     }
 }
 

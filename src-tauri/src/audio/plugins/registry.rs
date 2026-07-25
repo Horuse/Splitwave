@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::host::ClapHost;
+use super::clap_registry::ClapHost;
 #[cfg(target_os = "macos")]
 use super::vst3_registry::Vst3Host;
 #[cfg(target_os = "macos")]

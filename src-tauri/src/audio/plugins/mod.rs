@@ -19,8 +19,9 @@ pub mod vst3_host;
 pub mod vst3_node;
 #[cfg(target_os = "macos")]
 pub mod vst3_registry;
+pub mod clap_host;
+pub mod clap_registry;
 pub mod editor;
-pub mod host;
 pub mod host_api;
 pub mod main_thread;
 mod node;

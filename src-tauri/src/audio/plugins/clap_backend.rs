@@ -4,6 +4,10 @@ use clack_host::prelude::PluginEntry;
 
 use super::{PluginBackend, PluginDescriptor, PluginFormat};
 
+/// `CLAP_PLUGIN_FEATURE_AUDIO_EFFECT`: the plugin processes audio it is given,
+/// as opposed to generating it from notes.
+const AUDIO_EFFECT: &std::ffi::CStr = c"audio-effect";
+
 pub struct ClapBackend;
 
 impl PluginBackend for ClapBackend {
@@ -64,6 +68,12 @@ impl PluginBackend for ClapBackend {
                 .and_then(|c| c.to_str().ok())
                 .unwrap_or("")
                 .to_string();
+            // Splitwave routes audio and sends no notes, so an instrument would
+            // sit silent in the graph. Mirrors the VST3 scan's `Fx` filter and
+            // the AU scan, which takes only `aufx` and `aumf`.
+            if !desc.features().any(|f| f == AUDIO_EFFECT) {
+                continue;
+            }
             out.push(PluginDescriptor {
                 uid: format!("clap:{path_str}:{id}"),
                 format: PluginFormat::Clap,

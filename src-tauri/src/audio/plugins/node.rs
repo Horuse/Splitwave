@@ -11,7 +11,7 @@ use clack_host::prelude::*;
 use clack_host::utils::Cookie;
 
 use crate::audio::effects::Effect;
-use crate::audio::plugins::host::SplitwaveHost;
+use crate::audio::plugins::clap_host::SplitwaveHost;
 use crate::audio::plugins::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use crate::audio::plugins::ParamRing;
 

@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::latency::PluginLatency;
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
@@ -265,6 +266,15 @@ impl ClapInstance {
             .start_processing()
             .map_err(|e| format!("start {}: {e}", self.plugin_id))?;
 
+        // Read after activation: the spec only guarantees the value once the
+        // plugin is active, and several plugins report 0 before it.
+        let latency = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginLatency>()
+            .map(|ext| ext.get(&mut self.instance.plugin_handle()) as usize)
+            .unwrap_or(0);
+
         Ok(PluginNode::new(
             processor,
             &inputs,
@@ -272,6 +282,7 @@ impl ClapInstance {
             max_frames,
             params,
             alive,
+            latency,
         ))
     }
 
@@ -584,6 +595,57 @@ mod tests {
             }
             assert!(peak > 0.01, "{} produced silence", plugin.name);
             drop(node);
+        }
+    }
+
+    /// Reported latency has to match where the signal actually appears: the DAG
+    /// pads shorter parallel paths by this number, so a wrong one is an audible
+    /// phase error on a split-and-rejoin graph rather than a missing feature.
+    #[test]
+    fn reported_latency_matches_when_the_signal_arrives() {
+        let found = installed();
+        if found.is_empty() {
+            return skipped("latency reporting");
+        }
+        let mut bundles = Bundles::default();
+        for plugin in &found {
+            let mut instance = open(&mut bundles, plugin);
+            let mut node = instance
+                .activate(SAMPLE_RATE, FRAMES, Arc::new(ParamRing::new()), alive_flag())
+                .unwrap_or_else(|e| panic!("{}: {e}", plugin.name));
+            let reported = node.latency_frames();
+
+            // One impulse, then silence: the first non-zero output frame is the
+            // latency the plugin actually imposes.
+            let mut fed = 0;
+            let mut arrived = None;
+            for _ in 0..PRIMING_BLOCKS {
+                let mut block = vec![0.0f32; FRAMES * 2];
+                if fed == 0 {
+                    block[0] = 1.0;
+                    block[1] = 1.0;
+                }
+                node.process(&mut block, FRAMES);
+                if arrived.is_none() {
+                    if let Some(i) = block.iter().position(|s| s.abs() > 1e-6) {
+                        arrived = Some(fed + i / 2);
+                    }
+                }
+                fed += FRAMES;
+            }
+            let Some(arrived) = arrived else {
+                // A gate or expander may hold a lone impulse down entirely.
+                println!("  {} passed no impulse, latency unverified", plugin.name);
+                continue;
+            };
+            // Exact equality is too strict: a plugin may round its own report to
+            // a block, and a soft-knee stage can smear the leading edge.
+            let slack = FRAMES;
+            assert!(
+                arrived + slack >= reported && arrived <= reported + slack,
+                "{} reports {reported} samples of latency but the impulse arrived at {arrived}",
+                plugin.name
+            );
         }
     }
 

@@ -36,6 +36,10 @@ pub struct PluginNode {
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
     alive: Arc<AtomicBool>,
+    /// Reported by the plugin at activation. The DAG pads shorter parallel
+    /// paths by it, so a wrong value here is an audible phase error rather
+    /// than a missing feature.
+    latency: usize,
 }
 
 impl Drop for PluginNode {
@@ -60,6 +64,7 @@ impl PluginNode {
         max_frames: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
+        latency: usize,
     ) -> Self {
         let param_cursor = params.reader();
         Self {
@@ -80,6 +85,7 @@ impl PluginNode {
             param_cursor,
             events: EventBuffer::with_capacity(MAX_PARAM_CHANGES_PER_BLOCK),
             alive,
+            latency,
         }
     }
 }
@@ -173,5 +179,9 @@ impl Effect for PluginNode {
             }
         }
         *steady += frames as u64;
+    }
+
+    fn latency_frames(&self) -> usize {
+        self.latency
     }
 }

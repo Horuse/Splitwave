@@ -22,7 +22,8 @@ use objc2_audio_toolbox::{
     AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitSetParameter, AudioUnitSetProperty,
     AudioUnitUninitialize, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_MaximumFramesPerSlice,
     kAudioUnitProperty_ClassInfo, kAudioUnitProperty_ParameterInfo, kAudioUnitProperty_ParameterList,
-    kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
+    kAudioUnitProperty_Latency, kAudioUnitProperty_SetRenderCallback,
+    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
     kAudioUnitScope_Input, kAudioUnitScope_Output,
 };
 use objc2_core_audio_types::{
@@ -129,6 +130,10 @@ pub struct AuNode {
     output: [Vec<f32>; CHANNELS],
     max_frames: usize,
     steady: f64,
+    /// Reported by the unit once initialised. The DAG pads shorter parallel
+    /// paths by it, so a wrong value here is an audible phase error rather
+    /// than a missing feature.
+    latency: usize,
     // UI parameter writes, applied at the top of each block.
     params: Arc<ParamRing>,
     param_cursor: usize,
@@ -241,6 +246,7 @@ fn activate(
         output: [vec![0.0; max_frames], vec![0.0; max_frames]],
         max_frames,
         steady: 0.0,
+        latency: 0,
         param_cursor: params.reader(),
         params,
     };
@@ -248,6 +254,9 @@ fn activate(
     if let Err(e) = configure(&mut node, sample_rate, max_frames) {
         return Err(format!("au {url}: {e}"));
     }
+    // Only meaningful after `AudioUnitInitialize`: a unit sizes its lookahead to
+    // the stream format it was configured with.
+    node.latency = latency_frames(node.instance.unit, sample_rate);
     // After `AudioUnitInitialize`, which is where hosts apply class info: the
     // unit has to know its stream format before it can make sense of settings.
     if let Some(bytes) = state.and_then(|t| super::host_api::decode_state(node_id, url, t)) {
@@ -276,6 +285,28 @@ fn activate(
         graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
+}
+
+/// The unit's reported lookahead, converted from seconds. Zero when the unit
+/// does not implement the property, which most simple effects do not.
+fn latency_frames(unit: AudioUnit, sample_rate: u32) -> usize {
+    let mut seconds = 0.0f64;
+    let mut size = size_of::<f64>() as u32;
+    // SAFETY: the property is a single Float64 in global scope.
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_Latency,
+            kAudioUnitScope_Global,
+            0,
+            NonNull::from(&mut seconds).cast(),
+            NonNull::from(&mut size),
+        )
+    };
+    if status != 0 || !seconds.is_finite() || seconds <= 0.0 {
+        return 0;
+    }
+    (seconds * sample_rate as f64).round() as usize
 }
 
 fn configure(node: &mut AuNode, sample_rate: u32, max_frames: usize) -> Result<(), String> {
@@ -821,6 +852,10 @@ impl Effect for AuNode {
         }
         self.steady += frames as f64;
     }
+
+    fn latency_frames(&self) -> usize {
+        self.latency
+    }
 }
 
 #[cfg(test)]
@@ -853,6 +888,54 @@ mod tests {
         node.process(&mut block, FRAMES);
         let peak_out = block.iter().fold(0.0f32, |a, s| a.max(s.abs()));
         assert!(peak_out > 0.1, "audio unit produced silence");
+    }
+
+    /// Reported latency has to match where the signal actually appears: the DAG
+    /// pads shorter parallel paths by this number, so a wrong one is an audible
+    /// phase error on a split-and-rejoin graph. The peak limiter ships with
+    /// every macOS and has a real lookahead, unlike the flat N-band EQ.
+    #[test]
+    fn reported_latency_matches_when_the_signal_arrives() {
+        const LIMITER: &str = "au://aufx/lmtr/appl";
+        const FRAMES: usize = 512;
+
+        let mut node = activate(
+            "lat",
+            LIMITER,
+            48_000,
+            FRAMES,
+            None,
+            false,
+            Arc::new(ParamRing::new()),
+        )
+        .expect("activate");
+        let reported = node.latency_frames();
+        assert!(reported > 0, "the peak limiter reported no lookahead");
+
+        // One impulse, then silence: the first non-zero output frame is the
+        // latency the unit actually imposes.
+        let mut fed = 0;
+        let mut arrived = None;
+        while fed < 8 * FRAMES && arrived.is_none() {
+            let mut block = vec![0.0f32; FRAMES * CHANNELS];
+            if fed == 0 {
+                block[0] = 1.0;
+                block[1] = 1.0;
+            }
+            node.process(&mut block, FRAMES);
+            if let Some(i) = block.iter().position(|s| s.abs() > 1e-6) {
+                arrived = Some(fed + i / CHANNELS);
+            }
+            fed += FRAMES;
+        }
+        let arrived = arrived.expect("the limiter passed no impulse at all");
+        // Exact equality is too strict: the unit may round its own report, and
+        // its gain stage can smear the leading edge by a few samples.
+        let slack = FRAMES;
+        assert!(
+            arrived + slack >= reported && arrived <= reported + slack,
+            "reports {reported} samples of latency but the impulse arrived at {arrived}"
+        );
     }
 
     /// The N-band EQ exposes a known, stable parameter set, so this pins both

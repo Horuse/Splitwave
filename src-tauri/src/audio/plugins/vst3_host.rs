@@ -308,13 +308,14 @@ impl Vst3Instance {
         &self,
         sample_rate: u32,
         max_frames: usize,
+        channels: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Result<Vst3Node, String> {
         use vst3::Steinberg::Vst::{
             BusDirections_::{kInput, kOutput},
             IAudioProcessor, IAudioProcessorTrait, MediaTypes_::kAudio,
-            ProcessModes_::kRealtime, ProcessSetup, SpeakerArr::kStereo,
+            ProcessModes_::kRealtime, ProcessSetup,
             SymbolicSampleSizes_::kSample32,
         };
 
@@ -332,18 +333,40 @@ impl Vst3Instance {
             let ins = self.component.getBusCount(kAudio as i32, kInput as i32);
             let outs = self.component.getBusCount(kAudio as i32, kOutput as i32);
 
-            // The pipeline is stereo, so every audio bus is asked to be stereo.
-            // A plugin that refuses cannot carry our signal, and saying so beats
-            // running it in a layout we then mis-read.
-            let mut in_arr = vec![kStereo; ins.max(0) as usize];
-            let mut out_arr = vec![kStereo; outs.max(0) as usize];
-            if !ok(processor.setBusArrangements(
-                in_arr.as_mut_ptr(),
-                ins,
-                out_arr.as_mut_ptr(),
-                outs,
-            )) {
-                return Err("plugin refused a stereo bus layout".into());
+            // Offer the node's own width first, the way a DAW instantiates one
+            // multichannel plugin rather than several stereo ones. A plugin that
+            // will not have it runs as a stereo pair, which the pipeline then
+            // drives once per pair.
+            let mut accepted = 0;
+            for width in [channels, 2] {
+                let Some(arrangement) = speaker_arrangement(width) else {
+                    continue;
+                };
+                // Every bus gets the same layout: a plugin sizes its sidechain
+                // and aux buses to its main one, and a mismatch is refused.
+                let mut in_arr = vec![arrangement; ins.max(0) as usize];
+                let mut out_arr = vec![arrangement; outs.max(0) as usize];
+                if ok(processor.setBusArrangements(
+                    in_arr.as_mut_ptr(),
+                    ins,
+                    out_arr.as_mut_ptr(),
+                    outs,
+                )) {
+                    accepted = width;
+                    break;
+                }
+            }
+            if accepted == 0 {
+                return Err(format!(
+                    "plugin refused both a {channels}-channel and a stereo bus layout"
+                ));
+            }
+            if accepted != channels {
+                tracing::debug!(
+                    channels,
+                    accepted,
+                    "vst3: plugin would not take the node's width; driving it per pair"
+                );
             }
 
             for (dir, count) in [(kInput, ins), (kOutput, outs)] {
@@ -378,6 +401,7 @@ impl Vst3Instance {
                 &input_channels,
                 &output_channels,
                 max_frames,
+                accepted,
                 params,
                 alive,
             ))
@@ -604,7 +628,7 @@ mod tests {
             let params = std::sync::Arc::new(crate::audio::plugins::ParamRing::new());
             let alive = std::sync::Arc::new(AtomicBool::new(true));
 
-            let mut node = match instance.activate(RATE, FRAMES, params.clone(), alive.clone()) {
+            let mut node = match instance.activate(RATE, FRAMES, 2, params.clone(), alive.clone()) {
                 Ok(node) => node,
                 Err(err) => panic!("{}: {err}", plugin.name),
             };
@@ -651,6 +675,47 @@ mod tests {
 
     /// Every installed plugin must instantiate, expose a controller, and
     /// survive teardown. Both shapes (one object or two) go through here.
+    /// What each installed plugin does when offered widths other than stereo.
+    /// A plugin that takes 5.1 whole is run as one instance, the way a DAW does
+    /// it; one that refuses falls back to a stereo pair.
+    #[test]
+    fn negotiates_the_widest_layout_each_plugin_accepts() {
+        let found = Vst3Backend.scan();
+        if found.is_empty() {
+            return skipped("layout negotiation");
+        }
+        for plugin in &found {
+            let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
+            const FRAMES: usize = 512;
+            const RATE: u32 = 48_000;
+            for width in [1usize, 2, 6, 8] {
+                let instance = match Vst3Instance::new(module.clone(), &plugin.plugin_id) {
+                    Ok(i) => i,
+                    Err(_) => continue,
+                };
+                let node = instance.activate(
+                    RATE,
+                    FRAMES,
+                    width,
+                    Arc::new(ParamRing::new()),
+                    Arc::new(AtomicBool::new(true)),
+                );
+                match node {
+                    Ok(node) => {
+                        let got = node.channels();
+                        assert!(
+                            got == width || got == 2,
+                            "{} offered {width} took {got}, which is neither",
+                            plugin.name
+                        );
+                        println!("  {} offered {width} -> {got}", plugin.name);
+                    }
+                    Err(e) => println!("  {} offered {width} -> refused ({e})", plugin.name),
+                }
+            }
+        }
+    }
+
     #[test]
     fn instantiates_every_installed_plugin() {
         let found = Vst3Backend.scan();
@@ -675,4 +740,22 @@ mod tests {
             );
         }
     }
+}
+
+/// The standard VST3 arrangement for a channel count. `None` for widths the
+/// format does not name, which are then never offered to a plugin: guessing a
+/// layout would tell it the wrong thing about which speaker each channel is.
+fn speaker_arrangement(channels: usize) -> Option<vst3::Steinberg::Vst::SpeakerArrangement> {
+    use vst3::Steinberg::Vst::SpeakerArr;
+    Some(match channels {
+        1 => SpeakerArr::kMono,
+        2 => SpeakerArr::kStereo,
+        3 => SpeakerArr::k30Cine,
+        4 => SpeakerArr::k40Music,
+        5 => SpeakerArr::k50,
+        6 => SpeakerArr::k51,
+        7 => SpeakerArr::k70Music,
+        8 => SpeakerArr::k71Music,
+        _ => return None,
+    })
 }

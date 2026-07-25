@@ -172,6 +172,9 @@ pub struct Vst3Node {
     params: Arc<ParamRing>,
     param_cursor: usize,
     max_frames: usize,
+    /// Interleaved channels the pipeline hands this node, which is what the
+    /// plugin agreed to carry. The main bus is exactly this wide.
+    channels: usize,
     latency: usize,
     alive: Arc<AtomicBool>,
 }
@@ -194,6 +197,7 @@ impl Vst3Node {
         input_channels: &[usize],
         output_channels: &[usize],
         max_frames: usize,
+        channels: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Self {
@@ -229,6 +233,7 @@ impl Vst3Node {
             params,
             param_cursor,
             max_frames,
+            channels,
             latency,
             alive,
         }
@@ -247,7 +252,8 @@ fn bus_buffers(bus: &mut Bus) -> AudioBusBuffers {
 
 impl Effect for Vst3Node {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * 2 {
+        let width = self.channels;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
             return;
         }
 
@@ -261,13 +267,12 @@ impl Effect for Vst3Node {
             }
         }
 
-        // Main input bus, first two channels; silence stays everywhere else.
+        // Main input bus; silence stays in every other bus and in any channel
+        // the plugin declares beyond what the pipeline carries.
         if let Some(main) = self.inputs.first_mut() {
-            let stereo = main.channels.len() > 1;
-            for i in 0..frames {
-                main.channels[0][i] = samples[2 * i];
-                if stereo {
-                    main.channels[1][i] = samples[2 * i + 1];
+            for (c, channel) in main.channels.iter_mut().take(width).enumerate() {
+                for i in 0..frames {
+                    channel[i] = samples[i * width + c];
                 }
             }
         }
@@ -294,10 +299,14 @@ impl Effect for Vst3Node {
 
         if processed {
             if let Some(main) = self.outputs.first() {
-                let right = if main.channels.len() > 1 { 1 } else { 0 };
-                for i in 0..frames {
-                    samples[2 * i] = main.channels[0][i];
-                    samples[2 * i + 1] = main.channels[right][i];
+                for c in 0..width {
+                    // A plugin narrower than the pipeline (a mono unit driven as
+                    // a pair) repeats its last channel rather than leaving the
+                    // rest of the block at whatever it held.
+                    let src = &main.channels[c.min(main.channels.len() - 1)];
+                    for i in 0..frames {
+                        samples[i * width + c] = src[i];
+                    }
                 }
             }
         }
@@ -305,6 +314,12 @@ impl Effect for Vst3Node {
 
     fn latency_frames(&self) -> usize {
         self.latency
+    }
+}
+
+impl Vst3Node {
+    pub fn channels(&self) -> usize {
+        self.channels
     }
 }
 

@@ -65,6 +65,10 @@ pub struct ActivateRequest<'a> {
     pub plugin_id: &'a str,
     pub sample_rate: u32,
     pub max_frames: usize,
+    /// Channels the node carries. The host offers the plugin this width and
+    /// reports back what it took, which is never more and never a value the
+    /// plugin did not agree to.
+    pub channels: usize,
     pub state: Option<&'a str>,
     /// Marks the editor and parameter target. Other builds of the same node are
     /// metering duplicates or extra stereo pairs.
@@ -81,6 +85,20 @@ pub enum HostedNode {
     Au(super::AuNode),
     #[cfg(target_os = "macos")]
     Vst3(super::vst3_node::Vst3Node),
+}
+
+impl HostedNode {
+    /// Channels this instance was configured for. `2` means the pipeline must
+    /// drive it one stereo pair at a time.
+    pub fn channels(&self) -> usize {
+        match self {
+            HostedNode::Clap(n) => n.channels(),
+            #[cfg(target_os = "macos")]
+            HostedNode::Au(n) => n.channels(),
+            #[cfg(target_os = "macos")]
+            HostedNode::Vst3(n) => n.channels(),
+        }
+    }
 }
 
 impl Effect for HostedNode {

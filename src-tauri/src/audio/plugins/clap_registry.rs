@@ -51,6 +51,7 @@ fn activate_on_main(
     plugin_id: String,
     sample_rate: u32,
     max_frames: usize,
+    channels: usize,
     state: Option<String>,
     primary: bool,
     params: Arc<ParamRing>,
@@ -64,7 +65,7 @@ fn activate_on_main(
     }
 
     let alive = alive_flag();
-    let node = instance.activate(sample_rate, max_frames, params, alive.clone())?;
+    let node = instance.activate(sample_rate, max_frames, channels, params, alive.clone())?;
 
     if !primary {
         // The monitor graph builds its own metering-only duplicate. It must not
@@ -97,8 +98,13 @@ impl PluginHost for ClapHost {
             req.plugin_id.to_string(),
         );
         let state = req.state.map(str::to_string);
-        let (sample_rate, max_frames, primary, params) =
-            (req.sample_rate, req.max_frames, req.primary, req.params);
+        let (sample_rate, max_frames, channels, primary, params) = (
+            req.sample_rate,
+            req.max_frames,
+            req.channels,
+            req.primary,
+            req.params,
+        );
 
         main_thread::run(move || {
             activate_on_main(
@@ -107,6 +113,7 @@ impl PluginHost for ClapHost {
                 plugin_id,
                 sample_rate,
                 max_frames,
+                channels,
                 state,
                 primary,
                 params,

@@ -44,20 +44,23 @@ use super::{editor, main_thread};
 use super::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use super::ParamRing;
 
-/// The pipeline carries interleaved stereo, so every hosted unit is configured
-/// as a stereo pair; wider units are driven one pair per node, as CLAP ones are.
-const CHANNELS: usize = 2;
+/// Widest layout offered to a unit, and the fixed capacity of the buffer list
+/// below. Beyond 7.1 there is no arrangement the other formats name either, so
+/// a wider node is driven per stereo pair.
+const MAX_CHANNELS: usize = 8;
 
 /// `AudioBufferList` is a C flexible-array struct, so the generated binding
-/// declares one buffer. The unit is configured for exactly two non-interleaved
-/// channels; this is the same layout with room for both, cast at the call.
+/// declares one buffer. This is the same layout with room for the widest unit
+/// we configure, cast at the call; `number_buffers` says how many are live, so
+/// a narrower unit simply leaves the tail unused and the RT path never
+/// allocates one.
 #[repr(C)]
-struct StereoBufferList {
+struct RenderBufferList {
     number_buffers: u32,
-    buffers: [AudioBuffer; CHANNELS],
+    buffers: [AudioBuffer; MAX_CHANNELS],
 }
 
-impl StereoBufferList {
+impl RenderBufferList {
     fn as_audio_buffer_list(&mut self) -> NonNull<AudioBufferList> {
         NonNull::from(self).cast()
     }
@@ -67,7 +70,7 @@ impl StereoBufferList {
 /// itself is moved into the graph. The unit's input callback writes our channel
 /// pointers straight into its buffer list, so no copy happens on the pull.
 struct RenderInput {
-    channels: [Vec<f32>; CHANNELS],
+    channels: Vec<Vec<f32>>,
 }
 
 /// A live Audio Unit, shared between the DSP worker that renders it and the UI
@@ -127,8 +130,11 @@ pub struct AuNode {
     /// once this node is gone from the graph.
     alive: Arc<AtomicBool>,
     input: Box<RenderInput>,
-    output: [Vec<f32>; CHANNELS],
+    output: Vec<Vec<f32>>,
     max_frames: usize,
+    /// Interleaved channels the pipeline hands this node, which is the width the
+    /// unit was configured for.
+    channels: usize,
     steady: f64,
     /// Reported by the unit once initialised. The DAG pads shorter parallel
     /// paths by it, so a wrong value here is an audible phase error rather
@@ -159,7 +165,7 @@ unsafe extern "C-unwind" fn supply_input(
     let input = &mut *(ref_con.as_ptr() as *mut RenderInput);
     let count = (*io_data).mNumberBuffers as usize;
     let buffers = ptr::addr_of_mut!((*io_data).mBuffers) as *mut AudioBuffer;
-    for i in 0..count.min(CHANNELS) {
+    for i in 0..count.min(input.channels.len()) {
         let buf = &mut *buffers.add(i);
         buf.mNumberChannels = 1;
         buf.mDataByteSize = frames * size_of::<f32>() as u32;
@@ -168,7 +174,7 @@ unsafe extern "C-unwind" fn supply_input(
     0
 }
 
-fn stereo_float_format(sample_rate: u32) -> AudioStreamBasicDescription {
+fn float_format(sample_rate: u32, channels: usize) -> AudioStreamBasicDescription {
     AudioStreamBasicDescription {
         mSampleRate: sample_rate as f64,
         mFormatID: kAudioFormatLinearPCM,
@@ -180,7 +186,7 @@ fn stereo_float_format(sample_rate: u32) -> AudioStreamBasicDescription {
         mBytesPerPacket: size_of::<f32>() as u32,
         mFramesPerPacket: 1,
         mBytesPerFrame: size_of::<f32>() as u32,
-        mChannelsPerFrame: CHANNELS as u32,
+        mChannelsPerFrame: channels as u32,
         mBitsPerChannel: (size_of::<f32>() * 8) as u32,
         mReserved: 0,
     }
@@ -218,6 +224,7 @@ fn activate(
     url: &str,
     sample_rate: u32,
     max_frames: usize,
+    channels: usize,
     state: Option<&str>,
     primary: bool,
     params: Arc<ParamRing>,
@@ -237,21 +244,46 @@ fn activate(
     // From here on the instance is owned, so a failed `configure` still
     // disposes of it through `Drop`.
     let alive = alive_flag();
+    // Offer the node's own width first, the way a DAW instantiates one
+    // multichannel unit rather than several stereo ones. Anything wider than
+    // the widest arrangement the formats name goes straight to stereo.
+    let offered = if (1..=MAX_CHANNELS).contains(&channels) {
+        channels
+    } else {
+        2
+    };
     let mut node = AuNode {
         instance: Arc::new(AuInstance { unit, url: url.to_string() }),
         alive: alive.clone(),
         input: Box::new(RenderInput {
-            channels: [vec![0.0; max_frames], vec![0.0; max_frames]],
+            channels: vec![vec![0.0; max_frames]; offered],
         }),
-        output: [vec![0.0; max_frames], vec![0.0; max_frames]],
+        output: vec![vec![0.0; max_frames]; offered],
         max_frames,
+        channels: offered,
         steady: 0.0,
         latency: 0,
         param_cursor: params.reader(),
         params,
     };
 
-    if let Err(e) = configure(&mut node, sample_rate, max_frames) {
+    let mut configured = configure(&mut node, sample_rate, max_frames, offered);
+    if configured.is_err() && offered != 2 {
+        // The unit will not carry the node's width, so it runs as a stereo pair
+        // and the pipeline drives it once per pair. Nothing was initialised yet,
+        // so the same instance can simply be configured again.
+        tracing::debug!(
+            node_id,
+            url,
+            channels,
+            "audio unit refused the node's width; driving it per pair"
+        );
+        node.channels = 2;
+        node.input.channels = vec![vec![0.0; max_frames]; 2];
+        node.output = vec![vec![0.0; max_frames]; 2];
+        configured = configure(&mut node, sample_rate, max_frames, 2);
+    }
+    if let Err(e) = configured {
         return Err(format!("au {url}: {e}"));
     }
     // Only meaningful after `AudioUnitInitialize`: a unit sizes its lookahead to
@@ -309,9 +341,17 @@ fn latency_frames(unit: AudioUnit, sample_rate: u32) -> usize {
     (seconds * sample_rate as f64).round() as usize
 }
 
-fn configure(node: &mut AuNode, sample_rate: u32, max_frames: usize) -> Result<(), String> {
+/// Configures the unit for `channels` and initialises it. A unit that will not
+/// take the width says so through its stream-format property, which is how the
+/// caller knows to offer stereo instead.
+fn configure(
+    node: &mut AuNode,
+    sample_rate: u32,
+    max_frames: usize,
+    channels: usize,
+) -> Result<(), String> {
     let unit = node.instance.unit;
-    let format = stereo_float_format(sample_rate);
+    let format = float_format(sample_rate, channels);
     let slice = max_frames as u32;
     let callback = AURenderCallbackStruct {
         inputProc: Some(supply_input),
@@ -780,7 +820,8 @@ fn create_view(node_id: &str) -> Result<*mut objc2::runtime::AnyObject, String> 
 
 impl Effect for AuNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * CHANNELS {
+        let width = self.channels;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
             return;
         }
 
@@ -805,19 +846,19 @@ impl Effect for AuNode {
             applied += 1;
         }
 
-        let [left, right] = &mut self.input.channels;
-        for i in 0..frames {
-            left[i] = samples[CHANNELS * i];
-            right[i] = samples[CHANNELS * i + 1];
+        for (c, channel) in self.input.channels.iter_mut().enumerate() {
+            for i in 0..frames {
+                channel[i] = samples[i * width + c];
+            }
         }
 
-        let mut list = StereoBufferList {
-            number_buffers: CHANNELS as u32,
+        let mut list = RenderBufferList {
+            number_buffers: width as u32,
             buffers: [AudioBuffer {
                 mNumberChannels: 1,
                 mDataByteSize: (frames * size_of::<f32>()) as u32,
                 mData: ptr::null_mut(),
-            }; CHANNELS],
+            }; MAX_CHANNELS],
         };
         for (buf, chan) in list.buffers.iter_mut().zip(self.output.iter_mut()) {
             buf.mData = chan.as_mut_ptr() as *mut c_void;
@@ -845,9 +886,10 @@ impl Effect for AuNode {
         // A render error leaves the block untouched rather than emitting the
         // uninitialised output buffer.
         if status == 0 {
-            for i in 0..frames {
-                samples[CHANNELS * i] = self.output[0][i];
-                samples[CHANNELS * i + 1] = self.output[1][i];
+            for (c, channel) in self.output.iter().enumerate().take(width) {
+                for i in 0..frames {
+                    samples[i * width + c] = channel[i];
+                }
             }
         }
         self.steady += frames as f64;
@@ -858,9 +900,18 @@ impl Effect for AuNode {
     }
 }
 
+impl AuNode {
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tests drive units directly, always as a stereo pair.
+    const CHANNELS: usize = 2;
 
     /// Apple's N-band EQ ships with every macOS and is flat by default, so a
     /// signal must come back out at roughly the level it went in.
@@ -872,6 +923,7 @@ mod tests {
             "au://aufx/nbeq/appl",
             48_000,
             FRAMES,
+            CHANNELS,
             None,
             false,
             Arc::new(ParamRing::new()),
@@ -904,6 +956,7 @@ mod tests {
             LIMITER,
             48_000,
             FRAMES,
+            CHANNELS,
             None,
             false,
             Arc::new(ParamRing::new()),
@@ -938,6 +991,99 @@ mod tests {
         );
     }
 
+    /// What each installed unit does when offered widths other than stereo. A
+    /// unit that takes 5.1 whole is run as one instance, the way a DAW does it;
+    /// one that refuses falls back to a stereo pair.
+    #[test]
+    fn negotiates_the_widest_layout_each_unit_accepts() {
+        use crate::audio::plugins::PluginBackend;
+
+        let found = super::super::au_backend::AuBackend.scan();
+        let mut wide = 0;
+        for unit in &found {
+            let mut accepted = Vec::new();
+            for width in [1usize, 2, 6, 8] {
+                let node = activate(
+                    "neg",
+                    &unit.path,
+                    48_000,
+                    512,
+                    width,
+                    None,
+                    false,
+                    Arc::new(ParamRing::new()),
+                );
+                let Ok(node) = node else { continue };
+                let got = node.channels();
+                assert!(
+                    got == width || got == 2,
+                    "{} offered {width} took {got}, which is neither",
+                    unit.name
+                );
+                accepted.push(got);
+            }
+            if accepted.contains(&6) {
+                wide += 1;
+            }
+        }
+        println!("{wide} of {} audio units take more than stereo", found.len());
+    }
+
+    /// A unit driven at the node's full width must keep every channel separate
+    /// and in order. Feeding each channel a different level and checking the
+    /// order survives is what catches a buffer list wired up channel-shuffled,
+    /// which a per-channel loudness check alone would pass.
+    #[test]
+    fn a_six_channel_unit_keeps_its_channels_in_order() {
+        const WIDTH: usize = 6;
+        const FRAMES: usize = 512;
+        // Flat by default, so the block comes back at the level it went in.
+        const EQ: &str = "au://aufx/greq/appl";
+
+        let mut node = activate(
+            "wide",
+            EQ,
+            48_000,
+            FRAMES,
+            WIDTH,
+            None,
+            false,
+            Arc::new(ParamRing::new()),
+        )
+        .expect("activate");
+        assert_eq!(node.channels(), WIDTH, "unit did not take the full width");
+
+        // Descending levels, one per channel.
+        let level = |c: usize| 0.5 - 0.05 * c as f32;
+        let mut block = vec![0.0f32; FRAMES * WIDTH];
+        for i in 0..FRAMES {
+            let s = (i as f32 * 0.05).sin();
+            for c in 0..WIDTH {
+                block[i * WIDTH + c] = s * level(c);
+            }
+        }
+        node.process(&mut block, FRAMES);
+
+        let peaks: Vec<f32> = (0..WIDTH)
+            .map(|c| {
+                block
+                    .iter()
+                    .skip(c)
+                    .step_by(WIDTH)
+                    .fold(0.0f32, |a, s| a.max(s.abs()))
+            })
+            .collect();
+        for (c, peak) in peaks.iter().enumerate() {
+            assert!(*peak > 0.01, "channel {c} came back silent: {peaks:?}");
+        }
+        for c in 1..WIDTH {
+            assert!(
+                peaks[c] < peaks[c - 1],
+                "channels came back out of order: {peaks:?}"
+            );
+        }
+    }
+
     /// The N-band EQ exposes a known, stable parameter set, so this pins both
     /// the list query and the `AudioUnitParameterInfo` layout.
     #[test]
@@ -947,6 +1093,7 @@ mod tests {
             "au://aufx/nbeq/appl",
             48_000,
             512,
+            CHANNELS,
             None,
             true,
             Arc::new(ParamRing::new()),
@@ -972,7 +1119,7 @@ mod tests {
         const URL: &str = "au://aufx/nbeq/appl";
         const GAIN: u32 = 0;
 
-        let node = activate("st", URL, 48_000, 512, None, true, Arc::new(ParamRing::new()))
+        let node = activate("st", URL, 48_000, 512, CHANNELS, None, true, Arc::new(ParamRing::new()))
             .expect("activate");
         let unit = instances().lock().unwrap()["st"].instance.unit;
         unsafe { AudioUnitSetParameter(unit, GAIN, kAudioUnitScope_Global, 0, -12.0, 0) };
@@ -989,6 +1136,7 @@ mod tests {
             URL,
             48_000,
             512,
+            CHANNELS,
             Some(&saved),
             true,
             Arc::new(ParamRing::new()),
@@ -1019,6 +1167,7 @@ impl PluginHost for AuHost {
             req.path,
             req.sample_rate,
             req.max_frames,
+            req.channels,
             req.state,
             req.primary,
             req.params,

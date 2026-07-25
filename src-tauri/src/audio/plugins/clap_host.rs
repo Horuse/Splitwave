@@ -247,12 +247,22 @@ impl ClapInstance {
         &mut self,
         sample_rate: u32,
         max_frames: usize,
+        channels: usize,
         params: Arc<ParamRing>,
         alive: AliveFlag,
     ) -> Result<PluginNode, String> {
         let ports = self.instance.plugin_handle().get_extension::<PluginAudioPorts>();
         let inputs = port_channels(ports.as_ref(), &mut self.instance, true);
         let outputs = port_channels(ports.as_ref(), &mut self.instance, false);
+        // A CLAP plugin's ports are fixed at instantiation, so there is nothing
+        // to negotiate: it either already carries the node's width on its main
+        // ports, or it runs as a stereo pair like every other narrow effect.
+        let main_width = |ports: &[u32]| ports.first().copied().unwrap_or(2) as usize;
+        let accepted = if main_width(&inputs) == channels && main_width(&outputs) == channels {
+            channels
+        } else {
+            2
+        };
 
         let config = PluginAudioConfiguration {
             sample_rate: sample_rate as f64,
@@ -282,6 +292,7 @@ impl ClapInstance {
             max_frames,
             params,
             alive,
+            accepted,
             latency,
         ))
     }
@@ -550,6 +561,8 @@ mod tests {
 
     const FRAMES: usize = 512;
     const SAMPLE_RATE: u32 = 48_000;
+    /// The tests drive plugins directly, always as a stereo pair.
+    const CHANNELS: usize = 2;
     /// 16k samples, comfortably past the lookahead of any effect we host.
     const PRIMING_BLOCKS: usize = 32;
 
@@ -579,7 +592,7 @@ mod tests {
         for plugin in &found {
             let mut instance = open(&mut bundles, plugin);
             let mut node = instance
-                .activate(SAMPLE_RATE, FRAMES, Arc::new(ParamRing::new()), alive_flag())
+                .activate(SAMPLE_RATE, FRAMES, CHANNELS, Arc::new(ParamRing::new()), alive_flag())
                 .unwrap_or_else(|e| panic!("{}: {e}", plugin.name));
 
             let mut peak = 0.0f32;
@@ -611,7 +624,7 @@ mod tests {
         for plugin in &found {
             let mut instance = open(&mut bundles, plugin);
             let mut node = instance
-                .activate(SAMPLE_RATE, FRAMES, Arc::new(ParamRing::new()), alive_flag())
+                .activate(SAMPLE_RATE, FRAMES, CHANNELS, Arc::new(ParamRing::new()), alive_flag())
                 .unwrap_or_else(|e| panic!("{}: {e}", plugin.name));
             let reported = node.latency_frames();
 

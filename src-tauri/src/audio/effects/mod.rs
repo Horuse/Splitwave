@@ -390,6 +390,9 @@ pub struct EffectBuild {
     pub scope: Option<WaveformHandle>,
     pub bypass: Arc<AtomicBool>,
     pub bypass_is_new: bool,
+    /// The effect took the node's whole width, so the pipeline must hand it
+    /// every channel at once instead of splitting into stereo pairs.
+    pub full_width: bool,
 }
 
 /// Shared atomics keyed by node id so a fan-out effect (one node feeding
@@ -444,6 +447,9 @@ pub fn instantiate_effect(
     // False when building the monitor graph: a plugin instantiated there is a
     // metering-only duplicate, not the one its editor window attaches to.
     primary: bool,
+    // Channels this node carries. An effect that can take them all says so
+    // through `EffectBuild::full_width`; the rest are driven one pair at a time.
+    channels: usize,
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -468,6 +474,7 @@ pub fn instantiate_effect(
         scope,
         bypass: bypass.clone(),
         bypass_is_new,
+        full_width: false,
     };
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
@@ -822,6 +829,7 @@ pub fn instantiate_effect(
                 plugin_id,
                 sample_rate,
                 max_frames: PLUGIN_MAX_BLOCK,
+                channels,
                 state: state.as_deref(),
                 primary,
                 params: ring.clone(),
@@ -834,7 +842,13 @@ pub fn instantiate_effect(
                         registry.plugin_primary_claimed.insert(node_id.to_string());
                     }
                     let control = primary.then_some(EffectControl::Plugin { events: ring });
-                    mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None)
+                    // The plugin took the node whole, so the pipeline must stop
+                    // splitting it into pairs and hand it every channel.
+                    let full_width = node.channels() == channels;
+                    let mut build =
+                        mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None);
+                    build.full_width = full_width;
+                    build
                 }
                 Err(e) => {
                     // Surface as silence, never a passthrough that hides the failure.

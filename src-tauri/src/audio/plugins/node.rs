@@ -36,6 +36,9 @@ pub struct PluginNode {
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
     alive: Arc<AtomicBool>,
+    /// Interleaved channels the pipeline hands this node, which is what the
+    /// plugin's main port carries.
+    channels: usize,
     /// Reported by the plugin at activation. The DAG pads shorter parallel
     /// paths by it, so a wrong value here is an audible phase error rather
     /// than a missing feature.
@@ -64,6 +67,7 @@ impl PluginNode {
         max_frames: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
+        channels: usize,
         latency: usize,
     ) -> Self {
         let param_cursor = params.reader();
@@ -85,6 +89,7 @@ impl PluginNode {
             param_cursor,
             events: EventBuffer::with_capacity(MAX_PARAM_CHANGES_PER_BLOCK),
             alive,
+            channels,
             latency,
         }
     }
@@ -92,7 +97,8 @@ impl PluginNode {
 
 impl Effect for PluginNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * 2 {
+        let width = self.channels;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
             return;
         }
         let Self {
@@ -129,13 +135,12 @@ impl Effect for PluginNode {
             drained += 1;
         }
 
-        // Main input port, first two channels; silence stays in every other
-        // port/channel from allocation.
+        // Main input port; silence stays in every other port, and in any channel
+        // the plugin declares beyond what the pipeline carries.
         if let Some(main) = in_bufs.first_mut() {
-            for i in 0..frames {
-                main[0][i] = samples[2 * i];
-                if main.len() > 1 {
-                    main[1][i] = samples[2 * i + 1];
+            for (c, channel) in main.iter_mut().take(width).enumerate() {
+                for i in 0..frames {
+                    channel[i] = samples[i * width + c];
                 }
             }
         }
@@ -171,10 +176,14 @@ impl Effect for PluginNode {
 
         if processed {
             if let Some(main) = out_bufs.first() {
-                let right = if main.len() > 1 { 1 } else { 0 };
-                for i in 0..frames {
-                    samples[2 * i] = main[0][i];
-                    samples[2 * i + 1] = main[right][i];
+                for c in 0..width {
+                    // A plugin narrower than the pipeline (a mono unit driven as
+                    // a pair) repeats its last channel rather than leaving the
+                    // rest of the block at whatever it held.
+                    let src = &main[c.min(main.len() - 1)];
+                    for i in 0..frames {
+                        samples[i * width + c] = src[i];
+                    }
                 }
             }
         }
@@ -183,5 +192,11 @@ impl Effect for PluginNode {
 
     fn latency_frames(&self) -> usize {
         self.latency
+    }
+}
+
+impl PluginNode {
+    pub fn channels(&self) -> usize {
+        self.channels
     }
 }

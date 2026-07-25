@@ -1076,26 +1076,6 @@ pub(super) fn build_output_graph(
             // The cut plan builds each node in exactly one graph (its owner --
             // a real output, or the monitor for analyzer-only nodes), so this
             // build is the sole plugin instance and always the editor target.
-            let build = instantiate_effect(&effect.spec, id, output_sr, realtime, true, registry);
-            if let Some(c) = build.control {
-                controls.push((id.clone(), c));
-            }
-            if build.bypass_is_new {
-                bypasses.push((id.clone(), build.bypass.clone()));
-            }
-            if let Some(m) = build.meter {
-                meters.push(m);
-            }
-            if let Some(l) = build.lufs {
-                lufs.push(l);
-            }
-            if let Some(g) = build.gr {
-                gr_handles.push(g);
-            }
-            if let Some(s) = build.scope {
-                scopes.push(s);
-            }
-            let bypass = build.bypass;
             type Upstream = (usize, Option<String>, Option<String>);
             let mut main_upstream: Vec<Upstream> = Vec::new();
             let mut side_upstream: Vec<Upstream> = Vec::new();
@@ -1144,6 +1124,31 @@ pub(super) fn build_output_graph(
                 .max()
                 .unwrap_or(0);
             let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            // Built once the node's width is known: a plugin is offered that
+            // width and may take it whole, the way a DAW instantiates one
+            // multichannel plugin instead of several stereo ones.
+            let build = instantiate_effect(
+                &effect.spec, id, output_sr, realtime, true, eff_channels, registry,
+            );
+            if let Some(c) = build.control {
+                controls.push((id.clone(), c));
+            }
+            if build.bypass_is_new {
+                bypasses.push((id.clone(), build.bypass.clone()));
+            }
+            if let Some(m) = build.meter {
+                meters.push(m);
+            }
+            if let Some(l) = build.lufs {
+                lufs.push(l);
+            }
+            if let Some(g) = build.gr {
+                gr_handles.push(g);
+            }
+            if let Some(s) = build.scope {
+                scopes.push(s);
+            }
+            let bypass = build.bypass;
             let make_edge = |src_idx: usize,
                              source_handle: Option<String>,
                              target_handle: Option<String>| {
@@ -1200,12 +1205,14 @@ pub(super) fn build_output_graph(
                 } else {
                     Vec::new()
                 };
-            // Analyzers read all channels at once; WebRTC bridge is single.
-            // Everything else runs one instance per stereo pair.
-            let full_width = matches!(
-                effect.spec,
-                EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_) | EffectSpec::Spectrum(_)
-            );
+            // Analyzers read all channels at once, and so does a plugin that
+            // accepted the node's full width. Everything else runs one instance
+            // per stereo pair.
+            let full_width = build.full_width
+                || matches!(
+                    effect.spec,
+                    EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_) | EffectSpec::Spectrum(_)
+                );
             let pairs = if full_width || matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
                 1
             } else {
@@ -1217,7 +1224,10 @@ pub(super) fn build_output_graph(
             for _ in 1..pairs {
                 // Extra stereo pairs are separate instances for wider audio,
                 // never the editor target.
-                let extra = instantiate_effect(&effect.spec, id, output_sr, realtime, false, registry);
+                // Extra pairs exist only when the node is driven pairwise, so
+                // each is asked for stereo rather than the node's full width.
+                let extra =
+                    instantiate_effect(&effect.spec, id, output_sr, realtime, false, 2, registry);
                 effects.push(extra.effect);
             }
             id_to_index.insert(id.clone(), nodes.len());

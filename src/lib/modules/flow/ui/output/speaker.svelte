@@ -6,7 +6,6 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
-	import WaitingBadge from '../_waiting_badge.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
@@ -108,18 +107,9 @@
 	let volumePct = $derived(volume === null ? 0 : volume * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
-	// Handles render only inside the device block, so with no device the
-	// node offers no channels at all.
-	let offered = $derived(data.deviceId && !missing ? channelCount : 0);
-	// Always per-channel: a multi-channel device exposes one input handle per
-	// channel; mono stays a single handle.
 </script>
 
 <Wrapper label="Speaker" accent="output" icon={Speaker}>
-	{#snippet badge()}
-		<WaitingBadge nodeId={id} available={offered} side="target" />
-	{/snippet}
-
 	<div class="flex w-50 flex-col gap-1">
 		<Combobox
 			class="w-full"

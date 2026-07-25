@@ -33,6 +33,7 @@
 	import ChannelEdge from './_channel_edge.svelte';
 	import ConnectionLine from './_connection_line.svelte';
 	import EdgeRectSelect from './_edge_rect_select.svelte';
+	import OrphanEdges from './_orphan_edges.svelte';
 	const edgeTypes = { channel: ChannelEdge };
 	import {
 		Backspace,
@@ -627,6 +628,7 @@
 			<Background patternClass="fill-neutral-200"/>
 			<Controls />
 			<EdgeRectSelect />
+			<OrphanEdges onDelete={deleteEdge} />
 		</SvelteFlow>
 
 		{#if channelSelection.channels.length > 0}

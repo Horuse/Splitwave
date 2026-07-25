@@ -8,26 +8,22 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use super::host::{self, FALLBACK_EDITOR_SIZE};
 use super::host_api::{
-    tag_state, untag_state, ActivateRequest, EditorSize, HostedNode, PluginHost, PluginParamInfo,
-    PluginStatus, Unsupported,
+    alive_flag, tag_state, untag_state, ActivateRequest, AliveFlag, EditorSize, Graveyard,
+    HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
 };
 use super::vst3_backend::Vst3Module;
 use super::vst3_com::EditListener;
 use super::vst3_editor::EditorView;
 use super::vst3_host::Vst3Instance;
-use super::{ParamRing, PluginFormat};
+use super::{editor, main_thread, ParamRing, PluginFormat};
 
 /// A node's live plugin. Only the main thread ever touches one.
 struct Slot {
     instance: Vst3Instance,
-    /// Cleared by the RT node's `Drop`, which is how the sweep learns the
-    /// plugin has left the graph.
-    alive: Arc<AtomicBool>,
+    alive: AliveFlag,
     path: String,
     plugin_id: String,
     editor: Option<EditorView>,
@@ -37,7 +33,7 @@ thread_local! {
     static SLOTS: RefCell<HashMap<String, Slot>> = RefCell::new(HashMap::new());
     /// Instances whose node is gone but whose plugin has not been freed yet.
     /// Metering duplicates and extra stereo pairs land here directly.
-    static GRAVEYARD: RefCell<Vec<(Vst3Instance, Arc<AtomicBool>)>> = const { RefCell::new(Vec::new()) };
+    static GRAVEYARD: RefCell<Graveyard<Vst3Instance>> = RefCell::new(Graveyard::default());
 }
 
 /// Carries edits made inside the plugin's own window to the audio thread. The
@@ -63,7 +59,7 @@ fn with_slot<R: Send + 'static>(
     f: impl FnOnce(&mut Slot) -> R + Send + 'static,
 ) -> Option<R> {
     let id = node_id.to_string();
-    host::run_on_main(move || SLOTS.with(|s| s.borrow_mut().get_mut(&id).map(f)))
+    main_thread::run(move || SLOTS.with(|s| s.borrow_mut().get_mut(&id).map(f)))
         .ok()
         .flatten()
 }
@@ -92,7 +88,7 @@ fn activate_on_main(
 
     instance.listen(Box::new(ToRing(params.clone())));
 
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = alive_flag();
     let node = instance
         .activate(sample_rate, max_frames, params, alive.clone())
         .map_err(|e| at(&e))?;
@@ -114,7 +110,7 @@ fn activate_on_main(
     } else {
         // A metering duplicate has no editor and no parameters to answer for;
         // it only has to outlive its node.
-        GRAVEYARD.with(|g| g.borrow_mut().push((instance, alive)));
+        GRAVEYARD.with(|g| g.borrow_mut().bury(instance, alive));
     }
     Ok(node)
 }
@@ -132,7 +128,7 @@ impl PluginHost for Vst3Host {
         let (sample_rate, max_frames, primary, params) =
             (req.sample_rate, req.max_frames, req.primary, req.params);
 
-        host::run_on_main(move || {
+        main_thread::run(move || {
             activate_on_main(
                 node_id,
                 path,
@@ -149,12 +145,12 @@ impl PluginHost for Vst3Host {
 
     fn forget(&self, node_id: &str) {
         let id = node_id.to_string();
-        let _ = host::run_on_main(move || {
+        let _ = main_thread::run(move || {
             let slot = SLOTS.with(|s| s.borrow_mut().remove(&id));
             // The instance outlives this: its RT node may still be in a graph
             // that has not been swapped out yet.
             if let Some(slot) = slot {
-                GRAVEYARD.with(|g| g.borrow_mut().push((slot.instance, slot.alive)));
+                GRAVEYARD.with(|g| g.borrow_mut().bury(slot.instance, slot.alive));
             }
         });
     }
@@ -196,11 +192,11 @@ impl PluginHost for Vst3Host {
         let view_addr = window
             .ns_view()
             .map_err(|e| format!("vst3 {node_id}: content view: {e}"))? as usize;
-        let (_, titlebar) = host::decoration_overhead(window);
+        let (_, titlebar) = editor::decoration_overhead(window);
         let id = node_id.to_string();
         let resize_target = window.clone();
 
-        let size = host::run_on_main(move || {
+        main_thread::run(move || {
             SLOTS.with(|slots| {
                 let mut slots = slots.borrow_mut();
                 let slot = slots
@@ -224,10 +220,9 @@ impl PluginHost for Vst3Host {
                 slot.editor = Some(view);
                 Ok(size)
             })
-        })??;
-
-        Ok(host::valid_gui_size(size.0, size.1).unwrap_or(FALLBACK_EDITOR_SIZE))
+        })?
     }
+
 
     /// Already on the main thread by contract, so the view is dropped here
     /// rather than marshalled: the window's own close handler calls this, and
@@ -243,34 +238,14 @@ impl PluginHost for Vst3Host {
     /// Frees plugins whose RT node has left the graph. The main thread holds
     /// the last reference, which is the only place VST3 allows it to go.
     fn tick_and_reclaim(&self) {
-        let mut freed = Vec::new();
+        let mut freed = GRAVEYARD.with(|g| g.borrow_mut().reclaim());
 
-        GRAVEYARD.with(|g| {
-            let mut graves = g.borrow_mut();
-            let mut i = 0;
-            while i < graves.len() {
-                if graves[i].1.load(Ordering::Acquire) {
-                    i += 1;
-                } else {
-                    freed.push(graves.swap_remove(i).0);
-                }
-            }
-        });
-
-        let dead: Vec<String> = SLOTS.with(|s| {
-            s.borrow()
-                .iter()
-                .filter(|(_, slot)| !slot.alive.load(Ordering::Acquire))
-                .map(|(id, _)| id.clone())
-                .collect()
-        });
-        for node_id in dead {
-            let slot = SLOTS.with(|s| s.borrow_mut().remove(&node_id));
-            let Some(mut slot) = slot else { continue };
+        let dead = SLOTS.with(|s| super::host_api::take_dead(&mut s.borrow_mut(), |s| &s.alive));
+        for (node_id, mut slot) in dead {
             // The view is a child of the editor window and points into the
             // plugin, so it goes before the plugin does.
             slot.editor = None;
-            host::close_editor_window(&node_id);
+            editor::close_window(&node_id);
             freed.push(slot.instance);
         }
 

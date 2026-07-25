@@ -18,11 +18,8 @@ use vst3::Steinberg::{int32, kResultOk, kResultTrue, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
 
 use crate::audio::effects::Effect;
+use crate::audio::plugins::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use crate::audio::plugins::ParamRing;
-
-/// Upper bound on parameter changes handed to the plugin per block. The UI knob
-/// rate is far below this; the queues are allocated once at this size.
-const MAX_PARAM_CHANGES_PER_BLOCK: usize = 64;
 
 /// One parameter's changes within a block. The host writes at most one point
 /// per block, so the storage is a single value rather than a list.
@@ -218,9 +215,7 @@ impl Vst3Node {
             .map(|r| r.as_ptr())
             .expect("ParamChanges implements IParameterChanges");
 
-        // Start at the ring's current end so a freshly built node never replays
-        // writes issued for the plugin it replaced.
-        let param_cursor = params.cursor();
+        let param_cursor = params.reader();
         let latency = unsafe { processor.getLatencySamples() } as usize;
 
         Self {

@@ -12,11 +12,8 @@ use clack_host::utils::Cookie;
 
 use crate::audio::effects::Effect;
 use crate::audio::plugins::host::SplitwaveHost;
+use crate::audio::plugins::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use crate::audio::plugins::ParamRing;
-
-/// Upper bound on parameter changes applied per block; the UI knob rate is far
-/// below this, so the `EventBuffer` never grows past its preallocated capacity.
-const MAX_PARAM_EVENTS_PER_BLOCK: usize = 64;
 
 /// The pipeline carries interleaved stereo. Audio flows only through the
 /// plugin's main (index 0) input/output ports; other ports the plugin declares
@@ -64,9 +61,7 @@ impl PluginNode {
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Self {
-        // Start at the ring's current end so a freshly instantiated plugin
-        // never replays writes issued for a previously loaded one.
-        let param_cursor = params.cursor();
+        let param_cursor = params.reader();
         Self {
             processor,
             in_ports: AudioPorts::with_capacity(
@@ -83,7 +78,7 @@ impl PluginNode {
             max_frames,
             params,
             param_cursor,
-            events: EventBuffer::with_capacity(MAX_PARAM_EVENTS_PER_BLOCK),
+            events: EventBuffer::with_capacity(MAX_PARAM_CHANGES_PER_BLOCK),
             alive,
         }
     }
@@ -112,7 +107,7 @@ impl Effect for PluginNode {
         // resolves the parameter by its stable id.
         events.clear();
         let mut drained = 0;
-        while drained < MAX_PARAM_EVENTS_PER_BLOCK {
+        while drained < MAX_PARAM_CHANGES_PER_BLOCK {
             let Some((id, value)) = params.read(param_cursor) else {
                 break;
             };

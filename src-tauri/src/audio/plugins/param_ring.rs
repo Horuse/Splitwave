@@ -22,6 +22,11 @@ use std::sync::Mutex;
 /// Power of two so index wrap is a mask.
 const CAPACITY: usize = 512;
 
+/// Upper bound on parameter changes one block may carry into a plugin. The UI
+/// knob rate is far below this; every format allocates its per-block storage at
+/// this size, so a block never grows one.
+pub const MAX_PARAM_CHANGES_PER_BLOCK: usize = 64;
+
 /// Slot sequence marking a write in progress; a reader that sees it treats the
 /// slot as unavailable and stops.
 const WRITING: usize = usize::MAX;
@@ -60,9 +65,9 @@ impl ParamRing {
         }
     }
 
-    /// A consumer starts here so a freshly built `PluginNode` replays no writes
-    /// issued before it existed.
-    pub fn cursor(&self) -> usize {
+    /// A read cursor positioned at the ring's current end, so a freshly built
+    /// node replays no writes issued for the plugin it replaced.
+    pub fn reader(&self) -> usize {
         self.tail.load(Ordering::Acquire)
     }
 

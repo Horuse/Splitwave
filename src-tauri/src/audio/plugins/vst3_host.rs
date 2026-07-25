@@ -524,7 +524,7 @@ mod tests {
             return skipped("editor-to-host parameter edits");
         };
         let ring = Arc::new(ParamRing::new());
-        let mut cursor = ring.cursor();
+        let mut cursor = ring.reader();
         instance.listen(Box::new(ToRing(ring.clone())));
 
         // Stand in for the plugin's editor: the handler it was just given is

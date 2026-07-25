@@ -9,7 +9,11 @@
 //! every format implements it, which is the whole point: the alternative is
 //! wiring each new capability into each host by hand and forgetting one.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use super::{ParamRing, PluginFormat, PluginNode};
 use crate::audio::effects::Effect;
@@ -121,6 +125,87 @@ pub fn untag_state<'a>(owner: &str, tagged: &'a str) -> Option<&'a str> {
         Some((saved_by, payload)) if saved_by == owner => Some(payload),
         _ => None,
     }
+}
+
+/// A tagged blob as base64, for the formats whose state is bytes.
+pub fn encode_state(owner: &str, bytes: &[u8]) -> String {
+    tag_state(owner, &STANDARD.encode(bytes))
+}
+
+/// Inverse of [`encode_state`]. `None` when the blob belongs to another plugin
+/// or is not decodable; both are reported here so no caller has to.
+pub fn decode_state(node_id: &str, owner: &str, tagged: &str) -> Option<Vec<u8>> {
+    let Some(payload) = untag_state(owner, tagged) else {
+        tracing::warn!(node_id, owner, "discarding state saved by another plugin");
+        return None;
+    };
+    match STANDARD.decode(payload) {
+        Ok(bytes) => Some(bytes),
+        Err(err) => {
+            tracing::error!(node_id, owner, %err, "plugin state is not valid base64");
+            None
+        }
+    }
+}
+
+/// Cleared by an RT node's `Drop`, which is how a host learns the plugin has
+/// left the graph and may finally be freed.
+pub type AliveFlag = Arc<AtomicBool>;
+
+pub fn alive_flag() -> AliveFlag {
+    Arc::new(AtomicBool::new(true))
+}
+
+/// Instances kept alive until their RT node leaves the outgoing graph: dropping
+/// one earlier would destroy a plugin mid-process. Every format needs this, and
+/// for the same reason, so the bookkeeping is written once.
+pub struct Graveyard<T> {
+    graves: Vec<(T, AliveFlag)>,
+}
+
+impl<T> Default for Graveyard<T> {
+    fn default() -> Self {
+        Self { graves: Vec::new() }
+    }
+}
+
+impl<T> Graveyard<T> {
+    pub fn bury(&mut self, instance: T, alive: AliveFlag) {
+        self.graves.push((instance, alive));
+    }
+
+    /// The instances whose node is gone. Returned rather than dropped in place:
+    /// destroying a plugin runs its own code, which is free to call back into
+    /// the table this was invoked from.
+    #[must_use]
+    pub fn reclaim(&mut self) -> Vec<T> {
+        let mut freed = Vec::new();
+        let mut i = 0;
+        while i < self.graves.len() {
+            if self.graves[i].1.load(Ordering::Acquire) {
+                i += 1;
+            } else {
+                freed.push(self.graves.swap_remove(i).0);
+            }
+        }
+        freed
+    }
+}
+
+/// Removes and returns the slots whose RT node has left the graph. The caller
+/// decides what a slot's teardown involves; the sweep only decides which ones.
+pub fn take_dead<S>(
+    slots: &mut HashMap<String, S>,
+    alive: impl Fn(&S) -> &AliveFlag,
+) -> Vec<(String, S)> {
+    let dead: Vec<String> = slots
+        .iter()
+        .filter(|(_, slot)| !alive(slot).load(Ordering::Acquire))
+        .map(|(id, _)| id.clone())
+        .collect();
+    dead.into_iter()
+        .filter_map(|id| slots.remove(&id).map(|slot| (id, slot)))
+        .collect()
 }
 
 /// Logical size of an embedded editor view.

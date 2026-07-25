@@ -36,18 +36,12 @@ use crate::audio::effects::Effect;
 
 use super::au_backend::{find_component, parse_component_url};
 use super::host_api::{
-    ActivateRequest, EditorSize, HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
+    alive_flag, ActivateRequest, AliveFlag, EditorSize, Graveyard, HostedNode, PluginHost,
+    PluginParamInfo, PluginStatus, Unsupported,
 };
+use super::{editor, main_thread};
+use super::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use super::ParamRing;
-
-/// `NSViewWidthSizable` / `NSViewHeightSizable`: the plugin view follows the
-/// editor window's content area instead of staying pinned at its initial size.
-const NS_VIEW_WIDTH_SIZABLE: usize = 1 << 1;
-const NS_VIEW_HEIGHT_SIZABLE: usize = 1 << 4;
-
-/// Upper bound on parameter changes applied per block; matches the CLAP node,
-/// and the UI knob rate is far below it.
-const MAX_PARAM_WRITES_PER_BLOCK: usize = 64;
 
 /// The pipeline carries interleaved stereo, so every hosted unit is configured
 /// as a stereo pair; wider units are driven one pair per node, as CLAP ones are.
@@ -111,18 +105,9 @@ struct AuSlot {
     instance: Arc<AuInstance>,
     /// False once the matching `AuNode` has left the graph; the reclaim sweep
     /// then frees this instance. Mirrors the CLAP host's slot.
-    alive: Arc<AtomicBool>,
+    alive: AliveFlag,
     /// The plugin's Cocoa view while its editor is open. Main thread only.
     view: Option<usize>,
-}
-
-/// A retired instance kept alive until its RT node leaves the outgoing graph:
-/// dropping it earlier would destroy the unit mid-render.
-struct Grave {
-    // Held only for its `Drop`; retaining it keeps the unit alive.
-    #[allow(dead_code)]
-    instance: Arc<AuInstance>,
-    alive: Arc<AtomicBool>,
 }
 
 fn instances() -> &'static Mutex<HashMap<String, AuSlot>> {
@@ -130,9 +115,9 @@ fn instances() -> &'static Mutex<HashMap<String, AuSlot>> {
     INSTANCES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn graveyard() -> &'static Mutex<Vec<Grave>> {
-    static GRAVEYARD: OnceLock<Mutex<Vec<Grave>>> = OnceLock::new();
-    GRAVEYARD.get_or_init(|| Mutex::new(Vec::new()))
+fn graveyard() -> &'static Mutex<Graveyard<Arc<AuInstance>>> {
+    static GRAVEYARD: OnceLock<Mutex<Graveyard<Arc<AuInstance>>>> = OnceLock::new();
+    GRAVEYARD.get_or_init(|| Mutex::new(Graveyard::default()))
 }
 
 pub struct AuNode {
@@ -246,7 +231,7 @@ fn activate(
     }
     // From here on the instance is owned, so a failed `configure` still
     // disposes of it through `Drop`.
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = alive_flag();
     let mut node = AuNode {
         instance: Arc::new(AuInstance { unit, url: url.to_string() }),
         alive: alive.clone(),
@@ -256,9 +241,7 @@ fn activate(
         output: [vec![0.0; max_frames], vec![0.0; max_frames]],
         max_frames,
         steady: 0.0,
-        // Start at the ring's current end so a freshly instantiated unit never
-        // replays writes issued for a previously loaded one.
-        param_cursor: params.cursor(),
+        param_cursor: params.reader(),
         params,
     };
 
@@ -267,11 +250,8 @@ fn activate(
     }
     // After `AudioUnitInitialize`, which is where hosts apply class info: the
     // unit has to know its stream format before it can make sense of settings.
-    if let Some(tagged) = state {
-        match super::host_api::untag_state(url, tagged) {
-            Some(b64) => restore_class_info(node.instance.unit, node_id, b64),
-            None => tracing::warn!(node_id, url, "discarding state saved by another plugin"),
-        }
+    if let Some(bytes) = state.and_then(|t| super::host_api::decode_state(node_id, url, t)) {
+        restore_class_info(node.instance.unit, node_id, &bytes);
     }
     tracing::debug!(node_id, url, sample_rate, primary, "audio unit activated");
     let retired = if primary {
@@ -286,17 +266,14 @@ fn activate(
     } else {
         // A metering duplicate or an extra stereo pair: nothing addresses it, but
         // the sweep must still own it, or its `Drop` would land on the DSP worker.
-        graveyard().lock().unwrap().push(Grave {
-            instance: node.instance.clone(),
-            alive,
-        });
+        graveyard()
+            .lock()
+            .unwrap()
+            .bury(node.instance.clone(), alive);
         None
     };
     if let Some(old) = retired {
-        graveyard().lock().unwrap().push(Grave {
-            instance: old.instance,
-            alive: old.alive,
-        });
+        graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
 }
@@ -358,16 +335,13 @@ fn forget(node_id: &str) {
     };
     // Handed to the sweep rather than dropped here: the caller may be the engine
     // thread, and a unit must only ever be disposed on the main thread.
-    graveyard().lock().unwrap().push(Grave {
-        instance: slot.instance,
-        alive: slot.alive,
-    });
+    graveyard().lock().unwrap().bury(slot.instance, slot.alive);
 }
 
 /// Serializes a unit's settings the way every AU host does: the class-info
 /// property is a CFPropertyList, flattened to a binary plist and base64'd so it
 /// can live in the node's JSON alongside CLAP's blob.
-fn save_class_info(node_id: &str) -> Option<String> {
+fn save_class_info(node_id: &str) -> Option<Vec<u8>> {
     use objc2_core_foundation::{
         CFData, CFPropertyList, CFPropertyListCreateData, CFPropertyListFormat, CFRange,
     };
@@ -412,21 +386,14 @@ fn save_class_info(node_id: &str) -> Option<String> {
     // SAFETY: the buffer is exactly the range asked for.
     unsafe { data.bytes(CFRange { location: 0, length: len }, bytes.as_mut_ptr()) };
 
-    Some(base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        &bytes,
-    ))
+    Some(bytes)
 }
 
 /// Restores what [`save_class_info`] produced. A malformed blob is logged and
 /// skipped: defaults are a usable unit, a half-applied state is not.
-fn restore_class_info(unit: AudioUnit, node_id: &str, b64: &str) {
+fn restore_class_info(unit: AudioUnit, node_id: &str, bytes: &[u8]) {
     use objc2_core_foundation::{CFData, CFPropertyList, CFPropertyListCreateWithData};
 
-    let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64) else {
-        tracing::error!(node_id, "audio unit state is not valid base64");
-        return;
-    };
     // SAFETY: `bytes` outlives the copy CFData makes of it.
     let Some(data) = (unsafe { CFData::new(None, bytes.as_ptr(), bytes.len() as isize) }) else {
         return;
@@ -652,36 +619,19 @@ pub(super) fn embed_editor(
 ) -> Result<(f64, f64), String> {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSRect, NSSize};
 
     let view = create_view(node_id)?;
 
     // SAFETY: the caller passes the editor window's content view, which owns the
     // plugin view from here on.
     let (frame, fitting): (NSRect, NSSize) = unsafe {
-        let parent = parent_view as *mut AnyObject;
-        let _: () = msg_send![parent, addSubview: view];
+        let _: () = msg_send![parent_view as *mut AnyObject, addSubview: view];
         // Apple's generic views build their content lazily, so the frame is
         // still degenerate right after `addSubview`.
         let _: () = msg_send![view, layoutSubtreeIfNeeded];
-        let measured = (
-            msg_send![view, frame],
-            msg_send![view, fittingSize],
-        );
-
-        // The content view runs the full window height, under the title bar, so
-        // filling its bounds outright would put the top of the editor behind the
-        // bar. Starting at the bottom-left origin of an unflipped NSView and
-        // stopping `titlebar` short of the top is the same arrangement a CLAP
-        // plugin ends up in when it parents its own view. Margins stay fixed by
-        // default, so the mask preserves that gap through every later resize.
-        let bounds: NSRect = msg_send![parent, bounds];
-        let frame = NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(bounds.size.width, (bounds.size.height - titlebar).max(1.0)),
-        );
-        let _: () = msg_send![view, setFrame: frame];
-        let _: () = msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
+        let measured = (msg_send![view, frame], msg_send![view, fittingSize]);
+        editor::inset_below_titlebar(parent_view, view, titlebar);
         measured
     };
 
@@ -806,7 +756,7 @@ impl Effect for AuNode {
         // `AudioUnitSetParameter` is the AU-sanctioned way to change a value
         // from the render thread: it is lock-free and takes effect immediately.
         let mut applied = 0;
-        while applied < MAX_PARAM_WRITES_PER_BLOCK {
+        while applied < MAX_PARAM_CHANGES_PER_BLOCK {
             let Some((id, value)) = self.params.read(&mut self.param_cursor) else {
                 break;
             };
@@ -1010,9 +960,9 @@ impl PluginHost for AuHost {
 
     fn save_state(&self, node_id: &str) -> Result<Option<String>, Unsupported> {
         let url = loaded_path(node_id);
-        Ok(url.zip(save_class_info(node_id)).map(|(url, payload)| {
-            super::host_api::tag_state(&url, &payload)
-        }))
+        Ok(url
+            .zip(save_class_info(node_id))
+            .map(|(url, bytes)| super::host_api::encode_state(&url, &bytes)))
     }
 
     /// The value is already in the unit; this only tells listeners to redraw.
@@ -1030,28 +980,19 @@ impl PluginHost for AuHost {
     /// the caller blocks -- the interface promises a blocking answer on any
     /// non-main thread, and hiding this is exactly its job.
     fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
-        let app = crate::app_handle().ok_or("app handle not ready")?;
         // A raw pointer is not `Send`; the address is, and it stays valid
         // because the window outlives the editor.
         let view_addr = window
             .ns_view()
             .map_err(|e| format!("au {node_id}: content view: {e}"))? as usize;
-        let (_, titlebar) = super::host::decoration_overhead(window);
+        let (_, titlebar) = editor::decoration_overhead(window);
         let id = node_id.to_string();
-        let (tx, rx) = std::sync::mpsc::channel();
-        app.run_on_main_thread(move || {
-            let _ = tx.send(embed_editor(&id, view_addr as *mut c_void, titlebar));
-        })
-        .map_err(|e| format!("au {node_id}: dispatch to main thread: {e}"))?;
-        let (width, height) = rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|_| format!("au {node_id}: editor embed timed out on the main thread"))??;
-
-        // Unlike a CLAP plugin's self-reported GUI size, an NSView's frame is
-        // the real laid-out geometry, so a minimum-size floor must not
-        // second-guess it: a compact editor is genuinely compact.
-        Ok(super::host::valid_gui_size(width as u32, height as u32)
-            .unwrap_or(super::host::FALLBACK_EDITOR_SIZE))
+        // An NSView's frame is the real laid-out geometry rather than a plugin's
+        // own guess, so it is reported as measured; the window layer rejects
+        // only the degenerate values.
+        let (width, height) =
+            main_thread::run(move || embed_editor(&id, view_addr as *mut c_void, titlebar))??;
+        Ok((width as u32, height as u32))
     }
 
     fn destroy_editor(&self, node_id: &str) {
@@ -1070,42 +1011,19 @@ impl PluginHost for AuHost {
     /// until then, so this sweep drops the last one -- on the main thread, which
     /// is the only place a unit may be disposed.
     fn tick_and_reclaim(&self) {
-        // Dropped outside the lock: `Drop` calls into the unit, and a plugin is
-        // free to take its time.
-        let mut freed: Vec<Grave> = Vec::new();
-        {
-            let mut graves = graveyard().lock().unwrap();
-            let mut i = 0;
-            while i < graves.len() {
-                if graves[i].alive.load(Ordering::Acquire) {
-                    i += 1;
-                } else {
-                    freed.push(graves.swap_remove(i));
-                }
-            }
-        }
+        // Collected rather than dropped under the lock: `Drop` calls into the
+        // unit, and a plugin is free to take its time.
+        let mut freed = graveyard().lock().unwrap().reclaim();
 
-        let dead: Vec<String> = {
-            let instances = instances().lock().unwrap();
-            instances
-                .iter()
-                .filter(|(_, s)| !s.alive.load(Ordering::Acquire))
-                .map(|(id, _)| id.clone())
-                .collect()
-        };
-        for node_id in dead {
-            let slot = instances().lock().unwrap().remove(&node_id);
-            let Some(slot) = slot else { continue };
+        let dead = super::host_api::take_dead(&mut instances().lock().unwrap(), |s| &s.alive);
+        for (node_id, slot) in dead {
             // The view is a child of the editor window and points at the unit;
             // both go before the unit itself does.
             if let Some(view) = slot.view {
                 unsafe { drop_view(view) };
             }
-            super::host::close_editor_window(&node_id);
-            freed.push(Grave {
-                instance: slot.instance,
-                alive: slot.alive,
-            });
+            editor::close_window(&node_id);
+            freed.push(slot.instance);
         }
         drop(freed);
     }

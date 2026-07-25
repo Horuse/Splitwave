@@ -16,13 +16,8 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
+use crate::audio::plugins::editor;
 use crate::audio::plugins::host_api::EditorSize;
-
-/// Matches the arrangement a CLAP plugin lands in when it parents its own view:
-/// the content view spans the full window height, so the editor is inset by the
-/// title bar and then follows every later resize.
-const NS_VIEW_WIDTH_SIZABLE: usize = 1 << 1;
-const NS_VIEW_HEIGHT_SIZABLE: usize = 1 << 4;
 
 /// Called when the plugin wants its window a different size.
 pub type ResizeRequest = Box<dyn Fn(u32, u32) + Send + Sync>;
@@ -143,31 +138,12 @@ impl Drop for EditorView {
 /// Lays the view the plugin just parented under the title bar rather than at
 /// the window's bottom-left corner, where an unflipped `NSView` origin puts it.
 fn inset_below_titlebar(parent: *mut c_void, titlebar: f64) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
     // SAFETY: `parent` is the window's content view, and the plugin has just
     // added its own view as the last subview of it.
     unsafe {
-        let parent = parent as *mut AnyObject;
-        let subviews: *mut AnyObject = msg_send![parent, subviews];
-        let count: usize = msg_send![subviews, count];
-        if count == 0 {
-            return;
+        if let Some(view) = editor::last_subview(parent) {
+            editor::inset_below_titlebar(parent, view, titlebar);
         }
-        let view: *mut AnyObject = msg_send![subviews, objectAtIndex: count - 1];
-
-        let bounds: NSRect = msg_send![parent, bounds];
-        let frame = NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(bounds.size.width, (bounds.size.height - titlebar).max(1.0)),
-        );
-        let _: () = msg_send![view, setFrame: frame];
-        let _: () = msg_send![
-            view,
-            setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE
-        ];
     }
 }
 

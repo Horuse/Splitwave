@@ -58,7 +58,7 @@ pub async fn scan_plugins() -> AppResult<Vec<crate::audio::plugins::PluginDescri
 pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()> {
     let id = node_id.clone();
     let r = tauri::async_runtime::spawn_blocking(move || {
-        crate::audio::plugins::host::open_editor(&id, &title)
+        crate::audio::plugins::editor::open(&id, &title)
     })
     .await
     .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
@@ -153,7 +153,7 @@ pub fn debug_panic(app: AppHandle) {
 pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
     let id = node_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::audio::plugins::host::close_editor(&id)
+        crate::audio::plugins::editor::close(&id)
     })
     .await
     .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?

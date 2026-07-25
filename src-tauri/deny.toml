@@ -1,0 +1,45 @@
+# Splitwave ships under MIT (see ../LICENSE). This file is what keeps that true.
+#
+# `allow` is an allowlist, not a denylist: an unknown licence fails the build.
+# A denylist would only catch the copyleft crates we thought to name, and a
+# fork or rename of one would pass. Adding a licence here is a deliberate act.
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # File-level copyleft: obligations attach only to modified MPL files, and we
+    # modify none. Covers symphonia (../NOTICE section 2) plus cssparser and
+    # selectors, pulled in through Tauri.
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# LGPL-3.0 is allowed for these two crates only, never tree-wide. They are the
+# statically linked LAME encoder, and ../NOTICE section 1 carries the relicensing
+# rights that permits: source availability and the steps to rebuild against a
+# different libmp3lame. Removing either crate means removing that NOTICE section.
+exceptions = [
+    { crate = "mp3lame-sys", allow = ["LGPL-3.0"] },
+    { crate = "mp3lame-encoder", allow = ["LGPL-3.0"] },
+]
+
+[bans]
+# Second line of defence behind the allowlist, aimed at one specific trap: the
+# VST3 Rust bindings come in two crates with near-identical names. `vst3` from
+# coupler-rs is MIT/Apache-2.0; `vst3-sys` from RustAudio is deliberately GPL-3.0
+# ("a derivative work of the original SDK"). Picking the wrong one relicenses
+# Splitwave. The allowlist already rejects it; this names it so the failure says
+# why instead of just "GPL-3.0 not allowed".
+deny = [{ crate = "vst3-sys", reason = "GPL-3.0; use the MIT/Apache `vst3` crate from coupler-rs" }]

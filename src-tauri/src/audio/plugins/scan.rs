@@ -1,25 +1,24 @@
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
+use super::au_backend::AuBackend;
 use super::clap_backend::ClapBackend;
 use super::{PluginBackend, PluginDescriptor};
 
-/// Scan every registered format's install directories and return all plugins.
+/// Scan every registered format and return all plugins found.
 pub fn scan_all() -> Vec<PluginDescriptor> {
-    let backends: [Box<dyn PluginBackend>; 1] = [Box::new(ClapBackend)];
-    let mut out = Vec::new();
-    for backend in backends {
-        let ext = backend.extension();
-        for dir in backend.search_dirs() {
-            walk(&dir, ext, &mut |bundle| out.extend(backend.scan_bundle(bundle)));
-        }
-    }
-    out
+    let backends: Vec<Box<dyn PluginBackend>> = vec![
+        Box::new(ClapBackend),
+        #[cfg(target_os = "macos")]
+        Box::new(AuBackend),
+    ];
+    backends.iter().flat_map(|b| b.scan()).collect()
 }
 
 /// Recurse `dir`, invoking `on_bundle` for every entry whose extension matches
 /// `ext`. A matched bundle is not descended into (on macOS a `.clap` is itself
 /// a directory).
-fn walk(dir: &Path, ext: &str, on_bundle: &mut impl FnMut(&Path)) {
+pub(super) fn walk(dir: &Path, ext: &str, on_bundle: &mut impl FnMut(&Path)) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };

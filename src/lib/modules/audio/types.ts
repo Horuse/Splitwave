@@ -17,12 +17,18 @@ export interface AudioApplication {
 
 export interface PluginDescriptor {
 	uid: string;
-	format: 'clap';
+	format: 'clap' | 'au';
 	path: string;
 	pluginId: string;
 	name: string;
 	vendor: string;
 	version: string;
+}
+
+export interface PluginStatus {
+	/** Reference of the plugin actually running, null while none is loaded. */
+	path: string | null;
+	hasEditor: boolean;
 }
 
 export interface PluginParam {

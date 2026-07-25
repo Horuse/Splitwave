@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::audio::graph::EffectSpec;
-use crate::audio::plugins::PluginNode;
+use crate::audio::plugins::HostedNode;
 
 /// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
 /// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
@@ -96,7 +96,7 @@ pub enum RuntimeEffect {
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
     WebRtcBridge(WebRtcBridgeEffect),
-    HostedPlugin(PluginNode),
+    HostedPlugin(HostedNode),
 }
 
 impl RuntimeEffect {
@@ -421,6 +421,18 @@ impl EffectRegistry {
     /// the primary-instance claim is decided fresh each pass.
     pub fn begin_reconcile(&mut self) {
         self.plugin_primary_claimed.clear();
+    }
+}
+
+impl Drop for EffectRegistry {
+    /// A host keeps its own instance per plugin node so the UI thread can reach
+    /// it. Nothing else marks the end of a pipeline's life, so the registry
+    /// releases those holds as it goes; the instances themselves live on until
+    /// their RT nodes are dropped too.
+    fn drop(&mut self) {
+        for node_id in self.plugin_param_rings.keys() {
+            crate::audio::plugins::registry::forget(node_id);
+        }
     }
 }
 
@@ -777,17 +789,25 @@ pub fn instantiate_effect(
                 None, None, None, None, None,
             )
         }
-        EffectSpec::Plugin { ref path, ref plugin_id, ref state, .. } => {
+        EffectSpec::Plugin { format, ref path, ref plugin_id, ref state, .. } => {
             // Empty path == node not yet configured: inert passthrough, not a
             // failure. Silence is reserved for a real load error below.
             if path.is_empty() {
+                crate::audio::plugins::registry::forget(node_id);
                 let muted = Arc::new(AtomicBool::new(false));
                 return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
             }
-            // Only the first real-output build claims the editor target; a node
-            // fanning out to several outputs would otherwise bind the editor to
-            // whichever output was built last.
-            let primary = primary && registry.plugin_primary_claimed.insert(node_id.to_string());
+            // Surfaced as a load failure rather than guessed at: a path without
+            // a format is stored data we cannot act on.
+            let Some(format) = format else {
+                tracing::error!(node_id, path, "plugin node has no format");
+                let muted = Arc::new(AtomicBool::new(true));
+                return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
+            };
+            // Claimed only once the instance actually exists (below): a burned
+            // claim would leave the node with no editor target while the
+            // previous plugin stayed installed behind it.
+            let primary = primary && !registry.plugin_primary_claimed.contains(node_id);
             // Every stereo pair shares the persistent per-node broadcast ring
             // (kept across rebuilds); each pair reads it through its own cursor,
             // so a UI write reaches all pairs, not just the first.
@@ -796,25 +816,30 @@ pub fn instantiate_effect(
                 .entry(node_id.to_string())
                 .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
                 .clone();
-            match crate::audio::plugins::host::activate_clap(
+            let request = crate::audio::plugins::host_api::ActivateRequest {
                 node_id,
                 path,
                 plugin_id,
                 sample_rate,
-                PLUGIN_MAX_BLOCK,
-                state.clone(),
+                max_frames: PLUGIN_MAX_BLOCK,
+                state: state.as_deref(),
                 primary,
-                ring.clone(),
-            ) {
+                params: ring.clone(),
+            };
+            match crate::audio::plugins::registry::activate(format, request) {
                 // Only the editor-target build publishes the control, so the UI
                 // writes reach the audible instance.
                 Ok(node) => {
+                    if primary {
+                        registry.plugin_primary_claimed.insert(node_id.to_string());
+                    }
                     let control = primary.then_some(EffectControl::Plugin { events: ring });
                     mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None)
                 }
                 Err(e) => {
                     // Surface as silence, never a passthrough that hides the failure.
-                    tracing::error!("plugin {plugin_id} failed to load: {e}");
+                    tracing::error!(node_id, path, plugin_id, error = %e, "plugin failed to load");
+                    crate::audio::plugins::registry::forget(node_id);
                     let muted = Arc::new(AtomicBool::new(true));
                     mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None)
                 }

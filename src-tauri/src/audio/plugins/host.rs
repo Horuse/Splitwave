@@ -29,24 +29,11 @@ use clack_host::prelude::*;
 use raw_window_handle::HasWindowHandle;
 use tauri::Emitter;
 
+use super::host_api::{
+    ActivateRequest, EditorSize, HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
+};
 use super::node::PluginNode;
-use super::ParamRing;
-
-/// One automatable plugin parameter, sent to the frontend for the node UI.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginParamInfo {
-    pub id: u32,
-    pub name: String,
-    pub min: f64,
-    pub max: f64,
-    pub default: f64,
-    pub value: f64,
-    /// Stepped params (int/enum/toggle) render as discrete steps, not a slider.
-    pub stepped: bool,
-    /// Read-only params are shown but not editable.
-    pub read_only: bool,
-}
+use super::{ParamRing, PluginFormat};
 
 struct TimerReg {
     id: u32,
@@ -64,12 +51,22 @@ type Timers = Rc<RefCell<TimerState>>;
 
 pub struct SplitwaveShared {
     node_id: String,
+    /// The plugin asked the host to run its `on_main_thread` callback. A plugin
+    /// that marshals its own GUI edits to its audio side this way (FabFilter
+    /// does) never applies them if the host ignores the request.
+    callback_requested: AtomicBool,
 }
 
 impl<'a> SharedHandler<'a> for SplitwaveShared {
-    fn request_restart(&self) {}
+    // Restart means deactivate and reactivate the processor, which lives on the
+    // DSP worker; not implemented, so say so rather than drop it silently.
+    fn request_restart(&self) {
+        tracing::warn!(node_id = %self.node_id, "plugin requested a restart; not implemented");
+    }
     fn request_process(&self) {}
-    fn request_callback(&self) {}
+    fn request_callback(&self) {
+        self.callback_requested.store(true, Ordering::Release);
+    }
 }
 
 impl HostGuiImpl for SplitwaveShared {
@@ -144,8 +141,20 @@ impl HostHandlers for SplitwaveHost {
     }
 }
 
+/// Distinguishes a node's instances in the log, which is the only way to tell
+/// an editor bound to the audible instance from one bound to a duplicate.
+fn next_instance_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 struct Slot {
     instance: PluginInstance<SplitwaveHost>,
+    serial: u64,
+    /// The bundle this was built from, so the UI can tell whether the running
+    /// plugin is still the one the node currently points at.
+    path: String,
+    plugin_id: String,
     timers: Timers,
     gui_open: bool,
     // False once the matching `PluginNode` (and its processor) is dropped from
@@ -208,6 +217,21 @@ fn on_main<R: Send + 'static>(
         .map_err(|_| "main-thread plugin op timed out".to_string())
 }
 
+/// Runs `f` on the Tauri main thread and blocks for its result. Callers must
+/// not be the main thread themselves, or this deadlocks.
+pub(super) fn run_on_main<R: Send + 'static>(
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    let app = crate::app_handle().ok_or_else(|| "app handle not ready".to_string())?;
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "main-thread plugin op timed out".to_string())
+}
+
 /// Drives all registered plugin timers; runs on the main thread. Ticking is
 /// what makes editor windows paint and stay responsive.
 fn tick_timers() {
@@ -218,6 +242,13 @@ fn tick_timers() {
         };
         let now = Instant::now();
         for s in state.instances.values_mut() {
+            // Deferred work the plugin asked for, including the GUI-to-DSP hand
+            // off some plugins rely on.
+            if s.instance
+                .access_shared_handler(|h| h.callback_requested.swap(false, Ordering::AcqRel))
+            {
+                s.instance.call_on_main_thread_callback();
+            }
             let due: Vec<u32> = {
                 let mut st = s.timers.borrow_mut();
                 let mut due = Vec::new();
@@ -286,8 +317,9 @@ fn ensure_ticker() {
                 std::thread::sleep(Duration::from_millis(16));
                 if let Some(app) = crate::app_handle() {
                     let _ = app.run_on_main_thread(|| {
-                        tick_timers();
-                        reclaim_dead();
+                        for host in super::registry::hosts() {
+                            host.tick_and_reclaim();
+                        }
                     });
                 }
             })
@@ -318,9 +350,9 @@ fn port_channels(
 }
 
 /// Loads, instantiates and activates a CLAP plugin, returning its `Send` audio
-/// node. Safe to call from any non-main thread.
+/// node.
 #[allow(clippy::too_many_arguments)]
-pub fn activate_clap(
+fn activate_clap(
     node_id: &str,
     path: &str,
     plugin_id: &str,
@@ -352,6 +384,7 @@ pub fn activate_clap(
         let mut instance = PluginInstance::<SplitwaveHost>::new(
             move |_| SplitwaveShared {
                 node_id: shared_node_id,
+                callback_requested: AtomicBool::new(false),
             },
             move |_| SplitwaveMainThread {
                 timers: timers_for_handler,
@@ -361,6 +394,9 @@ pub fn activate_clap(
             &state.info,
         )
         .map_err(|e| format!("instantiate {plugin_id}: {e}"))?;
+
+        let serial = next_instance_serial();
+        tracing::debug!(node_id, path, plugin_id, primary, serial, "clap instance created");
 
         let ports = instance.plugin_handle().get_extension::<PluginAudioPorts>();
         let input_channels = port_channels(ports.as_ref(), &mut instance, true);
@@ -381,7 +417,20 @@ pub fn activate_clap(
         // logged and skipped, never fatal. Some plugins (nih-plug) *panic* on a
         // stream they can't parse instead of erroring, so the load is caught:
         // this runs on the UI thread, where an escaping panic kills the app.
-        if let Some(b64) = &state_b64 {
+        tracing::debug!(
+            node_id,
+            plugin_id,
+            state_bytes = state_b64.as_ref().map(|s| s.len()).unwrap_or(0),
+            "clap instance restoring state"
+        );
+        let own_state = state_b64.as_deref().and_then(|tagged| {
+            let payload = super::host_api::untag_state(&plugin_id, tagged);
+            if payload.is_none() {
+                tracing::warn!(node_id, plugin_id, "discarding state saved by another plugin");
+            }
+            payload
+        });
+        if let Some(b64) = own_state {
             if let Some(ext) = instance.plugin_handle().get_extension::<PluginState>() {
                 match STANDARD.decode(b64) {
                     Ok(bytes) => {
@@ -444,6 +493,9 @@ pub fn activate_clap(
             node_id.clone(),
             Slot {
                 instance,
+                serial,
+                path: path.clone(),
+                plugin_id: plugin_id.clone(),
                 timers,
                 gui_open: false,
                 alive,
@@ -454,16 +506,42 @@ pub fn activate_clap(
     .and_then(|r| r)
 }
 
+/// Retires a node's editor/parameter target without installing a replacement.
+/// Used when a rebuild fails to load the plugin: without it the previous
+/// plugin's instance stays installed and the editor goes on driving something
+/// the graph no longer contains. The instance itself is graveyarded rather than
+/// dropped, since its processor may still be in the outgoing DAG.
+pub fn forget_instance(node_id: &str) {
+    let nid = node_id.to_string();
+    let _ = on_main(move |state| {
+        let Some(mut slot) = state.instances.remove(&nid) else {
+            return;
+        };
+        if slot.gui_open {
+            if let Some(gui) = slot.instance.plugin_handle().get_extension::<PluginGui>() {
+                gui.destroy(&mut slot.instance.plugin_handle());
+            }
+        }
+        state.graveyard.push(Grave {
+            instance: slot.instance,
+            alive: slot.alive,
+        });
+    });
+    if let Some(w) = editor_windows().lock().unwrap().remove(node_id) {
+        let _ = w.close();
+    }
+}
+
 /// Serializes a running plugin's state to base64, or `None` if the plugin isn't
-/// running or does not implement the state extension. Safe off the main thread.
-pub fn save_state(node_id: &str) -> Option<String> {
+/// running or does not implement the state extension.
+fn save_state(node_id: &str) -> Option<String> {
     let node_id = node_id.to_string();
     on_main(move |state| {
         let slot = state.instances.get_mut(&node_id)?;
         let ext = slot.instance.plugin_handle().get_extension::<PluginState>()?;
         let mut buf = Vec::new();
         ext.save(&mut slot.instance.plugin_handle(), &mut buf).ok()?;
-        Some(STANDARD.encode(&buf))
+        Some(super::host_api::tag_state(&slot.plugin_id, &STANDARD.encode(&buf)))
     })
     .ok()
     .flatten()
@@ -471,8 +549,7 @@ pub fn save_state(node_id: &str) -> Option<String> {
 
 /// Enumerates a running plugin's parameters (id, range, current value) for the
 /// node UI. Empty when the plugin isn't running or exposes no params extension.
-/// Safe off the main thread.
-pub fn get_plugin_params(node_id: &str) -> Vec<PluginParamInfo> {
+fn get_plugin_params(node_id: &str) -> Vec<PluginParamInfo> {
     let node_id = node_id.to_string();
     on_main(move |state| {
         let Some(slot) = state.instances.get_mut(&node_id) else {
@@ -510,6 +587,40 @@ pub fn get_plugin_params(node_id: &str) -> Vec<PluginParamInfo> {
     .unwrap_or_default()
 }
 
+fn status(node_id: &str) -> PluginStatus {
+    let node_id = node_id.to_string();
+    on_main(move |state| {
+        let Some(slot) = state.instances.get_mut(&node_id) else {
+            return PluginStatus::default();
+        };
+        let path = Some(slot.path.clone());
+        let has_editor = slot
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginGui>()
+            .zip(GuiApiType::default_for_current_platform())
+            .is_some_and(|(gui, api_type)| {
+                gui.is_api_supported(
+                    &mut slot.instance.plugin_handle(),
+                    GuiConfiguration {
+                        api_type,
+                        is_floating: false,
+                    },
+                )
+            });
+        PluginStatus { path, has_editor }
+    })
+    .unwrap_or_default()
+}
+
+/// Closes a node's editor window if one is open. Shared with the format hosts,
+/// which have to take the window down alongside the instance it belongs to.
+pub(super) fn close_editor_window(node_id: &str) {
+    if let Some(w) = editor_windows().lock().unwrap().remove(node_id) {
+        let _ = w.close();
+    }
+}
+
 /// Native host windows that plugin editors are embedded into, keyed by node id.
 /// `tauri::Window` is `Send + Sync`, so this lives outside the main-thread
 /// state and can be created/closed from the command thread.
@@ -529,7 +640,10 @@ const TITLEBAR_LOGICAL: f64 = 28.0;
 #[cfg(not(target_os = "macos"))]
 const TITLEBAR_LOGICAL: f64 = 32.0;
 
-fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
+/// Logical px the window decoration takes beyond its content, as (width,
+/// height). The content view runs the full height of the window, under the
+/// title bar, so this is also how far down a child view must start to clear it.
+pub(super) fn decoration_overhead(window: &tauri::Window) -> (f64, f64) {
     let scale = window.scale_factor().unwrap_or(1.0);
     let (dw, measured_dh) = match (window.inner_size(), window.outer_size()) {
         (Ok(inner), Ok(outer)) => (
@@ -540,7 +654,16 @@ fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
     };
     // tao returns outer == inner on macOS, so the measurement is 0; fall back to
     // the platform title-bar height so the plugin renders below the bar.
-    let dh = if measured_dh > 0.5 { measured_dh } else { TITLEBAR_LOGICAL };
+    let dh = if measured_dh > 0.5 {
+        measured_dh
+    } else {
+        TITLEBAR_LOGICAL
+    };
+    (dw, dh)
+}
+
+fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
+    let (dw, dh) = decoration_overhead(window);
     let _ = window.set_size(tauri::LogicalSize::new(w + dw, h + dh));
 }
 
@@ -548,6 +671,7 @@ fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
 /// only support embedded GUIs (`is_floating=false`), so the host must own the
 /// window and hand its native handle to the plugin via `set_parent`.
 pub fn open_editor(node_id: &str, title: &str) -> Result<(), String> {
+    tracing::debug!(node_id, title, "opening plugin editor");
     let app = crate::app_handle().ok_or("app handle not ready")?;
     if let Some(w) = editor_windows().lock().unwrap().get(node_id) {
         let _ = w.set_focus();
@@ -561,17 +685,20 @@ pub fn open_editor(node_id: &str, title: &str) -> Result<(), String> {
         .resizable(true)
         .min_inner_size(200.0, 150.0)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("editor window for {node_id}: {e}"))?;
 
     let nid = node_id.to_string();
     window.on_window_event(move |ev| {
         // The plugin's view is a child of this window: tear the GUI down before
         // the window goes away, and tell the FE node its editor button is stale.
         if matches!(ev, tauri::WindowEvent::CloseRequested { .. }) {
-            unembed_current_thread(&nid);
+            // Already the main thread, which is where `destroy_editor` belongs.
+            if let Some(host) = super::registry::for_node(&nid) {
+                host.destroy_editor(&nid);
+            }
             editor_windows().lock().unwrap().remove(&nid);
             if let Some(app) = crate::app_handle() {
-                let _ = app.emit(EDITOR_CLOSED_EVENT, &nid);
+                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &nid);
             }
         }
     });
@@ -580,46 +707,65 @@ pub fn open_editor(node_id: &str, title: &str) -> Result<(), String> {
         .unwrap()
         .insert(node_id.to_string(), window.clone());
 
-    let info = embed_editor(node_id, window.clone())?;
-    set_content_size(&window, info.width as f64, info.height as f64);
+    let embedded = match super::registry::for_node(node_id) {
+        Some(host) => host.embed_editor(node_id, &window),
+        None => Err(format!("{node_id}: no plugin is running on this node")),
+    };
+
+    // The window exists before the plugin view does, so a failed embed would
+    // otherwise leave an empty one on screen and the caller none the wiser.
+    let (width, height) = match embedded {
+        Ok(size) => size,
+        Err(e) => {
+            tracing::error!(node_id, error = %e, "plugin editor embed failed");
+            editor_windows().lock().unwrap().remove(node_id);
+            let _ = window.close();
+            return Err(e);
+        }
+    };
+    tracing::debug!(node_id, width, height, "plugin editor embedded");
+
+    set_content_size(&window, width as f64, height as f64);
     Ok(())
 }
 
-/// Emitted with the node id when a plugin editor window is closed via its
-/// titlebar, so the FE node can reset its open/close button.
-pub const EDITOR_CLOSED_EVENT: &str = "plugin://editor-closed";
-
-struct EmbedInfo {
-    width: u32,
-    height: u32,
-}
-
-fn embed_editor(node_id: &str, window: tauri::Window) -> Result<EmbedInfo, String> {
+pub(super) fn embed_editor(node_id: &str, window: tauri::Window) -> Result<EditorSize, String> {
     let node_id = node_id.to_string();
     on_main(move |state| embed(state, &node_id, &window)).and_then(|r| r)
 }
 
-fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result<EmbedInfo, String> {
+fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
     let slot = state
         .instances
         .get_mut(node_id)
-        .ok_or("plugin is not running")?;
+        .ok_or_else(|| format!("clap {node_id}: plugin is not running"))?;
+    // Every failure below names the bundle: an editor error that says only what
+    // went wrong is unusable when several plugins are in the graph. Cloned
+    // rather than borrowed, because the steps need `slot` mutably.
+    let path = slot.path.clone();
+    tracing::debug!(node_id, %path, serial = slot.serial, "clap editor binding to instance");
+    let at = |step: &str, detail: String| format!("clap {path}: {step}: {detail}");
     let gui = slot
         .instance
         .plugin_handle()
         .get_extension::<PluginGui>()
-        .ok_or("plugin has no GUI")?;
-    let api = GuiApiType::default_for_current_platform().ok_or("no GUI API for this platform")?;
+        .ok_or_else(|| at("gui extension", "plugin does not implement it".into()))?;
+    let api = GuiApiType::default_for_current_platform()
+        .ok_or_else(|| at("gui api", "no GUI API for this platform".into()))?;
     let config = GuiConfiguration {
         api_type: api,
         is_floating: false,
     };
     if !gui.is_api_supported(&mut slot.instance.plugin_handle(), config) {
-        return Err("plugin does not support an embedded GUI".into());
+        return Err(at(
+            "is_api_supported",
+            "plugin does not support an embedded GUI".into(),
+        ));
     }
     if !slot.gui_open {
+        tracing::debug!(node_id, %path, "clap gui create");
         gui.create(&mut slot.instance.plugin_handle(), config)
-            .map_err(|e| format!("gui create: {e}"))?;
+            .map_err(|e| at("gui create", e.to_string()))?;
         slot.gui_open = true;
     }
     // macOS/Cocoa scales for Retina itself, so the scale is always 1 there;
@@ -630,13 +776,15 @@ fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result
     let scale = window.scale_factor().unwrap_or(1.0);
     let _ = gui.set_scale(&mut slot.instance.plugin_handle(), scale);
 
-    let handle = window.window_handle().map_err(|e| e.to_string())?;
-    let clap_window =
-        ClackWindow::from_window_handle(handle.as_raw()).ok_or("unsupported window handle")?;
+    let handle = window
+        .window_handle()
+        .map_err(|e| at("window handle", e.to_string()))?;
+    let clap_window = ClackWindow::from_window_handle(handle.as_raw())
+        .ok_or_else(|| at("window handle", "unsupported handle for this platform".into()))?;
     // SAFETY: `window` outlives the embed; it is parked in `editor_windows`.
     unsafe {
         gui.set_parent(&mut slot.instance.plugin_handle(), clap_window)
-            .map_err(|e| format!("set_parent: {e}"))?;
+            .map_err(|e| at("set_parent", e.to_string()))?;
     }
 
     let read = |slot: &mut Slot| {
@@ -648,14 +796,23 @@ fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result
     };
     // A pre-show hint lets the plugin lay out; the authoritative size is read
     // after show, since some plugins only finalize (or report 0x0) until then.
-    if let Some((w, h)) = read(slot) {
-        let _ = gui.set_size(
-            &mut slot.instance.plugin_handle(),
-            GuiSize { width: w, height: h },
-        );
+    // The embedded window must always be given a size before `show`, even when
+    // the plugin reports none: some refuse to show an unsized window.
+    let hinted = read(slot).unwrap_or(FALLBACK_EDITOR_SIZE);
+    let _ = gui.set_size(
+        &mut slot.instance.plugin_handle(),
+        GuiSize {
+            width: hinted.0,
+            height: hinted.1,
+        },
+    );
+    tracing::debug!(node_id, %path, ?hinted, "clap gui show");
+    // `set_parent` already made the plugin's view a child of our window, so a
+    // refused `show` still leaves a usable editor -- several plugins simply do
+    // not implement it. Aborting here would close a window that works.
+    if let Err(e) = gui.show(&mut slot.instance.plugin_handle()) {
+        tracing::warn!(node_id, %path, error = %e, "plugin refused gui show; view stays parented");
     }
-    gui.show(&mut slot.instance.plugin_handle())
-        .map_err(|e| format!("gui show: {e}"))?;
     // A too-small report (e.g. Floe's 150x105 placeholder) is a minimum, not a
     // usable editor size; fall back to a default and push it back so a resizable
     // plugin actually lays out at it instead of a corner.
@@ -666,17 +823,17 @@ fn embed(state: &mut HostState, node_id: &str, window: &tauri::Window) -> Result
         &mut slot.instance.plugin_handle(),
         GuiSize { width, height },
     );
-    Ok(EmbedInfo { width, height })
+    Ok((width, height))
 }
 
 /// Fallback editor size for plugins that report a nonsensical one.
-const FALLBACK_EDITOR_SIZE: (u32, u32) = (800, 600);
+pub(super) const FALLBACK_EDITOR_SIZE: (u32, u32) = (800, 600);
 /// Below this a reported size is treated as a placeholder/minimum, not usable.
 const MIN_USABLE_SIZE: (u32, u32) = (400, 300);
 
 /// Rejects the degenerate sizes plugins report before their view exists (0x0)
 /// or absurd values, so the window is never opened invisibly small or huge.
-fn valid_gui_size(w: u32, h: u32) -> Option<(u32, u32)> {
+pub(super) fn valid_gui_size(w: u32, h: u32) -> Option<(u32, u32)> {
     (w >= 100 && h >= 100 && w <= 8000 && h <= 8000).then_some((w, h))
 }
 
@@ -702,10 +859,75 @@ fn unembed_current_thread(node_id: &str) {
 
 /// Tears down the plugin editor and closes its native window.
 pub fn close_editor(node_id: &str) -> Result<(), String> {
+    // The plugin's view is a child of this window, so it goes first -- and it
+    // goes on the main thread, which is the one place AppKit and CLAP agree on.
     let nid = node_id.to_string();
-    let _ = on_main(move |state| unembed(state, &nid));
-    if let Some(w) = editor_windows().lock().unwrap().remove(node_id) {
-        let _ = w.close();
-    }
+    let _ = run_on_main(move || {
+        if let Some(host) = super::registry::for_node(&nid) {
+            host.destroy_editor(&nid);
+        }
+    });
+    close_editor_window(node_id);
     Ok(())
+}
+
+/// CLAP's side of the shared host interface. Holds nothing: the instances live
+/// in the main-thread `HOST` thread-local above.
+pub struct ClapHost;
+
+impl PluginHost for ClapHost {
+    fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
+        activate_clap(
+            req.node_id,
+            req.path,
+            req.plugin_id,
+            req.sample_rate,
+            req.max_frames,
+            req.state.map(str::to_string),
+            req.primary,
+            req.params,
+        )
+        .map(HostedNode::Clap)
+    }
+
+    // A CLAP slot's lifetime is governed by its `alive` flag and the reclaim
+    // sweep, not by a registry entry, so releasing the hold means retiring the
+    // instance -- which is exactly what `forget_instance` does.
+    fn forget(&self, node_id: &str) {
+        forget_instance(node_id);
+    }
+
+    fn status(&self, node_id: &str) -> PluginStatus {
+        status(node_id)
+    }
+
+    fn params(&self, node_id: &str) -> Vec<PluginParamInfo> {
+        get_plugin_params(node_id)
+    }
+
+    fn save_state(&self, node_id: &str) -> Result<Option<String>, Unsupported> {
+        Ok(save_state(node_id))
+    }
+
+    // CLAP parameter changes ride in the process call as events, so the plugin
+    // sees them itself and there is nothing to announce.
+    fn notify_param_changed(&self, _node_id: &str, _param_id: u32) -> Result<(), Unsupported> {
+        Err(Unsupported {
+            format: PluginFormat::Clap,
+            capability: "notify_param_changed",
+        })
+    }
+
+    fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
+        embed_editor(node_id, window.clone())
+    }
+
+    fn destroy_editor(&self, node_id: &str) {
+        unembed_current_thread(node_id);
+    }
+
+    fn tick_and_reclaim(&self) {
+        tick_timers();
+        reclaim_dead();
+    }
 }

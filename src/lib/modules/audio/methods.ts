@@ -8,6 +8,7 @@ import type {
 	NativeDeviceInfo,
 	PluginDescriptor,
 	PluginParam,
+	PluginStatus,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus
@@ -25,6 +26,8 @@ export const methods = {
 		invoke<string | null>('get_plugin_state', { nodeId }),
 	getPluginParams: (nodeId: string): Promise<PluginParam[]> =>
 		invoke<PluginParam[]>('get_plugin_params', { nodeId }),
+	pluginStatus: (nodeId: string): Promise<PluginStatus> =>
+		invoke<PluginStatus>('plugin_status', { nodeId }),
 	onPluginEditorClosed: (cb: (nodeId: string) => void): Promise<UnlistenFn> =>
 		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),

@@ -122,9 +122,17 @@ windows = { version = "0.61", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 embed_plist = "1.2"
 objc2 = "0.6"
+# Audio Unit hosting. Generated, maintained bindings to the AudioToolbox C API;
+# coreaudio-sys is deliberately not used (it is in maintenance mode and
+# coreaudio-rs itself moved to the objc2 crates).
+objc2-audio-toolbox = "0.3.2"
+objc2-core-audio-types = "0.3.2"
+objc2-core-foundation = { version = "0.3.2", features = ["CFData", "CFError", "CFPropertyList"] }
 objc2-foundation = { version = "0.3", features = [
     "NSArray", "NSString", "NSEnumerator", "NSError", "NSObject",
-    "NSObjCRuntime", "NSDictionary", "NSValue", "NSData", "NSURL"
+    "NSObjCRuntime", "NSDictionary", "NSValue", "NSData", "NSURL",
+    # AU editors: the plugin's Cocoa view comes out of a bundle we load by URL.
+    "NSBundle", "NSGeometry"
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSWorkspace", "NSRunningApplication"

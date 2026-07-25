@@ -50,3 +50,4 @@ export { default as Saturator } from './saturator.svelte';
 export { default as Delay } from './delay.svelte';
 export { default as Reverb } from './reverb.svelte';
 export { default as Balance } from './balance.svelte';
+export { default as WindowOff } from './window_off.svelte';

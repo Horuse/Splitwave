@@ -484,6 +484,9 @@ pub struct NetSenderData {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PluginData {
+    /// None until a plugin is picked, which pairs with an empty `path`.
+    #[serde(default)]
+    pub format: Option<crate::audio::plugins::PluginFormat>,
     pub path: String,
     pub plugin_id: String,
     #[serde(default)]
@@ -560,6 +563,7 @@ pub enum EffectSpec {
     },
     Plugin {
         node_id: String,
+        format: Option<crate::audio::plugins::PluginFormat>,
         path: String,
         plugin_id: String,
         bypassed: bool,
@@ -993,6 +997,7 @@ fn effect_from_node(n: &NodeSpec) -> AppResult<EffectSpec> {
             let data: PluginData = parse(&n.data, "Plugin")?;
             EffectSpec::Plugin {
                 node_id: n.id.clone(),
+                format: data.format,
                 path: data.path,
                 plugin_id: data.plugin_id,
                 bypassed: data.bypassed,

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
-	import type { PluginDescriptor, PluginParam } from '$lib/modules/audio/types';
+	import type { PluginDescriptor, PluginParam, PluginStatus } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
 	import Slider from './_slider.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
-	import { Plug } from '$lib/components/icons';
+	import { Plug, Refresh, WindowOff } from '$lib/components/icons';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
 	let { id, data }: NodeProps<PluginNodeType> = $props();
@@ -49,6 +49,9 @@
 	function select(uid: string | null) {
 		const desc = plugins.find((p) => p.uid === uid);
 		flow.updateNodeData(id, {
+			// The engine dispatches on this, so it is stored rather than guessed
+			// from the path shape -- more formats are coming.
+			format: desc?.format ?? null,
 			path: desc?.path ?? '',
 			pluginId: desc?.pluginId ?? '',
 			name: desc?.name ?? '',
@@ -63,7 +66,34 @@
 
 	// The editor embeds a native plugin view, which needs the running audio
 	// instance; there is nothing to open before the pipeline starts.
-	const canOpenEditor = $derived(!!data.path && audioStore.isRunning);
+	// What the engine is actually running, which lags the node's own selection
+	// while the graph rebuilds. Everything that touches the plugin waits on it:
+	// acting sooner opens the outgoing plugin's editor instead of the new one.
+	let status = $state<PluginStatus>({ path: null, hasEditor: true });
+	const loaded = $derived(!!data.path && status.path === data.path);
+	const loading = $derived(!!data.path && audioStore.isRunning && !loaded);
+
+	const canOpenEditor = $derived(loaded && audioStore.isRunning);
+
+	$effect(() => {
+		// Reading the path first both tracks it and clears the previous plugin's
+		// verdict, so a stale answer never carries over to the new selection.
+		const path = data.path;
+		status = { path: null, hasEditor: true };
+		editorError = null;
+		if (!path || !audioStore.isRunning) return;
+		// A single probe would race the rebuild and read the outgoing plugin's
+		// answer, which then never gets corrected; polling settles on the new
+		// instance instead.
+		const probe = () =>
+			audioMethods
+				.pluginStatus(id)
+				.then((v) => (status = v))
+				.catch(() => {});
+		probe();
+		const timer = setInterval(probe, 400);
+		return () => clearInterval(timer);
+	});
 
 	// Automatable parameters, editable directly in the node. Opt-in (most users
 	// only need the editor). Readable only once the plugin is instantiated; a
@@ -89,7 +119,7 @@
 	}
 
 	$effect(() => {
-		if (!data.showParams || !data.path || !audioStore.isRunning) {
+		if (!data.showParams || !loaded || !audioStore.isRunning) {
 			params = [];
 			return;
 		}
@@ -101,20 +131,34 @@
 	// Pull the plugin's own state (edited via its GUI) into node data so it
 	// survives project reload. State is non-structural, so this never rebuilds.
 	async function captureState() {
+		const capturedFor = data.path;
 		const state = await audioMethods.getPluginState(id).catch(() => null);
+		// The plugin may have been swapped while this was in flight. Writing now
+		// would hand the previous plugin's blob to the new one, which then loads
+		// it on the next rebuild and ends up in a state its own editor disagrees
+		// with.
+		if (data.path !== capturedFor) return;
 		if (state && state !== data.state) flow.updateNodeData(id, { state });
 	}
 
+	// Last editor failure, shown in the node. The backend message names the
+	// plugin and the step that failed, so it is worth surfacing verbatim.
+	let editorError = $state<string | null>(null);
+
 	function toggleEditor() {
+		editorError = null;
 		const next = !editorOpen;
 		editorOpen = next;
 		if (!next) captureState();
 		const call = next
 			? audioMethods.openPluginEditor(id, data.name || 'Plugin')
 			: audioMethods.closePluginEditor(id);
-		call.catch((e) => {
-			console.error('plugin editor error:', e);
+		call.catch((e: unknown) => {
 			editorOpen = !next;
+			editorError = String(e);
+			// The probe only says the plugin advertises an editor; a failed open
+			// is the stronger evidence, so the node stops offering the button.
+			if (next) status = { ...status, hasEditor: false };
 		});
 	}
 
@@ -172,14 +216,29 @@
 			{/snippet}
 		</Combobox>
 		{#if data.path}
-			<button
-				class="nodrag nopan rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
-				disabled={!canOpenEditor}
-				title={canOpenEditor ? undefined : 'Start the pipeline to open the editor'}
-				onclick={toggleEditor}
-			>
-				{editorOpen ? 'Close editor' : 'Open editor'}
-			</button>
+			{#if loading}
+				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
+					<Refresh class="h-4 w-4 shrink-0 animate-spin" />
+					Loading plugin...
+				</p>
+			{:else if canOpenEditor && !status.hasEditor}
+				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
+					<WindowOff class="h-4 w-4 shrink-0" />
+					No editor
+				</p>
+				{#if editorError}
+					<p class="text-xs text-rose-400">{editorError}</p>
+				{/if}
+			{:else}
+				<button
+					class="nodrag nopan rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
+					disabled={!canOpenEditor}
+					title={canOpenEditor ? undefined : 'Start the pipeline to open the editor'}
+					onclick={toggleEditor}
+				>
+					{editorOpen ? 'Close editor' : 'Open editor'}
+				</button>
+			{/if}
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>

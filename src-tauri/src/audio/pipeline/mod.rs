@@ -188,6 +188,17 @@ impl ActivePipeline {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
         }
+        // Some formats' editors only redraw when the host says a parameter
+        // moved; doing it here keeps the notification (which locks) off the DSP
+        // worker. Formats that carry the change to the plugin themselves report
+        // it as unsupported, which is not a failure.
+        if let Some(map) = data.get("pluginParams").and_then(serde_json::Value::as_object) {
+            if let Some(host) = crate::audio::plugins::registry::for_node(node_id) {
+                for id in map.keys().filter_map(|id| id.parse::<u32>().ok()) {
+                    let _ = host.notify_param_changed(node_id, id);
+                }
+            }
+        }
         if let Some(bypass) = self.effect_bypasses.get(node_id) {
             if let Some(b) = data.get("bypassed").and_then(serde_json::Value::as_bool) {
                 bypass.store(b, Ordering::Relaxed);

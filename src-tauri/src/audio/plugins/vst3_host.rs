@@ -45,6 +45,35 @@ fn ok(result: tresult) -> bool {
     result == kResultOk
 }
 
+/// Separates the two halves' state. Not in base64's alphabet, so it cannot
+/// occur inside either payload.
+const STATE_HALVES_SEP: char = '.';
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unb64(text: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(text)
+        .map_err(|e| format!("saved state is not base64: {e}"))
+}
+
+fn stream(bytes: Vec<u8>) -> ComPtr<IBStream> {
+    ComWrapper::new(MemoryStream::new(bytes))
+        .to_com_ptr::<IBStream>()
+        .expect("MemoryStream implements IBStream")
+}
+
+/// Runs `write` against a fresh stream and returns what it wrote.
+fn read_state(write: impl FnOnce(*mut IBStream) -> tresult) -> Option<Vec<u8>> {
+    let wrapper = ComWrapper::new(MemoryStream::new(Vec::new()));
+    let s = wrapper.to_com_ptr::<IBStream>()?;
+    ok(write(s.as_ptr())).then(|| wrapper.take())
+}
+
 /// A class id as the factory wants it: 16 raw bytes, not a C string.
 fn cid_arg(cid: &TUID) -> FIDString {
     cid.as_ptr()
@@ -219,6 +248,49 @@ impl Vst3Instance {
         }
         // The plugin holds a borrowed reference, so the object must outlive it.
         self.handler = Some(handler);
+    }
+
+    /// Both halves' state, base64 each side of a separator. Two blobs because
+    /// the controller keeps things the component does not: which page the
+    /// editor was on, a zoom level, anything with no effect on audio.
+    pub fn save_state(&self) -> Option<String> {
+        let component = read_state(|s| unsafe { self.component.getState(s) })?;
+        // The controller half is optional in the spec and Renegate omits it;
+        // an empty payload means "nothing of its own to remember".
+        let controller = read_state(|s| unsafe { self.controller.getState(s) }).unwrap_or_default();
+        Some(format!(
+            "{}{STATE_HALVES_SEP}{}",
+            b64(&component),
+            b64(&controller)
+        ))
+    }
+
+    /// Restores what `save_state` produced. Runs before activation, since a
+    /// plugin may resize its buffers to fit what it reads.
+    pub fn restore_state(&self, blob: &str) -> Result<(), String> {
+        let (component, controller) = blob
+            .split_once(STATE_HALVES_SEP)
+            .ok_or("saved state is not a vst3 blob")?;
+        let component = unb64(component)?;
+        let controller = unb64(controller)?;
+
+        // SAFETY: streams are owned here and outlive each call.
+        unsafe {
+            let s = stream(component);
+            if !ok(self.component.setState(s.as_ptr())) {
+                return Err("component rejected its saved state".into());
+            }
+            // The controller needs the component's state as well as its own:
+            // that is how its display learns what the audio side is doing.
+            rewind(&s);
+            self.controller.setComponentState(s.as_ptr());
+
+            if !controller.is_empty() {
+                let s = stream(controller);
+                self.controller.setState(s.as_ptr());
+            }
+        }
+        Ok(())
     }
 
     /// Configures the plugin for the pipeline's format and starts it. The
@@ -451,6 +523,48 @@ mod tests {
         }
 
         assert_eq!(ring.read(&mut cursor), Some((11, 0.375)));
+    }
+
+    /// A value set before saving must come back after restoring into a fresh
+    /// instance, which is what reopening a project does.
+    #[test]
+    fn state_survives_a_reinstantiation() {
+        let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
+            return;
+        };
+        let open = || {
+            let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
+            Vst3Instance::new(module, &plugin.plugin_id).unwrap()
+        };
+
+        let before = open();
+        let param = before
+            .params()
+            .into_iter()
+            .find(|p| !p.read_only && !p.stepped)
+            .expect("a continuous parameter");
+        let target = if param.value > 0.5 { 0.25 } else { 0.75 };
+        before.set_param(param.id, target);
+        let blob = before.save_state().expect("plugin saved no state");
+        drop(before);
+
+        let after = open();
+        after.restore_state(&blob).unwrap();
+        let restored = unsafe { after.controller.getParamNormalized(param.id) };
+        assert!(
+            (restored - target).abs() < 1e-6,
+            "{}: saved {target}, restored {restored}",
+            param.name
+        );
+    }
+
+    #[test]
+    fn a_state_blob_that_is_not_ours_is_refused() {
+        let Some((instance, _)) = first_plugin() else {
+            return;
+        };
+        assert!(instance.restore_state("no separator here").is_err());
+        assert!(instance.restore_state("not base64!.also not").is_err());
     }
 
     /// Audio must survive a round trip through the plugin: same length, no NaN

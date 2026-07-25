@@ -1,7 +1,9 @@
 //! VST3 discovery, plus the module handle instantiation reuses.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
 use vst3::Steinberg::{
@@ -51,13 +53,27 @@ impl PluginBackend for Vst3Backend {
     }
 }
 
+/// A handle to a loaded bundle. Cheap to clone; the bundle unloads when the
+/// last handle goes.
+#[derive(Clone)]
+pub struct Vst3Module(Arc<Module>);
+
 /// A loaded VST3 bundle and its factory, kept together because the factory
 /// points into code the bundle owns: releasing the bundle first leaves it
 /// dangling. Dropping this unloads both, in that order.
-pub struct Vst3Module {
+struct Module {
     factory: Option<ComPtr<IPluginFactory>>,
     bundle: CFRetained<CFBundle>,
     path: String,
+}
+
+/// One `Module` per path, process-wide. `bundleEntry` and `bundleExit` act on
+/// code shared by everything in the process, so a second load of the same
+/// bundle hands out the same factory, and one scan finishing must not unload
+/// the code another instance is still running.
+fn loaded() -> &'static Mutex<HashMap<String, Weak<Module>>> {
+    static LOADED: OnceLock<Mutex<HashMap<String, Weak<Module>>>> = OnceLock::new();
+    LOADED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
@@ -66,6 +82,29 @@ type GetFactory = unsafe extern "C" fn() -> *mut IPluginFactory;
 
 impl Vst3Module {
     pub fn open(path: &Path) -> Result<Self, String> {
+        let key = path.display().to_string();
+        // Held across the load so two threads cannot both run `bundleEntry`.
+        let mut loaded = loaded().lock().unwrap();
+        if let Some(module) = loaded.get(&key).and_then(Weak::upgrade) {
+            return Ok(Self(module));
+        }
+        let module = Arc::new(Module::load(path)?);
+        loaded.insert(key, Arc::downgrade(&module));
+        Ok(Self(module))
+    }
+
+    pub fn factory(&self) -> &ComPtr<IPluginFactory> {
+        self.0.factory.as_ref().expect("set in load, cleared in drop")
+    }
+
+    /// Every audio effect class the factory advertises.
+    pub fn descriptors(&self) -> Vec<PluginDescriptor> {
+        self.0.descriptors()
+    }
+}
+
+impl Module {
+    fn load(path: &Path) -> Result<Self, String> {
         let display = path.display();
         let at = |step: &str| format!("{display}: {step}");
 
@@ -121,13 +160,8 @@ impl Vst3Module {
         Ok(module)
     }
 
-    pub fn factory(&self) -> &ComPtr<IPluginFactory> {
-        self.factory.as_ref().expect("set in open, cleared in drop")
-    }
-
-    /// Every audio effect class the factory advertises.
-    pub fn descriptors(&self) -> Vec<PluginDescriptor> {
-        let factory = self.factory();
+    fn descriptors(&self) -> Vec<PluginDescriptor> {
+        let factory = self.factory.as_ref().expect("set in load");
         let factory2 = factory.cast::<vst3::Steinberg::IPluginFactory2>();
 
         // Per-class vendor is optional and FabFilter leaves it empty; the
@@ -181,7 +215,7 @@ impl Vst3Module {
     }
 }
 
-impl Drop for Vst3Module {
+impl Drop for Module {
     fn drop(&mut self) {
         // Release the factory before unloading the code that implements it.
         self.factory = None;
@@ -241,6 +275,28 @@ mod tests {
         assert_eq!(parse_cid(&text), Some(cid));
         assert_eq!(parse_cid("nope"), None);
         assert_eq!(parse_cid(&text[..30]), None);
+    }
+
+    /// Two handles to one bundle must share a factory. Loading it twice would
+    /// mean the first handle dropped unloads code the second is still calling.
+    #[test]
+    fn opening_a_bundle_twice_reuses_the_same_module() {
+        let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
+            return;
+        };
+        let path = std::path::Path::new(&plugin.path);
+        let first = Vst3Module::open(path).unwrap();
+        let second = Vst3Module::open(path).unwrap();
+        assert_eq!(
+            first.factory().as_ptr(),
+            second.factory().as_ptr(),
+            "a second open loaded a separate copy of {}",
+            plugin.path
+        );
+
+        drop(first);
+        // Surviving handle still works: the drop must not have unloaded it.
+        assert!(!second.descriptors().is_empty());
     }
 
     #[test]

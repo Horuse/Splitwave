@@ -9,6 +9,10 @@ pub mod au_host;
 mod clap_backend;
 #[cfg(target_os = "macos")]
 pub mod vst3_backend;
+// Constructed by the VST3 host, which lands next; the tests exercise them now.
+#[allow(dead_code)]
+#[cfg(target_os = "macos")]
+pub mod vst3_com;
 pub mod host;
 pub mod host_api;
 mod node;

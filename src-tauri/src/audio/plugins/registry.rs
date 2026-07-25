@@ -13,6 +13,8 @@ use std::sync::{Mutex, OnceLock};
 
 use super::host::ClapHost;
 #[cfg(target_os = "macos")]
+use super::vst3_registry::Vst3Host;
+#[cfg(target_os = "macos")]
 use super::au_host::AuHost;
 use super::host_api::{ActivateRequest, HostedNode, PluginHost};
 use super::PluginFormat;
@@ -22,10 +24,8 @@ fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
         PluginFormat::Clap => &ClapHost,
         #[cfg(target_os = "macos")]
         PluginFormat::Au => &AuHost,
-        // No node can hold this format yet: `scan_all` does not offer VST3
-        // plugins until the host exists, so none can be selected.
         #[cfg(target_os = "macos")]
-        PluginFormat::Vst3 => unreachable!("vst3 host not implemented"),
+        PluginFormat::Vst3 => &Vst3Host,
     }
 }
 
@@ -40,6 +40,8 @@ pub fn hosts() -> impl Iterator<Item = &'static dyn PluginHost> {
         &ClapHost as &'static dyn PluginHost,
         #[cfg(target_os = "macos")]
         &AuHost,
+        #[cfg(target_os = "macos")]
+        &Vst3Host,
     ]
     .into_iter()
 }

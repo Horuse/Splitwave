@@ -911,7 +911,12 @@ impl PluginHost for ClapHost {
 
     // CLAP parameter changes ride in the process call as events, so the plugin
     // sees them itself and there is nothing to announce.
-    fn notify_param_changed(&self, _node_id: &str, _param_id: u32) -> Result<(), Unsupported> {
+    fn notify_param_changed(
+        &self,
+        _node_id: &str,
+        _param_id: u32,
+        _value: f64,
+    ) -> Result<(), Unsupported> {
         Err(Unsupported {
             format: PluginFormat::Clap,
             capability: "notify_param_changed",

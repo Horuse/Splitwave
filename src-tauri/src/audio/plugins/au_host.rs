@@ -1015,7 +1015,13 @@ impl PluginHost for AuHost {
         }))
     }
 
-    fn notify_param_changed(&self, node_id: &str, param_id: u32) -> Result<(), Unsupported> {
+    /// The value is already in the unit; this only tells listeners to redraw.
+    fn notify_param_changed(
+        &self,
+        node_id: &str,
+        param_id: u32,
+        _value: f64,
+    ) -> Result<(), Unsupported> {
         notify_param_changed(node_id, param_id);
         Ok(())
     }

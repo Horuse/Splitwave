@@ -50,7 +50,7 @@
 		const desc = plugins.find((p) => p.uid === uid);
 		flow.updateNodeData(id, {
 			// The engine dispatches on this, so it is stored rather than guessed
-			// from the path shape -- more formats are coming.
+			// from the path shape.
 			format: desc?.format ?? null,
 			path: desc?.path ?? '',
 			pluginId: desc?.pluginId ?? '',

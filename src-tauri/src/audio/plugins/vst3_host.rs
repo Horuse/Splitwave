@@ -190,10 +190,6 @@ impl Vst3Instance {
         controller.setComponentState(s.as_ptr());
     }
 
-    pub fn parameter_count(&self) -> i32 {
-        unsafe { self.controller.getParameterCount() }
-    }
-
     /// Every automatable parameter, for the node UI. VST3 values are already
     /// normalised, so the range is 0..1 and the plugin's own text renders the
     /// real units.
@@ -229,6 +225,19 @@ impl Vst3Instance {
             }
         }
         out
+    }
+
+    /// Whether the plugin has an editor at all. Asked before offering the
+    /// button, so the node can say "no editor" instead of opening a blank
+    /// window.
+    pub fn has_editor(&self) -> bool {
+        use vst3::Steinberg::Vst::ViewType::kEditor;
+        // SAFETY: the view is created only to be counted and immediately
+        // released; it is never attached.
+        unsafe {
+            ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
+                .is_some()
+        }
     }
 
     /// Moves a parameter behind the plugin editor's back, so its own display
@@ -366,7 +375,6 @@ impl Vst3Instance {
 
             Ok(Vst3Node::new(
                 processor,
-                self.component.clone(),
                 &input_channels,
                 &output_channels,
                 max_frames,
@@ -409,10 +417,15 @@ impl Drop for Vst3Instance {
     fn drop(&mut self) {
         use vst3::Steinberg::Vst::{IConnectionPoint, IConnectionPointTrait};
 
-        // Unwind the setup in reverse: disconnect, then terminate each half.
-        // Terminating while still connected leaves the other side holding a
-        // reference to a dead object.
+        // Unwind the setup in reverse: stop processing, deactivate, disconnect,
+        // then terminate each half. Terminating a running or still-connected
+        // plugin leaves the other side holding a reference to a dead object.
         unsafe {
+            use vst3::Steinberg::Vst::{IAudioProcessor, IAudioProcessorTrait};
+            if let Some(processor) = self.component.cast::<IAudioProcessor>() {
+                processor.setProcessing(0);
+            }
+            self.component.setActive(0);
             if self.separate {
                 if let (Some(from), Some(to)) = (
                     self.component.cast::<IConnectionPoint>(),
@@ -621,7 +634,6 @@ mod tests {
                 plugin.name
             );
 
-            crate::audio::plugins::vst3_node::deactivate(&node);
             drop(node);
             assert!(!alive.load(std::sync::atomic::Ordering::Acquire));
         }
@@ -644,11 +656,11 @@ mod tests {
             println!(
                 "{}: {} params, {} halves",
                 plugin.name,
-                instance.parameter_count(),
+                instance.params().len(),
                 if instance.separate { 2 } else { 1 }
             );
             assert!(
-                instance.parameter_count() > 0,
+                !instance.params().is_empty(),
                 "{} exposes no parameters",
                 plugin.name
             );

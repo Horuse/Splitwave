@@ -3,6 +3,8 @@ use std::path::Path;
 #[cfg(target_os = "macos")]
 use super::au_backend::AuBackend;
 use super::clap_backend::ClapBackend;
+#[cfg(target_os = "macos")]
+use super::vst3_backend::Vst3Backend;
 use super::{PluginBackend, PluginDescriptor};
 
 /// Scan every registered format and return all plugins found.
@@ -11,6 +13,8 @@ pub fn scan_all() -> Vec<PluginDescriptor> {
         Box::new(ClapBackend),
         #[cfg(target_os = "macos")]
         Box::new(AuBackend),
+        #[cfg(target_os = "macos")]
+        Box::new(Vst3Backend),
     ];
     backends.iter().flat_map(|b| b.scan()).collect()
 }

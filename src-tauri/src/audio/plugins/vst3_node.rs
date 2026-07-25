@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::Arc;
 
 use vst3::Steinberg::Vst::{
-    AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessor, IAudioProcessorTrait, IComponent,
-    IComponentTrait, IParamValueQueue, IParamValueQueueTrait, IParameterChanges,
-    IParameterChangesTrait, ParamID, ParamValue, ProcessData, ProcessModes_, SymbolicSampleSizes_,
+    AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessor, IAudioProcessorTrait,
+    IParamValueQueue, IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, ParamID,
+    ParamValue, ProcessData, ProcessModes_, SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{int32, kResultOk, kResultTrue, tresult};
 use vst3::{Class, ComPtr, ComWrapper};
@@ -166,7 +166,6 @@ impl Bus {
 /// silence, because a missing buffer makes the plugin read a null pointer.
 pub struct Vst3Node {
     processor: ComPtr<IAudioProcessor>,
-    component: ComPtr<IComponent>,
     inputs: Vec<Bus>,
     outputs: Vec<Bus>,
     input_buses: Vec<AudioBusBuffers>,
@@ -195,7 +194,6 @@ impl Vst3Node {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         processor: ComPtr<IAudioProcessor>,
-        component: ComPtr<IComponent>,
         input_channels: &[usize],
         output_channels: &[usize],
         max_frames: usize,
@@ -227,7 +225,6 @@ impl Vst3Node {
 
         Self {
             processor,
-            component,
             inputs,
             outputs,
             input_buses,
@@ -313,15 +310,6 @@ impl Effect for Vst3Node {
 
     fn latency_frames(&self) -> usize {
         self.latency
-    }
-}
-
-/// Stops the plugin cleanly. Must run before the instance is released, and off
-/// the RT thread.
-pub fn deactivate(node: &Vst3Node) {
-    unsafe {
-        node.processor.setProcessing(0);
-        node.component.setActive(0);
     }
 }
 

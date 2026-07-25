@@ -194,8 +194,11 @@ impl ActivePipeline {
         // it as unsupported, which is not a failure.
         if let Some(map) = data.get("pluginParams").and_then(serde_json::Value::as_object) {
             if let Some(host) = crate::audio::plugins::registry::for_node(node_id) {
-                for id in map.keys().filter_map(|id| id.parse::<u32>().ok()) {
-                    let _ = host.notify_param_changed(node_id, id);
+                for (id, value) in map {
+                    let (Ok(id), Some(value)) = (id.parse::<u32>(), value.as_f64()) else {
+                        continue;
+                    };
+                    let _ = host.notify_param_changed(node_id, id, value);
                 }
             }
         }

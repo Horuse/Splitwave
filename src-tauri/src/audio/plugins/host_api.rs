@@ -75,6 +75,8 @@ pub enum HostedNode {
     Clap(PluginNode),
     #[cfg(target_os = "macos")]
     Au(super::AuNode),
+    #[cfg(target_os = "macos")]
+    Vst3(super::vst3_node::Vst3Node),
 }
 
 impl Effect for HostedNode {
@@ -84,6 +86,8 @@ impl Effect for HostedNode {
             HostedNode::Clap(n) => n.process(samples, frames),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.process(samples, frames),
+            #[cfg(target_os = "macos")]
+            HostedNode::Vst3(n) => n.process(samples, frames),
         }
     }
 
@@ -93,6 +97,8 @@ impl Effect for HostedNode {
             HostedNode::Clap(n) => n.latency_frames(),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.latency_frames(),
+            #[cfg(target_os = "macos")]
+            HostedNode::Vst3(n) => n.latency_frames(),
         }
     }
 }
@@ -134,9 +140,16 @@ pub trait PluginHost: Sync {
     /// Serialized instance state for project persistence.
     fn save_state(&self, node_id: &str) -> Result<Option<String>, Unsupported>;
 
-    /// Tells the plugin's own editor that the host moved a parameter behind its
-    /// back. Called off the RT thread.
-    fn notify_param_changed(&self, node_id: &str, param_id: u32) -> Result<(), Unsupported>;
+    /// Tells the plugin's own editor that the host moved a parameter behind
+    /// its back, so its display follows. Called off the RT thread. `value` is
+    /// in the format's own scale, which for the two implemented formats means
+    /// what the node UI already sends.
+    fn notify_param_changed(
+        &self,
+        node_id: &str,
+        param_id: u32,
+        value: f64,
+    ) -> Result<(), Unsupported>;
 
     /// Builds the plugin's view into `window`, returning the view's own size so
     /// the caller can fit the window to it.

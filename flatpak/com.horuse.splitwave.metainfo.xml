@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.horuse.splitwave</id>
+  <name>Splitwave</name>
+  <summary>Node-based audio router</summary>
+  <developer id="com.horuse">
+    <name>Horuse</name>
+  </developer>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>
+      Splitwave is a node-based audio router. Wire microphones, system audio,
+      per-app capture, and audio files into a visual graph, run them through a
+      chain of effects, then send the result to speakers or record it.
+    </p>
+    <p>Effects include:</p>
+    <ul>
+      <li>Parametric EQ, compressor, limiter, gate and de-esser</li>
+      <li>Reverb, delay and stereo width</li>
+      <li>Noise suppression and declick</li>
+      <li>Level meters, loudness metering and spectrum analysis</li>
+    </ul>
+    <p>
+      Recordings can be written as WAV, FLAC, AIFF, MP3, Opus or AAC.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.horuse.splitwave.desktop</launchable>
+
+  <url type="homepage">https://splitwave.app</url>
+  <url type="bugtracker">https://github.com/Horuse/Splitwave/issues</url>
+  <url type="vcs-browser">https://github.com/Horuse/Splitwave</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Horuse/Splitwave/main/preview.webp</image>
+      <caption>The node graph editor</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.5.0" date="2026-07-26" />
+  </releases>
+</component>

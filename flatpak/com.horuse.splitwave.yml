@@ -33,7 +33,8 @@ modules:
           - ar -x splitwave.deb --output deb-extract
           - tar -C deb-extract -xf deb-extract/data.tar.gz
           - install -Dm755 deb-extract/usr/bin/splitwave /app/bin/splitwave
-          - sed -i 's/^Icon=.*/Icon=com.horuse.splitwave/' deb-extract/usr/share/applications/Splitwave.desktop
+          # tauri leaves Categories empty, which appstream rejects
+          - sed -i -e 's/^Icon=.*/Icon=com.horuse.splitwave/' -e 's/^Categories=.*/Categories=AudioVideo;Audio;/' deb-extract/usr/share/applications/Splitwave.desktop
           - install -Dm644 deb-extract/usr/share/applications/Splitwave.desktop /app/share/applications/com.horuse.splitwave.desktop
           - |
             set -e

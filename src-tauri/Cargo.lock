@@ -6000,6 +6000,7 @@ dependencies = [
  "freedesktop-icons",
  "futures-util",
  "hound",
+ "libc",
  "mp3lame-encoder",
  "ndarray",
  "objc2",

@@ -83,7 +83,6 @@ pub enum HostedNode {
     Clap(PluginNode),
     #[cfg(target_os = "macos")]
     Au(super::AuNode),
-    #[cfg(target_os = "macos")]
     Vst3(super::vst3_node::Vst3Node),
 }
 
@@ -95,7 +94,6 @@ impl HostedNode {
             HostedNode::Clap(n) => n.channels(),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.channels(),
-            #[cfg(target_os = "macos")]
             HostedNode::Vst3(n) => n.channels(),
         }
     }
@@ -108,7 +106,6 @@ impl Effect for HostedNode {
             HostedNode::Clap(n) => n.process(samples, frames),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.process(samples, frames),
-            #[cfg(target_os = "macos")]
             HostedNode::Vst3(n) => n.process(samples, frames),
         }
     }
@@ -119,7 +116,6 @@ impl Effect for HostedNode {
             HostedNode::Clap(n) => n.latency_frames(),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.latency_frames(),
-            #[cfg(target_os = "macos")]
             HostedNode::Vst3(n) => n.latency_frames(),
         }
     }

@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use super::clap_registry::ClapHost;
-#[cfg(target_os = "macos")]
 use super::vst3_registry::Vst3Host;
 #[cfg(target_os = "macos")]
 use super::au_host::AuHost;
@@ -24,7 +23,6 @@ fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
         PluginFormat::Clap => &ClapHost,
         #[cfg(target_os = "macos")]
         PluginFormat::Au => &AuHost,
-        #[cfg(target_os = "macos")]
         PluginFormat::Vst3 => &Vst3Host,
     }
 }
@@ -40,7 +38,6 @@ pub fn hosts() -> impl Iterator<Item = &'static dyn PluginHost> {
         &ClapHost as &'static dyn PluginHost,
         #[cfg(target_os = "macos")]
         &AuHost,
-        #[cfg(target_os = "macos")]
         &Vst3Host,
     ]
     .into_iter()

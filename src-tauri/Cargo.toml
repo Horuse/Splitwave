@@ -99,6 +99,9 @@ freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 resvg = "0.47"
 dirs = "5"
+# VST3: modules are loaded with dlopen, and X11 editors hand the host file
+# descriptors to poll from its run loop.
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.61"
@@ -119,6 +122,8 @@ windows = { version = "0.61", features = [
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    # VST3 modules are plain DLLs loaded by hand.
+    "Win32_System_LibraryLoader",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

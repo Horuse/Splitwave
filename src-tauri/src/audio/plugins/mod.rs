@@ -1,24 +1,20 @@
-//! Third-party audio plugin hosting. Each format backend (CLAP now; AU / VST3
-//! later) implements `PluginBackend`, so the node graph and the UI reference
-//! plugins through one format-agnostic descriptor.
+//! Third-party audio plugin hosting. Each format backend (CLAP and VST3
+//! everywhere, AU on macOS) implements `PluginBackend`, so the node graph and
+//! the UI reference plugins through one format-agnostic descriptor.
 
 #[cfg(target_os = "macos")]
 mod au_backend;
 #[cfg(target_os = "macos")]
 pub mod au_host;
 mod clap_backend;
-#[cfg(target_os = "macos")]
 pub mod vst3_backend;
-#[cfg(target_os = "macos")]
 pub mod vst3_com;
-#[cfg(target_os = "macos")]
 pub mod vst3_editor;
-#[cfg(target_os = "macos")]
 pub mod vst3_host;
-#[cfg(target_os = "macos")]
 pub mod vst3_node;
-#[cfg(target_os = "macos")]
 pub mod vst3_registry;
+#[cfg(target_os = "linux")]
+pub mod vst3_runloop;
 pub mod clap_host;
 pub mod clap_registry;
 pub mod editor;
@@ -48,7 +44,6 @@ pub enum PluginFormat {
     Clap,
     #[cfg(target_os = "macos")]
     Au,
-    #[cfg(target_os = "macos")]
     Vst3,
 }
 

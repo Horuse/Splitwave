@@ -91,11 +91,16 @@ impl IBStreamTrait for MemoryStream {
 
     unsafe fn seek(&self, pos: int64, mode: int32, result: *mut int64) -> tresult {
         let len = self.bytes.borrow().len() as i64;
-        let base = match mode as u32 {
-            SeekMode::kIBSeekSet => 0,
-            SeekMode::kIBSeekCur => self.pos.get() as i64,
-            SeekMode::kIBSeekEnd => len,
-            _ => return kInvalidArgument,
+        // The generated constants are `c_int`, whose signedness differs per
+        // target, so they are compared as values rather than matched as patterns.
+        let base = if mode as i64 == SeekMode::kIBSeekSet as i64 {
+            0
+        } else if mode as i64 == SeekMode::kIBSeekCur as i64 {
+            self.pos.get() as i64
+        } else if mode as i64 == SeekMode::kIBSeekEnd as i64 {
+            len
+        } else {
+            return kInvalidArgument;
         };
         let target = base.saturating_add(pos);
         if target < 0 {

@@ -5,7 +5,6 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
 use vst3::Steinberg::{
     IPluginFactory, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo, PClassInfo2,
     PFactoryInfo, TUID,
@@ -29,6 +28,7 @@ impl PluginBackend for Vst3Backend {
         "vst3"
     }
 
+    /// The locations the VST3 spec reserves for installed plugins on each OS.
     fn search_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
         #[cfg(target_os = "macos")]
@@ -38,6 +38,29 @@ impl PluginBackend for Vst3Backend {
                 dirs.push(Path::new(&home).join("Library/Audio/Plug-Ins/VST3"));
             }
         }
+        #[cfg(target_os = "windows")]
+        {
+            // CommonProgramW6432 is the 64-bit location seen from any process;
+            // CommonProgramFiles follows the host process's own bitness.
+            for var in ["CommonProgramW6432", "CommonProgramFiles"] {
+                if let Some(common) = std::env::var_os(var) {
+                    dirs.push(Path::new(&common).join("VST3"));
+                }
+            }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                dirs.push(Path::new(&local).join("Programs/Common/VST3"));
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(home) = std::env::var_os("HOME") {
+                dirs.push(Path::new(&home).join(".vst3"));
+            }
+            dirs.push(PathBuf::from("/usr/lib/vst3"));
+            dirs.push(PathBuf::from("/usr/local/lib/vst3"));
+        }
+        dirs.retain(|dir| dir.is_dir());
+        dirs.dedup();
         dirs
     }
 
@@ -63,7 +86,7 @@ pub struct Vst3Module(Arc<Module>);
 /// dangling. Dropping this unloads both, in that order.
 struct Module {
     factory: Option<ComPtr<IPluginFactory>>,
-    bundle: CFRetained<CFBundle>,
+    binary: Binary,
     path: String,
 }
 
@@ -76,9 +99,291 @@ fn loaded() -> &'static Mutex<HashMap<String, Weak<Module>>> {
     LOADED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
-type BundleExit = unsafe extern "C" fn() -> bool;
 type GetFactory = unsafe extern "C" fn() -> *mut IPluginFactory;
+
+/// The executable half of a VST3 module: a CFBundle on macOS, a plain shared
+/// library everywhere else. Loading it, finding a symbol in it and running the
+/// module's entry/exit hooks is all the rest of this file needs from it.
+#[cfg(target_os = "macos")]
+mod platform {
+    use std::ffi::c_void;
+    use std::path::Path;
+
+    use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
+
+    type BundleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
+    type BundleExit = unsafe extern "C" fn() -> bool;
+
+    pub struct Binary(CFRetained<CFBundle>);
+
+    impl Binary {
+        pub fn open(path: &Path) -> Result<Self, String> {
+            let bytes = path.as_os_str().as_encoded_bytes();
+            // SAFETY: the buffer outlives the call, which copies what it needs.
+            let url = unsafe {
+                CFURL::from_file_system_representation(
+                    None,
+                    bytes.as_ptr(),
+                    bytes.len() as isize,
+                    true,
+                )
+            }
+            .ok_or("path is not representable as a file URL")?;
+
+            let bundle = CFBundle::new(None, Some(&url))
+                .ok_or("not a loadable bundle (no Contents/Info.plist?)")?;
+
+            // SAFETY: loads foreign code, which can do anything on load. Inherent
+            // to hosting third-party plugins and accepted for every format here.
+            if !unsafe { bundle.load_executable() } {
+                return Err("bundle executable failed to load (wrong architecture?)".into());
+            }
+            Ok(Self(bundle))
+        }
+
+        pub fn symbol(&self, name: &str) -> *mut c_void {
+            self.0
+                .function_pointer_for_name(Some(&CFString::from_str(name)))
+        }
+
+        pub fn enter(&self) -> Result<(), String> {
+            let entry = self.symbol("bundleEntry");
+            if entry.is_null() {
+                return Err("exports no bundleEntry, so it is not a VST3 module".into());
+            }
+            // SAFETY: the symbol's signature is fixed by the VST3 macOS ABI.
+            let entered = unsafe {
+                std::mem::transmute::<*mut c_void, BundleEntry>(entry)(
+                    CFRetained::as_ptr(&self.0).as_ptr().cast(),
+                )
+            };
+            entered
+                .then_some(())
+                .ok_or_else(|| "bundleEntry refused to initialise the module".into())
+        }
+
+        pub fn exit(&self) {
+            let exit = self.symbol("bundleExit");
+            if !exit.is_null() {
+                // SAFETY: signature fixed by the VST3 macOS ABI.
+                unsafe { std::mem::transmute::<*mut c_void, BundleExit>(exit)() };
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod platform {
+    use std::ffi::c_void;
+    use std::path::{Path, PathBuf};
+
+    /// Windows takes no argument, Linux takes the `dlopen` handle. Both return
+    /// success, and both are optional: a module that exports neither is still a
+    /// valid VST3 as long as `GetPluginFactory` is there.
+    #[cfg(target_os = "windows")]
+    type ModuleEntry = unsafe extern "C" fn() -> bool;
+    #[cfg(not(target_os = "windows"))]
+    type ModuleEntry = unsafe extern "C" fn(*mut c_void) -> bool;
+    type ModuleExit = unsafe extern "C" fn() -> bool;
+
+    #[cfg(target_os = "windows")]
+    const ENTRY: &str = "InitDll";
+    #[cfg(target_os = "windows")]
+    const EXIT: &str = "ExitDll";
+    #[cfg(not(target_os = "windows"))]
+    const ENTRY: &str = "ModuleEntry";
+    #[cfg(not(target_os = "windows"))]
+    const EXIT: &str = "ModuleExit";
+
+    /// Extension of the loadable file inside a bundle, which is not the `.vst3`
+    /// of the bundle directory itself on Linux.
+    #[cfg(target_os = "windows")]
+    const BINARY_EXT: &str = "vst3";
+    #[cfg(not(target_os = "windows"))]
+    const BINARY_EXT: &str = "so";
+
+    /// `Contents` subdirectory holding the build for this machine. The names are
+    /// fixed by the VST3 bundle layout, not by us.
+    const ARCH_DIR: &str = if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") {
+            "arm64-win"
+        } else if cfg!(target_arch = "x86_64") {
+            "x86_64-win"
+        } else {
+            "x86-win"
+        }
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64-linux"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64-linux"
+    } else {
+        "i386-linux"
+    };
+
+    /// The loaded library. `Module` owns exactly one and unloads it on drop, so
+    /// the handle is never copied out of here.
+    pub struct Binary(*mut c_void);
+
+    // SAFETY: the handle names code the loader keeps loaded process-wide, not
+    // thread-owned state; `Module` is the only owner and its registry
+    // serialises load and unload.
+    unsafe impl Send for Binary {}
+    unsafe impl Sync for Binary {}
+
+    impl Binary {
+        pub fn open(path: &Path) -> Result<Self, String> {
+            let binary = binary_in(path)?;
+            let handle = load(&binary)?;
+            Ok(Self(handle))
+        }
+
+        pub fn symbol(&self, name: &str) -> *mut c_void {
+            let Ok(name) = std::ffi::CString::new(name) else {
+                return std::ptr::null_mut();
+            };
+            // SAFETY: a missing symbol comes back as null rather than as UB; the
+            // caller transmutes to the signature the VST3 ABI fixes for it.
+            #[cfg(target_os = "windows")]
+            unsafe {
+                use windows::core::PCSTR;
+                use windows::Win32::Foundation::HMODULE;
+                use windows::Win32::System::LibraryLoader::GetProcAddress;
+
+                GetProcAddress(HMODULE(self.0), PCSTR(name.as_ptr().cast()))
+                    .map(|p| p as *mut c_void)
+                    .unwrap_or(std::ptr::null_mut())
+            }
+            #[cfg(not(target_os = "windows"))]
+            unsafe {
+                libc::dlsym(self.0, name.as_ptr())
+            }
+        }
+
+        pub fn enter(&self) -> Result<(), String> {
+            let entry = self.symbol(ENTRY);
+            // Both hooks are optional in the spec; `GetPluginFactory` is what
+            // makes a library a VST3 module, and the caller checks for that.
+            if entry.is_null() {
+                return Ok(());
+            }
+            // SAFETY: signature fixed by the VST3 ABI for this platform.
+            let entered = unsafe {
+                let entry = std::mem::transmute::<*mut c_void, ModuleEntry>(entry);
+                #[cfg(target_os = "windows")]
+                {
+                    entry()
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    entry(self.0)
+                }
+            };
+            entered
+                .then_some(())
+                .ok_or_else(|| format!("{ENTRY} refused to initialise the module"))
+        }
+
+        pub fn exit(&self) {
+            let exit = self.symbol(EXIT);
+            if !exit.is_null() {
+                // SAFETY: signature fixed by the VST3 ABI.
+                unsafe { std::mem::transmute::<*mut c_void, ModuleExit>(exit)() };
+            }
+        }
+    }
+
+    impl Drop for Binary {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from the loader below and nothing else
+            // holds it; `Module::drop` has already released the factory.
+            unsafe {
+                #[cfg(target_os = "windows")]
+                {
+                    use windows::Win32::Foundation::{FreeLibrary, HMODULE};
+                    let _ = FreeLibrary(HMODULE(self.0));
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    libc::dlclose(self.0);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn load(binary: &Path) -> Result<*mut c_void, String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::System::LibraryLoader::LoadLibraryW;
+
+        let wide: Vec<u16> = binary
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: loads foreign code, which runs its own initialisers. Inherent
+        // to hosting third-party plugins and accepted for every format here.
+        unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }
+            .map(|m| m.0)
+            .map_err(|e| format!("{} failed to load: {e}", binary.display()))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn load(binary: &Path) -> Result<*mut c_void, String> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = std::ffi::CString::new(binary.as_os_str().as_bytes())
+            .map_err(|_| format!("{}: path contains a NUL", binary.display()))?;
+        // SAFETY: loads foreign code, which runs its own initialisers. Inherent
+        // to hosting third-party plugins and accepted for every format here.
+        let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if handle.is_null() {
+            // SAFETY: dlerror is valid straight after a failed dlopen.
+            let err = unsafe {
+                let msg = libc::dlerror();
+                if msg.is_null() {
+                    String::new()
+                } else {
+                    std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned()
+                }
+            };
+            return Err(format!("{} failed to load: {err}", binary.display()));
+        }
+        Ok(handle)
+    }
+
+    /// The loadable file for this machine inside a `.vst3` bundle. Windows also
+    /// allows a bare DLL named `*.vst3`, which is already the file to load.
+    fn binary_in(path: &Path) -> Result<PathBuf, String> {
+        if path.is_file() {
+            return Ok(path.to_path_buf());
+        }
+        let arch = path.join("Contents").join(ARCH_DIR);
+        let named = path
+            .file_stem()
+            .map(|stem| arch.join(stem).with_extension(BINARY_EXT));
+        if let Some(named) = named.filter(|p| p.is_file()) {
+            return Ok(named);
+        }
+        // The spec names the binary after the bundle, but not every vendor
+        // obeys; a directory holding exactly one candidate is still unambiguous.
+        let mut candidates = std::fs::read_dir(&arch)
+            .map_err(|e| format!("{}: {e}", arch.display()))?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some(BINARY_EXT));
+        match (candidates.next(), candidates.next()) {
+            (Some(only), None) => Ok(only),
+            (Some(_), Some(_)) => Err(format!(
+                "{} holds several binaries and none matches the bundle name",
+                arch.display()
+            )),
+            _ => Err(format!("{} holds no loadable binary", arch.display())),
+        }
+    }
+}
+
+use platform::Binary;
 
 impl Vst3Module {
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -108,43 +413,16 @@ impl Module {
         let display = path.display();
         let at = |step: &str| format!("{display}: {step}");
 
-        let bytes = path.as_os_str().as_encoded_bytes();
-        // SAFETY: the buffer outlives the call, which copies what it needs.
-        let url = unsafe {
-            CFURL::from_file_system_representation(None, bytes.as_ptr(), bytes.len() as isize, true)
-        }
-        .ok_or_else(|| at("path is not representable as a file URL"))?;
-
-        let bundle = CFBundle::new(None, Some(&url))
-            .ok_or_else(|| at("not a loadable bundle (no Contents/Info.plist?)"))?;
-
-        // SAFETY: loads foreign code, which can do anything on load. Inherent to
-        // hosting third-party plugins and accepted for every format here.
-        if !unsafe { bundle.load_executable() } {
-            return Err(at("bundle executable failed to load (wrong architecture?)"));
-        }
-
-        let entry = bundle.function_pointer_for_name(Some(&CFString::from_str("bundleEntry")));
-        if entry.is_null() {
-            return Err(at("exports no bundleEntry, so it is not a VST3 module"));
-        }
-        // SAFETY: the symbol's signature is fixed by the VST3 macOS ABI.
-        let entered = unsafe { std::mem::transmute::<*mut c_void, BundleEntry>(entry)(
-            CFRetained::as_ptr(&bundle).as_ptr().cast(),
-        ) };
-        if !entered {
-            return Err(at("bundleEntry refused to initialise the module"));
-        }
+        let binary = Binary::open(path).map_err(|e| at(&e))?;
+        binary.enter().map_err(|e| at(&e))?;
 
         let mut module = Self {
             factory: None,
-            bundle,
+            binary,
             path: display.to_string(),
         };
 
-        let get_factory = module
-            .bundle
-            .function_pointer_for_name(Some(&CFString::from_str("GetPluginFactory")));
+        let get_factory = module.binary.symbol("GetPluginFactory");
         if get_factory.is_null() {
             return Err(at("exports no GetPluginFactory"));
         }
@@ -221,13 +499,7 @@ impl Drop for Module {
     fn drop(&mut self) {
         // Release the factory before unloading the code that implements it.
         self.factory = None;
-        let exit = self
-            .bundle
-            .function_pointer_for_name(Some(&CFString::from_str("bundleExit")));
-        if !exit.is_null() {
-            // SAFETY: signature fixed by the VST3 macOS ABI.
-            unsafe { std::mem::transmute::<*mut c_void, BundleExit>(exit)() };
-        }
+        self.binary.exit();
     }
 }
 

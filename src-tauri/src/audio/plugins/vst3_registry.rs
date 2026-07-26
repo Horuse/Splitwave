@@ -116,6 +116,34 @@ fn activate_on_main(
     Ok(node)
 }
 
+/// The window a plugin view is parented to, as the address VST3 expects for
+/// this platform's `attached` type.
+fn parent_handle(window: &tauri::Window) -> Result<usize, String> {
+    #[cfg(target_os = "macos")]
+    {
+        window
+            .ns_view()
+            .map(|view| view as usize)
+            .map_err(|e| format!("content view: {e}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        let handle = window
+            .window_handle()
+            .map_err(|e| format!("window handle: {e}"))?;
+        match handle.as_raw() {
+            RawWindowHandle::Win32(h) => Ok(h.hwnd.get() as usize),
+            RawWindowHandle::Xlib(h) => Ok(h.window as usize),
+            RawWindowHandle::Xcb(h) => Ok(h.window.get() as usize),
+            // VST3 defines no Wayland platform type, so there is nothing to
+            // parent into; running the session under XWayland is the way out.
+            other => Err(format!("VST3 editors need an X11 or Win32 window, got {other:?}")),
+        }
+    }
+}
+
 pub struct Vst3Host;
 
 impl PluginHost for Vst3Host {
@@ -196,9 +224,7 @@ impl PluginHost for Vst3Host {
     fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
         // A raw pointer is not `Send`; the address is, and the window outlives
         // the editor it hosts.
-        let view_addr = window
-            .ns_view()
-            .map_err(|e| format!("vst3 {node_id}: content view: {e}"))? as usize;
+        let view_addr = parent_handle(window).map_err(|e| format!("vst3 {node_id}: {e}"))?;
         let (_, titlebar) = editor::decoration_overhead(window);
         let id = node_id.to_string();
         let resize_target = window.clone();
@@ -245,6 +271,11 @@ impl PluginHost for Vst3Host {
     /// Frees plugins whose RT node has left the graph. The main thread holds
     /// the last reference, which is the only place VST3 allows it to go.
     fn tick_and_reclaim(&self) {
+        // X11 editors only repaint and react to input when the host services
+        // the descriptors and timers they registered with us.
+        #[cfg(target_os = "linux")]
+        super::vst3_runloop::tick();
+
         let mut freed = GRAVEYARD.with(|g| g.borrow_mut().reclaim());
 
         let dead = SLOTS.with(|s| super::host_api::take_dead(&mut s.borrow_mut(), |s| &s.alive));

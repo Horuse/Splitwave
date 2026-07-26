@@ -11,13 +11,27 @@ use std::ffi::c_void;
 use vst3::Steinberg::Vst::ViewType::kEditor;
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait};
 use vst3::Steinberg::{
-    kPlatformTypeNSView, kResultOk, kResultTrue, tresult, IPlugFrame, IPlugFrameTrait, IPlugView,
+    kResultOk, kResultTrue, tresult, FIDString, IPlugFrame, IPlugFrameTrait, IPlugView,
     IPlugViewTrait, ViewRect,
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
-use crate::audio::plugins::editor;
+#[cfg(target_os = "linux")]
+use crate::audio::plugins::vst3_runloop;
 use crate::audio::plugins::host_api::EditorSize;
+#[cfg(target_os = "macos")]
+use crate::audio::plugins::editor;
+
+/// The window system the plugin is asked to render into. One per OS: a plugin
+/// that does not support its platform's own type has no embeddable editor.
+pub fn platform_type() -> FIDString {
+    #[cfg(target_os = "macos")]
+    return vst3::Steinberg::kPlatformTypeNSView;
+    #[cfg(target_os = "windows")]
+    return vst3::Steinberg::kPlatformTypeHWND;
+    #[cfg(target_os = "linux")]
+    return vst3::Steinberg::kPlatformTypeX11EmbedWindowID;
+}
 
 /// Called when the plugin wants its window a different size.
 pub type ResizeRequest = Box<dyn Fn(u32, u32) + Send + Sync>;
@@ -28,8 +42,49 @@ pub struct PlugFrame {
     resize: ResizeRequest,
 }
 
+/// On X11 the plugin drives its editor from the host's event loop, so the frame
+/// it is given must also answer as `IRunLoop`.
+#[cfg(target_os = "linux")]
+impl Class for PlugFrame {
+    type Interfaces = (IPlugFrame, vst3::Steinberg::Linux::IRunLoop);
+}
+
+#[cfg(not(target_os = "linux"))]
 impl Class for PlugFrame {
     type Interfaces = (IPlugFrame,);
+}
+
+#[cfg(target_os = "linux")]
+impl vst3::Steinberg::Linux::IRunLoopTrait for PlugFrame {
+    unsafe fn registerEventHandler(
+        &self,
+        handler: *mut vst3::Steinberg::Linux::IEventHandler,
+        fd: vst3::Steinberg::Linux::FileDescriptor,
+    ) -> tresult {
+        vst3_runloop::register_event_handler(handler, fd)
+    }
+
+    unsafe fn unregisterEventHandler(
+        &self,
+        handler: *mut vst3::Steinberg::Linux::IEventHandler,
+    ) -> tresult {
+        vst3_runloop::unregister_event_handler(handler)
+    }
+
+    unsafe fn registerTimer(
+        &self,
+        handler: *mut vst3::Steinberg::Linux::ITimerHandler,
+        milliseconds: vst3::Steinberg::Linux::TimerInterval,
+    ) -> tresult {
+        vst3_runloop::register_timer(handler, milliseconds)
+    }
+
+    unsafe fn unregisterTimer(
+        &self,
+        handler: *mut vst3::Steinberg::Linux::ITimerHandler,
+    ) -> tresult {
+        vst3_runloop::unregister_timer(handler)
+    }
 }
 
 impl IPlugFrameTrait for PlugFrame {
@@ -60,9 +115,10 @@ pub struct EditorView {
 }
 
 impl EditorView {
-    /// Builds the plugin's view into `parent` (an `NSView`) and returns the
-    /// size the plugin asked for. `None` when the plugin has no editor at all,
-    /// which is not an error.
+    /// Builds the plugin's view into `parent` -- an `NSView` on macOS, an `HWND`
+    /// on Windows, an X11 window id on Linux -- and returns the size the plugin
+    /// asked for. `None` when the plugin has no editor at all, which is not an
+    /// error.
     ///
     /// Must run on the main thread.
     pub fn attach(
@@ -71,16 +127,20 @@ impl EditorView {
         titlebar: f64,
         resize: ResizeRequest,
     ) -> Result<Option<(Self, EditorSize)>, String> {
-        // SAFETY: main thread, and `parent` is a live NSView owned by a window
-        // that outlives this editor.
+        // SAFETY: main thread, and `parent` is a live window handle owned by a
+        // window that outlives this editor.
         unsafe {
             let raw = controller.createView(kEditor);
             let Some(view) = ComPtr::from_raw(raw) else {
                 return Ok(None);
             };
 
-            if view.isPlatformTypeSupported(kPlatformTypeNSView) != kResultTrue {
-                return Err("editor does not support NSView".into());
+            let platform = platform_type();
+            if view.isPlatformTypeSupported(platform) != kResultTrue {
+                return Err(format!(
+                    "editor does not support {}",
+                    std::ffi::CStr::from_ptr(platform).to_string_lossy()
+                ));
             }
 
             let frame = ComWrapper::new(PlugFrame { resize });
@@ -102,12 +162,15 @@ impl EditorView {
                 return Err("editor reported no size".into());
             }
 
-            if view.attached(parent, kPlatformTypeNSView) != kResultOk {
+            if view.attached(parent, platform) != kResultOk {
                 view.setFrame(std::ptr::null_mut());
                 return Err("editor refused to attach to the window".into());
             }
 
+            #[cfg(target_os = "macos")]
             inset_below_titlebar(parent, titlebar);
+            #[cfg(not(target_os = "macos"))]
+            let _ = titlebar;
 
             let size = (
                 (rect.right - rect.left).max(1) as u32,
@@ -137,6 +200,9 @@ impl Drop for EditorView {
 
 /// Lays the view the plugin just parented under the title bar rather than at
 /// the window's bottom-left corner, where an unflipped `NSView` origin puts it.
+/// Win32 and X11 children are placed from the top-left of the client area, so
+/// they need no equivalent.
+#[cfg(target_os = "macos")]
 fn inset_below_titlebar(parent: *mut c_void, titlebar: f64) {
     // SAFETY: `parent` is the window's content view, and the plugin has just
     // added its own view as the last subview of it.
@@ -159,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn every_installed_plugin_offers_an_nsview_editor() {
+    fn every_installed_plugin_offers_an_embeddable_editor() {
         let installed = Vst3Backend.scan();
         if installed.is_empty() {
             return skipped("editor creation");
@@ -173,17 +239,23 @@ mod tests {
                     println!("{}: no editor", plugin.name);
                     continue;
                 };
-                let supported = view.isPlatformTypeSupported(kPlatformTypeNSView);
+                let platform = platform_type();
+                let supported = view.isPlatformTypeSupported(platform);
                 let mut rect = ViewRect { left: 0, top: 0, right: 0, bottom: 0 };
                 let sized = view.getSize(&mut rect);
+                let platform_name = std::ffi::CStr::from_ptr(platform).to_string_lossy();
                 println!(
-                    "{}: nsview {}, size {}x{}",
+                    "{}: {platform_name} {}, size {}x{}",
                     plugin.name,
                     supported == kResultTrue,
                     rect.right - rect.left,
                     rect.bottom - rect.top
                 );
-                assert_eq!(supported, kResultTrue, "{} cannot host in an NSView", plugin.name);
+                assert_eq!(
+                    supported, kResultTrue,
+                    "{} cannot host in a {platform_name}",
+                    plugin.name
+                );
                 assert_eq!(sized, kResultOk, "{} reported no size", plugin.name);
             }
         }

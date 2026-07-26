@@ -369,8 +369,16 @@ impl Vst3Instance {
                 );
             }
 
-            for (dir, count) in [(kInput, ins), (kOutput, outs)] {
-                for index in 0..count {
+            // Only the main bus carries signal; a DAW leaves aux/sidechain
+            // buses inactive until the user routes something into them. An
+            // aux bus forced active with a same-width buffer it never asked
+            // for is what crashed FabFilter Pro-MB: it treated the buffer as
+            // a live sidechain feed.
+            let input_main = self.main_bus_indices(kInput as i32, ins);
+            let output_main = self.main_bus_indices(kOutput as i32, outs);
+
+            for (dir, indices) in [(kInput, &input_main), (kOutput, &output_main)] {
+                for &index in indices.iter() {
                     self.component
                         .activateBus(kAudio as i32, dir as i32, index, 1);
                 }
@@ -393,8 +401,8 @@ impl Vst3Instance {
             }
             processor.setProcessing(1);
 
-            let input_channels = self.channel_counts(kInput as i32, ins);
-            let output_channels = self.channel_counts(kOutput as i32, outs);
+            let input_channels = self.channel_counts(kInput as i32, &input_main);
+            let output_channels = self.channel_counts(kOutput as i32, &output_main);
 
             Ok(Vst3Node::new(
                 processor,
@@ -408,12 +416,29 @@ impl Vst3Instance {
         }
     }
 
-    /// Channels per bus, read back after the arrangement is set.
-    unsafe fn channel_counts(&self, direction: i32, count: i32) -> Vec<usize> {
-        use vst3::Steinberg::Vst::{BusInfo, MediaTypes_::kAudio};
+    /// The main-bus indices for a direction; aux/sidechain buses are excluded
+    /// because nothing feeds them.
+    unsafe fn main_bus_indices(&self, direction: i32, count: i32) -> Vec<i32> {
+        use vst3::Steinberg::Vst::{BusInfo, BusTypes_::kMain, MediaTypes_::kAudio};
 
         (0..count)
-            .map(|index| {
+            .filter(|&index| {
+                let mut info: BusInfo = std::mem::zeroed();
+                ok(self
+                    .component
+                    .getBusInfo(kAudio as i32, direction, index, &mut info))
+                    && info.busType == kMain as i32
+            })
+            .collect()
+    }
+
+    /// Channels per bus, read back after the arrangement is set.
+    unsafe fn channel_counts(&self, direction: i32, indices: &[i32]) -> Vec<usize> {
+        use vst3::Steinberg::Vst::{BusInfo, MediaTypes_::kAudio};
+
+        indices
+            .iter()
+            .map(|&index| {
                 let mut info: BusInfo = std::mem::zeroed();
                 if ok(self
                     .component

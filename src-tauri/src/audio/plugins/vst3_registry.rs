@@ -95,8 +95,13 @@ fn activate_on_main(
         .map_err(|e| at(&e))?;
 
     if primary {
-        // Replacing a slot drops the plugin it held, here on the main thread.
-        SLOTS.with(|s| {
+        // A rebuild that keeps this node_id re-activates it before the RT
+        // graph has swapped away from the old one, so the old instance's RT
+        // node may still be mid-`process()` on the DSP worker. Dropping it
+        // here would run `terminate`/`setActive(0)` on that same COM object
+        // out from under the RT call -- bury it like `forget` does instead,
+        // and let `tick_and_reclaim` free it once its `alive` flag is clear.
+        let old = SLOTS.with(|s| {
             s.borrow_mut().insert(
                 node_id,
                 Slot {
@@ -108,6 +113,9 @@ fn activate_on_main(
                 },
             )
         });
+        if let Some(old) = old {
+            GRAVEYARD.with(|g| g.borrow_mut().bury(old.instance, old.alive));
+        }
     } else {
         // A metering duplicate has no editor and no parameters to answer for;
         // it only has to outlive its node.

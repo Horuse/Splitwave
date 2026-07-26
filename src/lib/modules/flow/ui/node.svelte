@@ -76,7 +76,7 @@
 
 <div
 	class={[
-		'min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
+		'node-shell min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
 		!wide && 'max-w-80'
 	]}
 >
@@ -147,3 +147,10 @@
 		{/if}
 	{/if}
 </div>
+
+<style>
+	/* XYFlow marks selection on the node wrapper it owns, one level above us. */
+	:global(.svelte-flow__node.selected) .node-shell {
+		border-color: var(--color-neutral-700);
+	}
+</style>

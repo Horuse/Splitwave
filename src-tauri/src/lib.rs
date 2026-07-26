@@ -55,6 +55,18 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let redo_action = MenuItemBuilder::with_id("redo", "Redo")
         .accelerator("CmdOrCtrl+Shift+Z")
         .build(app)?;
+    // Predefined Copy/Paste/SelectAll swallow their accelerators in AppKit before
+    // the webview sees a keydown, so the graph could never bind them. Custom items
+    // forward to the frontend, which dispatches to the focused field or the canvas.
+    let copy_action = MenuItemBuilder::with_id("copy", "Copy")
+        .accelerator("CmdOrCtrl+C")
+        .build(app)?;
+    let paste_action = MenuItemBuilder::with_id("paste", "Paste")
+        .accelerator("CmdOrCtrl+V")
+        .build(app)?;
+    let select_all_action = MenuItemBuilder::with_id("select_all", "Select All")
+        .accelerator("CmdOrCtrl+A")
+        .build(app)?;
 
     let app_submenu = SubmenuBuilder::new(app, "Splitwave")
         .item(&about_action)
@@ -73,9 +85,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .item(&redo_action)
         .separator()
         .cut()
-        .copy()
-        .paste()
-        .select_all()
+        .item(&copy_action)
+        .item(&paste_action)
+        .item(&select_all_action)
         .build()?;
 
     MenuBuilder::new(app)

@@ -1,9 +1,27 @@
 import { methods } from './methods';
 import type { NodeKind, Pipeline } from './types';
 
-export type ClipboardEntry = {
+export type ClipboardNode = {
 	kind: NodeKind;
 	data: Record<string, unknown>;
+	/** Offset from the copied group's top-left corner. */
+	dx: number;
+	dy: number;
+};
+
+/** Endpoints are indices into `ClipboardEntry.nodes`; ids are minted on paste. */
+export type ClipboardEdge = {
+	source: number;
+	target: number;
+	sourceHandle?: string;
+	targetHandle?: string;
+};
+
+export type ClipboardEntry = {
+	/** Top-left of the copied group in flow coordinates; paste offsets from here. */
+	origin: { x: number; y: number };
+	nodes: ClipboardNode[];
+	edges: ClipboardEdge[];
 };
 
 export type EditorActions = {
@@ -17,6 +35,9 @@ export type EditorActions = {
 	revertToSnapshot: (p: Pipeline) => void;
 	undo: () => void;
 	redo: () => void;
+	copySelection: () => void;
+	paste: () => void;
+	selectAll: () => void;
 	canUndo: () => boolean;
 	canRedo: () => boolean;
 };

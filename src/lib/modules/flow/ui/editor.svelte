@@ -177,17 +177,77 @@
 		edges = edges.filter((e) => e.id !== edgeId);
 	}
 
-	function copyNode(node: XyNode) {
+	function copyNodes(group: XyNode[]) {
+		if (group.length === 0) return;
+		const originX = Math.min(...group.map((n) => n.position.x));
+		const originY = Math.min(...group.map((n) => n.position.y));
+		const index = new Map(group.map((n, i) => [n.id, i]));
 		pipelineStore.clipboard = {
-			kind: node.type as NodeKind,
-			data: JSON.parse(JSON.stringify(node.data))
+			origin: { x: originX, y: originY },
+			nodes: group.map((n) => ({
+				kind: n.type as NodeKind,
+				data: JSON.parse(JSON.stringify(n.data)),
+				dx: n.position.x - originX,
+				dy: n.position.y - originY
+			})),
+			edges: edges.flatMap((e) => {
+				const source = index.get(e.source);
+				const target = index.get(e.target);
+				if (source === undefined || target === undefined) return [];
+				return [
+					{
+						source,
+						target,
+						sourceHandle: e.sourceHandle ?? undefined,
+						targetHandle: e.targetHandle ?? undefined
+					}
+				];
+			})
 		};
 	}
 
+	function copyNode(node: XyNode) {
+		copyNodes([node]);
+	}
+
+	function copySelection() {
+		copyNodes(nodes.filter((n) => n.selected));
+	}
+
+	function selectAllNodes() {
+		nodes = nodes.map((n) => (n.selected ? n : { ...n, selected: true }));
+	}
+
+	/** Diagonal nudge so a pasted group stays next to its source instead of on top. */
+	const PASTE_OFFSET = 50;
+
 	function pasteAt(position?: { x: number; y: number }) {
 		const c = pipelineStore.clipboard;
-		if (!c) return;
-		addNodeWithData(c.kind, JSON.parse(JSON.stringify(c.data)), position);
+		if (!c || c.nodes.length === 0) return;
+		const origin = position ?? { x: c.origin.x + PASTE_OFFSET, y: c.origin.y + PASTE_OFFSET };
+		const ids = c.nodes.map(() => createId());
+		nodes = [
+			...nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
+			...c.nodes.map((n, i) => ({
+				id: ids[i],
+				type: n.kind,
+				position: { x: origin.x + n.dx, y: origin.y + n.dy },
+				data: JSON.parse(JSON.stringify(n.data)),
+				selected: true
+			}))
+		];
+		edges = [
+			...edges,
+			...c.edges.map((e) => ({
+				id: createId(),
+				type: 'channel',
+				source: ids[e.source],
+				sourceHandle: e.sourceHandle,
+				target: ids[e.target],
+				targetHandle: e.targetHandle
+			}))
+		];
+		pipelineStore.clipboard = { ...c, origin };
 	}
 
 	function patchNodeData(nodeId: string, patch: Record<string, unknown>) {
@@ -276,7 +336,7 @@
 			label: 'Copy',
 			icon: Copy,
 			shortcut: '⌘C',
-			action: () => copyNode(node)
+			action: () => copyNodes(node.selected ? nodes.filter((n) => n.selected) : [node])
 		});
 		items.push({
 			label: 'Delete',
@@ -440,6 +500,9 @@
 		revertToSnapshot,
 		undo,
 		redo,
+		copySelection,
+		paste: () => pasteAt(undefined),
+		selectAll: selectAllNodes,
 		canUndo: () => canUndo,
 		canRedo: () => canRedo
 	};
@@ -528,14 +591,16 @@
 		if (!mod || inField) return;
 
 		if (e.key === 'c' || e.key === 'C') {
-			const selected = nodes.find((n) => n.selected);
-			if (!selected) return;
+			if (!nodes.some((n) => n.selected)) return;
 			e.preventDefault();
-			copyNode(selected);
+			copySelection();
 		} else if (e.key === 'v' || e.key === 'V') {
 			if (!pipelineStore.clipboard) return;
 			e.preventDefault();
 			pasteAt(undefined);
+		} else if (e.key === 'a' || e.key === 'A') {
+			e.preventDefault();
+			selectAllNodes();
 		}
 	}
 

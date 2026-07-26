@@ -23,8 +23,43 @@
 
 	let unlistenMenu: UnlistenFn | undefined;
 
+	function focusedField(): HTMLInputElement | HTMLTextAreaElement | null {
+		const el = document.activeElement;
+		return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el : null;
+	}
+
+	// The macOS Edit menu routes Copy/Paste/Select All here instead of letting AppKit
+	// handle them, so the text-field behaviour has to be reproduced by hand.
+	function fieldCopy(el: HTMLInputElement | HTMLTextAreaElement) {
+		const { selectionStart, selectionEnd } = el;
+		if (selectionStart === null || selectionEnd === null || selectionStart === selectionEnd) return;
+		navigator.clipboard.writeText(el.value.slice(selectionStart, selectionEnd)).catch(() => {});
+	}
+
+	async function fieldPaste(el: HTMLInputElement | HTMLTextAreaElement) {
+		const text = await navigator.clipboard.readText();
+		if (!text) return;
+		const start = el.selectionStart ?? el.value.length;
+		const end = el.selectionEnd ?? start;
+		el.setRangeText(text, start, end, 'end');
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+	}
+
 	function handleMenu(id: string) {
+		const field = focusedField();
 		switch (id) {
+			case 'copy':
+				if (field) fieldCopy(field);
+				else pipelineStore.editorActions?.copySelection();
+				return;
+			case 'paste':
+				if (field) fieldPaste(field).catch(() => {});
+				else pipelineStore.editorActions?.paste();
+				return;
+			case 'select_all':
+				if (field) field.select();
+				else pipelineStore.editorActions?.selectAll();
+				return;
 			case 'about':
 				modalManager.open('', AboutModal, { canClose: true });
 				break;

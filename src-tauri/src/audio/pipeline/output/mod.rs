@@ -32,7 +32,7 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
+pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, SpeakerResolved};
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;

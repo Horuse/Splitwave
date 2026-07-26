@@ -11,6 +11,7 @@ export { default as ChevronDown } from './chevron_down.svelte';
 export { default as ClipboardPaste } from './clipboard_paste.svelte';
 export { default as Copy } from './copy.svelte';
 export { default as Delete } from './delete.svelte';
+export { default as Dismiss } from './dismiss.svelte';
 export { default as Folder } from './folder.svelte';
 export { default as FolderOpen } from './folder_open.svelte';
 export { default as History } from './history.svelte';

@@ -25,6 +25,8 @@ use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, Va
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx};
 use crate::error::{AppError, AppResult};
 
+mod cue;
+pub use cue::play as play_cue;
 mod dag;
 mod file_reader;
 mod input;

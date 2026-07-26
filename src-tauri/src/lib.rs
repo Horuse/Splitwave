@@ -196,6 +196,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::spawn())
         .invoke_handler(tauri::generate_handler![
             commands::scan_plugins,
@@ -208,6 +209,7 @@ pub fn run() {
             commands::debug_panic,
             commands::list_input_devices,
             commands::list_output_devices,
+            commands::play_cue,
             commands::list_audio_applications,
             commands::get_app_icons,
             commands::virtual_driver_status,

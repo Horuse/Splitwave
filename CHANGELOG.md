@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stereo pairs. Existing pipelines are migrated automatically.
 - **WebRTC, Net Sender and Net Receiver nodes** (#10) - stream audio between
   machines and into WebRTC sessions.
+- **Mute hotkey** - bind any key or combination to a Mute node and toggle it
+  system-wide, even when Splitwave is in the background. Optionally a spoken cue
+  confirms the switch on an output device of your choice, at its own volume.
 - **Spectrum analyzer** node with per-channel FFT.
 - **De-esser** node with presets, and a **Declick** node for removing clicks and
   crackle.

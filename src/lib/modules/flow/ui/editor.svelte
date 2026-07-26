@@ -20,7 +20,6 @@
 		DND_MIME,
 		defaultDataFor,
 		emitNodeAction,
-		freeRunFrom,
 		fromXyEdges,
 		fromXyNodes,
 		nodeTypes,
@@ -87,21 +86,23 @@
 			if (!seed?.targetHandle || seedCh === null) return;
 
 			const dropped = parseHandle(seed.targetHandle) ?? 1;
-			const taken = current
-				.filter((e) => e.target === seed.target && e.id !== seed.id)
-				.map((e) => e.targetHandle ?? '');
 			// The target may refuse the whole set: mono recording takes one channel.
 			const cap = channelCaps.get(seed.target) ?? Infinity;
-			const run = freeRunFrom(taken, dropped, armed.length).filter((ch) => ch <= cap);
+			// Sequential from the drop point, occupied or not: the user chose that
+			// channel as the anchor, existing wiring there yields.
+			const run = Array.from({ length: armed.length }, (_, i) => dropped + i).filter(
+				(ch) => ch <= cap
+			);
 			if (run.length === 0) return;
-			const seedIdx = armed.indexOf(seedCh);
 
 			const added: XyEdge[] = [];
+			// Which physical channel was dragged from doesn't matter: mapping is
+			// always ascending armed[i] -> run[i], anchored at the drop point.
 			const retargeted = current.map((e) =>
-				e.id === seed.id ? { ...e, targetHandle: `ch${run[seedIdx]}` } : e
+				e.id === seed.id ? { ...e, targetHandle: `ch${run[armed.indexOf(seedCh)]}` } : e
 			);
 			armed.forEach((ch, i) => {
-				if (i === seedIdx || run[i] === undefined) return;
+				if (ch === seedCh || run[i] === undefined) return;
 				added.push({
 					id: createId(),
 					source: seed.source,

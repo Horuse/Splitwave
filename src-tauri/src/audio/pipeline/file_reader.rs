@@ -217,6 +217,15 @@ fn run(
     let mut last_frame: Vec<f32> = vec![0.0f32; ch];
     let mut last_paused_progress = Instant::now();
 
+    // The ring buffer (dag.rs RING_CAPACITY_FRAMES) can hold a whole short
+    // file, so broadcast_blocking's backpressure alone doesn't pace playback
+    // to real time -- without this, a short file decodes and floods the ring
+    // in a few ms, hits EOF, and the EOF-triggered pause then has the mixer
+    // discard most of the still-unplayed buffered audio (dag.rs fill_block).
+    let mut pace_origin = Instant::now();
+    let mut pace_frame_origin: u64 = 0;
+    let mut resuming = true;
+
     loop {
         if stop.load(Ordering::SeqCst) {
             emit_progress(
@@ -239,6 +248,7 @@ fn run(
                 last_paused_progress = Instant::now();
             }
             thread::sleep(Duration::from_millis(10));
+            resuming = true;
             continue;
         }
         last_paused_progress = Instant::now();
@@ -252,6 +262,13 @@ fn run(
                 app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
             );
             last_progress = Instant::now();
+            resuming = true;
+        }
+
+        if resuming {
+            pace_origin = Instant::now();
+            pace_frame_origin = frames_played;
+            resuming = false;
         }
 
         let frames_decoded = decode_next(&mut od, &mut interleaved, &mut block)?;
@@ -285,6 +302,14 @@ fn run(
         bridge.broadcast_blocking(samples, stop, paused, BACKOFF_WHEN_FULL);
         frames_played += frames_decoded as u64;
         last_frame.copy_from_slice(&block[(frames_decoded - 1) * ch..frames_decoded * ch]);
+
+        let target = Duration::from_secs_f64(
+            (frames_played - pace_frame_origin) as f64 / od.sample_rate as f64,
+        );
+        let elapsed = pace_origin.elapsed();
+        if target > elapsed {
+            thread::sleep(target - elapsed);
+        }
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
             emit_progress(

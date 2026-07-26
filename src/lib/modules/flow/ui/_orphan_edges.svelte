@@ -141,7 +141,7 @@
 </script>
 
 <ViewportPortal target="back">
-	<svg class="absolute overflow-visible" style="width:1px;height:1px;pointer-events:none">
+	<svg class="absolute overflow-visible z-10" style="width:1px;height:1px;pointer-events:none">
 		{#each orphans as o (o.id)}
 			<path
 				d="M {o.from.x},{o.from.y} L {o.to.x},{o.to.y}"
@@ -209,7 +209,7 @@
 		{#if active === o.id}
 			<button
 				type="button"
-				class="nodrag nopan pointer-events-auto absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-500 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
+				class="nodrag nopan z-10 pointer-events-auto absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-500 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
 				style="left:{o.mid.x}px;top:{o.mid.y}px"
 				title="Remove this connection"
 				onmouseenter={() => hold(o.id)}

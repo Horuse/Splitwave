@@ -10,8 +10,23 @@
 		kindsByCategory,
 		registry
 	} from '$lib/modules/flow/utils';
+	import { startFakeSignal } from './_fake_signal';
 
 	setContext(PREVIEW_CTX, true);
+
+	const ids: Partial<Record<NodeKind, string>> = {};
+	function idFor(kind: NodeKind): string {
+		return (ids[kind] ??= createId());
+	}
+
+	$effect(() =>
+		startFakeSignal({
+			levelMeter: idFor('levelMeter'),
+			lufsMeter: idFor('lufsMeter'),
+			waveform: idFor('waveform'),
+			spectrum: idFor('spectrum')
+		})
+	);
 
 	const DATA_OVERRIDES: Partial<Record<NodeKind, Record<string, unknown>>> = {
 		microphone: { deviceId: 'splitwave' },
@@ -34,7 +49,7 @@
 					{#each kindsByCategory[cat] as kind (kind)}
 						{@const Comp = registry[kind].component}
 						<div data-node-kind={kind}>
-							<Comp id={createId()} data={dataFor(kind)} />
+							<Comp id={idFor(kind)} data={dataFor(kind)} />
 						</div>
 					{/each}
 				</div>

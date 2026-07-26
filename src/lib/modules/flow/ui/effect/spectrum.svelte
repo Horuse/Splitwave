@@ -38,6 +38,7 @@
 	let fMax = $derived(sampleRate / 2);
 
 	const SCALE_W = 28;
+	const RIGHT_PAD = 12; // mirrors the gap the dB rail leaves on the left
 	const TOP_PAD = 9; // headroom so the 0 dB line and its label aren't clipped
 	const AXIS_H = 12;
 
@@ -62,7 +63,7 @@
 		return () => ro.disconnect();
 	});
 
-	let plotW = $derived(Math.max(1, W - SCALE_W));
+	let plotW = $derived(Math.max(1, W - SCALE_W - RIGHT_PAD));
 	let plotH = $derived(Math.max(1, Hpx - AXIS_H));
 
 	// Bar band edges in bin space, log-spaced. Recomputed if the monitor rate
@@ -309,7 +310,7 @@
 					<line
 						x1={SCALE_W}
 						y1={y}
-						x2={W}
+						x2={W - RIGHT_PAD}
 						y2={y}
 						stroke="rgba(255,255,255,0.07)"
 						stroke-width="1"
@@ -348,6 +349,16 @@
 						dominant-baseline="middle">{t.label}</text
 					>
 				{/each}
+
+				<line
+					x1={W - RIGHT_PAD}
+					y1={TOP_PAD}
+					x2={W - RIGHT_PAD}
+					y2={plotH}
+					stroke="rgba(255,255,255,0.12)"
+					stroke-width="1"
+					shape-rendering="crispEdges"
+				/>
 
 				{#each bars as bar, b (b)}
 					<rect

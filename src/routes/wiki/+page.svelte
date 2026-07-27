@@ -66,13 +66,15 @@
 				</div>
 
 				<video
-					src={entry.video}
 					autoplay
 					loop
 					muted
 					playsinline
 					class="w-full rounded-xl border border-neutral-400 bg-neutral-100"
-				></video>
+				>
+					<source src={entry.video.replace('.mp4', '.webm')} type="video/webm" />
+					<source src={entry.video} type="video/mp4" />
+				</video>
 			</section>
 		{/each}
 	</div>

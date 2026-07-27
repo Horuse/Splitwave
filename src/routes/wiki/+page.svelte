@@ -8,22 +8,22 @@
 	const ENTRIES = [
 		{
 			title: 'Multi-select channels with Option',
-			video: '/wiki/alt_connect.mov',
+			video: '/wiki/alt_connect.mp4',
 			body: 'Hold Option (Alt on Windows/Linux) while picking channels to select several at once, then drag them together as one connection.'
 		},
 		{
 			title: 'Select, copy and paste nodes',
-			video: '/wiki/ctrl_copy_paste.mov',
+			video: '/wiki/ctrl_copy_paste.mp4',
 			body: 'Press Ctrl+A (Cmd+A) to select every node on the canvas. Copy with Ctrl+C and paste with Ctrl+V (Cmd on macOS) to duplicate the selection.'
 		},
 		{
 			title: 'Box select with Shift',
-			video: '/wiki/shift_select.mov',
+			video: '/wiki/shift_select.mp4',
 			body: 'Hold Shift to switch the canvas into box-select mode, then drag a rectangle over the nodes you want to select.'
 		},
 		{
 			title: 'Delete multiple connections at once',
-			video: '/wiki/shift_delete_edges.mov',
+			video: '/wiki/shift_delete_edges.mp4',
 			body: 'Hold Shift and click each connection you want to remove, then press Delete to drop them all at once.'
 		}
 	];

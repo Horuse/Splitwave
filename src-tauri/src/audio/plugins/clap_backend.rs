@@ -31,6 +31,25 @@ impl PluginBackend for ClapBackend {
                 dirs.push(Path::new(&home).join("Library/Audio/Plug-Ins/CLAP"));
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            dirs.push(PathBuf::from("/usr/lib/clap"));
+            dirs.push(PathBuf::from("/usr/local/lib/clap"));
+            if let Some(home) = std::env::var_os("HOME") {
+                dirs.push(Path::new(&home).join(".clap"));
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            for var in ["CommonProgramW6432", "CommonProgramFiles"] {
+                if let Some(common) = std::env::var_os(var) {
+                    dirs.push(Path::new(&common).join("CLAP"));
+                }
+            }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                dirs.push(Path::new(&local).join("Programs/Common/CLAP"));
+            }
+        }
         dirs
     }
 

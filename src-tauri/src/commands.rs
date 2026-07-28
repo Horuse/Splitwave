@@ -496,6 +496,7 @@ pub struct NetReceiverStats {
     pub packets: u64,
     pub lost: u64,
     pub channels: u32,
+    pub buffer_ms: u32,
 }
 
 /// The DAG only binds receivers reachable from an output, so an unrouted node
@@ -515,11 +516,12 @@ pub fn net_receiver_release(node_id: String) {
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
     crate::audio::netaudio::receiver::stats(&node_id)
-        .map(|(bytes, packets, lost, channels)| NetReceiverStats {
+        .map(|(bytes, packets, lost, channels, buffer_ms)| NetReceiverStats {
             bytes,
             packets,
             lost,
             channels,
+            buffer_ms,
         })
 }
 

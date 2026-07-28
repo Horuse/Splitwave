@@ -338,6 +338,7 @@ struct ConsumerRef {
     rate: u32,
     realtime: bool,
     drift: Arc<AtomicU32>,
+    target: Arc<AtomicU32>,
     taps: Weak<Mutex<HashMap<String, PlaybackTap>>>,
 }
 
@@ -419,6 +420,7 @@ impl FanoutRegistry {
             rate: output_sr,
             realtime,
             drift: drift.clone(),
+            target: target.clone(),
             taps: Arc::downgrade(&map),
         });
         ConsumerHandle { taps: map, drift, target, realtime }
@@ -486,6 +488,18 @@ impl FanoutRegistry {
         }
         self.broadcasts.lock().unwrap().insert(key, bc.clone());
         bc
+    }
+
+    /// Deepest jitter buffer target any live consumer of this source is steering
+    /// to, in 48 kHz samples. The drift loop holds the actual fill there, so it
+    /// is the latency the receive path adds.
+    pub fn buffer_depth(&self) -> Option<u32> {
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|c| c.taps.strong_count() > 0);
+        consumers
+            .iter()
+            .map(|c| c.target.load(Ordering::Relaxed))
+            .max()
     }
 
     /// Forgets one channel. Its next packet re-attaches it, which is how a

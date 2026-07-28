@@ -34,15 +34,21 @@ pub const OUT_BLOCK_FRAMES: usize = 1024;
 pub const CONSUMER_RING: usize = 96_000;
 
 /// Adaptive jitter-buffer target (mono samples at 48 kHz): the fill the drift
-/// loop steers toward and the buffer primes to. Starts moderate, grows when the
-/// network under-delivers (a latency spike drains it), shrinks slowly during
-/// sustained calm -- so a periodic spike is absorbed after the first occurrence.
+/// loop steers toward and the buffer primes to. Fast attack, slow release: an
+/// outage is answered with the depth that would have covered it, and that depth
+/// is handed back over minutes. Release quick enough to see is worse than none
+/// -- it returns the buffer to a depth already proven to fail, right in time for
+/// the spike to repeat, and the user hears the cycle rather than the adaptation.
 const TARGET_INIT: usize = 2_880; // ~60 ms
 const TARGET_MIN: usize = 1_920; // ~40 ms
 const TARGET_MAX: usize = 19_200; // ~400 ms
-const TARGET_GROW: usize = 2_400; // +50 ms per starvation
-const TARGET_SHRINK: usize = 960; // -20 ms per calm window
-const CALM_WINDOW: u32 = 240; // ~5 s at ~21 ms/block
+/// Headroom over an outage the buffer failed to ride out.
+const TARGET_MARGIN: usize = 480; // ~10 ms
+/// Ceiling on what one outage may add, so a single dropout cannot pin the
+/// target at its maximum for the rest of the session.
+const TARGET_EVENT_MAX: usize = 4_800; // ~100 ms
+const TARGET_DECAY: usize = 240; // -5 ms per calm window
+const CALM_WINDOW: u32 = 1_440; // ~30 s at ~21 ms/block
 /// Depth kept above what a block consumes when shrinking: the buffer still has
 /// to absorb the jitter it has not seen yet.
 const KEEP_MARGIN: usize = 960; // ~20 ms
@@ -546,7 +552,8 @@ pub struct ChannelReceiver {
     // Adaptive-jitter state; only the single worker thread touches these.
     min_backlog: Cell<usize>,
     window_blocks: Cell<u32>,
-    starving: Cell<bool>,
+    starve_blocks: Cell<u32>,
+    ever_primed: Cell<bool>,
     avg_backlog: Cell<f64>,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
@@ -576,7 +583,8 @@ impl ChannelReceiver {
             realtime: handle.realtime,
             min_backlog: Cell::new(usize::MAX),
             window_blocks: Cell::new(0),
-            starving: Cell::new(false),
+            starve_blocks: Cell::new(0),
+            ever_primed: Cell::new(false),
             avg_backlog: Cell::new(-1.0),
             last_mix: std::cell::RefCell::new(Vec::new()),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
@@ -664,12 +672,23 @@ impl ChannelReceiver {
 
         if self.realtime {
             // Drive from the emptiest channel so no channel is left to underrun;
-            // one shared ratio keeps channels phase-coherent. A priming source is
-            // skipped: its ring is filling by design, and reading that as
-            // starvation deepens the very target it is filling towards.
-            if let Some(p) = plans.iter().filter(|p| !p.hold).min_by_key(|p| p.min_backlog) {
-                self.control(p.min_backlog, p.need);
+            // one shared ratio keeps channels phase-coherent. A priming source
+            // never steers: its ring is filling by design, and reading that as
+            // drift would chase the refill.
+            let live = plans.iter().filter(|p| !p.hold).min_by_key(|p| p.min_backlog);
+            // A source refilling after a break emits nothing, exactly like one
+            // that concealed, and the target has to answer for both. Only the
+            // first prime of all is exempt: filling from empty is how playback
+            // starts, not something the buffer failed at.
+            let starving = live.is_some_and(|p| p.min_backlog < p.need)
+                || (self.ever_primed.get() && plans.iter().any(|p| p.hold));
+            self.account(starving, live.map(|p| (p.min_backlog, p.need)));
+            if let Some(p) = live {
+                self.steer(p.min_backlog);
             }
+        }
+        if plans.iter().any(|p| !p.hold) {
+            self.ever_primed.set(true);
         }
 
         // Channels are mono; a wider mix gets each one centred across it.
@@ -711,46 +730,55 @@ impl ChannelReceiver {
         held.copy_from_slice(mix);
     }
 
-    /// Adaptive buffer depth + drift ratio from the current backlog.
-    fn control(&self, backlog: usize, need: usize) {
-        let mut target = self.target.load(Ordering::Relaxed) as usize;
-        self.min_backlog.set(self.min_backlog.get().min(backlog));
-        self.window_blocks.set(self.window_blocks.get() + 1);
-
-        if backlog < need {
-            // Once per outage, not once per block: a spike that lasts several
-            // blocks is one event, and charging it repeatedly walks the target
-            // to its ceiling and leaves it there.
-            if !self.starving.get() {
-                self.starving.set(true);
-                target = (target + TARGET_GROW).min(TARGET_MAX);
-                self.target.store(target as u32, Ordering::Relaxed);
-            }
+    /// Adaptive buffer depth. `live` is the emptiest source that is actually
+    /// playing, absent while every source is refilling.
+    fn account(&self, starving: bool, live: Option<(usize, usize)>) {
+        if starving {
+            self.starve_blocks.set(self.starve_blocks.get() + 1);
             self.min_backlog.set(usize::MAX);
             self.window_blocks.set(0);
-        } else {
-            self.starving.set(false);
-            if self.window_blocks.get() >= CALM_WINDOW {
-                // Give back the depth the window never touched. Measured against
-                // what a block consumes, not against the target: the drift loop
-                // holds the fill *at* the target, so a backlog above it is not
-                // something this can ever observe.
-                let spare = self.min_backlog.get().saturating_sub(need + KEEP_MARGIN);
-                if spare > 0 {
-                    target = target.saturating_sub(spare.min(TARGET_SHRINK)).max(TARGET_MIN);
-                    self.target.store(target as u32, Ordering::Relaxed);
-                }
-                self.min_backlog.set(usize::MAX);
-                self.window_blocks.set(0);
-            }
+            return;
+        }
+        // Charged when the outage ends, so its length sizes the answer: a buffer
+        // deeper by what the source failed to deliver is precisely the buffer
+        // that would have played straight through it.
+        let blocks = self.starve_blocks.replace(0) as usize;
+        if blocks > 0 {
+            let grow = (blocks * OUT_BLOCK_FRAMES + TARGET_MARGIN).min(TARGET_EVENT_MAX);
+            let target = self.target.load(Ordering::Relaxed) as usize;
+            self.target.store((target + grow).min(TARGET_MAX) as u32, Ordering::Relaxed);
+            return;
         }
 
+        let Some((backlog, need)) = live else { return };
+        self.min_backlog.set(self.min_backlog.get().min(backlog));
+        self.window_blocks.set(self.window_blocks.get() + 1);
+        if self.window_blocks.get() < CALM_WINDOW {
+            return;
+        }
+        // Give back the depth the window never touched. Measured against what a
+        // block consumes, not against the target: the drift loop holds the fill
+        // *at* the target, so a backlog above it is not something this can ever
+        // observe.
+        let spare = self.min_backlog.get().saturating_sub(need + KEEP_MARGIN);
+        if spare > 0 {
+            let target = self.target.load(Ordering::Relaxed) as usize;
+            let target = target.saturating_sub(spare.min(TARGET_DECAY)).max(TARGET_MIN);
+            self.target.store(target as u32, Ordering::Relaxed);
+        }
+        self.min_backlog.set(usize::MAX);
+        self.window_blocks.set(0);
+    }
+
+    /// Drift ratio from the current backlog.
+    fn steer(&self, backlog: usize) {
+        let target = self.target.load(Ordering::Relaxed) as usize;
         // Drive the ratio from a smoothed backlog so it tracks real drift (slow)
         // and ignores per-block fill ripple (fast). A jump far beyond jitter
         // scale is a re-prime refill, not drift -- restart the EMA there so the
         // controller doesn't chase the refill as a huge error.
         let prev = self.avg_backlog.get();
-        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_GROW as f64 {
+        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_EVENT_MAX as f64 {
             backlog as f64
         } else {
             prev + DRIFT_BACKLOG_ALPHA * (backlog as f64 - prev)

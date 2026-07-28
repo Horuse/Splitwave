@@ -13,11 +13,13 @@ use crate::audio::stream_recv::{broadcast_push, ChannelBroadcast, ConsumerHandle
 
 use super::codec::ChannelDecoder;
 use super::packet;
+use super::timeline::{ChannelTimeline, SeqStep};
 
 struct ChannelState {
     decoder: Mutex<ChannelDecoder>,
     // Decoded 48 kHz audio is pushed straight into every consumer's ring.
     broadcast: ChannelBroadcast,
+    timeline: Mutex<ChannelTimeline>,
 }
 
 pub struct NetReceiver {
@@ -122,7 +124,6 @@ impl NetReceiver {
         info!(port = self.port, "net receiver listening");
         let mut buf = vec![0u8; 2048];
         let mut pcm: Vec<f32> = Vec::new();
-        let mut last_seq: HashMap<u8, u16> = HashMap::new();
         loop {
             let n = match socket.recv_from(&mut buf).await {
                 Ok((n, _)) => n,
@@ -131,45 +132,57 @@ impl NetReceiver {
             let Some(pkt) = packet::parse(&buf[..n]) else { continue };
             self.bytes.fetch_add(n as u64, Ordering::Relaxed);
             self.packets.fetch_add(1, Ordering::Relaxed);
-            let channel = self.channel(pkt.channel);
-            let mut gap = 0u16;
-            if let Some(prev) = last_seq.insert(pkt.channel, pkt.seq) {
-                let g = pkt.seq.wrapping_sub(prev).wrapping_sub(1);
-                if g > 0 && (g as u32) < 1000 {
-                    self.lost.fetch_add(g as u64, Ordering::Relaxed);
-                    gap = g;
+            let channel = self.channel(pkt.channel, pkt.seq);
+            let step = channel.timeline.lock().unwrap().step(pkt.seq);
+            match step {
+                SeqStep::Drop => continue,
+                // The break is longer than concealment covers, so this channel
+                // no longer sits where its siblings do. Forget it and let the
+                // next packet re-attach it in phase.
+                SeqStep::Resync => {
+                    self.drop_channel(pkt.channel);
+                    continue;
                 }
+                SeqStep::Advance { .. } => {}
             }
-            // Opus conceals lost frames from decoder state; PCM has no codec PLC
-            // (the playback side fades instead), so only conceal for Opus.
-            if gap > 0 && pkt.format == packet::Format::Opus {
-                for _ in 0..gap.min(10) {
-                    pcm.clear();
-                    channel.decoder.lock().unwrap().conceal(&mut pcm);
-                    if !pcm.is_empty() {
-                        broadcast_push(&channel.broadcast, &pcm);
+            let mut packets = 1u16;
+            // Concealment and payload go out as one push, so the channel
+            // advances by whole packets on the source's timeline.
+            pcm.clear();
+            {
+                let mut decoder = channel.decoder.lock().unwrap();
+                if let SeqStep::Advance { gap } = step {
+                    if gap > 0 {
+                        self.lost.fetch_add(gap as u64, Ordering::Relaxed);
+                        decoder.conceal_packets(pkt.format, gap, &mut pcm);
+                        packets += gap;
                     }
                 }
+                decoder.decode(pkt.format, pkt.payload, &mut pcm);
             }
-            pcm.clear();
-            channel.decoder.lock().unwrap().decode(pkt.format, pkt.payload, &mut pcm);
             if !pcm.is_empty() {
-                broadcast_push(&channel.broadcast, &pcm);
+                broadcast_push(&channel.broadcast, pkt.seq, packets, &pcm);
             }
         }
     }
 
+    fn drop_channel(&self, index: u8) {
+        self.channels.lock().unwrap().remove(&index);
+        self.fanout.drop_channel(&index.to_string());
+    }
+
     /// Receive state for a channel index, created (and wired to consumers) on
     /// its first packet.
-    fn channel(&self, index: u8) -> Arc<ChannelState> {
+    fn channel(&self, index: u8, first_seq: u16) -> Arc<ChannelState> {
         let mut channels = self.channels.lock().unwrap();
         if let Some(c) = channels.get(&index) {
             return c.clone();
         }
-        let broadcast = self.fanout.attach_channel(index.to_string());
+        let broadcast = self.fanout.attach_channel(index.to_string(), first_seq);
         let state = Arc::new(ChannelState {
             decoder: Mutex::new(ChannelDecoder::new()),
             broadcast,
+            timeline: Mutex::new(ChannelTimeline::default()),
         });
         channels.insert(index, state.clone());
         state

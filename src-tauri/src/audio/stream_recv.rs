@@ -8,6 +8,12 @@
 //! loop nudges the resample ratio to hold the ring near a target fill. So clock
 //! drift is absorbed continuously by the resampler, never by dropping/inserting
 //! samples -- which is what produced the "needle" discontinuities before.
+//!
+//! Channels of one source stay in phase by position, not by arrival: each push
+//! carries the `seq` it ends at, losses are pushed as concealment of the exact
+//! size they replace, and a ring wired in mid-stream opens with the silence that
+//! puts it where its siblings already are. Everything downstream then only has
+//! to keep consumption equal across the source (`GroupPlan`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -61,7 +67,32 @@ const IDLE_BLOCKS_DEAD: u32 = 8;
 
 /// One received channel's fan-out: the 48 kHz ring producer for each live
 /// consumer. The decode task pushes decoded audio into all of them.
-pub type ChannelBroadcast = Arc<Mutex<Vec<Producer<f32>>>>;
+pub type ChannelBroadcast = Arc<ChannelFeed>;
+
+pub struct ChannelFeed {
+    /// Shared by every channel of the same source (see `group_id`), and held
+    /// for the whole of a push or a ring creation, so a ring being wired in
+    /// never lands inside a push.
+    sync: Arc<Mutex<()>>,
+    prods: Mutex<Vec<Producer<f32>>>,
+    state: Mutex<FeedState>,
+}
+
+#[derive(Default)]
+struct FeedState {
+    /// Packet index just past the last one pushed, on the source's shared
+    /// timeline (all its channels are encoded from one tick, so `seq` counts
+    /// the same instants for each). Extended past the 16-bit wire counter.
+    pos_end: u64,
+    /// Samples one packet carries, from the last push.
+    chunk: usize,
+}
+
+/// Widen a 16-bit wire counter to the epoch of `near`.
+fn extend_seq(seq: u16, near: u64) -> u64 {
+    let delta = seq.wrapping_sub(near as u16) as i16;
+    near.wrapping_add(delta as i64 as u64)
+}
 
 /// A consumer's per-channel playback taps, keyed by channel id.
 pub type TapMap = Arc<Mutex<HashMap<String, PlaybackTap>>>;
@@ -74,12 +105,22 @@ pub struct ConsumerHandle {
     pub realtime: bool,
 }
 
-/// Push decoded 48 kHz audio into every live consumer ring for a channel.
-pub fn broadcast_push(broadcast: &ChannelBroadcast, samples: &[f32]) {
-    let mut prods = broadcast.lock().unwrap();
+/// Push one channel's audio for the `packets` packets ending at `seq` (a lost
+/// packet is carried as its concealment, so a push always covers whole packets).
+/// Tracking where the samples sit on the timeline -- rather than when they
+/// arrived -- is what keeps a channel wired in mid-stream in phase with its
+/// siblings.
+pub fn broadcast_push(broadcast: &ChannelBroadcast, seq: u16, packets: u16, samples: &[f32]) {
+    let _sync = broadcast.sync.lock().unwrap();
+    let mut prods = broadcast.prods.lock().unwrap();
     prods.retain(|p| !p.is_abandoned());
     for p in prods.iter_mut() {
         bulk_push(p, samples);
+    }
+    let mut state = broadcast.state.lock().unwrap();
+    state.pos_end = extend_seq(seq, state.pos_end) + 1;
+    if packets > 0 {
+        state.chunk = samples.len() / packets as usize;
     }
 }
 
@@ -289,6 +330,8 @@ impl PlaybackTap {
 pub struct FanoutRegistry {
     broadcasts: Mutex<HashMap<String, ChannelBroadcast>>,
     consumers: Mutex<Vec<ConsumerRef>>,
+    /// One push lock per source, handed to every channel of it.
+    groups: Mutex<HashMap<u64, Arc<Mutex<()>>>>,
 }
 
 struct ConsumerRef {
@@ -303,11 +346,21 @@ impl Default for FanoutRegistry {
         Self {
             broadcasts: Mutex::new(HashMap::new()),
             consumers: Mutex::new(Vec::new()),
+            groups: Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl FanoutRegistry {
+    fn group_sync(&self, gid: u64) -> Arc<Mutex<()>> {
+        self.groups
+            .lock()
+            .unwrap()
+            .entry(gid)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     /// New output consumer: an empty tap map wired a fresh ring into every known
     /// channel's broadcast. Locks `consumers` before `broadcasts`.
     pub fn register_consumer(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
@@ -316,21 +369,52 @@ impl FanoutRegistry {
         let target = Arc::new(AtomicU32::new(TARGET_INIT as u32));
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
-        for (key, bc) in self.broadcasts.lock().unwrap().iter() {
-            let (prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
-            bc.lock().unwrap().push(prod);
-            map.lock().unwrap().insert(
-                key.clone(),
-                PlaybackTap::new(
-                    group_id(key),
-                    cons,
-                    output_sr,
-                    realtime,
-                    false,
-                    drift.clone(),
-                ),
-            );
+        // A source's rings are created together under its push lock, so they all
+        // open empty at the same instant. Wiring them one packet apart would
+        // offset the channels against each other for the consumer's lifetime.
+        let broadcasts = self.broadcasts.lock().unwrap();
+        let mut by_group: HashMap<u64, Vec<(&String, &ChannelBroadcast)>> = HashMap::new();
+        for (key, bc) in broadcasts.iter() {
+            by_group.entry(group_id(key)).or_default().push((key, bc));
         }
+        let mut pad: Vec<f32> = Vec::new();
+        for (gid, channels) in by_group {
+            let sync = channels[0].1.sync.clone();
+            let _sync = sync.lock().unwrap();
+            // Within one tick some channels have already been pushed and some
+            // have not. Opening every ring at the least advanced position and
+            // padding the rest by how far they lead puts them all on the same
+            // instant, whatever order the packets landed in.
+            let states: Vec<(u64, usize)> = channels
+                .iter()
+                .map(|(_, bc)| {
+                    let st = bc.state.lock().unwrap();
+                    (st.pos_end, st.chunk)
+                })
+                .collect();
+            // One packet behind the furthest: within a tick the channels differ
+            // by at most that, and opening there costs at most one packet of
+            // depth while keeping them in phase whatever the arrival order. A
+            // channel further behind has stopped delivering, and re-enters in
+            // phase through `drop_channel` when it comes back.
+            let head = states.iter().map(|(pos, _)| *pos).max().unwrap_or(0);
+            let base = head.saturating_sub(1);
+            for ((key, bc), (pos_end, chunk)) in channels.into_iter().zip(states) {
+                let (mut prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
+                let lead = pos_end.saturating_sub(base).min(1) as usize * chunk;
+                if lead > 0 {
+                    pad.clear();
+                    pad.resize(lead.min(CONSUMER_RING / 2), 0.0);
+                    bulk_push(&mut prod, &pad);
+                }
+                bc.prods.lock().unwrap().push(prod);
+                map.lock().unwrap().insert(
+                    key.clone(),
+                    PlaybackTap::new(gid, cons, output_sr, realtime, false, drift.clone()),
+                );
+            }
+        }
+        drop(broadcasts);
         consumers.push(ConsumerRef {
             rate: output_sr,
             realtime,
@@ -340,48 +424,81 @@ impl FanoutRegistry {
         ConsumerHandle { taps: map, drift, target, realtime }
     }
 
-    /// New received channel: a fresh broadcast wired into every live consumer.
-    pub fn attach_channel(&self, key: String) -> ChannelBroadcast {
-        let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
+    /// New received channel, wired into every live consumer. `first_seq` is the
+    /// packet about to be pushed: its distance from the siblings' position is
+    /// what the fresh rings open with, so the channel joins in phase.
+    pub fn attach_channel(&self, key: String, first_seq: u16) -> ChannelBroadcast {
         let gid = group_id(&key);
+        let sync = self.group_sync(gid);
+        let bc: ChannelBroadcast = Arc::new(ChannelFeed {
+            sync: sync.clone(),
+            prods: Mutex::new(Vec::new()),
+            state: Mutex::new(FeedState::default()),
+        });
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
+        // No sibling can push while the rings are sized and wired, so the
+        // positions and fills read here are the ones the new rings must match.
+        let _sync = sync.lock().unwrap();
+        let sibling = {
+            let broadcasts = self.broadcasts.lock().unwrap();
+            broadcasts
+                .iter()
+                .filter(|(k, _)| group_id(k) == gid)
+                .map(|(k, b)| {
+                    let st = b.state.lock().unwrap();
+                    (k.clone(), st.pos_end, st.chunk)
+                })
+                .max_by_key(|(_, pos_end, _)| *pos_end)
+        };
         let mut pad: Vec<f32> = Vec::new();
         for c in consumers.iter() {
             if let Some(map) = c.taps.upgrade() {
                 let (mut prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
                 let mut taps = map.lock().unwrap();
-                // The channel starts at "now"; its siblings sit a jitter buffer
-                // behind it. Opening with that much silence puts them on one
-                // timeline, so the source stays phase-coherent from its first
-                // block instead of the group having to re-prime.
-                let sibling = taps
-                    .values()
-                    .filter(|t| t.group == gid)
-                    .map(|t| (t.backlog(), t.primed))
-                    .max_by_key(|(backlog, _)| *backlog);
-                let (backlog, primed) = sibling.unwrap_or((0, false));
-                if backlog > 0 {
+                // A sibling's ring spans [read position, its last packet]; the
+                // new channel starts at `first_seq`, so it opens with whatever
+                // separates the two.
+                let (fill, primed) = sibling
+                    .as_ref()
+                    .and_then(|(k, _, _)| taps.get(k))
+                    .map(|t| (t.backlog() as i64, t.primed))
+                    .unwrap_or((0, false));
+                let lead = sibling
+                    .as_ref()
+                    .map(|(_, pos_end, chunk)| {
+                        let start = extend_seq(first_seq, *pos_end);
+                        (start as i64 - *pos_end as i64) * *chunk as i64
+                    })
+                    .unwrap_or(0);
+                let open = (fill + lead).clamp(0, (CONSUMER_RING / 2) as i64) as usize;
+                if open > 0 {
                     pad.clear();
-                    pad.resize(backlog, 0.0);
+                    pad.resize(open, 0.0);
                     bulk_push(&mut prod, &pad);
                 }
-                bc.lock().unwrap().push(prod);
+                bc.prods.lock().unwrap().push(prod);
                 taps.insert(
                     key.clone(),
-                    PlaybackTap::new(
-                        gid,
-                        cons,
-                        c.rate,
-                        c.realtime,
-                        primed,
-                        c.drift.clone(),
-                    ),
+                    PlaybackTap::new(gid, cons, c.rate, c.realtime, primed, c.drift.clone()),
                 );
             }
         }
         self.broadcasts.lock().unwrap().insert(key, bc.clone());
         bc
+    }
+
+    /// Forgets one channel. Its next packet re-attaches it, which is how a
+    /// stream that broke for longer than concealment covers gets back in phase.
+    pub fn drop_channel(&self, key: &str) {
+        self.broadcasts.lock().unwrap().remove(key);
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|c| c.taps.strong_count() > 0);
+        for c in consumers.iter() {
+            if let Some(map) = c.taps.upgrade() {
+                map.lock().unwrap().remove(key);
+            }
+        }
     }
 
     /// Drops channels whose key starts with `prefix`.
@@ -392,6 +509,7 @@ impl FanoutRegistry {
     pub fn clear(&self) {
         self.broadcasts.lock().unwrap().clear();
         self.consumers.lock().unwrap().clear();
+        self.groups.lock().unwrap().clear();
     }
 }
 
@@ -494,8 +612,10 @@ impl ChannelReceiver {
         let target = self.target.load(Ordering::Relaxed) as usize;
         for p in plans.iter_mut() {
             if !p.primed {
-                // Prime the whole source at once, levelling every channel to the
-                // shallowest so they resume in step.
+                // Prime the whole source at once. Fills are not levelled: a
+                // channel whose packet for this tick has already landed leads
+                // its siblings by exactly that packet, and that lead *is* the
+                // alignment.
                 if p.min_backlog < target.max(p.need) {
                     p.hold = true;
                     continue;
@@ -549,13 +669,8 @@ impl ChannelReceiver {
                 }
                 continue;
             }
-            // Level to the group's shallowest channel on the priming block; from
-            // then on every channel pops the same count per block.
-            let excess = if tap.primed { plan.trim } else {
-                tap.primed = true;
-                tap.snap_backlog - plan.min_backlog + plan.trim
-            };
-            tap.trim(excess);
+            tap.primed = true;
+            tap.trim(plan.trim);
             let n = tap.fill_block().min(OUT_BLOCK_FRAMES);
             for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
                 for s in frame.iter_mut() {

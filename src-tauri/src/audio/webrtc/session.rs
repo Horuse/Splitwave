@@ -9,6 +9,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 use crate::audio::graph::{NetCodec, OpusApplication};
 use crate::audio::netaudio::codec::ChannelDecoder;
 use crate::audio::netaudio::packet::Format;
+use crate::audio::netaudio::timeline::ChannelTimeline;
 use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry};
 
 use super::OPUS_SR;
@@ -76,8 +77,7 @@ pub struct PeerChannel {
     pub decoder: Mutex<ChannelDecoder>,
     // Decoded 48 kHz audio is pushed straight into every consumer's ring.
     pub broadcast: ChannelBroadcast,
-    // Last seq seen on this channel, to count gaps as loss.
-    pub last_seq: Mutex<Option<u16>>,
+    pub timeline: Mutex<ChannelTimeline>,
 }
 
 impl WebRtcSession {
@@ -121,8 +121,8 @@ impl WebRtcSession {
     }
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.
-    pub fn attach_channel(&self, peer: String, channel: u8) -> ChannelBroadcast {
-        self.fanout.attach_channel(format!("{peer}:{channel}"))
+    pub fn attach_channel(&self, peer: String, channel: u8, first_seq: u16) -> ChannelBroadcast {
+        self.fanout.attach_channel(format!("{peer}:{channel}"), first_seq)
     }
 
     /// Drops a disconnected peer's channels so new bridges don't wire to them.

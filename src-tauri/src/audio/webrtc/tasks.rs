@@ -10,6 +10,7 @@ use webrtc::data_channel::RTCDataChannel;
 use crate::audio::graph::OpusApplication;
 use crate::audio::netaudio::codec::{ChannelDecoder, ChannelEncoder};
 use crate::audio::netaudio::packet::{self, Format};
+use crate::audio::netaudio::timeline::SeqStep;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::broadcast_push;
 
@@ -203,9 +204,6 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         peers.get(peer_id).cloned()
     };
     let Some(peer) = peer else { return };
-    if peer.muted.load(Ordering::Relaxed) {
-        return;
-    }
 
     let ch = {
         let mut chans = peer.channels.lock().unwrap();
@@ -213,51 +211,52 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
             c.clone()
         } else {
             let display = peer.display_id.lock().unwrap().clone();
-            let broadcast = session.attach_channel(display, channel);
+            let broadcast = session.attach_channel(display, channel, seq);
             let c = Arc::new(PeerChannel {
                 decoder: std::sync::Mutex::new(ChannelDecoder::new()),
                 broadcast,
-                last_seq: std::sync::Mutex::new(None),
+                timeline: std::sync::Mutex::new(Default::default()),
             });
             chans.insert(channel, c.clone());
             c
         }
     };
 
-    // Count gaps between consecutive seq numbers as loss (guard against
-    // reorder / wrap producing an absurd jump).
-    let mut gap = 0u16;
-    {
-        let mut last = ch.last_seq.lock().unwrap();
-        if let Some(prev) = *last {
-            let g = seq.wrapping_sub(prev).wrapping_sub(1);
-            if g > 0 && (g as u32) < 1000 {
-                peer.lost.fetch_add(g as u64, Ordering::Relaxed);
-                gap = g;
-            }
+    // The timeline advances even while muted, so unmuting resumes in step with
+    // the peer's other channels instead of counting the mute as one huge loss.
+    let step = ch.timeline.lock().unwrap().step(seq);
+    match step {
+        SeqStep::Drop => return,
+        // The break is longer than concealment covers, so this channel no
+        // longer sits where its siblings do. Forget it and let the next packet
+        // re-attach it in phase.
+        SeqStep::Resync => {
+            peer.channels.lock().unwrap().remove(&channel);
+            let display = peer.display_id.lock().unwrap().clone();
+            session.fanout.drop_channel(&format!("{display}:{channel}"));
+            return;
         }
-        *last = Some(seq);
+        SeqStep::Advance { .. } => {}
+    }
+    if peer.muted.load(Ordering::Relaxed) {
+        return;
     }
     peer.packets.fetch_add(1, Ordering::Relaxed);
 
-    // Opus conceals lost frames from decoder state; PCM has no codec PLC (the
-    // playback side fades instead), so only conceal for Opus.
-    if gap > 0 && format == Format::Opus {
-        for _ in 0..gap.min(10) {
-            let mut c: Vec<f32> = Vec::new();
-            if let Ok(mut dec) = ch.decoder.lock() {
-                dec.conceal(&mut c);
-            }
-            if !c.is_empty() {
-                broadcast_push(&ch.broadcast, &c);
-            }
-        }
-    }
-
+    // Concealment and payload go out as one push, so the channel advances by
+    // whole packets on the peer's timeline.
     let mut pcm: Vec<f32> = Vec::new();
+    let mut packets = 1u16;
     {
         let Ok(mut dec) = ch.decoder.lock() else { return };
+        if let SeqStep::Advance { gap } = step {
+            if gap > 0 {
+                peer.lost.fetch_add(gap as u64, Ordering::Relaxed);
+                dec.conceal_packets(format, gap, &mut pcm);
+                packets += gap;
+            }
+        }
         dec.decode(format, &payload, &mut pcm);
     }
-    broadcast_push(&ch.broadcast, &pcm);
+    broadcast_push(&ch.broadcast, seq, packets, &pcm);
 }

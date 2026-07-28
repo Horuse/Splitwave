@@ -40,16 +40,24 @@ pub const CONSUMER_RING: usize = 96_000;
 const TARGET_INIT: usize = 2_880; // ~60 ms
 const TARGET_MIN: usize = 1_920; // ~40 ms
 const TARGET_MAX: usize = 19_200; // ~400 ms
-const TARGET_GROW: usize = 2_400; // +50 ms on underrun
-const TARGET_SHRINK: usize = 480; // -10 ms per calm window
-const CALM_WINDOW: u32 = 480; // ~10 s at ~21 ms/block
+const TARGET_GROW: usize = 2_400; // +50 ms per starvation
+const TARGET_SHRINK: usize = 960; // -20 ms per calm window
+const CALM_WINDOW: u32 = 240; // ~5 s at ~21 ms/block
+/// Depth kept above what a block consumes when shrinking: the buffer still has
+/// to absorb the jitter it has not seen yet.
+const KEEP_MARGIN: usize = 960; // ~20 ms
 
 /// Proportional gain: backlog error (samples) -> ratio correction. A varying
-/// resample ratio IS pitch modulation, so the loop must be far slower and far
-/// narrower than the jitter it rides on: corrections stay within +-2000 ppm
-/// (real oscillator pairs differ by <200 ppm) and jitter is absorbed by the
-/// buffer, never by the ratio -- otherwise bursty links produce audible wow.
-const DRIFT_KP: f64 = 1.0e-7;
+/// resample ratio IS pitch modulation, so the loop stays far slower and far
+/// narrower than the jitter it rides on: corrections clamp to +-2000 ppm (~3.5
+/// cents) and jitter is absorbed by the buffer, never by the ratio -- otherwise
+/// bursty links produce audible wow. Against the backlog integrator this gain
+/// settles in 1/(KP*SR) ~ 21 s, slow next to the ~3 s EMA below and so stable,
+/// yet quick enough to actually hand back depth the target gave up. A tenth of
+/// it could only track oscillator drift: the buffer would keep whatever a spike
+/// added for the rest of the session. Only realtime consumers steer the ratio,
+/// so recordings never see it.
+const DRIFT_KP: f64 = 1.0e-6;
 const DRIFT_MIN: f64 = 0.998;
 const DRIFT_MAX: f64 = 1.002;
 /// EMA smoothing for the backlog the drift controller sees (~3 s time constant)
@@ -538,6 +546,7 @@ pub struct ChannelReceiver {
     // Adaptive-jitter state; only the single worker thread touches these.
     min_backlog: Cell<usize>,
     window_blocks: Cell<u32>,
+    starving: Cell<bool>,
     avg_backlog: Cell<f64>,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
@@ -567,6 +576,7 @@ impl ChannelReceiver {
             realtime: handle.realtime,
             min_backlog: Cell::new(usize::MAX),
             window_blocks: Cell::new(0),
+            starving: Cell::new(false),
             avg_backlog: Cell::new(-1.0),
             last_mix: std::cell::RefCell::new(Vec::new()),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
@@ -654,8 +664,10 @@ impl ChannelReceiver {
 
         if self.realtime {
             // Drive from the emptiest channel so no channel is left to underrun;
-            // one shared ratio keeps channels phase-coherent.
-            if let Some(p) = plans.iter().min_by_key(|p| p.min_backlog) {
+            // one shared ratio keeps channels phase-coherent. A priming source is
+            // skipped: its ring is filling by design, and reading that as
+            // starvation deepens the very target it is filling towards.
+            if let Some(p) = plans.iter().filter(|p| !p.hold).min_by_key(|p| p.min_backlog) {
                 self.control(p.min_backlog, p.need);
             }
         }
@@ -706,17 +718,31 @@ impl ChannelReceiver {
         self.window_blocks.set(self.window_blocks.get() + 1);
 
         if backlog < need {
-            target = (target + TARGET_GROW).min(TARGET_MAX);
-            self.target.store(target as u32, Ordering::Relaxed);
-            self.min_backlog.set(usize::MAX);
-            self.window_blocks.set(0);
-        } else if self.window_blocks.get() >= CALM_WINDOW {
-            if self.min_backlog.get() > target + need {
-                target = target.saturating_sub(TARGET_SHRINK).max(TARGET_MIN);
+            // Once per outage, not once per block: a spike that lasts several
+            // blocks is one event, and charging it repeatedly walks the target
+            // to its ceiling and leaves it there.
+            if !self.starving.get() {
+                self.starving.set(true);
+                target = (target + TARGET_GROW).min(TARGET_MAX);
                 self.target.store(target as u32, Ordering::Relaxed);
             }
             self.min_backlog.set(usize::MAX);
             self.window_blocks.set(0);
+        } else {
+            self.starving.set(false);
+            if self.window_blocks.get() >= CALM_WINDOW {
+                // Give back the depth the window never touched. Measured against
+                // what a block consumes, not against the target: the drift loop
+                // holds the fill *at* the target, so a backlog above it is not
+                // something this can ever observe.
+                let spare = self.min_backlog.get().saturating_sub(need + KEEP_MARGIN);
+                if spare > 0 {
+                    target = target.saturating_sub(spare.min(TARGET_SHRINK)).max(TARGET_MIN);
+                    self.target.store(target as u32, Ordering::Relaxed);
+                }
+                self.min_backlog.set(usize::MAX);
+                self.window_blocks.set(0);
+            }
         }
 
         // Drive the ratio from a smoothed backlog so it tracks real drift (slow)

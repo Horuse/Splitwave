@@ -72,8 +72,8 @@
 					playsinline
 					class="w-full rounded-xl border border-neutral-400 bg-neutral-100"
 				>
-					<source src={entry.video.replace('.mp4', '.webm')} type="video/webm" />
 					<source src={entry.video} type="video/mp4" />
+					<source src={entry.video.replace('.mp4', '.webm')} type="video/webm" />
 				</video>
 			</section>
 		{/each}

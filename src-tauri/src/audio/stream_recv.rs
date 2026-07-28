@@ -52,6 +52,13 @@ const DRIFT_BACKLOG_ALPHA: f64 = 0.007;
 /// No correction while the smoothed backlog is this close to target.
 const DRIFT_DEADBAND: f64 = 240.0;
 
+/// Blocks without a single new sample before a channel counts as gone (~170 ms
+/// at 1024 frames / 48 kHz, the same window the DSP sources call a stall). A
+/// channel the sender never transmits still has a tap here -- the UI can wire a
+/// handle the peer doesn't fill, and a channel that stops is never reaped -- and
+/// a group decision taken over it would stall every sibling forever.
+const IDLE_BLOCKS_DEAD: u32 = 8;
+
 /// One received channel's fan-out: the 48 kHz ring producer for each live
 /// consumer. The decode task pushes decoded audio into all of them.
 pub type ChannelBroadcast = Arc<Mutex<Vec<Producer<f32>>>>;
@@ -108,6 +115,11 @@ pub struct PlaybackTap {
     // Fill at the top of the current block. Levelling reads it rather than the
     // live count, which the decode task keeps growing while we walk the map.
     snap_backlog: usize,
+    // Samples popped so far plus the current fill: a total that only moves when
+    // the decode task delivered something, so idle blocks are countable.
+    popped: u64,
+    last_total: u64,
+    idle_blocks: u32,
     // PLC: the last real output block, and whether we're currently in a gap.
     // On a network underrun we fade this out (instead of a hard silence step),
     // and fade the real audio back in on recovery.
@@ -140,6 +152,9 @@ impl PlaybackTap {
             valid: 0,
             primed,
             snap_backlog: 0,
+            popped: 0,
+            last_total: 0,
+            idle_blocks: 0,
             last_block: vec![0.0; OUT_BLOCK_FRAMES],
             gap: false,
         }
@@ -154,14 +169,39 @@ impl PlaybackTap {
         self.resampler.input_frames_next()
     }
 
+    /// Whether this channel has gone quiet long enough to be left out of its
+    /// group's decisions.
+    fn dead(&self) -> bool {
+        self.idle_blocks >= IDLE_BLOCKS_DEAD
+    }
+
+    /// Fold this block's arrivals into the idle count. Call once per block,
+    /// after `snap_backlog` is taken.
+    fn track_liveness(&mut self) {
+        let total = self.popped + self.snap_backlog as u64;
+        if total != self.last_total {
+            self.last_total = total;
+            self.idle_blocks = 0;
+            return;
+        }
+        self.idle_blocks = self.idle_blocks.saturating_add(1);
+        // Drop out of the primed set on the way out, so coming back means
+        // re-priming with the group and picking its alignment up again.
+        if self.idle_blocks == IDLE_BLOCKS_DEAD {
+            self.primed = false;
+        }
+    }
+
     /// Discard `n` buffered samples. The group applies the same count to every
     /// channel, so a splice never costs them their alignment.
     fn trim(&mut self, n: usize) {
         if n == 0 {
             return;
         }
-        if let Ok(chunk) = self.consumer.read_chunk(n.min(self.consumer.slots())) {
+        let n = n.min(self.consumer.slots());
+        if let Ok(chunk) = self.consumer.read_chunk(n) {
             chunk.commit_all();
+            self.popped += n as u64;
             self.gap = true;
         }
     }
@@ -198,6 +238,7 @@ impl PlaybackTap {
             self.in_buf.extend_from_slice(a);
             self.in_buf.extend_from_slice(b);
             chunk.commit_all();
+            self.popped += need as u64;
         }
         self.scratch.clear();
         if self.resampler.process(&self.in_buf, &mut self.scratch).is_err() {
@@ -428,6 +469,10 @@ impl ChannelReceiver {
             let backlog = tap.backlog();
             let need = tap.need_in();
             tap.snap_backlog = backlog;
+            tap.track_liveness();
+            if tap.dead() {
+                continue;
+            }
             match plans.iter_mut().find(|p| p.id == tap.group) {
                 Some(p) => {
                     p.min_backlog = p.min_backlog.min(backlog);
@@ -483,7 +528,14 @@ impl ChannelReceiver {
 
         // Channels are mono; a wider mix gets each one centred across it.
         for tap in taps.values_mut() {
-            let Some(plan) = plans.iter().find(|p| p.id == tap.group) else { continue };
+            if tap.dead() {
+                tap.hold();
+                continue;
+            }
+            let Some(plan) = plans.iter().find(|p| p.id == tap.group) else {
+                tap.hold();
+                continue;
+            };
             if plan.hold {
                 tap.hold();
                 continue;

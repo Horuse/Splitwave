@@ -20,6 +20,12 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
 const BACKOFF_WHEN_FULL: Duration = Duration::from_micros(200);
+/// Decoded audio kept queued in each subscriber ring. Well under the DSP
+/// source's backlog cushion, deep enough that a scheduler hiccup on either side
+/// never runs it dry.
+const PACE_QUEUE_MS: usize = 120;
+/// Cap on how long end-of-file waits for the queued tail to play out.
+const EOF_DRAIN_MAX: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const PROGRESS_EVENT: &str = "audio://audio_file_progress";
 const SEEK_NONE: i64 = -1;
@@ -217,14 +223,13 @@ fn run(
     let mut last_frame: Vec<f32> = vec![0.0f32; ch];
     let mut last_paused_progress = Instant::now();
 
-    // The ring buffer (dag.rs RING_CAPACITY_FRAMES) can hold a whole short
-    // file, so broadcast_blocking's backpressure alone doesn't pace playback
-    // to real time -- without this, a short file decodes and floods the ring
-    // in a few ms, hits EOF, and the EOF-triggered pause then has the mixer
-    // discard most of the still-unplayed buffered audio (dag.rs fill_block).
-    let mut pace_origin = Instant::now();
-    let mut pace_frame_origin: u64 = 0;
-    let mut resuming = true;
+    // Playback rate follows the consumers draining these rings: decode until
+    // `pace_queue` samples are buffered, then idle. The ring (dag.rs
+    // RING_CAPACITY_FRAMES) can hold a whole short file, so backpressure alone
+    // doesn't pace anything; a wall-clock schedule instead drifts against the
+    // audio clock (steady underruns) and turns any stall -- a graph swap
+    // re-routing our bridges -- into an unpaced catch-up burst.
+    let pace_queue = (od.sample_rate as usize * PACE_QUEUE_MS / 1000) * ch;
 
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -248,7 +253,6 @@ fn run(
                 last_paused_progress = Instant::now();
             }
             thread::sleep(Duration::from_millis(10));
-            resuming = true;
             continue;
         }
         last_paused_progress = Instant::now();
@@ -262,13 +266,26 @@ fn run(
                 app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
             );
             last_progress = Instant::now();
-            resuming = true;
         }
 
-        if resuming {
-            pace_origin = Instant::now();
-            pace_frame_origin = frames_played;
-            resuming = false;
+        // An unrouted file has no backpressure to pace against; it falls back to
+        // a per-chunk wall-clock delay after the push below.
+        let mut unrouted = false;
+        loop {
+            if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
+                break;
+            }
+            match bridge.max_queued() {
+                Some(q) if q >= pace_queue => thread::sleep(BACKOFF_WHEN_FULL),
+                Some(_) => break,
+                None => {
+                    unrouted = true;
+                    break;
+                }
+            }
+        }
+        if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
+            continue;
         }
 
         let frames_decoded = decode_next(&mut od, &mut interleaved, &mut block)?;
@@ -289,6 +306,15 @@ fn run(
                 }
             }
             bridge.broadcast_blocking(&fade_buf, stop, paused, BACKOFF_WHEN_FULL);
+            // Pausing discards whatever the mixer still holds (dag.rs
+            // fill_block), so let the queued tail play out first.
+            let deadline = Instant::now() + EOF_DRAIN_MAX;
+            while Instant::now() < deadline && !stop.load(Ordering::SeqCst) {
+                match bridge.max_queued() {
+                    Some(q) if q > 0 => thread::sleep(BACKOFF_WHEN_FULL),
+                    _ => break,
+                }
+            }
             info!(path = %path.display(), "audio file reached end");
             paused.store(true, Ordering::SeqCst);
             do_seek(&mut od, 0);
@@ -303,12 +329,10 @@ fn run(
         frames_played += frames_decoded as u64;
         last_frame.copy_from_slice(&block[(frames_decoded - 1) * ch..frames_decoded * ch]);
 
-        let target = Duration::from_secs_f64(
-            (frames_played - pace_frame_origin) as f64 / od.sample_rate as f64,
-        );
-        let elapsed = pace_origin.elapsed();
-        if target > elapsed {
-            thread::sleep(target - elapsed);
+        if unrouted {
+            thread::sleep(Duration::from_secs_f64(
+                frames_decoded as f64 / od.sample_rate as f64,
+            ));
         }
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {

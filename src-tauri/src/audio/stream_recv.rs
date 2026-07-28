@@ -76,20 +76,38 @@ pub fn broadcast_push(broadcast: &ChannelBroadcast, samples: &[f32]) {
     }
 }
 
+/// Channels of one source (a WebRTC peer, or the whole direct-IP receiver) key
+/// as `group:channel` / `channel`. They carry one recording's worth of
+/// simultaneous audio, so every buffer decision has to be taken across the
+/// group -- priming, discarding or concealing one channel alone shifts it in
+/// time against its siblings, and that phase error combs the summed signal.
+fn group_id(key: &str) -> u64 {
+    let group = key.rsplit_once(':').map(|(g, _)| g).unwrap_or("");
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in group.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
 /// One channel's playback state for one consumer: a 48 kHz jitter ring plus a
 /// fixed-output resampler (48 kHz -> consumer rate) whose ratio tracks drift.
 pub struct PlaybackTap {
+    group: u64,
     consumer: Consumer<f32>,
     resampler: MultiResamplerOut,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
     drift: Arc<AtomicU32>,
-    target: Arc<AtomicU32>,
     in_buf: Vec<f32>,
     pub scratch: Vec<f32>,
     pub valid: usize,
     primed: bool,
+    // Fill at the top of the current block. Levelling reads it rather than the
+    // live count, which the decode task keeps growing while we walk the map.
+    snap_backlog: usize,
     // PLC: the last real output block, and whether we're currently in a gap.
     // On a network underrun we fade this out (instead of a hard silence step),
     // and fade the real audio back in on recovery.
@@ -99,27 +117,29 @@ pub struct PlaybackTap {
 
 impl PlaybackTap {
     fn new(
+        group: u64,
         consumer: Consumer<f32>,
         rate: u32,
         realtime: bool,
+        primed: bool,
         drift: Arc<AtomicU32>,
-        target: Arc<AtomicU32>,
     ) -> Self {
         let base_ratio = rate as f64 / SR as f64;
         let resampler = MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1)
             .expect("mono resampler init");
         Self {
+            group,
             consumer,
             resampler,
             base_ratio,
             last_ratio: base_ratio,
             realtime,
             drift,
-            target,
             in_buf: Vec::with_capacity(4096),
             scratch: Vec::with_capacity(OUT_BLOCK_FRAMES),
             valid: 0,
-            primed: false,
+            primed,
+            snap_backlog: 0,
             last_block: vec![0.0; OUT_BLOCK_FRAMES],
             gap: false,
         }
@@ -134,10 +154,29 @@ impl PlaybackTap {
         self.resampler.input_frames_next()
     }
 
+    /// Discard `n` buffered samples. The group applies the same count to every
+    /// channel, so a splice never costs them their alignment.
+    fn trim(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        if let Ok(chunk) = self.consumer.read_chunk(n.min(self.consumer.slots())) {
+            chunk.commit_all();
+            self.gap = true;
+        }
+    }
+
+    /// Emit silence for this block without touching the ring (the group is
+    /// priming).
+    fn hold(&mut self) -> usize {
+        self.valid = 0;
+        0
+    }
+
     /// Produce one output block into `scratch` (valid = its length), resampling
     /// 48 kHz -> consumer rate at the drift-adjusted ratio. Returns the sample
-    /// count (0 = emit silence: priming, or a real network underrun).
-    fn fill_block(&mut self, _out_frames: usize) -> usize {
+    /// count (0 = emit silence after a sustained network underrun).
+    fn fill_block(&mut self) -> usize {
         // Track drift ratio for this block.
         if self.realtime {
             let d = f32::from_bits(self.drift.load(Ordering::Relaxed)) as f64;
@@ -147,30 +186,7 @@ impl PlaybackTap {
                 self.last_ratio = ratio;
             }
         }
-        let target = self.target.load(Ordering::Relaxed) as usize;
         let need = self.need_in();
-
-        if !self.primed {
-            if self.consumer.slots() < target.max(need) {
-                self.valid = 0;
-                return 0;
-            }
-            self.primed = true;
-        }
-
-        // Safety net only (abnormal burst): the drift loop normally keeps the
-        // ring near target. Generous headroom -- sender catch-up bursts after a
-        // scheduler stall are legitimate and must not get spliced.
-        let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
-        if self.consumer.slots() > hard_cap {
-            let drop = self.consumer.slots() - target;
-            if let Ok(chunk) = self.consumer.read_chunk(drop) {
-                chunk.commit_all();
-                // The discard is a splice; fade back in over the next block.
-                self.gap = true;
-            }
-        }
-
         if self.consumer.slots() < need {
             // Real network underrun: conceal (fade), don't step to silence.
             return self.conceal();
@@ -238,7 +254,6 @@ struct ConsumerRef {
     rate: u32,
     realtime: bool,
     drift: Arc<AtomicU32>,
-    target: Arc<AtomicU32>,
     taps: Weak<Mutex<HashMap<String, PlaybackTap>>>,
 }
 
@@ -265,14 +280,20 @@ impl FanoutRegistry {
             bc.lock().unwrap().push(prod);
             map.lock().unwrap().insert(
                 key.clone(),
-                PlaybackTap::new(cons, output_sr, realtime, drift.clone(), target.clone()),
+                PlaybackTap::new(
+                    group_id(key),
+                    cons,
+                    output_sr,
+                    realtime,
+                    false,
+                    drift.clone(),
+                ),
             );
         }
         consumers.push(ConsumerRef {
             rate: output_sr,
             realtime,
             drift: drift.clone(),
-            target: target.clone(),
             taps: Arc::downgrade(&map),
         });
         ConsumerHandle { taps: map, drift, target, realtime }
@@ -281,15 +302,40 @@ impl FanoutRegistry {
     /// New received channel: a fresh broadcast wired into every live consumer.
     pub fn attach_channel(&self, key: String) -> ChannelBroadcast {
         let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
+        let gid = group_id(&key);
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
+        let mut pad: Vec<f32> = Vec::new();
         for c in consumers.iter() {
             if let Some(map) = c.taps.upgrade() {
-                let (prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
+                let (mut prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
+                let mut taps = map.lock().unwrap();
+                // The channel starts at "now"; its siblings sit a jitter buffer
+                // behind it. Opening with that much silence puts them on one
+                // timeline, so the source stays phase-coherent from its first
+                // block instead of the group having to re-prime.
+                let sibling = taps
+                    .values()
+                    .filter(|t| t.group == gid)
+                    .map(|t| (t.backlog(), t.primed))
+                    .max_by_key(|(backlog, _)| *backlog);
+                let (backlog, primed) = sibling.unwrap_or((0, false));
+                if backlog > 0 {
+                    pad.clear();
+                    pad.resize(backlog, 0.0);
+                    bulk_push(&mut prod, &pad);
+                }
                 bc.lock().unwrap().push(prod);
-                map.lock().unwrap().insert(
+                taps.insert(
                     key.clone(),
-                    PlaybackTap::new(cons, c.rate, c.realtime, c.drift.clone(), c.target.clone()),
+                    PlaybackTap::new(
+                        gid,
+                        cons,
+                        c.rate,
+                        c.realtime,
+                        primed,
+                        c.drift.clone(),
+                    ),
                 );
             }
         }
@@ -323,6 +369,20 @@ pub struct ChannelReceiver {
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
     last_mix: std::cell::RefCell<Vec<f32>>,
+    // Per-block scratch for the group decisions; reused so `mix_block` never
+    // allocates on the DSP thread.
+    plans: std::cell::RefCell<Vec<GroupPlan>>,
+}
+
+/// One source's buffer decision for this block, taken over all its channels.
+struct GroupPlan {
+    id: u64,
+    min_backlog: usize,
+    need: usize,
+    primed: bool,
+    trim: usize,
+    hold: bool,
+    conceal: bool,
 }
 
 impl ChannelReceiver {
@@ -336,6 +396,7 @@ impl ChannelReceiver {
             window_blocks: Cell::new(0),
             avg_backlog: Cell::new(-1.0),
             last_mix: std::cell::RefCell::new(Vec::new()),
+            plans: std::cell::RefCell::new(Vec::with_capacity(8)),
         }
     }
 
@@ -358,22 +419,92 @@ impl ChannelReceiver {
             return;
         };
         mix.fill(0.0);
+
+        // Collapse the taps into one plan per source, then act on every channel
+        // of a source identically -- see `group_id`.
+        let mut plans = self.plans.borrow_mut();
+        plans.clear();
+        for tap in taps.values_mut() {
+            let backlog = tap.backlog();
+            let need = tap.need_in();
+            tap.snap_backlog = backlog;
+            match plans.iter_mut().find(|p| p.id == tap.group) {
+                Some(p) => {
+                    p.min_backlog = p.min_backlog.min(backlog);
+                    p.need = p.need.max(need);
+                    p.primed &= tap.primed;
+                }
+                None => plans.push(GroupPlan {
+                    id: tap.group,
+                    min_backlog: backlog,
+                    need,
+                    primed: tap.primed,
+                    trim: 0,
+                    hold: false,
+                    conceal: false,
+                }),
+            }
+        }
+
+        let target = self.target.load(Ordering::Relaxed) as usize;
+        for p in plans.iter_mut() {
+            if !p.primed {
+                // Prime the whole source at once, levelling every channel to the
+                // shallowest so they resume in step.
+                if p.min_backlog < target.max(p.need) {
+                    p.hold = true;
+                    continue;
+                }
+                p.primed = true;
+            }
+            // One channel short of a block stalls the whole source: a channel
+            // that popped while a sibling concealed would sit a block ahead of
+            // it for good.
+            if p.min_backlog < p.need {
+                p.conceal = true;
+                continue;
+            }
+            // Safety net only (abnormal burst): the drift loop normally keeps
+            // the ring near target. Generous headroom -- sender catch-up bursts
+            // after a scheduler stall are legitimate and must not get spliced.
+            let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
+            if p.min_backlog > hard_cap {
+                p.trim = p.min_backlog - target;
+            }
+        }
+
         if self.realtime {
             // Drive from the emptiest channel so no channel is left to underrun;
             // one shared ratio keeps channels phase-coherent.
-            let mut min_backlog = usize::MAX;
-            let mut need = OUT_BLOCK_FRAMES;
-            for tap in taps.values() {
-                min_backlog = min_backlog.min(tap.backlog());
-                need = tap.need_in();
-            }
-            if min_backlog != usize::MAX {
-                self.control(min_backlog, need);
+            if let Some(p) = plans.iter().min_by_key(|p| p.min_backlog) {
+                self.control(p.min_backlog, p.need);
             }
         }
+
         // Channels are mono; a wider mix gets each one centred across it.
         for tap in taps.values_mut() {
-            let n = tap.fill_block(OUT_BLOCK_FRAMES).min(OUT_BLOCK_FRAMES);
+            let Some(plan) = plans.iter().find(|p| p.id == tap.group) else { continue };
+            if plan.hold {
+                tap.hold();
+                continue;
+            }
+            if plan.conceal {
+                let n = tap.conceal().min(OUT_BLOCK_FRAMES);
+                for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
+                    for s in frame.iter_mut() {
+                        *s += v;
+                    }
+                }
+                continue;
+            }
+            // Level to the group's shallowest channel on the priming block; from
+            // then on every channel pops the same count per block.
+            let excess = if tap.primed { plan.trim } else {
+                tap.primed = true;
+                tap.snap_backlog - plan.min_backlog + plan.trim
+            };
+            tap.trim(excess);
+            let n = tap.fill_block().min(OUT_BLOCK_FRAMES);
             for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
                 for s in frame.iter_mut() {
                     *s += v;

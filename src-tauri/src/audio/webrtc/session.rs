@@ -21,6 +21,9 @@ pub struct WebRtcSession {
     // One send ring per local channel; the encode task drains all of them and
     // tags each Opus packet with its channel index.
     pub send_consumers: Mutex<Vec<Consumer<f32>>>,
+    /// Bumped whenever the send rings are replaced, so the encode task rebuilds
+    /// every channel's encode state together.
+    pub send_gen: AtomicU64,
     // Each output subgraph builds its own bridge, so received audio fans out to
     // per-bridge rings (keyed "peer:ch") rather than being drained once.
     pub fanout: FanoutRegistry,
@@ -84,6 +87,7 @@ impl WebRtcSession {
             opus_bitrate,
             opus_application,
             send_consumers: Mutex::new(Vec::new()),
+            send_gen: AtomicU64::new(0),
             fanout: FanoutRegistry::default(),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
@@ -108,6 +112,7 @@ impl WebRtcSession {
 
     pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>, output_sr: u32) {
         *self.send_consumers.lock().unwrap() = consumers;
+        self.send_gen.fetch_add(1, Ordering::SeqCst);
         self.output_sr.store(output_sr, Ordering::Relaxed);
     }
 

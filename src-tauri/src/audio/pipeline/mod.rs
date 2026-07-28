@@ -50,6 +50,10 @@ use worker::WorkerCtrl;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) const STATE_EVENT: &str = "audio://state";
 
+/// Overlap between a hot-swapped output's old and new bridges: one DSP block at
+/// 48 kHz plus slack, so the incoming sub-graph starts with its rings primed.
+const SWAP_PREFILL: std::time::Duration = std::time::Duration::from_millis(25);
+
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
 /// thread, the meter tick thread, and the effect parameter registry.
 /// State is keyed by node id so `reconcile` can diff against `current` and
@@ -78,6 +82,9 @@ pub struct ActivePipeline {
     /// Per-source underrun counters, rebuilt each reconcile alongside the graphs.
     xrun_handles: Vec<(String, Arc<AtomicU64>)>,
     xrun_thread: Option<XrunTickThread>,
+    /// `(input_id, slot)` bridges of hot-swapping outputs, kept feeding the old
+    /// sub-graph while the new one's rings prefill. Removed after the swap.
+    stale_bridges: Vec<(String, usize)>,
 }
 
 struct InputState {
@@ -146,6 +153,7 @@ impl ActivePipeline {
             meter_thread: None,
             xrun_handles: Vec::new(),
             xrun_thread: None,
+            stale_bridges: Vec::new(),
         }
     }
 
@@ -252,6 +260,7 @@ impl ActivePipeline {
 
     fn teardown(&mut self) {
         self.tear_down_outputs();
+        self.stale_bridges.clear();
         self.inputs.clear();
         self.meters.clear();
         self.gr_handles.clear();
@@ -350,16 +359,23 @@ impl ActivePipeline {
                 continue;
             }
             // Surgically clear this output's bridges from each input. For
-            // GraphSwap, `apply_full` will route fresh ones; for Drop the
+            // GraphSwap they stay live until the swap lands (`apply_full`
+            // prefills the fresh rings first, so the old sub-graph plays on
+            // instead of the new one starting from silence); for Drop the
             // worker goes away and bridges are gone with it.
-            for state in self.inputs.values_mut() {
+            let swapping = matches!(cat, Cat::GraphSwap);
+            for (input_id, state) in self.inputs.iter_mut() {
                 if let Some(slots) = state.bridges_by_output.remove(id) {
                     for slot in slots {
-                        let _ = state.bridge_tx.remove(slot);
+                        if swapping {
+                            self.stale_bridges.push((input_id.clone(), slot));
+                        } else {
+                            let _ = state.bridge_tx.remove(slot);
+                        }
                     }
                 }
             }
-            if matches!(cat, Cat::GraphSwap) {
+            if swapping {
                 continue;
             }
             if id == MONITOR_KEY {
@@ -804,10 +820,24 @@ impl ActivePipeline {
             by_input.entry(inp_id).or_default().push((out_id, prod));
         }
 
+        let mut stale = std::mem::take(&mut self.stale_bridges);
         for (input_id, tagged) in by_input {
             if self.inputs.contains_key(&input_id) {
                 let state = self.inputs.get_mut(&input_id).unwrap();
                 for (out_id, prod) in tagged {
+                    // Overlapping bridges double this input's slot use until the
+                    // swap lands; retire its stale ones early rather than fail
+                    // the reconcile on an exhausted table.
+                    if state.bridge_tx.free_slots() == 0 {
+                        stale.retain(|(id, slot)| {
+                            if id != &input_id {
+                                return true;
+                            }
+                            let _ = state.bridge_tx.remove(*slot);
+                            false
+                        });
+                        state.bridge_tx.drain_discarded();
+                    }
                     let slot = state.bridge_tx.add(prod)?;
                     state.bridges_by_output.entry(out_id).or_default().push(slot);
                 }
@@ -889,6 +919,15 @@ impl ActivePipeline {
                     drain,
                 },
             );
+        }
+
+        self.stale_bridges = stale;
+
+        // Let the fresh rings collect a block before the swap: a worker handed a
+        // sub-graph whose sources are empty emits zero-fill until the input
+        // callback catches up, which is an audible dropout on every edit.
+        if !self.stale_bridges.is_empty() {
+            std::thread::sleep(SWAP_PREFILL);
         }
 
         // Hot-swap the new sub-graph into an existing worker when
@@ -1003,6 +1042,15 @@ impl ActivePipeline {
                     sig: new_sig,
                     ctrl,
                 });
+            }
+        }
+
+        // The swapped-in graphs own the live rings now; retire the ones that fed
+        // their predecessors.
+        for (input_id, slot) in std::mem::take(&mut self.stale_bridges) {
+            if let Some(state) = self.inputs.get_mut(&input_id) {
+                let _ = state.bridge_tx.remove(slot);
+                state.bridge_tx.drain_discarded();
             }
         }
 

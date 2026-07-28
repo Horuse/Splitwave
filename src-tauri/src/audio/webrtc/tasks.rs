@@ -102,6 +102,7 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     tauri::async_runtime::spawn(async move {
         let mut encs: Vec<ChannelEnc> = Vec::new();
         let mut seqs: Vec<u16> = Vec::new();
+        let mut seen_gen = u64::MAX;
         let mut interval = tokio::time::interval(Duration::from_millis(20));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -115,6 +116,15 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
             // before the async resample/encode/send work.
             {
                 let mut cons = session.send_consumers.lock().unwrap();
+                // Each encoder holds a partial Opus frame and a resampler tail;
+                // keeping them across a ring swap would leave a channel added
+                // now offset from its siblings by whatever they had buffered.
+                let gen = session.send_gen.load(Ordering::SeqCst);
+                if gen != seen_gen {
+                    seen_gen = gen;
+                    encs.clear();
+                    seqs.clear();
+                }
                 while encs.len() < cons.len() {
                     encs.push(ChannelEnc::new(format, bitrate, application));
                     seqs.push(0);

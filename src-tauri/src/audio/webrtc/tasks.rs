@@ -204,6 +204,9 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         peers.get(peer_id).cloned()
     };
     let Some(peer) = peer else { return };
+    // Counted on arrival, not on acceptance: a stream whose packets are all
+    // being rejected has to read as bad quality, not as no data at all.
+    peer.packets.fetch_add(1, Ordering::Relaxed);
 
     let ch = {
         let mut chans = peer.channels.lock().unwrap();
@@ -241,7 +244,6 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     if peer.muted.load(Ordering::Relaxed) {
         return;
     }
-    peer.packets.fetch_add(1, Ordering::Relaxed);
 
     // Concealment and payload go out as one push, so the channel advances by
     // whole packets on the peer's timeline.

@@ -41,8 +41,8 @@ use dag::{build_output_graph, inputs_feeding_output, OutputGraph, RING_CAPACITY_
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
-    resolve_output, start_monitor_worker, start_net_sender_worker, start_recorder_worker,
-    start_speaker_stream, RecorderWorker, ResolvedOutput, SpeakerHandle,
+    resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
+    start_wire_sender_worker, RecorderWorker, ResolvedOutput, SpeakerHandle,
 };
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
@@ -64,7 +64,7 @@ pub struct ActivePipeline {
     inputs: HashMap<String, InputState>,
     speakers: HashMap<String, SpeakerState>,
     recorders: HashMap<String, RecorderState>,
-    net_senders: HashMap<String, NetSenderState>,
+    wire_senders: HashMap<String, WireSenderState>,
     /// Populated when there are no real outputs OR when monitor nodes are present.
     monitor: Option<MonitorState>,
 
@@ -119,7 +119,7 @@ struct RecorderState {
     ctrl: WorkerCtrl,
 }
 
-struct NetSenderState {
+struct WireSenderState {
     worker: RecorderWorker,
     #[allow(dead_code)]
     sample_rate: u32,
@@ -141,7 +141,7 @@ impl ActivePipeline {
             inputs: HashMap::new(),
             speakers: HashMap::new(),
             recorders: HashMap::new(),
-            net_senders: HashMap::new(),
+            wire_senders: HashMap::new(),
             monitor: None,
             effect_registry: EffectRegistry::new(),
             effect_controls: HashMap::new(),
@@ -273,14 +273,14 @@ impl ActivePipeline {
         for r in self.recorders.values() {
             r.worker.stop.store(true, Ordering::SeqCst);
         }
-        for s in self.net_senders.values() {
+        for s in self.wire_senders.values() {
             s.worker.stop.store(true, Ordering::SeqCst);
         }
         if let Some(m) = &self.monitor {
             m.worker.stop.store(true, Ordering::SeqCst);
         }
         self.recorders.clear();
-        self.net_senders.clear();
+        self.wire_senders.clear();
         self.monitor = None;
         self.meter_thread = None;
         self.xrun_handles.clear();
@@ -348,7 +348,7 @@ impl ActivePipeline {
         let mut all_old: Vec<String> = Vec::new();
         all_old.extend(self.speakers.keys().cloned());
         all_old.extend(self.recorders.keys().cloned());
-        all_old.extend(self.net_senders.keys().cloned());
+        all_old.extend(self.wire_senders.keys().cloned());
         if self.monitor.is_some() {
             all_old.push(MONITOR_KEY.to_string());
         }
@@ -386,7 +386,7 @@ impl ActivePipeline {
             } else if let Some(state) = self.recorders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 drop(state);
-            } else if let Some(state) = self.net_senders.remove(id) {
+            } else if let Some(state) = self.wire_senders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 drop(state);
             } else {
@@ -464,7 +464,7 @@ impl ActivePipeline {
         let mut running: HashSet<String> = HashSet::new();
         running.extend(self.speakers.keys().cloned());
         running.extend(self.recorders.keys().cloned());
-        running.extend(self.net_senders.keys().cloned());
+        running.extend(self.wire_senders.keys().cloned());
         if self.monitor.is_some() {
             running.insert(MONITOR_KEY.to_string());
         }
@@ -490,7 +490,7 @@ impl ActivePipeline {
         if let Some(r) = self.recorders.get(id) {
             return Some(&r.sig);
         }
-        if let Some(s) = self.net_senders.get(id) {
+        if let Some(s) = self.wire_senders.get(id) {
             return Some(&s.sig);
         }
         None
@@ -541,9 +541,9 @@ impl ActivePipeline {
         let mut input_native_channels: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
-            // NetReceiver has no capture device; it produces at the output rate
-            // via its own UDP socket, so it needs no resolved input runtime.
-            if matches!(inp.spec, InputSpec::NetReceiver { .. }) {
+            // Network inputs have no capture device; they produce at the output
+            // rate from their own socket, so they need no resolved input runtime.
+            if matches!(inp.spec, InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. }) {
                 continue;
             }
             if let Some(state) = self.inputs.get(&inp.id) {
@@ -1010,17 +1010,17 @@ impl ActivePipeline {
                         },
                     );
                 }
-                ResolvedOutput::NetSender => {
+                ResolvedOutput::WireSender => {
                     let sample_rate = og.sample_rate();
-                    if let Some(state) = self.net_senders.get_mut(&out.id) {
+                    if let Some(state) = self.wire_senders.get_mut(&out.id) {
                         state.ctrl.send_graph(og)?;
                         state.sig = new_sig;
                         continue;
                     }
-                    let (worker, ctrl) = start_net_sender_worker(og)?;
-                    self.net_senders.insert(
+                    let (worker, ctrl) = start_wire_sender_worker(og)?;
+                    self.wire_senders.insert(
                         out.id.clone(),
-                        NetSenderState {
+                        WireSenderState {
                             worker,
                             sample_rate,
                             sig: new_sig,

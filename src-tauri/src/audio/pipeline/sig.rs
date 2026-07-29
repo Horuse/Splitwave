@@ -184,7 +184,7 @@ fn structural_effect(spec: &EffectSpec) -> EffectSpec {
             *state = None;
         }
         // No live params (or all fields structural): compared as-is.
-        E::LevelMeter(_) | E::LufsMeter(_) | E::Waveform(_) | E::Spectrum(_) | E::WebRtcBridge { .. } => {}
+        E::LevelMeter(_) | E::LufsMeter(_) | E::Waveform(_) | E::Spectrum(_) => {}
     }
     s
 }

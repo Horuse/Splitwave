@@ -376,9 +376,6 @@ struct EffectState {
     pair_main: Vec<f32>,
     pair_side: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
-    // WebRTC bridge only: one input buffer per send channel ("ch1".."chN"),
-    // summed by target handle and pushed to the matching send ring.
-    channel_bufs: Vec<(String, Vec<f32>)>,
     // When this node fans out to several outputs it is computed once (here, in
     // its owning output's graph) and its `out_buf` is published each block into
     // one ring per other consuming output, which reads it via a ring-source.
@@ -432,16 +429,26 @@ struct ProducerState {
     receiver: ChannelReceiver,
     out_buf: Vec<f32>,
     handle_bufs: Vec<(String, Vec<f32>)>,
-    /// Wire channel index per `handle_bufs` entry; the tap map is keyed by the
-    /// index the sender stamped, not by the `chN` handle the UI draws.
-    wire_keys: Vec<String>,
+    /// What each `handle_bufs` entry draws from the tap map, which is keyed by
+    /// what the sender stamped rather than by the handle the UI draws.
+    wire_keys: Vec<TapKey>,
+}
+
+/// A handle either reads one tap or sums a group of them: a WebRTC peer's mix
+/// is every channel that peer sends, and the peer is the key prefix.
+enum TapKey {
+    Channel(String),
+    PrefixMix(String),
 }
 
 impl ProducerState {
     fn process(&mut self) {
         self.receiver.mix_block(&mut self.out_buf);
         for ((_, buf), key) in self.handle_bufs.iter_mut().zip(&self.wire_keys) {
-            self.receiver.channel(key, buf);
+            match key {
+                TapKey::Channel(k) => self.receiver.channel(k, buf),
+                TapKey::PrefixMix(p) => self.receiver.prefix_mix(p, buf),
+            }
         }
     }
 
@@ -481,6 +488,20 @@ struct TerminalEdge {
 #[inline]
 fn parse_ch(handle: &str) -> Option<usize> {
     handle.strip_prefix("ch").and_then(|s| s.parse::<usize>().ok())
+}
+
+/// What a network producer's source handle reads from the tap map. `chN` is the
+/// direct-IP wire index (0-based on the wire, 1-based in the UI); `peer:<id>:<ch>`
+/// is a WebRTC tap key verbatim, and `peer:<id>` sums that peer's channels.
+fn tap_key(handle: &str) -> Option<TapKey> {
+    if let Some(rest) = handle.strip_prefix("peer:") {
+        return Some(if rest.contains(':') {
+            TapKey::Channel(rest.to_string())
+        } else {
+            TapKey::PrefixMix(format!("{rest}:"))
+        });
+    }
+    parse_ch(handle).map(|ch| TapKey::Channel((ch - 1).to_string()))
 }
 
 /// Parse an `stA` stereo-group handle into its 1-based lower channel; the group
@@ -733,37 +754,6 @@ impl OutputGraph {
                 continue;
             }
             if let DagNode::Effect(eff) = &mut tail[0] {
-                // WebRTC bridge: sum each incoming edge into its channel input
-                // buffer by target handle, then push to the send rings.
-                if !eff.channel_bufs.is_empty() {
-                    for (_, buf) in eff.channel_bufs.iter_mut() {
-                        for s in buf.iter_mut() {
-                            *s = 0.0;
-                        }
-                    }
-                    for edge in &mut eff.incoming {
-                        let src =
-                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                        let Some((_, buf)) = eff
-                            .channel_bufs
-                            .iter_mut()
-                            .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
-                        else {
-                            continue;
-                        };
-                        match &mut edge.delay {
-                            Some(d) => d.process_and_add(src, buf),
-                            None => add_mapped(src, buf),
-                        }
-                    }
-                    eff.effects[0].push_channel_inputs(&eff.channel_bufs);
-                    // out_buf becomes the global mix (every peer, every channel).
-                    eff.effects[0]
-                        .process_with_sidechain(&mut eff.out_buf, None, DSP_BLOCK_FRAMES);
-                    eff.effects[0]
-                        .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
-                    continue;
-                }
                 for s in eff.out_buf.iter_mut() {
                     *s = 0.0;
                 }
@@ -793,8 +783,6 @@ impl OutputGraph {
                 if !eff.bypass.load(Ordering::Relaxed) {
                     eff.run(DSP_BLOCK_FRAMES);
                 }
-                eff.effects[0]
-                    .populate_handle_bufs(&mut eff.handle_bufs, DSP_BLOCK_FRAMES);
                 let w = eff.out_buf.len() / DSP_BLOCK_FRAMES;
                 for (h, buf) in eff.handle_bufs.iter_mut() {
                     if let Some(a) = parse_stereo(h) {
@@ -959,12 +947,30 @@ pub(super) fn build_output_graph(
             continue;
         }
         if let Some(input) = valid.inputs.iter().find(|i| &i.id == id) {
-            // NetReceiver is a network producer, not a captured source: it emits
-            // per-channel outputs from a shared jitter buffer at the output rate.
-            if let InputSpec::NetReceiver { port } = input.spec {
-                let receiver = crate::audio::netaudio::receiver::get_or_create(id, port);
-                let receiver =
-                    ChannelReceiver::new(receiver.register_consumer(output_sr, realtime));
+            // Network producers are not captured sources: they emit per-channel
+            // outputs from a shared jitter buffer at the output rate. The handle
+            // naming is all that separates the two -- direct-IP draws `chN` off
+            // one sender, WebRTC draws `peer:<id>[:<ch>]` off many.
+            let network = match &input.spec {
+                InputSpec::NetReceiver { port } => {
+                    let receiver = crate::audio::netaudio::receiver::get_or_create(id, *port);
+                    Some(ChannelReceiver::new(
+                        receiver.register_consumer(output_sr, realtime),
+                    ))
+                }
+                InputSpec::WebRtcRecv { node_id, opus_bitrate, opus_application } => {
+                    let session = crate::audio::webrtc::get_or_create(
+                        node_id,
+                        *opus_bitrate,
+                        *opus_application,
+                    );
+                    Some(ChannelReceiver::new(
+                        session.register_bridge(output_sr, realtime),
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(receiver) = network {
                 let mut handles: Vec<String> = valid
                     .edges
                     .iter()
@@ -977,8 +983,8 @@ pub(super) fn build_output_graph(
                 let mut handle_bufs = Vec::with_capacity(handles.len());
                 let mut wire_keys = Vec::with_capacity(handles.len());
                 for h in handles {
-                    let Some(ch) = parse_ch(&h) else { continue };
-                    wire_keys.push((ch - 1).to_string());
+                    let Some(key) = tap_key(&h) else { continue };
+                    wire_keys.push(key);
                     handle_bufs.push((h, vec![0.0; DSP_BLOCK_FRAMES]));
                 }
                 id_to_index.insert(id.clone(), nodes.len());
@@ -1039,7 +1045,9 @@ pub(super) fn build_output_graph(
                 InputSpec::SystemAudio { .. } => "system-audio".to_string(),
                 InputSpec::AppAudio { bundle_id } => format!("app:{bundle_id}"),
                 InputSpec::AudioFile { file_path } => format!("file:{file_path}"),
-                InputSpec::NetReceiver { port } => format!("net:{port}"),
+                InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. } => {
+                    unreachable!("network inputs are built as producers")
+                }
             };
             let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
             let xrun = Arc::new(AtomicU64::new(0));
@@ -1128,7 +1136,7 @@ pub(super) fn build_output_graph(
             // width and may take it whole, the way a DAW instantiates one
             // multichannel plugin instead of several stereo ones.
             let build = instantiate_effect(
-                &effect.spec, id, output_sr, realtime, true, eff_channels, registry,
+                &effect.spec, id, output_sr, true, eff_channels, registry,
             );
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
@@ -1177,15 +1185,14 @@ pub(super) fn build_output_graph(
             } else {
                 Some(vec![0.0; DSP_BLOCK_FRAMES * eff_channels])
             };
-            // Output taps drawn off this effect: WebRTC `peer:<id>` mixes plus
-            // generic `chK` per-channel taps. A stale handle just yields silence.
-            let is_webrtc = matches!(effect.spec, EffectSpec::WebRtcBridge { .. });
+            // Generic `chK` per-channel taps drawn off this effect. A stale
+            // handle just yields silence.
             let mut handle_ids: Vec<String> = valid
                 .edges
                 .iter()
                 .filter(|e| &e.from == id)
                 .filter_map(|e| e.source_handle.clone())
-                .filter(|h| tap_handle_width(h).is_some() || (is_webrtc && h.starts_with("peer:")))
+                .filter(|h| tap_handle_width(h).is_some())
                 .collect();
             handle_ids.sort();
             handle_ids.dedup();
@@ -1196,15 +1203,6 @@ pub(super) fn build_output_graph(
                     (h, vec![0.0; DSP_BLOCK_FRAMES * w])
                 })
                 .collect();
-            // One input buffer per WebRTC send channel, keyed "ch1".."chN".
-            let channel_bufs: Vec<(String, Vec<f32>)> =
-                if let EffectSpec::WebRtcBridge { channels, .. } = &effect.spec {
-                    (1..=(*channels).clamp(1, MAX_NET_CH))
-                        .map(|c| (format!("ch{c}"), vec![0.0; DSP_BLOCK_FRAMES]))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
             // Analyzers read all channels at once, and so does a plugin that
             // accepted the node's full width. Everything else runs one instance
             // per stereo pair.
@@ -1213,7 +1211,7 @@ pub(super) fn build_output_graph(
                     effect.spec,
                     EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_) | EffectSpec::Spectrum(_)
                 );
-            let pairs = if full_width || matches!(effect.spec, EffectSpec::WebRtcBridge { .. }) {
+            let pairs = if full_width {
                 1
             } else {
                 eff_channels.div_ceil(2)
@@ -1227,7 +1225,7 @@ pub(super) fn build_output_graph(
                 // Extra pairs exist only when the node is driven pairwise, so
                 // each is asked for stereo rather than the node's full width.
                 let extra =
-                    instantiate_effect(&effect.spec, id, output_sr, realtime, false, 2, registry);
+                    instantiate_effect(&effect.spec, id, output_sr, false, 2, registry);
                 effects.push(extra.effect);
             }
             id_to_index.insert(id.clone(), nodes.len());
@@ -1242,7 +1240,6 @@ pub(super) fn build_output_graph(
                 pair_main: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 pair_side: vec![0.0; DSP_BLOCK_FRAMES * 2],
                 handle_bufs,
-                channel_bufs,
                 taps: Vec::new(),
             }));
             node_meta.insert(id.clone(), (nodes.len() - 1, eff_channels));
@@ -1251,24 +1248,16 @@ pub(super) fn build_output_graph(
         }
     }
 
-    // A NetSender output is a terminal Consumer node inside the DAG (not a
-    // summed output terminal): it sums per-channel inputs and pushes them into
-    // send rings drained by the background UDP transmitter.
-    let net_sender = output_id
+    // A wire sender (direct-IP or WebRTC) is a terminal Consumer node inside the
+    // DAG (not a summed output terminal): it sums per-channel inputs and pushes
+    // them into send rings drained by a background transmitter.
+    let wire_sender = output_id
         .and_then(|oid| valid.outputs.iter().find(|o| o.id == oid))
         .and_then(|o| match &o.spec {
-            OutputSpec::NetSender { .. } => Some(o.spec.clone()),
+            OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => Some(o.spec.clone()),
             _ => None,
         });
-    if let Some(OutputSpec::NetSender {
-        node_id,
-        target,
-        channels,
-        codec,
-        opus_bitrate,
-        opus_application,
-    }) = net_sender
-    {
+    if let Some(spec) = wire_sender {
         let oid = output_id.unwrap();
         let mut up: Vec<(usize, Option<String>, Option<String>)> = Vec::new();
         for e in &valid.edges {
@@ -1295,6 +1284,12 @@ pub(super) fn build_output_graph(
             })
             .collect();
 
+        let channels = match &spec {
+            OutputSpec::NetSender { channels, .. } | OutputSpec::WebRtcSend { channels, .. } => {
+                *channels
+            }
+            _ => unreachable!("wire sender spec"),
+        };
         let n = channels.clamp(1, MAX_NET_CH) as usize;
         let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
         let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
@@ -1305,19 +1300,41 @@ pub(super) fn build_output_graph(
             send_producers.push(prod);
             send_consumers.push(cons);
         }
-        let format = match codec {
-            NetCodec::PcmF32 => Format::PcmF32,
-            NetCodec::PcmI16 => Format::PcmI16,
-            NetCodec::Opus => Format::Opus,
-        };
-        let sender = crate::audio::netaudio::sender::get_or_create(
-            &node_id,
-            target,
-            format,
-            opus_bitrate,
-            opus_application,
-        );
-        sender.set_send_consumers(send_consumers);
+        match &spec {
+            OutputSpec::NetSender {
+                node_id,
+                target,
+                codec,
+                opus_bitrate,
+                opus_application,
+                ..
+            } => {
+                let format = match codec {
+                    NetCodec::PcmF32 => Format::PcmF32,
+                    NetCodec::PcmI16 => Format::PcmI16,
+                    NetCodec::Opus => Format::Opus,
+                };
+                let sender = crate::audio::netaudio::sender::get_or_create(
+                    node_id,
+                    *target,
+                    format,
+                    *opus_bitrate,
+                    *opus_application,
+                );
+                sender.set_send_consumers(send_consumers);
+            }
+            OutputSpec::WebRtcSend { node_id, opus_bitrate, opus_application, .. } => {
+                let session = crate::audio::webrtc::get_or_create(
+                    node_id,
+                    *opus_bitrate,
+                    *opus_application,
+                );
+                // This graph already runs at the wire rate, so the encode task's
+                // own resampler stays out of the path.
+                session.set_send_consumers(send_consumers, output_sr);
+            }
+            _ => unreachable!("wire sender spec"),
+        }
 
         nodes.push(DagNode::Consumer(ConsumerState {
             incoming,

@@ -34,7 +34,6 @@ pub mod noise_suppressor;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
-pub mod webrtc_bridge;
 mod util;
 
 use util::{db_to_linear, num, store_f32};
@@ -52,7 +51,6 @@ use noise_gate::NoiseGateEffect;
 use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
-use webrtc_bridge::WebRtcBridgeEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
 pub use lufs_meter::{LufsHandle, LufsMeterEffect};
 pub use waveform::{WaveformEffect, WaveformHandle};
@@ -95,7 +93,6 @@ pub enum RuntimeEffect {
     NoiseSuppressor(NoiseSuppressorEffect),
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
-    WebRtcBridge(WebRtcBridgeEffect),
     HostedPlugin(HostedNode),
 }
 
@@ -119,7 +116,6 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
             RuntimeEffect::Declick(e) => e.latency_frames(),
             RuntimeEffect::DeEsser(e) => e.latency_frames(),
-            RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
             RuntimeEffect::HostedPlugin(e) => e.latency_frames(),
         }
     }
@@ -148,26 +144,10 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
             RuntimeEffect::Declick(e) => e.process(main, frames),
             RuntimeEffect::DeEsser(e) => e.process(main, frames),
-            RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
             RuntimeEffect::HostedPlugin(e) => e.process(main, frames),
         }
     }
 
-    /// Fills per-peer output handle buffers; only the WebRTC bridge has any.
-    #[inline]
-    pub fn populate_handle_bufs(&self, handle_bufs: &mut [(String, Vec<f32>)], frames: usize) {
-        if let RuntimeEffect::WebRtcBridge(e) = self {
-            e.populate_handle_bufs(handle_bufs, frames);
-        }
-    }
-
-    /// Pushes per-channel input buffers to the send rings; WebRTC bridge only.
-    #[inline]
-    pub fn push_channel_inputs(&mut self, channel_bufs: &[(String, Vec<f32>)]) {
-        if let RuntimeEffect::WebRtcBridge(e) = self {
-            e.push_channel_inputs(channel_bufs);
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -443,7 +423,6 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
-    realtime: bool,
     // False when building the monitor graph: a plugin instantiated there is a
     // metering-only duplicate, not the one its editor window attaches to.
     primary: bool,
@@ -769,33 +748,6 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::DeEsser(e), Some(c), None, None, None, None)
             }
         },
-        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application, channels } => {
-            use crate::audio::webrtc;
-            use rtrb::RingBuffer;
-            // ~1 s of stereo audio at the graph rate per channel; drained by the
-            // encode task.
-            const SEND_RING: usize = 96_000;
-            let count = channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32) as usize;
-            let mut send_producers = Vec::with_capacity(count);
-            let mut send_consumers = Vec::with_capacity(count);
-            for _ in 0..count {
-                let (p, c) = RingBuffer::<f32>::new(SEND_RING);
-                send_producers.push(p);
-                send_consumers.push(c);
-            }
-            let session = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application);
-            session.set_send_consumers(send_consumers, sample_rate);
-            let receiver = crate::audio::stream_recv::ChannelReceiver::new(
-                session.register_bridge(sample_rate, realtime),
-            );
-            mk(
-                RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
-                    send_producers,
-                    receiver,
-                }),
-                None, None, None, None, None,
-            )
-        }
         EffectSpec::Plugin { format, ref path, ref plugin_id, ref state, .. } => {
             // Empty path == node not yet configured: inert passthrough, not a
             // failure. Silence is reserved for a real load error below.

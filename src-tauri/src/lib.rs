@@ -240,6 +240,7 @@ pub fn run() {
             commands::webrtc_leave_room,
             commands::webrtc_peer_pings,
             commands::webrtc_peer_stats,
+            commands::webrtc_buffer_ms,
             commands::net_receiver_listen,
             commands::net_receiver_release,
             commands::net_receiver_stats,

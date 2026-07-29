@@ -13,8 +13,8 @@ pub use handshake::{
     create_offer, create_offer_trickle,
 };
 pub use registry::{
-    disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, peer_stats, session_state,
-    set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,
+    buffer_ms, disconnect_peer, get_or_create, leave_room, mark_room, peer_pings, peer_stats,
+    session_state, set_identity, set_peer_muted, set_signaling_task, WebRtcSessionState,
 };
 
 // Opus operates only at 48 kHz; the DSP graph runs at the output device rate,

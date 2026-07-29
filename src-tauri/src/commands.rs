@@ -489,6 +489,13 @@ pub fn webrtc_peer_stats(node_id: String) -> std::collections::HashMap<String, P
         .collect()
 }
 
+/// Jitter buffer depth in ms, the latency this node adds. Session-wide: unlike
+/// ping, it is a property of the buffer every peer plays out of.
+#[tauri::command]
+pub fn webrtc_buffer_ms(node_id: String) -> u32 {
+    webrtc::buffer_ms(&node_id)
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetReceiverStats {

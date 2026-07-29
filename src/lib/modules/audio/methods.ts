@@ -170,6 +170,8 @@ export const methods = {
 		nodeId: string
 	): Promise<Record<string, { pingMs: number; packets: number; lost: number }>> =>
 		invoke('webrtc_peer_stats', { nodeId }),
+	/** Jitter buffer depth in ms: the latency the receive path itself adds. */
+	webrtcBufferMs: (nodeId: string): Promise<number> => invoke('webrtc_buffer_ms', { nodeId }),
 	/** Binds the receive port so an unrouted node can still report its stream. */
 	netReceiverListen: (nodeId: string, port: number): Promise<void> =>
 		invoke('net_receiver_listen', { nodeId, port }),

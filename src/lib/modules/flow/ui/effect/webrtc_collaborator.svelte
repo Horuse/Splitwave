@@ -55,6 +55,8 @@
 	let error = $state('');
 	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
 	let quality = $state<Record<string, { ping: number; loss: number }>>({});
+	// Jitter buffer depth: latency this node adds, separate from the link's RTT.
+	let bufferMs = $state(0);
 	const lossWindows = new Map<string, LossWindow>();
 	let copied = $state(false);
 
@@ -210,6 +212,7 @@
 		if (pingInterval) return;
 		pingInterval = setInterval(async () => {
 			if (peers.length === 0) return;
+			bufferMs = await audioMethods.webrtcBufferMs(id).catch(() => 0);
 			const raw = await audioMethods.webrtcPeerStats(id).catch(() => ({}));
 			const next: Record<string, { ping: number; loss: number }> = {};
 			for (const [peerId, s] of Object.entries(raw)) {
@@ -226,6 +229,7 @@
 
 	function stopPingPolling() {
 		if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+		bufferMs = 0;
 	}
 
 	const unlistens = Promise.all([
@@ -398,6 +402,16 @@
 
 		{#if error}
 			<p class="font-mono text-[9px] text-red-600">{error}</p>
+		{/if}
+
+		<!-- added latency: one buffer serves every peer, unlike the per-peer ping -->
+		{#if peers.length > 0}
+			<div class="flex items-center justify-between">
+				<span class="font-mono text-[9px] text-neutral-500">delay</span>
+				<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+					{bufferMs ? `${bufferMs}ms` : '--'}
+				</span>
+			</div>
 		{/if}
 
 		{#if phase !== 'idle' || peers.length > 0}

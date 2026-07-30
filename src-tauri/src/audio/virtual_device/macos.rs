@@ -10,6 +10,9 @@ use super::{VirtualDeviceConfig, VirtualDriverStatus};
 
 const DRIVER_NAME: &str = "Splitwave.driver";
 const HAL_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
+// Group-staff writable, so applying devices needs no privilege escalation.
+const CONFIG_DIR: &str = "/Library/Application Support/Splitwave";
+const CONFIG_PATH: &str = "/Library/Application Support/Splitwave/devices.plist";
 
 // Reject paths that would escape single-quote shell quoting or the enclosing AppleScript string.
 fn shell_safe(path: &Path) -> Result<&str, String> {
@@ -33,15 +36,15 @@ fn write_temp_plist(content: &str) -> Result<TempPlist, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    let path = std::path::PathBuf::from(format!(
-        "/tmp/splitwave_devices_{}_{}.plist",
+    let path = Path::new(CONFIG_DIR).join(format!(
+        ".devices.plist.{}.{}",
         std::process::id(),
         nanos
     ));
     let f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(0o644)
         .open(&path)
         .map_err(|e| format!("create temp plist: {e}"))?;
     let guard = TempPlist(path);
@@ -57,19 +60,14 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
-    let dst = Path::new(HAL_DIR).join(DRIVER_NAME);
-    if !dst.exists() {
-        return Err("virtual driver is not installed".into());
-    }
-
+fn build_plist(devices: &[VirtualDeviceConfig]) -> String {
     let mut plist = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
          <plist version=\"1.0\">\n\
          <array>\n",
     );
-    for d in &devices {
+    for d in devices {
         plist.push_str(&format!(
             "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t</dict>\n",
             xml_escape(&d.id),
@@ -78,27 +76,22 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
         ));
     }
     plist.push_str("</array>\n</plist>\n");
+    plist
+}
 
-    let tmp = write_temp_plist(&plist)?;
-
-    const SCRIPT: &str = r#"on run argv
-    set src to item 1 of argv
-    set dstDir to "/Library/Audio/Plug-Ins/HAL/Splitwave.driver/Contents/Resources"
-    set dst to dstDir & "/devices.plist"
-    do shell script "mkdir -p " & quoted form of dstDir & " && cp " & quoted form of src & " " & quoted form of dst & " && chmod 644 " & quoted form of dst & "; s=$?; killall -9 coreaudiod 2>/dev/null; exit $s" with administrator privileges
-end run"#;
-
-    let out = Command::new("osascript")
-        .arg("-e").arg(SCRIPT)
-        .arg("--")
-        .arg(&tmp.0)
-        .output()
-        .map_err(|e| format!("osascript failed: {e}"))?;
-
-    if !out.status.success() {
-        let msg = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("Apply cancelled or failed: {}", msg.trim()));
+// The driver watches CONFIG_DIR and reconciles its device set on every change,
+// so no privilege escalation and no coreaudiod restart is involved.
+pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
+    if !Path::new(HAL_DIR).join(DRIVER_NAME).exists() {
+        return Err("virtual driver is not installed".into());
     }
+    if !Path::new(CONFIG_DIR).is_dir() {
+        return Err("virtual driver needs an update".into());
+    }
+
+    let tmp = write_temp_plist(&build_plist(&devices))?;
+    std::fs::rename(&tmp.0, CONFIG_PATH)
+        .map_err(|e| format!("write device config: {e}"))?;
 
     info!(count = devices.len(), "virtual devices applied");
     Ok(())
@@ -108,9 +101,11 @@ pub fn status() -> VirtualDriverStatus {
     let dst = Path::new(HAL_DIR).join(DRIVER_NAME);
     let installed = dst.exists();
     let installed_version = if installed { read_bundle_version(&dst) } else { None };
-    // unknown version on an installed bundle = pre-versioning, treat as stale
-    let needs_update =
-        installed && installed_version.map_or(true, |v| v < super::DRIVER_VERSION);
+    // unknown version on an installed bundle = pre-versioning, treat as stale.
+    // A missing config dir also needs a privileged pass to recreate it.
+    let needs_update = installed
+        && (installed_version.map_or(true, |v| v < super::DRIVER_VERSION)
+            || !Path::new(CONFIG_DIR).is_dir());
     info!(installed, ?installed_version, needs_update, "virtual driver status");
     VirtualDriverStatus {
         installed,
@@ -150,9 +145,20 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
     info!(src = src_safe, "installing virtual driver");
 
     // rm + cp + chown must all succeed; killall is fire-and-forget.
+    // The config dir is created here, once, as group-staff writable: that is what
+    // lets later applies run without a password. Any config still living inside an
+    // older driver bundle is migrated before that bundle is replaced.
     let script = format!(
         concat!(
             r#"do shell script "mkdir -p '/Library/Audio/Plug-Ins/HAL'"#,
+            r#" && mkdir -p '/Library/Application Support/Splitwave'"#,
+            r#" && if [ -f '/Library/Audio/Plug-Ins/HAL/Splitwave.driver/Contents/Resources/devices.plist' ]"#,
+            r#" && [ ! -f '/Library/Application Support/Splitwave/devices.plist' ]; then"#,
+            r#" cp '/Library/Audio/Plug-Ins/HAL/Splitwave.driver/Contents/Resources/devices.plist'"#,
+            r#" '/Library/Application Support/Splitwave/devices.plist'"#,
+            r#" && chmod 644 '/Library/Application Support/Splitwave/devices.plist'; fi"#,
+            r#" && chown root:staff '/Library/Application Support/Splitwave'"#,
+            r#" && chmod 775 '/Library/Application Support/Splitwave'"#,
             r#" && rm -rf '/Library/Audio/Plug-Ins/HAL/Splitwave.driver'"#,
             r#" && cp -R '{src}' '/Library/Audio/Plug-Ins/HAL/Splitwave.driver'"#,
             r#" && chown -R root:wheel '/Library/Audio/Plug-Ins/HAL/Splitwave.driver'"#,
@@ -184,7 +190,7 @@ pub fn uninstall() -> Result<(), String> {
     }
 
     let script =
-        "do shell script \"rm -rf '/Library/Audio/Plug-Ins/HAL/Splitwave.driver'; killall -9 coreaudiod 2>/dev/null; true\" with administrator privileges";
+        "do shell script \"rm -rf '/Library/Audio/Plug-Ins/HAL/Splitwave.driver' '/Library/Application Support/Splitwave'; killall -9 coreaudiod 2>/dev/null; true\" with administrator privileges";
 
     Command::new("osascript")
         .args(["-e", script])

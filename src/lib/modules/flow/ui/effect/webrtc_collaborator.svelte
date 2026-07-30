@@ -3,11 +3,11 @@
 	import {
 		useNodeConnections,
 		useSvelteFlow,
-		Handle,
 		Position,
 		type Node,
 		type NodeProps
 	} from '@xyflow/svelte';
+	import Handle from '../_handle.svelte';
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
 	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -17,6 +17,7 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
+	import { PeopleTeam } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
 
@@ -54,6 +55,8 @@
 	let error = $state('');
 	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
 	let quality = $state<Record<string, { ping: number; loss: number }>>({});
+	// Jitter buffer depth: latency this node adds, separate from the link's RTT.
+	let bufferMs = $state(0);
 	const lossWindows = new Map<string, LossWindow>();
 	let copied = $state(false);
 
@@ -209,6 +212,7 @@
 		if (pingInterval) return;
 		pingInterval = setInterval(async () => {
 			if (peers.length === 0) return;
+			bufferMs = await audioMethods.webrtcBufferMs(id).catch(() => 0);
 			const raw = await audioMethods.webrtcPeerStats(id).catch(() => ({}));
 			const next: Record<string, { ping: number; loss: number }> = {};
 			for (const [peerId, s] of Object.entries(raw)) {
@@ -225,6 +229,7 @@
 
 	function stopPingPolling() {
 		if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+		bufferMs = 0;
 	}
 
 	const unlistens = Promise.all([
@@ -281,7 +286,7 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" accent="effect" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="WebRTC" icon={PeopleTeam} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">
@@ -397,6 +402,16 @@
 
 		{#if error}
 			<p class="font-mono text-[9px] text-red-600">{error}</p>
+		{/if}
+
+		<!-- added latency: one buffer serves every peer, unlike the per-peer ping -->
+		{#if peers.length > 0}
+			<div class="flex items-center justify-between">
+				<span class="font-mono text-[9px] text-neutral-500">delay</span>
+				<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+					{bufferMs ? `${bufferMs}ms` : '--'}
+				</span>
+			</div>
 		{/if}
 
 		{#if phase !== 'idle' || peers.length > 0}

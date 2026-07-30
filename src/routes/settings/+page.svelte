@@ -5,6 +5,9 @@
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
+	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
+	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS } from '$lib/modules/settings/stores.svelte';
+	import PresetsSection from './_presets_section.svelte';
 
 	const isWindows = platform() === 'windows';
 
@@ -24,12 +27,33 @@
 		edgeSettings[key] = !edgeSettings[key];
 		edgeSettings.persist();
 	}
+
+	const THEMES: { value: ThemePref; label: string }[] = [
+		{ value: 'light', label: 'Light' },
+		{ value: 'dark', label: 'Dark' },
+		{ value: 'system', label: 'System' }
+	];
+
+	function resetAll() {
+		edgeSettings.reset();
+		appSettings.reset();
+	}
+
+	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize'>(
+		key: K,
+		value: (typeof appSettings)[K]
+	) {
+		appSettings[key] = value;
+		appSettings.persist();
+	}
 </script>
 
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-2">
-			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
+			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm"
+				>Pipelines</a
+			>
 			{#if !isWindows}
 				<a
 					class:active={page.route.id === '/virtual-devices'}
@@ -37,6 +61,11 @@
 					class="button-header px-4 text-sm">Virtual devices</a
 				>
 			{/if}
+			<a
+				class:active={page.route.id === '/wiki'}
+				href="/wiki"
+				class="button-header px-4 text-sm">Wiki</a
+			>
 			<a
 				class:active={page.route.id === '/settings'}
 				href="/settings"
@@ -48,6 +77,32 @@
 
 <div class="h-[calc(100vh-40px)] overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">
+		<section class="flex flex-col gap-3">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Appearance</h2>
+				<p class="text-xs text-neutral-900">
+					System follows your OS setting and changes with it.
+				</p>
+			</div>
+
+			<div class="grid grid-cols-3 gap-2">
+				{#each THEMES as t (t.value)}
+					<button
+						type="button"
+						onclick={() => ($themeStore = t.value)}
+						class={[
+							'rounded-xl border px-3 py-2 text-[11px] font-medium transition-colors',
+							$themeStore === t.value
+								? 'border-neutral-900 bg-neutral-200 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+						]}
+					>
+						{t.label}
+					</button>
+				{/each}
+			</div>
+		</section>
+
 		<section class="flex flex-col gap-3">
 			<div>
 				<h2 class="text-sm font-semibold text-theme">Cable shape</h2>
@@ -92,10 +147,88 @@
 			{/each}
 		</section>
 
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Canvas</h2>
+				<p class="text-xs text-neutral-900">Where nodes land when you drag them.</p>
+			</div>
+
+			<Toggle
+				checked={appSettings.snapToGrid}
+				label="Snap to grid"
+				hint="Nodes align to a fixed grid instead of moving freely."
+				onChange={() => setApp('snapToGrid', !appSettings.snapToGrid)}
+			/>
+
+			{#if appSettings.snapToGrid}
+				<div class="flex items-center gap-2 pl-1">
+					<span class="text-xs text-neutral-900">Grid size</span>
+					{#each GRID_SIZES as size (size)}
+						<button
+							type="button"
+							onclick={() => setApp('gridSize', size)}
+							class={[
+								'rounded-lg border px-2.5 py-1 font-mono text-[11px] tabular-nums transition-colors',
+								appSettings.gridSize === size
+									? 'border-neutral-900 bg-neutral-200 text-theme'
+									: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+							]}
+						>
+							{size}
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">History</h2>
+				<p class="text-xs text-neutral-900">
+					Snapshots kept per pipeline. Older ones are dropped as new ones arrive.
+				</p>
+			</div>
+
+			<div class="flex items-center gap-2">
+				{#each SNAPSHOT_LIMITS as limit (limit)}
+					<button
+						type="button"
+						onclick={() => setApp('maxSnapshots', limit)}
+						class={[
+							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
+							appSettings.maxSnapshots === limit
+								? 'border-neutral-900 bg-neutral-200 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+						]}
+					>
+						{limit}
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Updates</h2>
+				<p class="text-xs text-neutral-900">
+					Checking from the menu always works, whatever this is set to.
+				</p>
+			</div>
+
+			<Toggle
+				checked={appSettings.checkUpdatesOnLaunch}
+				label="Check on launch"
+				hint="Looks for a new version each time the app starts."
+				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)}
+			/>
+		</section>
+
+		<PresetsSection />
+
 		<button
 			type="button"
 			class="button-main primary self-start text-xs"
-			onclick={() => edgeSettings.reset()}
+			onclick={() => resetAll()}
 		>
 			Reset to defaults
 		</button>

@@ -42,8 +42,13 @@ async fn new_host_peer(
 
     let pc = Arc::new(new_peer_connection().await?);
 
+    // Unreliable but ordered. The receiver places every packet by its `seq` on
+    // the source timeline and refuses anything that goes backwards, so
+    // unordered delivery reads as a flood of duplicates: the audio is
+    // concealed away and the buffer re-primes. Retransmits stay off -- late
+    // audio is worthless -- and SCTP skips what it abandons.
     let dc_init = webrtc::data_channel::data_channel_init::RTCDataChannelInit {
-        ordered: Some(false),
+        ordered: Some(true),
         max_retransmits: Some(0),
         ..Default::default()
     };

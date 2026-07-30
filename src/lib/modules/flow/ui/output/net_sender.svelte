@@ -6,6 +6,7 @@
 	import { formatRate } from '$lib/components/format';
 	import { parseHandle } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
+	import { ArrowUpload } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
@@ -90,7 +91,7 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" accent="output" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- target -->
 		<div class="flex flex-col gap-0.5">

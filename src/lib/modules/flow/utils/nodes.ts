@@ -1,11 +1,35 @@
 import type { Component } from 'svelte';
+import type { ClassValue } from 'svelte/elements';
 import type { NodeTypes } from '@xyflow/svelte';
-import type {
-	AnyNodeData,
-	NodeCategory,
-	NodeDataMap,
-	NodeKind
-} from '$lib/modules/pipeline/types';
+import { DEFAULT_NODE_DATA } from '$lib/modules/pipeline/defaults';
+import {
+	Apps as AppsIcon,
+	ArrowDownload as ArrowDownloadIcon,
+	Backspace as BackspaceIcon,
+	ArrowUpload as ArrowUploadIcon,
+	Balance as BalanceIcon,
+	Compressor as CompressorIcon,
+	DataBar as DataBarIcon,
+	Delay as DelayIcon,
+	Gauge as GaugeIcon,
+	Limiter as LimiterIcon,
+	Mic as MicIcon,
+	MusicNote as MusicNoteIcon,
+	NoiseGate as NoiseGateIcon,
+	PeopleTeam as PeopleTeamIcon,
+	Plug as PlugIcon,
+	Pulse as PulseIcon,
+	FileRecord as FileRecordIcon,
+	Reverb as ReverbIcon,
+	Saturator as SaturatorIcon,
+	Sliders as SlidersIcon,
+	SoundWave as SoundWaveIcon,
+	Speaker as SpeakerIcon,
+	SpeakerMute as SpeakerMuteIcon,
+	Trending as TrendingIcon,
+	Wand as WandIcon
+} from '$lib/components/icons';
+import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '$lib/modules/pipeline/types';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
 import AppAudio from '../ui/input/app_audio.svelte';
@@ -20,12 +44,16 @@ import Eq from '../ui/effect/eq.svelte';
 import LevelMeter from '../ui/effect/level_meter.svelte';
 import LufsMeter from '../ui/effect/lufs_meter.svelte';
 import Waveform from '../ui/effect/waveform.svelte';
+import Spectrum from '../ui/effect/spectrum.svelte';
 import Limiter from '../ui/effect/limiter.svelte';
 import Compressor from '../ui/effect/compressor.svelte';
 import NoiseGate from '../ui/effect/noise_gate.svelte';
 import Delay from '../ui/effect/delay.svelte';
 import Reverb from '../ui/effect/reverb.svelte';
 import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
+import Declick from '../ui/effect/declick.svelte';
+import DeEsser from '../ui/effect/de_esser.svelte';
+import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
@@ -41,6 +69,7 @@ export interface NodeRegistryEntry<K extends NodeKind = NodeKind> {
 	label: string;
 	description: string;
 	component: Component<any>;
+	icon: Component<{ class?: ClassValue; title?: string }>;
 	defaultData: NodeDataMap[K];
 }
 
@@ -55,7 +84,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Microphone',
 		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
 		component: Microphone,
-		defaultData: { deviceId: null, channelsExpanded: false }
+		icon: MicIcon,
+		defaultData: DEFAULT_NODE_DATA['microphone']
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
@@ -63,7 +93,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'System Audio',
 		description: 'Capture everything the system is playing.',
 		component: SystemAudio,
-		defaultData: { excludeCurrentApp: true, volume: 1 }
+		icon: SoundWaveIcon,
+		defaultData: DEFAULT_NODE_DATA['systemAudio']
 	}),
 	appAudio: entry<'appAudio'>({
 		kind: 'appAudio',
@@ -71,15 +102,18 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'App Audio',
 		description: 'Capture audio from a single running application.',
 		component: AppAudio,
-		defaultData: { bundleId: null, volume: 1 }
+		icon: AppsIcon,
+		defaultData: DEFAULT_NODE_DATA['appAudio']
 	}),
 	audioFile: entry<'audioFile'>({
 		kind: 'audioFile',
 		category: 'input',
 		label: 'Audio File',
-		description: 'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
+		description:
+			'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
 		component: AudioFile,
-		defaultData: { filePath: null, loopEnabled: false, volume: 1, autoStart: true }
+		icon: MusicNoteIcon,
+		defaultData: DEFAULT_NODE_DATA['audioFile']
 	}),
 	speaker: entry<'speaker'>({
 		kind: 'speaker',
@@ -87,7 +121,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Speaker',
 		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
 		component: Speaker,
-		defaultData: { deviceId: null, channelsExpanded: false }
+		icon: SpeakerIcon,
+		defaultData: DEFAULT_NODE_DATA['speaker']
 	}),
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',
@@ -95,12 +130,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'File Recording',
 		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy).',
 		component: FileRecording,
-		defaultData: {
-			filePath: null,
-			format: { kind: 'wav', bitDepth: 'f32' },
-			allowOverwrite: false,
-			channels: 2
-		}
+		icon: FileRecordIcon,
+		defaultData: DEFAULT_NODE_DATA['fileRecording']
 	}),
 	gain: entry<'gain'>({
 		kind: 'gain',
@@ -108,7 +139,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Gain',
 		description: 'Linear amplitude scaling in dB.',
 		component: Gain,
-		defaultData: { gainDb: 0, bypassed: false }
+		icon: TrendingIcon,
+		defaultData: DEFAULT_NODE_DATA['gain']
 	}),
 	mute: entry<'mute'>({
 		kind: 'mute',
@@ -116,7 +148,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Mute',
 		description: 'Silence the signal.',
 		component: Mute,
-		defaultData: { muted: false, bypassed: false }
+		icon: SpeakerMuteIcon,
+		defaultData: DEFAULT_NODE_DATA['mute']
 	}),
 	channelBalance: entry<'channelBalance'>({
 		kind: 'channelBalance',
@@ -124,15 +157,18 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Channel Balance',
 		description: 'Separate gain for left and right channels.',
 		component: ChannelBalance,
-		defaultData: { leftGainDb: 0, rightGainDb: 0, bypassed: false }
+		icon: BalanceIcon,
+		defaultData: DEFAULT_NODE_DATA['channelBalance']
 	}),
 	saturator: entry<'saturator'>({
 		kind: 'saturator',
 		category: 'effect',
 		label: 'Saturator',
-		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
+		description:
+			'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
 		component: Saturator,
-		defaultData: { thresholdDb: -0.3, driveDb: 0, bypassed: false }
+		icon: SaturatorIcon,
+		defaultData: DEFAULT_NODE_DATA['saturator']
 	}),
 	eq: entry<'eq'>({
 		kind: 'eq',
@@ -140,7 +176,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'EQ',
 		description: '10-band graphic EQ at ISO octave centres (32 Hz → 16 kHz).',
 		component: Eq,
-		defaultData: { gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bypassed: false }
+		icon: SlidersIcon,
+		defaultData: DEFAULT_NODE_DATA['eq']
 	}),
 	levelMeter: entry<'levelMeter'>({
 		kind: 'levelMeter',
@@ -148,15 +185,18 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Level Meter',
 		description: 'Live L/R peak + RMS meter. Works standalone or anywhere in a chain.',
 		component: LevelMeter,
-		defaultData: {}
+		icon: DataBarIcon,
+		defaultData: DEFAULT_NODE_DATA['levelMeter']
 	}),
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
 		category: 'monitor',
 		label: 'Loudness',
-		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
+		description:
+			'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
 		component: LufsMeter,
-		defaultData: { target: -14 }
+		icon: GaugeIcon,
+		defaultData: DEFAULT_NODE_DATA['lufsMeter']
 	}),
 	waveform: entry<'waveform'>({
 		kind: 'waveform',
@@ -164,46 +204,47 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Waveform',
 		description: 'Live waveform — filled min/max envelope for L and R channels.',
 		component: Waveform,
-		defaultData: { segs: 4 }
+		icon: PulseIcon,
+		defaultData: DEFAULT_NODE_DATA['waveform']
+	}),
+	spectrum: entry<'spectrum'>({
+		kind: 'spectrum',
+		category: 'monitor',
+		label: 'Spectrum',
+		description: 'Live spectrum analyzer — log-frequency FFT magnitude with a peak-hold fall-off.',
+		component: Spectrum,
+		icon: DataBarIcon,
+		defaultData: DEFAULT_NODE_DATA['spectrum']
 	}),
 	limiter: entry<'limiter'>({
 		kind: 'limiter',
 		category: 'effect',
 		label: 'Limiter',
-		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
+		description:
+			'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
 		component: Limiter,
-		defaultData: { ceilingDb: -0.3, lookaheadMs: 5, releaseMs: 50, bypassed: false }
+		icon: LimiterIcon,
+		defaultData: DEFAULT_NODE_DATA['limiter']
 	}),
 	compressor: entry<'compressor'>({
 		kind: 'compressor',
 		category: 'effect',
 		label: 'Compressor',
-		description: 'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
+		description:
+			'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
 		component: Compressor,
-		defaultData: {
-			thresholdDb: -18,
-			ratio: 3,
-			attackMs: 10,
-			releaseMs: 100,
-			kneeDb: 6,
-			makeupDb: 0,
-			bypassed: false
-		}
+		icon: CompressorIcon,
+		defaultData: DEFAULT_NODE_DATA['compressor']
 	}),
 	noiseGate: entry<'noiseGate'>({
 		kind: 'noiseGate',
 		category: 'effect',
 		label: 'Noise Gate',
-		description: 'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
+		description:
+			'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
 		component: NoiseGate,
-		defaultData: {
-			thresholdDb: -40,
-			rangeDb: -40,
-			attackMs: 1,
-			holdMs: 50,
-			releaseMs: 200,
-			bypassed: false
-		}
+		icon: NoiseGateIcon,
+		defaultData: DEFAULT_NODE_DATA['noiseGate']
 	}),
 	delay: entry<'delay'>({
 		kind: 'delay',
@@ -211,7 +252,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Delay',
 		description: 'Stereo delay (1-2000 ms) with feedback and dry/wet mix.',
 		component: Delay,
-		defaultData: { timeMs: 250, feedback: 0.4, mix: 0.35, bypassed: false }
+		icon: DelayIcon,
+		defaultData: DEFAULT_NODE_DATA['delay']
 	}),
 	reverb: entry<'reverb'>({
 		kind: 'reverb',
@@ -219,53 +261,76 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		label: 'Reverb',
 		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
 		component: Reverb,
-		defaultData: { roomSize: 0.5, damping: 0.5, width: 1, mix: 0.33, bypassed: false }
+		icon: ReverbIcon,
+		defaultData: DEFAULT_NODE_DATA['reverb']
 	}),
 	noiseSuppressor: entry<'noiseSuppressor'>({
 		kind: 'noiseSuppressor',
 		category: 'effect',
 		label: 'Noise Suppressor',
-		description: 'DeepFilterNet deep-learning speech denoise. Runs at 48 kHz only; off-rate signals pass through.',
+		description:
+			'DeepFilterNet deep-learning speech denoise. Model runs at 48 kHz mono; resampled and downmixed for you.',
 		component: NoiseSuppressor,
-		defaultData: {
-			attenuationLimitDb: 100,
-			postFilterBeta: 0,
-			minThreshDb: -10,
-			maxErbThreshDb: 30,
-			maxDfThreshDb: 20,
-			bypassed: false
-		}
+		icon: WandIcon,
+		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']
+	}),
+	declick: entry<'declick'>({
+		kind: 'declick',
+		category: 'effect',
+		label: 'Declick',
+		description:
+			'Removes short impulsive clicks and crackle — median detector replaces spikes, clean audio passes through.',
+		component: Declick,
+		icon: BackspaceIcon,
+		defaultData: DEFAULT_NODE_DATA['declick']
+	}),
+	deEsser: entry<'deEsser'>({
+		kind: 'deEsser',
+		category: 'effect',
+		label: 'De-esser',
+		description:
+			'Tames harsh "s"/"sh" sibilance — splits off the high band and compresses only that, leaving the voice body untouched.',
+		component: DeEsser,
+		icon: SoundWaveIcon,
+		defaultData: DEFAULT_NODE_DATA['deEsser']
+	}),
+	plugin: entry<'plugin'>({
+		kind: 'plugin',
+		category: 'effect',
+		label: 'Plugin',
+		description:
+			'Host a third-party CLAP audio plugin as a node — scan installed plugins and route channels through it like any effect.',
+		component: Plugin,
+		icon: PlugIcon,
+		defaultData: DEFAULT_NODE_DATA['plugin']
 	}),
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',
-		category: 'effect',
+		category: 'network',
 		label: 'WebRTC',
-		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
+		description:
+			'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
 		component: WebRtcCollaborator,
-		defaultData: { opusBitrate: 96000, opusApplication: 'voip', channels: 1, name: '', codec: 'opus' }
+		icon: PeopleTeamIcon,
+		defaultData: DEFAULT_NODE_DATA['webRtcCollaborator']
 	}),
 	netReceiver: entry<'netReceiver'>({
 		kind: 'netReceiver',
-		category: 'input',
+		category: 'network',
 		label: 'Net Receiver',
 		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
 		component: NetReceiver,
-		defaultData: { port: 5004, channels: 1 }
+		icon: ArrowDownloadIcon,
+		defaultData: DEFAULT_NODE_DATA['netReceiver']
 	}),
 	netSender: entry<'netSender'>({
 		kind: 'netSender',
-		category: 'output',
+		category: 'network',
 		label: 'Net Sender',
 		description: 'Send audio over UDP to a direct IP target (Opus or raw PCM).',
 		component: NetSender,
-		defaultData: {
-			targetIp: '',
-			port: 5004,
-			channels: 1,
-			codec: 'opus',
-			opusBitrate: 96000,
-			opusApplication: 'audio'
-		}
+		icon: ArrowUploadIcon,
+		defaultData: DEFAULT_NODE_DATA['netSender']
 	})
 };
 
@@ -275,13 +340,14 @@ export const nodeTypes: NodeTypes = Object.fromEntries(
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'effect', 'monitor', 'output'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
-	effect: 'Effects',
+	output: 'Outputs',
 	monitor: 'Monitors',
-	output: 'Outputs'
+	network: 'Network',
+	effect: 'Effects'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(
@@ -295,5 +361,7 @@ export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.r
 // Default data must not leak references to the registry copy, otherwise
 // independent nodes would share the same object.
 export function defaultDataFor(kind: NodeKind): AnyNodeData {
-	return { ...registry[kind].defaultData };
+	// Deep: nested values (an EQ's gain array) would otherwise be shared with
+	// every other node of the same kind.
+	return structuredClone(registry[kind].defaultData);
 }

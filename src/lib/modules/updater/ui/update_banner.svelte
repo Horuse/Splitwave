@@ -3,6 +3,11 @@
 	import { installUpdate, skipVersion } from '../methods';
 	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
+	import { Checkmark } from '$lib/components/icons';
+	import { getCachedAppInfo } from '$lib/modules/app_info';
+
+
+	const info = getCachedAppInfo();
 
 	let s = $derived(updaterStore.state);
 
@@ -15,14 +20,16 @@
 	});
 
 	let titleClass = $derived(
-		s.phase === 'error'
-			? 'text-md font-semibold text-red-500'
-			: 'text-md font-semibold text-emerald-700'
+		s.phase === 'error' ? 'text-sm font-semibold text-red-500' : 'text-sm font-semibold text-theme'
 	);
 
 	function progressPct(): number {
 		if (s.phase !== 'downloading' || !s.total || s.total === 0) return 0;
 		return Math.min(100, Math.round((s.downloaded / s.total) * 100));
+	}
+
+	function mb(bytes: number): string {
+		return `${(bytes / 1_000_000).toFixed(1)} MB`;
 	}
 
 	function dismiss() {
@@ -44,7 +51,7 @@
 	>
 		{#snippet badge()}
 			{#if s.phase === 'available' || s.phase === 'downloading'}
-				<span class="rounded bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
+				<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
 					v{s.update.version}
 				</span>
 			{/if}
@@ -52,26 +59,61 @@
 
 		<div class="px-5 py-4">
 			{#if s.phase === 'up_to_date'}
-				<p class="text-xs text-neutral-1000">You're running the latest version.</p>
+				<div class="flex flex-col items-center gap-3 py-2">
+					<div
+						class="flex size-11 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+					>
+						<Checkmark class="size-5" />
+					</div>
+					<div class="flex flex-col items-center gap-1.5">
+						<p class="text-lg font-semibold text-theme">You're on the latest version</p>
+						<span
+							class="rounded-full bg-neutral-200 px-2.5 py-0.5 font-mono text-[11px] tabular-nums text-neutral-1000"
+						>
+							v{info?.appVersion ?? '?'}
+						</span>
+					</div>
+					<p class="text-xs text-neutral-900">Splitwave checks for updates on launch.</p>
+				</div>
 			{:else if s.phase === 'available'}
-				<p class="mb-2 text-xs text-neutral-1000">
+				<p class="mb-3 text-xs text-neutral-900">
 					A new version is ready to install. Your work will be saved before restarting.
 				</p>
 				{#if s.update.body}
-					<pre class="max-h-60 overflow-auto rounded bg-neutral-200 p-3 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{s.update.body}</pre>
+					<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{s.update.body}</pre>
 				{/if}
 			{:else if s.phase === 'downloading'}
-				<div class="flex items-center gap-3 text-xs text-neutral-1000">
-					<div class="h-2 flex-1 overflow-hidden rounded bg-neutral-300">
-						<div class="h-full bg-emerald-500 transition-all" style="width: {progressPct()}%;"></div>
+				<div class="flex flex-col gap-3">
+					<div class="flex items-baseline justify-between">
+						<span class="font-mono text-3xl tabular-nums text-theme">
+							{s.total ? `${progressPct()}%` : mb(s.downloaded)}
+						</span>
+						<span class="font-mono text-xs tabular-nums text-neutral-900">
+							{s.total ? `${mb(s.downloaded)} of ${mb(s.total)}` : 'Size unknown'}
+						</span>
 					</div>
-					<span class="font-mono tabular-nums">{progressPct()}%</span>
+
+					<div class="h-2.5 overflow-hidden rounded-full bg-neutral-300">
+						{#if s.total}
+							<div
+								class="h-full rounded-full bg-emerald-500 transition-[width] duration-300 ease-out"
+								style="width: {progressPct()}%;"
+							></div>
+						{:else}
+							<!-- The server sent no content length, so completion cannot be shown. -->
+							<div class="h-full w-1/3 animate-pulse rounded-full bg-emerald-500"></div>
+						{/if}
+					</div>
+
+					<p class="text-xs text-neutral-900">
+						Keep the app open. It will restart itself once the update is installed.
+					</p>
 				</div>
 			{:else if s.phase === 'installing'}
-				<p class="text-xs text-neutral-1000">Finalizing. The app will restart in a moment.</p>
+				<p class="text-xs text-neutral-900">Finalizing. The app will restart in a moment.</p>
 			{:else if s.phase === 'error'}
-				<p class="mb-2 text-xs text-neutral-1000">Couldn't check for updates.</p>
-				<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{s.message}</pre>
+				<p class="mb-3 text-xs text-neutral-900">Couldn't check for updates.</p>
+				<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{s.message}</pre>
 			{/if}
 		</div>
 
@@ -87,7 +129,7 @@
 				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
 					Later
 				</button>
-				<button type="button" class="button-main green rounded-lg" onclick={() => installUpdate()}>
+				<button type="button" class="button-main green rounded-lg" onclick={installUpdate}>
 					Install &amp; restart
 				</button>
 			{:else if s.phase === 'error'}

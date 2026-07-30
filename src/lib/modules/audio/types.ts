@@ -15,6 +15,33 @@ export interface AudioApplication {
 	icon?: string | null;
 }
 
+export interface PluginDescriptor {
+	uid: string;
+	format: 'clap' | 'au';
+	path: string;
+	pluginId: string;
+	name: string;
+	vendor: string;
+	version: string;
+}
+
+export interface PluginStatus {
+	/** Reference of the plugin actually running, null while none is loaded. */
+	path: string | null;
+	hasEditor: boolean;
+}
+
+export interface PluginParam {
+	id: number;
+	name: string;
+	min: number;
+	max: number;
+	default: number;
+	value: number;
+	stepped: boolean;
+	readOnly: boolean;
+}
+
 export interface NativeDeviceInfo {
 	sampleRate: number;
 	channels: number;

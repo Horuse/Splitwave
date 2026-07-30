@@ -8,6 +8,12 @@
 //! loop nudges the resample ratio to hold the ring near a target fill. So clock
 //! drift is absorbed continuously by the resampler, never by dropping/inserting
 //! samples -- which is what produced the "needle" discontinuities before.
+//!
+//! Channels of one source stay in phase by position, not by arrival: each push
+//! carries the `seq` it ends at, losses are pushed as concealment of the exact
+//! size they replace, and a ring wired in mid-stream opens with the silence that
+//! puts it where its siblings already are. Everything downstream then only has
+//! to keep consumption equal across the source (`GroupPlan`).
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -28,22 +34,36 @@ pub const OUT_BLOCK_FRAMES: usize = 1024;
 pub const CONSUMER_RING: usize = 96_000;
 
 /// Adaptive jitter-buffer target (mono samples at 48 kHz): the fill the drift
-/// loop steers toward and the buffer primes to. Starts moderate, grows when the
-/// network under-delivers (a latency spike drains it), shrinks slowly during
-/// sustained calm -- so a periodic spike is absorbed after the first occurrence.
+/// loop steers toward and the buffer primes to. Fast attack, slow release: an
+/// outage is answered with the depth that would have covered it, and that depth
+/// is handed back over minutes. Release quick enough to see is worse than none
+/// -- it returns the buffer to a depth already proven to fail, right in time for
+/// the spike to repeat, and the user hears the cycle rather than the adaptation.
 const TARGET_INIT: usize = 2_880; // ~60 ms
 const TARGET_MIN: usize = 1_920; // ~40 ms
 const TARGET_MAX: usize = 19_200; // ~400 ms
-const TARGET_GROW: usize = 2_400; // +50 ms on underrun
-const TARGET_SHRINK: usize = 480; // -10 ms per calm window
-const CALM_WINDOW: u32 = 480; // ~10 s at ~21 ms/block
+/// Headroom over an outage the buffer failed to ride out.
+const TARGET_MARGIN: usize = 480; // ~10 ms
+/// Ceiling on what one outage may add, so a single dropout cannot pin the
+/// target at its maximum for the rest of the session.
+const TARGET_EVENT_MAX: usize = 4_800; // ~100 ms
+const TARGET_DECAY: usize = 240; // -5 ms per calm window
+const CALM_WINDOW: u32 = 1_440; // ~30 s at ~21 ms/block
+/// Depth kept above what a block consumes when shrinking: the buffer still has
+/// to absorb the jitter it has not seen yet.
+const KEEP_MARGIN: usize = 960; // ~20 ms
 
 /// Proportional gain: backlog error (samples) -> ratio correction. A varying
-/// resample ratio IS pitch modulation, so the loop must be far slower and far
-/// narrower than the jitter it rides on: corrections stay within +-2000 ppm
-/// (real oscillator pairs differ by <200 ppm) and jitter is absorbed by the
-/// buffer, never by the ratio -- otherwise bursty links produce audible wow.
-const DRIFT_KP: f64 = 1.0e-7;
+/// resample ratio IS pitch modulation, so the loop stays far slower and far
+/// narrower than the jitter it rides on: corrections clamp to +-2000 ppm (~3.5
+/// cents) and jitter is absorbed by the buffer, never by the ratio -- otherwise
+/// bursty links produce audible wow. Against the backlog integrator this gain
+/// settles in 1/(KP*SR) ~ 21 s, slow next to the ~3 s EMA below and so stable,
+/// yet quick enough to actually hand back depth the target gave up. A tenth of
+/// it could only track oscillator drift: the buffer would keep whatever a spike
+/// added for the rest of the session. Only realtime consumers steer the ratio,
+/// so recordings never see it.
+const DRIFT_KP: f64 = 1.0e-6;
 const DRIFT_MIN: f64 = 0.998;
 const DRIFT_MAX: f64 = 1.002;
 /// EMA smoothing for the backlog the drift controller sees (~3 s time constant)
@@ -52,9 +72,41 @@ const DRIFT_BACKLOG_ALPHA: f64 = 0.007;
 /// No correction while the smoothed backlog is this close to target.
 const DRIFT_DEADBAND: f64 = 240.0;
 
+/// Blocks without a single new sample before a channel counts as gone (~170 ms
+/// at 1024 frames / 48 kHz, the same window the DSP sources call a stall). A
+/// channel the sender never transmits still has a tap here -- the UI can wire a
+/// handle the peer doesn't fill, and a channel that stops is never reaped -- and
+/// a group decision taken over it would stall every sibling forever.
+const IDLE_BLOCKS_DEAD: u32 = 8;
+
 /// One received channel's fan-out: the 48 kHz ring producer for each live
 /// consumer. The decode task pushes decoded audio into all of them.
-pub type ChannelBroadcast = Arc<Mutex<Vec<Producer<f32>>>>;
+pub type ChannelBroadcast = Arc<ChannelFeed>;
+
+pub struct ChannelFeed {
+    /// Shared by every channel of the same source (see `group_id`), and held
+    /// for the whole of a push or a ring creation, so a ring being wired in
+    /// never lands inside a push.
+    sync: Arc<Mutex<()>>,
+    prods: Mutex<Vec<Producer<f32>>>,
+    state: Mutex<FeedState>,
+}
+
+#[derive(Default)]
+struct FeedState {
+    /// Packet index just past the last one pushed, on the source's shared
+    /// timeline (all its channels are encoded from one tick, so `seq` counts
+    /// the same instants for each). Extended past the 16-bit wire counter.
+    pos_end: u64,
+    /// Samples one packet carries, from the last push.
+    chunk: usize,
+}
+
+/// Widen a 16-bit wire counter to the epoch of `near`.
+fn extend_seq(seq: u16, near: u64) -> u64 {
+    let delta = seq.wrapping_sub(near as u16) as i16;
+    near.wrapping_add(delta as i64 as u64)
+}
 
 /// A consumer's per-channel playback taps, keyed by channel id.
 pub type TapMap = Arc<Mutex<HashMap<String, PlaybackTap>>>;
@@ -67,29 +119,62 @@ pub struct ConsumerHandle {
     pub realtime: bool,
 }
 
-/// Push decoded 48 kHz audio into every live consumer ring for a channel.
-pub fn broadcast_push(broadcast: &ChannelBroadcast, samples: &[f32]) {
-    let mut prods = broadcast.lock().unwrap();
+/// Push one channel's audio for the `packets` packets ending at `seq` (a lost
+/// packet is carried as its concealment, so a push always covers whole packets).
+/// Tracking where the samples sit on the timeline -- rather than when they
+/// arrived -- is what keeps a channel wired in mid-stream in phase with its
+/// siblings.
+pub fn broadcast_push(broadcast: &ChannelBroadcast, seq: u16, packets: u16, samples: &[f32]) {
+    let _sync = broadcast.sync.lock().unwrap();
+    let mut prods = broadcast.prods.lock().unwrap();
     prods.retain(|p| !p.is_abandoned());
     for p in prods.iter_mut() {
         bulk_push(p, samples);
     }
+    let mut state = broadcast.state.lock().unwrap();
+    state.pos_end = extend_seq(seq, state.pos_end) + 1;
+    if packets > 0 {
+        state.chunk = samples.len() / packets as usize;
+    }
+}
+
+/// Channels of one source (a WebRTC peer, or the whole direct-IP receiver) key
+/// as `group:channel` / `channel`. They carry one recording's worth of
+/// simultaneous audio, so every buffer decision has to be taken across the
+/// group -- priming, discarding or concealing one channel alone shifts it in
+/// time against its siblings, and that phase error combs the summed signal.
+fn group_id(key: &str) -> u64 {
+    let group = key.rsplit_once(':').map(|(g, _)| g).unwrap_or("");
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in group.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
 }
 
 /// One channel's playback state for one consumer: a 48 kHz jitter ring plus a
 /// fixed-output resampler (48 kHz -> consumer rate) whose ratio tracks drift.
 pub struct PlaybackTap {
+    group: u64,
     consumer: Consumer<f32>,
     resampler: MultiResamplerOut,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
     drift: Arc<AtomicU32>,
-    target: Arc<AtomicU32>,
     in_buf: Vec<f32>,
     pub scratch: Vec<f32>,
     pub valid: usize,
     primed: bool,
+    // Fill at the top of the current block. Levelling reads it rather than the
+    // live count, which the decode task keeps growing while we walk the map.
+    snap_backlog: usize,
+    // Samples popped so far plus the current fill: a total that only moves when
+    // the decode task delivered something, so idle blocks are countable.
+    popped: u64,
+    last_total: u64,
+    idle_blocks: u32,
     // PLC: the last real output block, and whether we're currently in a gap.
     // On a network underrun we fade this out (instead of a hard silence step),
     // and fade the real audio back in on recovery.
@@ -99,27 +184,32 @@ pub struct PlaybackTap {
 
 impl PlaybackTap {
     fn new(
+        group: u64,
         consumer: Consumer<f32>,
         rate: u32,
         realtime: bool,
+        primed: bool,
         drift: Arc<AtomicU32>,
-        target: Arc<AtomicU32>,
     ) -> Self {
         let base_ratio = rate as f64 / SR as f64;
         let resampler = MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1)
             .expect("mono resampler init");
         Self {
+            group,
             consumer,
             resampler,
             base_ratio,
             last_ratio: base_ratio,
             realtime,
             drift,
-            target,
             in_buf: Vec::with_capacity(4096),
             scratch: Vec::with_capacity(OUT_BLOCK_FRAMES),
             valid: 0,
-            primed: false,
+            primed,
+            snap_backlog: 0,
+            popped: 0,
+            last_total: 0,
+            idle_blocks: 0,
             last_block: vec![0.0; OUT_BLOCK_FRAMES],
             gap: false,
         }
@@ -134,10 +224,54 @@ impl PlaybackTap {
         self.resampler.input_frames_next()
     }
 
+    /// Whether this channel has gone quiet long enough to be left out of its
+    /// group's decisions.
+    fn dead(&self) -> bool {
+        self.idle_blocks >= IDLE_BLOCKS_DEAD
+    }
+
+    /// Fold this block's arrivals into the idle count. Call once per block,
+    /// after `snap_backlog` is taken.
+    fn track_liveness(&mut self) {
+        let total = self.popped + self.snap_backlog as u64;
+        if total != self.last_total {
+            self.last_total = total;
+            self.idle_blocks = 0;
+            return;
+        }
+        self.idle_blocks = self.idle_blocks.saturating_add(1);
+        // Drop out of the primed set on the way out, so coming back means
+        // re-priming with the group and picking its alignment up again.
+        if self.idle_blocks == IDLE_BLOCKS_DEAD {
+            self.primed = false;
+        }
+    }
+
+    /// Discard `n` buffered samples. The group applies the same count to every
+    /// channel, so a splice never costs them their alignment.
+    fn trim(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let n = n.min(self.consumer.slots());
+        if let Ok(chunk) = self.consumer.read_chunk(n) {
+            chunk.commit_all();
+            self.popped += n as u64;
+            self.gap = true;
+        }
+    }
+
+    /// Emit silence for this block without touching the ring (the group is
+    /// priming).
+    fn hold(&mut self) -> usize {
+        self.valid = 0;
+        0
+    }
+
     /// Produce one output block into `scratch` (valid = its length), resampling
     /// 48 kHz -> consumer rate at the drift-adjusted ratio. Returns the sample
-    /// count (0 = emit silence: priming, or a real network underrun).
-    fn fill_block(&mut self, _out_frames: usize) -> usize {
+    /// count (0 = emit silence after a sustained network underrun).
+    fn fill_block(&mut self) -> usize {
         // Track drift ratio for this block.
         if self.realtime {
             let d = f32::from_bits(self.drift.load(Ordering::Relaxed)) as f64;
@@ -147,30 +281,7 @@ impl PlaybackTap {
                 self.last_ratio = ratio;
             }
         }
-        let target = self.target.load(Ordering::Relaxed) as usize;
         let need = self.need_in();
-
-        if !self.primed {
-            if self.consumer.slots() < target.max(need) {
-                self.valid = 0;
-                return 0;
-            }
-            self.primed = true;
-        }
-
-        // Safety net only (abnormal burst): the drift loop normally keeps the
-        // ring near target. Generous headroom -- sender catch-up bursts after a
-        // scheduler stall are legitimate and must not get spliced.
-        let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
-        if self.consumer.slots() > hard_cap {
-            let drop = self.consumer.slots() - target;
-            if let Ok(chunk) = self.consumer.read_chunk(drop) {
-                chunk.commit_all();
-                // The discard is a splice; fade back in over the next block.
-                self.gap = true;
-            }
-        }
-
         if self.consumer.slots() < need {
             // Real network underrun: conceal (fade), don't step to silence.
             return self.conceal();
@@ -182,6 +293,7 @@ impl PlaybackTap {
             self.in_buf.extend_from_slice(a);
             self.in_buf.extend_from_slice(b);
             chunk.commit_all();
+            self.popped += need as u64;
         }
         self.scratch.clear();
         if self.resampler.process(&self.in_buf, &mut self.scratch).is_err() {
@@ -232,6 +344,8 @@ impl PlaybackTap {
 pub struct FanoutRegistry {
     broadcasts: Mutex<HashMap<String, ChannelBroadcast>>,
     consumers: Mutex<Vec<ConsumerRef>>,
+    /// One push lock per source, handed to every channel of it.
+    groups: Mutex<HashMap<u64, Arc<Mutex<()>>>>,
 }
 
 struct ConsumerRef {
@@ -247,11 +361,21 @@ impl Default for FanoutRegistry {
         Self {
             broadcasts: Mutex::new(HashMap::new()),
             consumers: Mutex::new(Vec::new()),
+            groups: Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl FanoutRegistry {
+    fn group_sync(&self, gid: u64) -> Arc<Mutex<()>> {
+        self.groups
+            .lock()
+            .unwrap()
+            .entry(gid)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     /// New output consumer: an empty tap map wired a fresh ring into every known
     /// channel's broadcast. Locks `consumers` before `broadcasts`.
     pub fn register_consumer(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
@@ -260,14 +384,52 @@ impl FanoutRegistry {
         let target = Arc::new(AtomicU32::new(TARGET_INIT as u32));
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
-        for (key, bc) in self.broadcasts.lock().unwrap().iter() {
-            let (prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
-            bc.lock().unwrap().push(prod);
-            map.lock().unwrap().insert(
-                key.clone(),
-                PlaybackTap::new(cons, output_sr, realtime, drift.clone(), target.clone()),
-            );
+        // A source's rings are created together under its push lock, so they all
+        // open empty at the same instant. Wiring them one packet apart would
+        // offset the channels against each other for the consumer's lifetime.
+        let broadcasts = self.broadcasts.lock().unwrap();
+        let mut by_group: HashMap<u64, Vec<(&String, &ChannelBroadcast)>> = HashMap::new();
+        for (key, bc) in broadcasts.iter() {
+            by_group.entry(group_id(key)).or_default().push((key, bc));
         }
+        let mut pad: Vec<f32> = Vec::new();
+        for (gid, channels) in by_group {
+            let sync = channels[0].1.sync.clone();
+            let _sync = sync.lock().unwrap();
+            // Within one tick some channels have already been pushed and some
+            // have not. Opening every ring at the least advanced position and
+            // padding the rest by how far they lead puts them all on the same
+            // instant, whatever order the packets landed in.
+            let states: Vec<(u64, usize)> = channels
+                .iter()
+                .map(|(_, bc)| {
+                    let st = bc.state.lock().unwrap();
+                    (st.pos_end, st.chunk)
+                })
+                .collect();
+            // One packet behind the furthest: within a tick the channels differ
+            // by at most that, and opening there costs at most one packet of
+            // depth while keeping them in phase whatever the arrival order. A
+            // channel further behind has stopped delivering, and re-enters in
+            // phase through `drop_channel` when it comes back.
+            let head = states.iter().map(|(pos, _)| *pos).max().unwrap_or(0);
+            let base = head.saturating_sub(1);
+            for ((key, bc), (pos_end, chunk)) in channels.into_iter().zip(states) {
+                let (mut prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
+                let lead = pos_end.saturating_sub(base).min(1) as usize * chunk;
+                if lead > 0 {
+                    pad.clear();
+                    pad.resize(lead.min(CONSUMER_RING / 2), 0.0);
+                    bulk_push(&mut prod, &pad);
+                }
+                bc.prods.lock().unwrap().push(prod);
+                map.lock().unwrap().insert(
+                    key.clone(),
+                    PlaybackTap::new(gid, cons, output_sr, realtime, false, drift.clone()),
+                );
+            }
+        }
+        drop(broadcasts);
         consumers.push(ConsumerRef {
             rate: output_sr,
             realtime,
@@ -278,23 +440,93 @@ impl FanoutRegistry {
         ConsumerHandle { taps: map, drift, target, realtime }
     }
 
-    /// New received channel: a fresh broadcast wired into every live consumer.
-    pub fn attach_channel(&self, key: String) -> ChannelBroadcast {
-        let bc: ChannelBroadcast = Arc::new(Mutex::new(Vec::new()));
+    /// New received channel, wired into every live consumer. `first_seq` is the
+    /// packet about to be pushed: its distance from the siblings' position is
+    /// what the fresh rings open with, so the channel joins in phase.
+    pub fn attach_channel(&self, key: String, first_seq: u16) -> ChannelBroadcast {
+        let gid = group_id(&key);
+        let sync = self.group_sync(gid);
+        let bc: ChannelBroadcast = Arc::new(ChannelFeed {
+            sync: sync.clone(),
+            prods: Mutex::new(Vec::new()),
+            state: Mutex::new(FeedState::default()),
+        });
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
+        // No sibling can push while the rings are sized and wired, so the
+        // positions and fills read here are the ones the new rings must match.
+        let _sync = sync.lock().unwrap();
+        let sibling = {
+            let broadcasts = self.broadcasts.lock().unwrap();
+            broadcasts
+                .iter()
+                .filter(|(k, _)| group_id(k) == gid)
+                .map(|(k, b)| {
+                    let st = b.state.lock().unwrap();
+                    (k.clone(), st.pos_end, st.chunk)
+                })
+                .max_by_key(|(_, pos_end, _)| *pos_end)
+        };
+        let mut pad: Vec<f32> = Vec::new();
         for c in consumers.iter() {
             if let Some(map) = c.taps.upgrade() {
-                let (prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
-                bc.lock().unwrap().push(prod);
-                map.lock().unwrap().insert(
+                let (mut prod, cons) = RingBuffer::<f32>::new(CONSUMER_RING);
+                let mut taps = map.lock().unwrap();
+                // A sibling's ring spans [read position, its last packet]; the
+                // new channel starts at `first_seq`, so it opens with whatever
+                // separates the two.
+                let (fill, primed) = sibling
+                    .as_ref()
+                    .and_then(|(k, _, _)| taps.get(k))
+                    .map(|t| (t.backlog() as i64, t.primed))
+                    .unwrap_or((0, false));
+                let lead = sibling
+                    .as_ref()
+                    .map(|(_, pos_end, chunk)| {
+                        let start = extend_seq(first_seq, *pos_end);
+                        (start as i64 - *pos_end as i64) * *chunk as i64
+                    })
+                    .unwrap_or(0);
+                let open = (fill + lead).clamp(0, (CONSUMER_RING / 2) as i64) as usize;
+                if open > 0 {
+                    pad.clear();
+                    pad.resize(open, 0.0);
+                    bulk_push(&mut prod, &pad);
+                }
+                bc.prods.lock().unwrap().push(prod);
+                taps.insert(
                     key.clone(),
-                    PlaybackTap::new(cons, c.rate, c.realtime, c.drift.clone(), c.target.clone()),
+                    PlaybackTap::new(gid, cons, c.rate, c.realtime, primed, c.drift.clone()),
                 );
             }
         }
         self.broadcasts.lock().unwrap().insert(key, bc.clone());
         bc
+    }
+
+    /// Deepest jitter buffer target any live consumer of this source is steering
+    /// to, in 48 kHz samples. The drift loop holds the actual fill there, so it
+    /// is the latency the receive path adds.
+    pub fn buffer_depth(&self) -> Option<u32> {
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|c| c.taps.strong_count() > 0);
+        consumers
+            .iter()
+            .map(|c| c.target.load(Ordering::Relaxed))
+            .max()
+    }
+
+    /// Forgets one channel. Its next packet re-attaches it, which is how a
+    /// stream that broke for longer than concealment covers gets back in phase.
+    pub fn drop_channel(&self, key: &str) {
+        self.broadcasts.lock().unwrap().remove(key);
+        let mut consumers = self.consumers.lock().unwrap();
+        consumers.retain(|c| c.taps.strong_count() > 0);
+        for c in consumers.iter() {
+            if let Some(map) = c.taps.upgrade() {
+                map.lock().unwrap().remove(key);
+            }
+        }
     }
 
     /// Drops channels whose key starts with `prefix`.
@@ -305,6 +537,7 @@ impl FanoutRegistry {
     pub fn clear(&self) {
         self.broadcasts.lock().unwrap().clear();
         self.consumers.lock().unwrap().clear();
+        self.groups.lock().unwrap().clear();
     }
 }
 
@@ -319,10 +552,26 @@ pub struct ChannelReceiver {
     // Adaptive-jitter state; only the single worker thread touches these.
     min_backlog: Cell<usize>,
     window_blocks: Cell<u32>,
+    starve_blocks: Cell<u32>,
+    ever_primed: Cell<bool>,
     avg_backlog: Cell<f64>,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
     last_mix: std::cell::RefCell<Vec<f32>>,
+    // Per-block scratch for the group decisions; reused so `mix_block` never
+    // allocates on the DSP thread.
+    plans: std::cell::RefCell<Vec<GroupPlan>>,
+}
+
+/// One source's buffer decision for this block, taken over all its channels.
+struct GroupPlan {
+    id: u64,
+    min_backlog: usize,
+    need: usize,
+    primed: bool,
+    trim: usize,
+    hold: bool,
+    conceal: bool,
 }
 
 impl ChannelReceiver {
@@ -334,8 +583,11 @@ impl ChannelReceiver {
             realtime: handle.realtime,
             min_backlog: Cell::new(usize::MAX),
             window_blocks: Cell::new(0),
+            starve_blocks: Cell::new(0),
+            ever_primed: Cell::new(false),
             avg_backlog: Cell::new(-1.0),
             last_mix: std::cell::RefCell::new(Vec::new()),
+            plans: std::cell::RefCell::new(Vec::with_capacity(8)),
         }
     }
 
@@ -358,22 +610,113 @@ impl ChannelReceiver {
             return;
         };
         mix.fill(0.0);
-        if self.realtime {
-            // Drive from the emptiest channel so no channel is left to underrun;
-            // one shared ratio keeps channels phase-coherent.
-            let mut min_backlog = usize::MAX;
-            let mut need = OUT_BLOCK_FRAMES;
-            for tap in taps.values() {
-                min_backlog = min_backlog.min(tap.backlog());
-                need = tap.need_in();
+
+        // Collapse the taps into one plan per source, then act on every channel
+        // of a source identically -- see `group_id`.
+        let mut plans = self.plans.borrow_mut();
+        plans.clear();
+        for tap in taps.values_mut() {
+            let backlog = tap.backlog();
+            let need = tap.need_in();
+            tap.snap_backlog = backlog;
+            tap.track_liveness();
+            if tap.dead() {
+                continue;
             }
-            if min_backlog != usize::MAX {
-                self.control(min_backlog, need);
+            match plans.iter_mut().find(|p| p.id == tap.group) {
+                Some(p) => {
+                    p.min_backlog = p.min_backlog.min(backlog);
+                    p.need = p.need.max(need);
+                    p.primed &= tap.primed;
+                }
+                None => plans.push(GroupPlan {
+                    id: tap.group,
+                    min_backlog: backlog,
+                    need,
+                    primed: tap.primed,
+                    trim: 0,
+                    hold: false,
+                    conceal: false,
+                }),
             }
         }
+
+        let target = self.target.load(Ordering::Relaxed) as usize;
+        for p in plans.iter_mut() {
+            if !p.primed {
+                // Prime the whole source at once. Fills are not levelled: a
+                // channel whose packet for this tick has already landed leads
+                // its siblings by exactly that packet, and that lead *is* the
+                // alignment.
+                if p.min_backlog < target.max(p.need) {
+                    p.hold = true;
+                    continue;
+                }
+                p.primed = true;
+            }
+            // One channel short of a block stalls the whole source: a channel
+            // that popped while a sibling concealed would sit a block ahead of
+            // it for good.
+            if p.min_backlog < p.need {
+                p.conceal = true;
+                continue;
+            }
+            // Safety net only (abnormal burst): the drift loop normally keeps
+            // the ring near target. Generous headroom -- sender catch-up bursts
+            // after a scheduler stall are legitimate and must not get spliced.
+            let hard_cap = (target * 2).max(target + OUT_BLOCK_FRAMES * 20);
+            if p.min_backlog > hard_cap {
+                p.trim = p.min_backlog - target;
+            }
+        }
+
+        if self.realtime {
+            // Drive from the emptiest channel so no channel is left to underrun;
+            // one shared ratio keeps channels phase-coherent. A priming source
+            // never steers: its ring is filling by design, and reading that as
+            // drift would chase the refill.
+            let live = plans.iter().filter(|p| !p.hold).min_by_key(|p| p.min_backlog);
+            // A source refilling after a break emits nothing, exactly like one
+            // that concealed, and the target has to answer for both. Only the
+            // first prime of all is exempt: filling from empty is how playback
+            // starts, not something the buffer failed at.
+            let starving = live.is_some_and(|p| p.min_backlog < p.need)
+                || (self.ever_primed.get() && plans.iter().any(|p| p.hold));
+            self.account(starving, live.map(|p| (p.min_backlog, p.need)));
+            if let Some(p) = live {
+                self.steer(p.min_backlog);
+            }
+        }
+        if plans.iter().any(|p| !p.hold) {
+            self.ever_primed.set(true);
+        }
+
         // Channels are mono; a wider mix gets each one centred across it.
         for tap in taps.values_mut() {
-            let n = tap.fill_block(OUT_BLOCK_FRAMES).min(OUT_BLOCK_FRAMES);
+            if tap.dead() {
+                tap.hold();
+                continue;
+            }
+            let Some(plan) = plans.iter().find(|p| p.id == tap.group) else {
+                tap.hold();
+                continue;
+            };
+            if plan.hold {
+                tap.hold();
+                continue;
+            }
+            if plan.conceal {
+                let n = tap.conceal().min(OUT_BLOCK_FRAMES);
+                for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
+                    for s in frame.iter_mut() {
+                        *s += v;
+                    }
+                }
+                continue;
+            }
+            tap.primed = true;
+            tap.trim(plan.trim);
+            let n = tap.fill_block().min(OUT_BLOCK_FRAMES);
             for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
                 for s in frame.iter_mut() {
                     *s += v;
@@ -387,32 +730,55 @@ impl ChannelReceiver {
         held.copy_from_slice(mix);
     }
 
-    /// Adaptive buffer depth + drift ratio from the current backlog.
-    fn control(&self, backlog: usize, need: usize) {
-        let mut target = self.target.load(Ordering::Relaxed) as usize;
-        self.min_backlog.set(self.min_backlog.get().min(backlog));
-        self.window_blocks.set(self.window_blocks.get() + 1);
-
-        if backlog < need {
-            target = (target + TARGET_GROW).min(TARGET_MAX);
-            self.target.store(target as u32, Ordering::Relaxed);
+    /// Adaptive buffer depth. `live` is the emptiest source that is actually
+    /// playing, absent while every source is refilling.
+    fn account(&self, starving: bool, live: Option<(usize, usize)>) {
+        if starving {
+            self.starve_blocks.set(self.starve_blocks.get() + 1);
             self.min_backlog.set(usize::MAX);
             self.window_blocks.set(0);
-        } else if self.window_blocks.get() >= CALM_WINDOW {
-            if self.min_backlog.get() > target + need {
-                target = target.saturating_sub(TARGET_SHRINK).max(TARGET_MIN);
-                self.target.store(target as u32, Ordering::Relaxed);
-            }
-            self.min_backlog.set(usize::MAX);
-            self.window_blocks.set(0);
+            return;
+        }
+        // Charged when the outage ends, so its length sizes the answer: a buffer
+        // deeper by what the source failed to deliver is precisely the buffer
+        // that would have played straight through it.
+        let blocks = self.starve_blocks.replace(0) as usize;
+        if blocks > 0 {
+            let grow = (blocks * OUT_BLOCK_FRAMES + TARGET_MARGIN).min(TARGET_EVENT_MAX);
+            let target = self.target.load(Ordering::Relaxed) as usize;
+            self.target.store((target + grow).min(TARGET_MAX) as u32, Ordering::Relaxed);
+            return;
         }
 
+        let Some((backlog, need)) = live else { return };
+        self.min_backlog.set(self.min_backlog.get().min(backlog));
+        self.window_blocks.set(self.window_blocks.get() + 1);
+        if self.window_blocks.get() < CALM_WINDOW {
+            return;
+        }
+        // Give back the depth the window never touched. Measured against what a
+        // block consumes, not against the target: the drift loop holds the fill
+        // *at* the target, so a backlog above it is not something this can ever
+        // observe.
+        let spare = self.min_backlog.get().saturating_sub(need + KEEP_MARGIN);
+        if spare > 0 {
+            let target = self.target.load(Ordering::Relaxed) as usize;
+            let target = target.saturating_sub(spare.min(TARGET_DECAY)).max(TARGET_MIN);
+            self.target.store(target as u32, Ordering::Relaxed);
+        }
+        self.min_backlog.set(usize::MAX);
+        self.window_blocks.set(0);
+    }
+
+    /// Drift ratio from the current backlog.
+    fn steer(&self, backlog: usize) {
+        let target = self.target.load(Ordering::Relaxed) as usize;
         // Drive the ratio from a smoothed backlog so it tracks real drift (slow)
         // and ignores per-block fill ripple (fast). A jump far beyond jitter
         // scale is a re-prime refill, not drift -- restart the EMA there so the
         // controller doesn't chase the refill as a huge error.
         let prev = self.avg_backlog.get();
-        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_GROW as f64 {
+        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_EVENT_MAX as f64 {
             backlog as f64
         } else {
             prev + DRIFT_BACKLOG_ALPHA * (backlog as f64 - prev)

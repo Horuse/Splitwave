@@ -38,6 +38,12 @@ const K_AUDIO_DEVICE_PROPERTY_NOMINAL_SAMPLE_RATE: AudioObjectPropertySelector =
 const K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR: AudioObjectPropertySelector = fourcc(b"volm");
 const K_AUDIO_DEVICE_PROPERTY_MUTE: AudioObjectPropertySelector = fourcc(b"mute");
 const K_AUDIO_OBJECT_PROPERTY_NAME: AudioObjectPropertySelector = fourcc(b"lnam");
+const K_AUDIO_DEVICE_PROPERTY_DEVICE_UID: AudioObjectPropertySelector = fourcc(b"uid ");
+
+/// UID prefix of the private aggregate we create for CATap app-audio capture
+/// (see `native/CATapCapture.swift`). CoreAudio still lists a process's own
+/// private aggregates back to it, so they must be filtered from the device menus.
+const TAP_AGGREGATE_UID_PREFIX: &str = "com.horuse.splitwave.tap.";
 const K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: AudioObjectPropertyScope = fourcc(b"glob");
 const K_AUDIO_OBJECT_PROPERTY_SCOPE_INPUT: AudioObjectPropertyScope = fourcc(b"inpt");
 const K_AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT: AudioObjectPropertyScope = fourcc(b"outp");
@@ -152,6 +158,32 @@ unsafe fn device_name(device_id: AudioObjectID) -> Option<String> {
         CFRelease(cfstring);
     }
     name
+}
+
+unsafe fn device_uid(device_id: AudioObjectID) -> Option<String> {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_DEVICE_UID,
+        scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut cfstring: *const c_void = ptr::null();
+    let mut size: u32 = mem::size_of::<*const c_void>() as u32;
+    if AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut size,
+        &mut cfstring as *mut _ as *mut c_void,
+    ) != 0
+    {
+        return None;
+    }
+    let uid = cfstring_to_string(cfstring);
+    if !cfstring.is_null() {
+        CFRelease(cfstring);
+    }
+    uid
 }
 
 /// Whether the device exposes at least one stream object in `scope`.
@@ -287,6 +319,9 @@ fn list_by_scope(scope: AudioObjectPropertyScope) -> Vec<HalDevice> {
     let mut out = Vec::new();
     unsafe {
         for id in all_device_ids() {
+            if is_tap_aggregate(id) {
+                continue;
+            }
             if !has_streams_in_scope(id, scope) {
                 continue;
             }
@@ -336,6 +371,9 @@ fn scope_for(kind: crate::audio::device::DeviceKind) -> AudioObjectPropertyScope
 fn find_device_id(name: &str, scope: AudioObjectPropertyScope) -> Option<AudioObjectID> {
     unsafe {
         for id in all_device_ids() {
+            if is_tap_aggregate(id) {
+                continue;
+            }
             if !has_streams_in_scope(id, scope) {
                 continue;
             }
@@ -345,6 +383,13 @@ fn find_device_id(name: &str, scope: AudioObjectPropertyScope) -> Option<AudioOb
         }
     }
     None
+}
+
+/// True for our own private CATap capture aggregate; CoreAudio hands a
+/// process its own private aggregates, so they must be hidden from the menus.
+unsafe fn is_tap_aggregate(device_id: AudioObjectID) -> bool {
+    device_uid(device_id)
+        .is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
 }
 
 unsafe fn read_volume_for_element(

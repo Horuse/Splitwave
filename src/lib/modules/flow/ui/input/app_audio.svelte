@@ -6,8 +6,8 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
-	import { Combobox } from '$lib/modules/form/ui';
-	import { Apps, Refresh } from '$lib/components/icons';
+	import { Combobox, RescanButton } from '$lib/modules/form/ui';
+	import { Apps } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -17,19 +17,12 @@
 	const flow = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
 
-	let refreshing = $state(false);
-
 	function setApp(value: string | null) {
 		flow.updateNodeData(id, { bundleId: value });
 	}
 
 	async function refresh() {
-		refreshing = true;
-		try {
-			await audioStore.refreshAudioApplications();
-		} finally {
-			refreshing = false;
-		}
+		await audioStore.refreshAudioApplications();
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -67,18 +60,18 @@
 
 <Wrapper label="App Audio" accent="input" icon={Apps}>
 	<div class="flex w-64 flex-col gap-3">
-		<div class="flex items-center w-full gap-1">
-			<Combobox class="w-full" {options} value={data.bundleId ?? null} placeholder="— Select application —" emptyHint="No audible apps" onChange={setApp} />
-			<button
-				type="button"
-				class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
-				title="Refresh applications"
-				disabled={refreshing}
-				onclick={refresh}
-			>
-				<Refresh class={['h-3.5 w-3.5', refreshing ? 'animate-spin' : '']} />
-			</button>
-		</div>
+		<Combobox
+			class="w-full"
+			{options}
+			value={data.bundleId ?? null}
+			placeholder="— Select application —"
+			emptyHint="No audible apps"
+			onChange={setApp}
+		>
+			{#snippet footer()}
+				<RescanButton onRescan={refresh} />
+			{/snippet}
+		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}

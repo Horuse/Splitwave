@@ -1,12 +1,17 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { Add, ChevronDown } from '$lib/components/icons';
+	import { ChevronDown } from '$lib/components/icons';
 
 	interface Option {
 		value: string;
 		label: string;
 		/** Optional base64-encoded PNG (no data: prefix); rendered as a 16×16 icon. */
 		icon?: string | null;
+		/** Secondary line under the label (e.g. a plugin vendor). Also searched. */
+		subtitle?: string | null;
+		/** Short leading tag (e.g. a plugin format). Also searched. */
+		badge?: string | null;
 	}
 
 	interface Props {
@@ -16,9 +21,11 @@
 		emptyHint?: string;
 		onChange: (v: string | null) => void;
 		class?: string;
-		/** Footer action pinned below the list, e.g. a shortcut to create a missing option. */
-		actionLabel?: string;
-		onAction?: () => void;
+		/** Compact variant for dense node UIs. */
+		size?: 'sm' | 'md';
+		/** Footer pinned below the list, e.g. `ComboboxAction` / `RescanButton`
+		 * rows. Receives a `close` callback so an action can dismiss the panel. */
+		footer?: Snippet<[() => void]>;
 	}
 
 	let {
@@ -27,9 +34,9 @@
 		placeholder = '— Select —',
 		emptyHint = 'No matches',
 		onChange,
+		size = 'md',
 		class: ClassName,
-		actionLabel,
-		onAction
+		footer
 	}: Props = $props();
 
 	let open = $state(false);
@@ -39,11 +46,13 @@
 	let activeIndex = $state(0);
 
 	let selected = $derived(options.find((o) => o.value === value));
-	let filtered = $derived(
-		search.trim()
-			? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()))
-			: options
-	);
+	let filtered = $derived.by(() => {
+		const q = search.trim().toLowerCase();
+		if (!q) return options;
+		return options.filter((o) =>
+			`${o.label} ${o.subtitle ?? ''} ${o.badge ?? ''}`.toLowerCase().includes(q)
+		);
+	});
 
 	function openPanel() {
 		open = true;
@@ -95,12 +104,22 @@
 <div bind:this={containerEl} class="relative min-w-0 {ClassName}">
 	<button
 		type="button"
-		class="nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-1100 hover:bg-neutral-200"
+		class={[
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 text-left text-neutral-1100 hover:bg-neutral-200',
+			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
+		]}
 		onclick={() => (open ? closePanel() : openPanel())}
 	>
 		<span class="flex min-w-0 flex-1 items-center gap-1.5">
 			{#if selected?.icon}
 				<img src="data:image/png;base64,{selected.icon}" alt="" class="h-4 w-4 shrink-0" />
+			{/if}
+			{#if selected?.badge}
+				<span
+					class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold uppercase text-neutral-1000"
+				>
+					{selected.badge}
+				</span>
 			{/if}
 			<span class="truncate {selected ? '' : 'text-neutral-900'}">
 				{selected?.label ?? placeholder}
@@ -149,7 +168,19 @@
 							{#if opt.icon}
 								<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
 							{/if}
-							<span class="truncate">{opt.label}</span>
+							{#if opt.badge}
+								<span
+									class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold uppercase text-neutral-1000"
+								>
+									{opt.badge}
+								</span>
+							{/if}
+							<span class="flex min-w-0 flex-col">
+								<span class="truncate">{opt.label}</span>
+								{#if opt.subtitle}
+									<span class="truncate text-[10px] text-neutral-900">{opt.subtitle}</span>
+								{/if}
+							</span>
 						</button>
 					</li>
 				{/each}
@@ -157,18 +188,8 @@
 					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint}</li>
 				{/if}
 			</ul>
-			{#if actionLabel && onAction}
-				<button
-					type="button"
-					class="nodrag nopan flex w-full items-center gap-1.5 border-t border-neutral-300 bg-neutral-100 px-2 py-1.5 text-left text-xs font-medium text-neutral-1000 hover:bg-neutral-200"
-					onclick={() => {
-						closePanel();
-						onAction();
-					}}
-				>
-					<Add class="size-3.5 shrink-0" />
-					<span class="truncate">{actionLabel}</span>
-				</button>
+			{#if footer}
+				{@render footer(closePanel)}
 			{/if}
 		</div>
 	{/if}

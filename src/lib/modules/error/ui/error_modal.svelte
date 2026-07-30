@@ -74,23 +74,31 @@
 
 {#if current}
 	<ModalShell
-		title="Something went wrong"
-		titleClass="text-md font-semibold text-red-500"
+		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
+		titleClass={current.previousRun
+			? 'text-sm font-semibold text-amber-500'
+			: 'text-sm font-semibold text-red-500'}
 		onClose={dismiss}
 	>
 		{#snippet badge()}
-			<span class="rounded bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
+			<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
 				{sourceLabel(current.source)}
 			</span>
 		{/snippet}
 
-		<div class="px-5 py-4">
-			<p class="mb-2 text-xs text-neutral-1000">Please report this so we can fix it.</p>
-			<pre class="max-h-40 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[11px] leading-tight whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
+		<div class="flex flex-col gap-3 px-5 py-4">
+			<p class="text-xs text-neutral-900">
+				{#if current.previousRun}
+					The app closed unexpectedly during your previous session. Reporting this helps us fix it.
+				{:else}
+					Please report this so we can fix it.
+				{/if}
+			</p>
+			<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
 			{#if current.stack}
-				<details class="mt-3">
-					<summary class="cursor-pointer text-[11px] text-neutral-900">Stack trace</summary>
-					<pre class="mt-2 max-h-60 overflow-auto rounded bg-neutral-200 p-2 font-mono text-[10px] leading-tight whitespace-pre-wrap break-words text-neutral-1000">{current.stack}</pre>
+				<details class="group">
+					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Stack trace</summary>
+					<pre class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1000">{current.stack}</pre>
 				</details>
 			{/if}
 		</div>

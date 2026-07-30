@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  # Splitwave ships under MIT; a copyleft dependency would silently revoke that.
+  # See src-tauri/deny.toml.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          # Only what this gate is for. `advisories` would fail the build on an
+          # unrelated CVE published upstream, which is a separate concern.
+          command: check licenses bans
+
   check:
     runs-on: macos-latest
     steps:

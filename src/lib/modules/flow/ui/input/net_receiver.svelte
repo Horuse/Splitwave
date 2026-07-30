@@ -1,18 +1,12 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import {
-		useNodeConnections,
-		useSvelteFlow,
-		Handle,
-		Position,
-		type Node,
-		type NodeProps
-	} from '@xyflow/svelte';
+	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { formatRate, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
+	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
@@ -22,6 +16,9 @@
 
 	let loss = $state<number | null>(null);
 	let rate = $state(0); // bytes/sec
+	// Jitter buffer depth: the latency this node adds, which the receive path
+	// grows on its own when the link gets bursty.
+	let bufferMs = $state(0);
 	let prevBytes = 0;
 	let prevAt = 0;
 	const lossWindow = new LossWindow();
@@ -33,6 +30,7 @@
 		if (!s) {
 			loss = null;
 			rate = 0;
+			bufferMs = 0;
 			received = 0;
 			prevBytes = 0;
 			prevAt = now;
@@ -45,6 +43,7 @@
 		}
 		prevBytes = s.bytes;
 		prevAt = now;
+		bufferMs = s.bufferMs;
 		received = s.channels;
 	}, POLL_MS);
 	onDestroy(() => clearInterval(interval));
@@ -83,7 +82,7 @@
 
 </script>
 
-<Wrapper label="Net Receiver" accent="input" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
+<Wrapper label="Net Receiver" icon={ArrowDownload} accent="network" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
 	<div class="nodrag nopan flex w-44 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">
@@ -109,12 +108,12 @@
 			<span class="font-mono text-[9px] tabular-nums text-neutral-500">{formatRate(rate)}</span>
 		</div>
 
-		<hr class="border-neutral-300" />
-
-		<div class="relative -mr-4 flex min-h-5 items-center justify-between gap-1 pr-4">
-			<span class="truncate font-mono text-[9px] text-neutral-500">all inputs</span>
-			<span class="shrink-0 font-mono text-[9px] text-neutral-400">mix</span>
-			<Handle type="source" position={Position.Right} class="handle" />
+		<!-- added latency -->
+		<div class="flex items-center justify-between">
+			<span class="font-mono text-[9px] text-neutral-500">delay</span>
+			<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+				{bufferMs ? `${bufferMs}ms` : '--'}
+			</span>
 		</div>
 	</div>
 </Wrapper>

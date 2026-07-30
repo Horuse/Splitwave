@@ -1,17 +1,28 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
-    import { createId } from '@paralleldrive/cuid2';
     import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
     import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
     import { modalManager } from '$lib/modules/overlay/modal';
     import { ConfirmModal } from '$lib/modules/overlay/ui';
     import { relativeTime } from '$lib/utils/time';
+    import { isFromFuture } from '$lib/modules/pipeline/migrations';
+    import { TEMPLATES, instantiate } from '$lib/modules/template';
+    import { TemplateModal } from '$lib/modules/template/ui';
 
     async function createPipeline() {
-        const id = createId();
-        const p = pipelineMethods.emptyPipeline(id, `Pipeline ${pipelineStore.pipelines.length + 1}`);
+        const templateId = await modalManager.open<string>('New pipeline', TemplateModal, {
+            size: 'xl',
+            description: 'Start from a wired-up layout, or an empty canvas.'
+        });
+        if (!templateId) return;
+
+        const template = TEMPLATES.find((t) => t.id === templateId);
+        if (!template) return;
+
+        const name = `Pipeline ${pipelineStore.pipelines.length + 1}`;
+        const p = instantiate(template, name);
         await pipelineStore.save(p);
-        await goto(`/pipelines/${id}`);
+        await goto(`/pipelines/${p.id}`);
     }
 
     async function remove(id: string, name: string, event: Event) {
@@ -47,7 +58,7 @@
                 await audioMethods.stopPipeline();
             } else {
                 const p = await pipelineMethods.get(id);
-                if (!p) return;
+                if (!p || isFromFuture(p)) return;
                 await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
             }
         } catch (e) {
@@ -66,6 +77,7 @@
                 <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
             {/if}
 
+                <a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
                 <a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
         </div>
     {/snippet}
@@ -100,21 +112,35 @@
     {:else}
         <ul class="flex flex-col gap-4">
             {#each pipelineStore.pipelines as p (p.id)}
-                <li class="flex items-center bg-neutral-200 hover:bg-neutral-300 transition-colors rounded-2xl">
-                    <a href={`/pipelines/${p.id}`} class="flex-1 p-4">
+                {@const stale = isFromFuture(p)}
+                <li class={['flex items-center rounded-2xl transition-colors', stale ? 'bg-neutral-100' : 'bg-neutral-200 hover:bg-neutral-300']}>
+                    <svelte:element
+                        this={stale ? 'div' : 'a'}
+                        href={stale ? undefined : `/pipelines/${p.id}`}
+                        class={['flex-1 p-4', stale && 'opacity-60']}
+                    >
                         <div class="flex items-center gap-2">
                             {#if audioStore.runningPipelineId === p.id}
                                 <span class="size-2 rounded-full bg-green-500"></span>
                             {/if}
                             <span class="font-medium">{p.name}</span>
+                            {#if stale}
+                                <span class="rounded border border-amber-600/50 bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] text-amber-600">
+                                    newer version
+                                </span>
+                            {/if}
                             {#if audioStore.runningPipelineId === p.id}
                                 <RunningTimer />
                             {/if}
                         </div>
                         <div class="text-xs text-neutral-900">
-                            {p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
+                            {#if stale}
+                                Saved by a newer version - update Splitwave to open it.
+                            {:else}
+                                {p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
+                            {/if}
                         </div>
-                    </a>
+                    </svelte:element>
                     <div class="flex items-center py-3.5 h-full gap-2 mx-4">
                         <button
                             class={[
@@ -122,7 +148,7 @@
                                 !audioStore.isRunning && 'green',
                                 audioStore.isRunning && audioStore.runningPipelineId === p.id && 'red'
                             ]}
-                            disabled={!!busy || (audioStore.isRunning && audioStore.runningPipelineId !== p.id)}
+                            disabled={stale || !!busy || (audioStore.isRunning && audioStore.runningPipelineId !== p.id)}
                             onclick={(e) => toggle(p.id, e)}
                         >
                             {#if busy === p.id}

@@ -100,6 +100,11 @@ impl BroadcastTx {
         Ok(slot)
     }
 
+    /// Slots still available for `add`.
+    pub fn free_slots(&self) -> usize {
+        self.used.iter().filter(|&&b| !b).count()
+    }
+
     /// Unregister the producer at `slot`. Idempotent -- quietly no-ops if
     /// the slot was already free.
     pub fn remove(&mut self, slot: usize) -> AppResult<()> {
@@ -156,6 +161,19 @@ impl BroadcastRx {
                 bulk_push(p, samples);
             }
         }
+    }
+
+    /// Samples queued in the fullest active slot, or `None` when nothing is
+    /// subscribed. A file-driven source paces itself off this so its rate is
+    /// dictated by the consumers rather than by a wall clock of its own.
+    pub fn max_queued(&mut self) -> Option<usize> {
+        self.apply_commands();
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .filter(|p| !p.is_abandoned())
+            .map(|p| p.buffer().capacity() - p.slots())
+            .max()
     }
 
     /// Push `samples` to every active slot without dropping on overflow --

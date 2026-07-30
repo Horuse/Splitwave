@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("audio stream error: {0}")]
     Stream(String),
 
+    #[error("plugin error: {0}")]
+    Plugin(String),
+
     #[error("invalid graph: {0}")]
     Validation(String),
 

@@ -9,9 +9,11 @@
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
+	import { isFromFuture } from '$lib/modules/pipeline/migrations';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
+	let stale = $state(false);
 
 	$effect(() => {
 		const id = page.params.id;
@@ -23,6 +25,8 @@
 			const p = await pipelineMethods.get(id);
 			if (!p) {
 				notFound = true;
+			} else if (isFromFuture(p)) {
+				stale = true;
 			} else {
 				pipeline = p;
 			}
@@ -46,10 +50,14 @@
 	}
 </script>
 
-<Toaster position="bottom-end" containerClassName="mr-72" toastOptions={{
-	duration: 5000,
-	className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!',
-}} />
+<Toaster
+	position="bottom-end"
+	containerClassName="mr-72"
+	toastOptions={{
+		duration: 5000,
+		className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!'
+	}}
+/>
 
 <Header>
 	{#snippet left()}
@@ -79,6 +87,21 @@
 <div class="flex h-[calc(100vh-40px)] w-full">
 	{#if notFound}
 		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
+	{:else if stale}
+		<div class="flex w-full flex-col items-start gap-4 p-8">
+			<div class="warning-block max-w-xl">
+				<span class="font-semibold"
+					>This pipeline was saved by a newer version of Splitwave.</span
+				>
+				<span>
+					Its layout is not known to this build, so opening it would mean guessing at
+					routing this version cannot represent. It is left untouched and can still be
+					deleted.
+				</span>
+				<span>Update Splitwave to open it.</span>
+			</div>
+			<a href="/" class="button-main primary rounded-lg text-sm">Back to pipelines</a>
+		</div>
 	{:else if pipeline}
 		<Flow.ui.Flow {pipeline} />
 	{:else}

@@ -111,6 +111,12 @@ pub(super) fn spawn_meter_thread(
                             "tpL": snap.tp_l,
                             "tpR": snap.tp_r,
                             "lra": snap.lra,
+                            "rms": snap.rms,
+                            "noiseFloor": snap.noise_floor,
+                            "samplePeak": snap.sample_peak,
+                            "dcOffset": snap.dc_offset,
+                            "correlation": snap.correlation,
+                            "clips": snap.clips,
                         }),
                     );
                 }
@@ -130,7 +136,12 @@ pub(super) fn spawn_meter_thread(
                     }
                     let _ = app.emit(
                         SCOPE_EVENT,
-                        json!({ "nodeId": s.node_id, "channels": ch, "data": chans }),
+                        json!({
+                            "nodeId": s.node_id,
+                            "channels": ch,
+                            "data": chans,
+                            "sampleRate": s.sample_rate,
+                        }),
                     );
                 }
             }

@@ -55,6 +55,7 @@ async function diagnoseError(e: unknown): Promise<string> {
 	}
 }
 
+
 export async function installUpdate(): Promise<void> {
 	const s = updaterStore.state;
 	if (s.phase !== 'available') return;

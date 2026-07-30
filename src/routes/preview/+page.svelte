@@ -9,6 +9,7 @@
 		if (cmd === 'list_output_devices') return [{ ...SPLITWAVE_DEVICE, kind: 'output' }];
 		if (cmd === 'device_info') return { sampleRate: 48000, channels: 2, sampleFormat: 'f32' };
 		if (cmd === 'get_device_volume') return 0.75;
+		if (cmd === 'scan_plugins') return [];
 		if (cmd.startsWith('list_')) return [];
 		if (cmd === 'get_app_icons') return {};
 		if (cmd === 'is_pipeline_running') return false;

@@ -94,7 +94,69 @@ model for real-time speech enhancement.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-5. Other Notable Dependencies
+5. VST3 Plugin Hosting
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Splitwave can load third-party VST3 plugins. It does NOT include,
+link against, or redistribute the Steinberg VST 3 SDK.
+
+Steinberg distributes the VST 3 SDK under a dual license: GPL-3.0,
+or a separate proprietary Steinberg VST 3 licensing agreement.
+Neither applies here, because Splitwave contains no SDK code.
+
+The host implementation is built on:
+
+  - `vst3` (https://github.com/coupler-rs/vst3-rs), licensed
+    MIT OR Apache-2.0. It provides Rust bindings for the VST 3 API
+    generated from the interface definitions; it does not vendor
+    Steinberg SDK sources.
+  - The COM objects a VST 3 host must expose (IHostApplication,
+    IComponentHandler, IPlugFrame and friends) are implemented from
+    scratch in this repository under the MIT License.
+
+The RustAudio `vst3-sys` crate, which is GPL-3.0, is explicitly
+denied in `src-tauri/deny.toml` so it cannot enter the dependency
+tree.
+
+VST 3 is a trademark of Steinberg Media Technologies GmbH.
+Splitwave is not affiliated with or endorsed by Steinberg. Plugins
+loaded by the user remain under their own licenses; Splitwave
+ships none.
+
+VST3 hosting runs on macOS, Windows and Linux. Editors embed as
+NSView, HWND and X11 windows respectively; on Linux the host also
+implements Steinberg's IRunLoop, which plugins there rely on for
+their event handling.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. CLAP and Audio Unit Plugin Hosting
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CLAP hosting uses `clack` (https://github.com/prokopyl/clack),
+licensed under the MIT License, which binds the CLAP API
+(https://github.com/free-audio/clap, MIT License).
+
+Audio Unit hosting (macOS only, as the format is Apple's) uses the
+AudioToolbox and AudioUnit system frameworks through the `objc2-*`
+binding crates (MIT License). No Apple code is redistributed.
+
+As with VST3, plugins loaded by the user remain under their own
+licenses and are not distributed with Splitwave.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. Dependency License Gating
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The Rust dependency tree is checked in CI with `cargo-deny` against
+an explicit license allowlist (`src-tauri/deny.toml`). Copyleft
+crates that would conflict with MIT distribution are denied rather
+than reviewed after the fact.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. Other Notable Dependencies
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The following components are used under permissive licenses

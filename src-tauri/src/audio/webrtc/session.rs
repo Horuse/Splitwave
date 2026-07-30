@@ -9,6 +9,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 use crate::audio::graph::{NetCodec, OpusApplication};
 use crate::audio::netaudio::codec::ChannelDecoder;
 use crate::audio::netaudio::packet::Format;
+use crate::audio::netaudio::timeline::ChannelTimeline;
 use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry};
 
 use super::OPUS_SR;
@@ -21,6 +22,9 @@ pub struct WebRtcSession {
     // One send ring per local channel; the encode task drains all of them and
     // tags each Opus packet with its channel index.
     pub send_consumers: Mutex<Vec<Consumer<f32>>>,
+    /// Bumped whenever the send rings are replaced, so the encode task rebuilds
+    /// every channel's encode state together.
+    pub send_gen: AtomicU64,
     // Each output subgraph builds its own bridge, so received audio fans out to
     // per-bridge rings (keyed "peer:ch") rather than being drained once.
     pub fanout: FanoutRegistry,
@@ -73,8 +77,7 @@ pub struct PeerChannel {
     pub decoder: Mutex<ChannelDecoder>,
     // Decoded 48 kHz audio is pushed straight into every consumer's ring.
     pub broadcast: ChannelBroadcast,
-    // Last seq seen on this channel, to count gaps as loss.
-    pub last_seq: Mutex<Option<u16>>,
+    pub timeline: Mutex<ChannelTimeline>,
 }
 
 impl WebRtcSession {
@@ -84,6 +87,7 @@ impl WebRtcSession {
             opus_bitrate,
             opus_application,
             send_consumers: Mutex::new(Vec::new()),
+            send_gen: AtomicU64::new(0),
             fanout: FanoutRegistry::default(),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
@@ -108,6 +112,7 @@ impl WebRtcSession {
 
     pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>, output_sr: u32) {
         *self.send_consumers.lock().unwrap() = consumers;
+        self.send_gen.fetch_add(1, Ordering::SeqCst);
         self.output_sr.store(output_sr, Ordering::Relaxed);
     }
 
@@ -116,8 +121,8 @@ impl WebRtcSession {
     }
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.
-    pub fn attach_channel(&self, peer: String, channel: u8) -> ChannelBroadcast {
-        self.fanout.attach_channel(format!("{peer}:{channel}"))
+    pub fn attach_channel(&self, peer: String, channel: u8, first_seq: u16) -> ChannelBroadcast {
+        self.fanout.attach_channel(format!("{peer}:{channel}"), first_seq)
     }
 
     /// Drops a disconnected peer's channels so new bridges don't wire to them.

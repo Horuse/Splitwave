@@ -32,7 +32,7 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
+pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, SpeakerResolved};
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
@@ -50,9 +50,10 @@ pub(super) enum ResolvedOutput {
         format: RecordingFormat,
         channels: u16,
     },
-    // The DAG produces at 48 kHz; the sender's send rings are wired inside
-    // `build_output_graph`, so nothing device-specific to resolve here.
-    NetSender,
+    // The DAG produces at 48 kHz; the send rings are wired inside
+    // `build_output_graph`, so nothing device-specific to resolve here. Covers
+    // both direct-IP and WebRTC senders.
+    WireSender,
 }
 
 impl ResolvedOutput {
@@ -60,7 +61,7 @@ impl ResolvedOutput {
         match self {
             ResolvedOutput::Speaker(s) => s.sample_rate,
             ResolvedOutput::File { sample_rate, .. } => *sample_rate,
-            ResolvedOutput::NetSender => crate::audio::netaudio::SR,
+            ResolvedOutput::WireSender => crate::audio::netaudio::SR,
         }
     }
 }
@@ -83,7 +84,9 @@ pub(super) fn resolve_output(
             format: *format,
             channels: *channels,
         }),
-        OutputSpec::NetSender { .. } => Ok(ResolvedOutput::NetSender),
+        OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => {
+            Ok(ResolvedOutput::WireSender)
+        }
     }
 }
 
@@ -171,13 +174,13 @@ pub(super) fn start_monitor_worker(
     ))
 }
 
-// Clock-paced worker for a NetSender output. The Consumer node pushes each
+// Clock-paced worker for a wire-sender output (direct-IP or WebRTC). The Consumer node pushes each
 // channel into its send ring inside `process_block`; the sink is a no-op since
 // the background UDP task does the transmitting. Catch-up pacing: a scheduler
 // hiccup must not lose wire time -- the send rings are elastic, and lost time
 // otherwise builds capture backlog until the trim splices it (a click baked
 // into the stream).
-pub(super) fn start_net_sender_worker(
+pub(super) fn start_wire_sender_worker(
     graph: OutputGraph,
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));

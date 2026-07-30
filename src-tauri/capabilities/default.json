@@ -20,6 +20,9 @@
 		"os:allow-platform",
 		"os:allow-version",
 		"os:allow-arch",
-		"os:allow-hostname"
+		"os:allow-hostname",
+		"global-shortcut:allow-register",
+		"global-shortcut:allow-unregister",
+		"global-shortcut:allow-is-registered"
 	]
 }

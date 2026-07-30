@@ -32,6 +32,9 @@ struct Config {
 pub struct NetSender {
     config: Config,
     send_consumers: Arc<Mutex<Vec<Consumer<f32>>>>,
+    /// Bumped whenever the send rings are replaced, so the task rebuilds every
+    /// channel's encode state together.
+    consumers_gen: Arc<AtomicU64>,
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     bytes: Arc<AtomicU64>,
     packets: Arc<AtomicU64>,
@@ -75,6 +78,7 @@ pub fn get_or_create(
     let sender = Arc::new(NetSender {
         config,
         send_consumers: Arc::new(Mutex::new(Vec::new())),
+        consumers_gen: Arc::new(AtomicU64::new(0)),
         task: Mutex::new(None),
         bytes: Arc::new(AtomicU64::new(0)),
         packets: Arc::new(AtomicU64::new(0)),
@@ -89,6 +93,7 @@ impl NetSender {
     /// (re)build of this node's output sub-graph.
     pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>) {
         *self.send_consumers.lock().unwrap() = consumers;
+        self.consumers_gen.fetch_add(1, Ordering::SeqCst);
     }
 
     fn stop(&self) {
@@ -119,6 +124,8 @@ impl NetSender {
         info!(%target, "net sender started");
 
         let consumers = self.send_consumers.clone();
+        let consumers_gen = self.consumers_gen.clone();
+        let mut seen_gen = u64::MAX;
         let format = self.config.format;
         let bitrate = self.config.opus_bitrate;
 
@@ -135,6 +142,16 @@ impl NetSender {
             // before the encode / send work.
             {
                 let mut cons = consumers.lock().unwrap();
+                // Each encoder holds a partial Opus frame; keeping them across a
+                // ring swap would leave a channel added now offset from its
+                // siblings by whatever they had buffered.
+                let gen = consumers_gen.load(Ordering::SeqCst);
+                if gen != seen_gen {
+                    seen_gen = gen;
+                    encoders.clear();
+                    ins.clear();
+                    seqs.clear();
+                }
                 let n = cons.len();
                 while encoders.len() < n {
                     encoders.push(ChannelEncoder::new(format, bitrate, application));

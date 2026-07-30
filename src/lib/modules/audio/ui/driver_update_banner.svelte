@@ -38,8 +38,8 @@
 			<span class="text-base font-bold">Driver update required</span>
 			<p>
 				An older audio driver is installed and may cause audio glitches. Reinstall to update
-				(requires your password, then restarts the audio service). Afterwards, go to Virtual
-				devices and press Apply to recreate your devices.
+				(requires your password once, then restarts the audio service). Your virtual devices
+				are kept.
 			</p>
 		</div>
 		<button class="btn-warning h-full py-1.5" onclick={update} disabled={updating}>

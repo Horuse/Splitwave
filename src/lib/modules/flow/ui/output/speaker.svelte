@@ -8,8 +8,8 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
-	import { Combobox } from '$lib/modules/form/ui';
-	import { Refresh, Speaker } from '$lib/components/icons';
+	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
+	import { Speaker, Add } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -19,7 +19,6 @@
 	const flow = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
 
-	let refreshing = $state(false);
 	let info = $state<NativeDeviceInfo | null>(null);
 
 	let volume = $state<number | null>(null);
@@ -31,13 +30,8 @@
 	}
 
 	async function refresh() {
-		refreshing = true;
-		try {
-			await audioStore.refreshOutputDevices();
-			await loadVolume();
-		} finally {
-			refreshing = false;
-		}
+		await audioStore.refreshOutputDevices();
+		await loadVolume();
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -113,32 +107,29 @@
 	let volumePct = $derived(volume === null ? 0 : volume * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
-	// Always per-channel: a multi-channel device exposes one input handle per
-	// channel; mono stays a single handle.
 </script>
 
 <Wrapper label="Speaker" accent="output" icon={Speaker}>
 	<div class="flex w-50 flex-col gap-1">
-		<div class="flex items-center w-full gap-1">
-			<Combobox
-				class="w-full"
-				{options}
-				value={data.deviceId ?? null}
-				placeholder="— Select output —"
-				onChange={setDevice}
-				actionLabel="Add virtual device"
-				onAction={() => goto('/virtual-devices')}
-			/>
-			<button
-				type="button"
-				class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
-				title="Refresh devices"
-				disabled={refreshing}
-				onclick={refresh}
-			>
-				<Refresh class={['h-3.5 w-3.5', refreshing ? 'animate-spin' : '']} />
-			</button>
-		</div>
+		<Combobox
+			class="w-full"
+			{options}
+			value={data.deviceId ?? null}
+			placeholder="— Select output —"
+			onChange={setDevice}
+		>
+			{#snippet footer(close)}
+				<RescanButton onRescan={refresh} />
+				<ComboboxAction
+					label="Add virtual device"
+					icon={Add}
+					onclick={() => {
+						close();
+						goto('/virtual-devices');
+					}}
+				/>
+			{/snippet}
+		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}

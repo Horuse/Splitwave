@@ -8,8 +8,9 @@ use super::packet::{
 };
 use super::{OPUS_FRAME_SAMPLES, SR};
 
-/// Samples per PCM packet, sized to stay under one MTU (even for stereo).
-fn pcm_chunk_samples(format: Format) -> usize {
+/// Samples one packet of `format` carries. Fixed per format, which is what
+/// makes a packet's `seq` a position on the source's timeline.
+pub fn chunk_samples(format: Format) -> usize {
     let bytes = match format {
         Format::PcmF32 => 4,
         Format::PcmI16 => 2,
@@ -50,7 +51,7 @@ impl ChannelEncoder {
     /// payload (packet body, without header).
     pub fn push(&mut self, samples: &[f32], mut emit: impl FnMut(&[u8])) {
         self.acc.extend_from_slice(samples);
-        let chunk = pcm_chunk_samples(self.format);
+        let chunk = chunk_samples(self.format);
         let mut off = 0;
         while self.acc.len() - off >= chunk {
             let frame = &self.acc[off..off + chunk];
@@ -81,6 +82,10 @@ impl ChannelEncoder {
 pub struct ChannelDecoder {
     opus: Option<opus::Decoder>,
     pcm: Vec<f32>,
+    // Samples the last packet decoded to. The sender's MTU (and so its PCM
+    // chunk) need not match ours, so concealment follows what this stream
+    // actually carries rather than what we would have sent.
+    last_chunk: usize,
 }
 
 impl ChannelDecoder {
@@ -88,22 +93,42 @@ impl ChannelDecoder {
         let opus = opus::Decoder::new(SR, opus::Channels::Mono)
             .map_err(|e| warn!(error = %e, "opus decoder init failed"))
             .ok();
-        Self { opus, pcm: vec![0.0; OPUS_FRAME_SAMPLES] }
+        Self { opus, pcm: vec![0.0; OPUS_FRAME_SAMPLES], last_chunk: 0 }
     }
 
-    /// Generate one frame of Opus packet-loss concealment (Opus extrapolates
-    /// from decoder state) appended to `out`. No-op for raw PCM -- there the
-    /// playback side conceals with a fade. Call once per lost Opus packet.
-    pub fn conceal(&mut self, out: &mut Vec<f32>) {
-        if let Some(dec) = self.opus.as_mut() {
-            if let Ok(n) = dec.decode_float(&[], &mut self.pcm, false) {
-                out.extend_from_slice(&self.pcm[..n]);
+    /// Append concealment for `packets` lost packets: exactly what they would
+    /// have carried, so the channel keeps its place on the source's timeline.
+    /// Opus extrapolates from decoder state; raw PCM has no codec PLC and gets
+    /// silence (the playback side fades across the join).
+    pub fn conceal_packets(&mut self, format: Format, packets: u16, out: &mut Vec<f32>) {
+        let want = out.len() + self.chunk(format) * packets as usize;
+        if format == Format::Opus {
+            for _ in 0..packets {
+                let Some(dec) = self.opus.as_mut() else { break };
+                match dec.decode_float(&[], &mut self.pcm, false) {
+                    Ok(n) => out.extend_from_slice(&self.pcm[..n]),
+                    Err(e) => {
+                        warn!(error = %e, "opus conceal failed");
+                        break;
+                    }
+                }
             }
+        }
+        // Whatever the codec declined to produce is still owed to the timeline.
+        out.resize(want.max(out.len()), 0.0);
+    }
+
+    fn chunk(&self, format: Format) -> usize {
+        if self.last_chunk > 0 {
+            self.last_chunk
+        } else {
+            chunk_samples(format)
         }
     }
 
     /// Decodes one payload into 48 kHz interleaved samples appended to `out`.
     pub fn decode(&mut self, format: Format, payload: &[u8], out: &mut Vec<f32>) {
+        let before = out.len();
         match format {
             Format::Opus => {
                 if let Some(dec) = self.opus.as_mut() {
@@ -115,6 +140,11 @@ impl ChannelDecoder {
             }
             Format::PcmF32 => pcm_f32_decode(payload, out),
             Format::PcmI16 => pcm_i16_decode(payload, out),
+        }
+        match out.len() - before {
+            // A packet the codec rejected still owes the timeline its samples.
+            0 => out.resize(before + self.chunk(format), 0.0),
+            n => self.last_chunk = n,
         }
     }
 }

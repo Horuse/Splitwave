@@ -4,8 +4,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
-	import { Add, Minus } from '$lib/components/icons';
+	import { Add, Minus, Pulse } from '$lib/components/icons';
 	import { PREVIEW_CTX, channelColor, channelLabel } from '$lib/modules/flow/utils';
+	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
@@ -215,7 +216,10 @@
 	{/if}
 
 	<div class="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
-		<span class="text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">Waveform</span>
+		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
+			<Pulse class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
+			Waveform
+		</span>
 		<div class="flex items-center gap-1.5">
 			<button
 				type="button"

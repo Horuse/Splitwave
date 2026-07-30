@@ -3,6 +3,9 @@
 	import type { SaturatorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Saturator } from '$lib/components/icons';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 
 	type SaturatorNodeType = Node<SaturatorNodeData, 'saturator'>;
@@ -19,6 +22,11 @@
 		const patch = { driveDb: v };
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
+	}
+
+	function applyPreset(p: PresetData<'saturator'>) {
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
@@ -63,6 +71,7 @@
 
 <Wrapper
 	label="Saturator"
+	icon={Saturator}
 	accent="effect"
 	hasInput
 	hasOutput
@@ -72,6 +81,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex w-50 flex-col gap-1.5">
+		<PresetBar kind="saturator" {data} onApply={applyPreset} />
+
 		<div class="flex items-start gap-2">
 			<svg
 				viewBox="0 0 {CURVE_W} {CURVE_H}"

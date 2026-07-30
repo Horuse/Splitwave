@@ -45,6 +45,130 @@ where
     .map_err(|_| AppError::Stream("audio request task failed".into()))?
 }
 
+/// Scans standard install directories for hostable plugins. Loading foreign
+/// dylibs blocks and can be slow, so it runs off the main thread.
+#[tauri::command]
+pub async fn scan_plugins() -> AppResult<Vec<crate::audio::plugins::PluginDescriptor>> {
+    tauri::async_runtime::spawn_blocking(crate::audio::plugins::scan_all)
+        .await
+        .map_err(|_| AppError::Plugin("plugin scan task failed".into()))
+}
+
+#[tauri::command]
+pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()> {
+    let id = node_id.clone();
+    let r = tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::editor::open(&id, &title)
+    })
+    .await
+    .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
+    .map_err(AppError::Plugin);
+    if let Err(e) = &r {
+        // The node id has to be re-supplied here: it was moved into the task.
+        error!(node_id, error = %e, "open_plugin_editor failed");
+    }
+    r
+}
+
+/// Serializes a running plugin's state to base64 so the FE can persist it in
+/// the node's data. Returns null when the plugin isn't running or has no state.
+#[tauri::command]
+pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
+    let id = node_id.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        // A format without state persistence reports it; the node then has
+        // nothing to store, which is not the same as an empty state.
+        crate::audio::plugins::registry::for_node(&id).and_then(|h| match h.save_state(&id) {
+            Ok(state) => state,
+            Err(unsupported) => {
+                tracing::debug!(
+                    ?unsupported.format,
+                    capability = unsupported.capability,
+                    "plugin state not persisted"
+                );
+                None
+            }
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        error!(node_id, "get_plugin_state task failed");
+        None
+    }))
+}
+
+/// Automatable parameters of a running plugin for the node UI. Empty when the
+/// plugin isn't running or exposes no parameters.
+#[tauri::command]
+pub async fn get_plugin_params(
+    node_id: String,
+) -> AppResult<Vec<crate::audio::plugins::PluginParamInfo>> {
+    let id = node_id.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::registry::for_node(&id)
+            .map(|h| h.params(&id))
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_else(|_| {
+        error!(node_id, "get_plugin_params task failed");
+        Vec::new()
+    }))
+}
+
+/// Which plugin a node is actually running and whether it can show an editor.
+/// The node waits on this after a change: a rebuild is not instant, and acting
+/// on the outgoing plugin opens the wrong editor.
+#[tauri::command]
+pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::PluginStatus> {
+    let id = node_id.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::registry::for_node(&id)
+            .map(|h| h.status(&id))
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_else(|_| {
+        error!(node_id, "plugin_status task failed");
+        Default::default()
+    }))
+}
+
+/// Persisted crash reports from previous runs, cleared as they are read.
+#[tauri::command]
+pub fn take_crash_reports() -> Vec<serde_json::Value> {
+    crate::take_crash_reports()
+}
+
+/// Dev-only: panics on the main thread to exercise the crash-persistence path
+/// (a real panic, not a faked event). Crashes the app on purpose.
+#[tauri::command]
+pub fn debug_panic(app: AppHandle) {
+    let _ = app.run_on_main_thread(|| {
+        panic!("debug: intentional test panic");
+    });
+}
+
+#[tauri::command]
+pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
+    let id = node_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::editor::close(&id)
+    })
+    .await
+    .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
+    .map_err(AppError::Plugin)
+}
+
+#[tauri::command]
+pub async fn play_cue(device_id: String, muted: bool, gain: f32) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::pipeline::play_cue(&device_id, muted, gain)
+    })
+    .await
+        .map_err(|_| AppError::Stream("cue task failed".into()))?
+}
+
 #[tauri::command]
 pub fn list_input_devices() -> AppResult<Vec<DeviceInfo>> {
     let devices = device::list_inputs()?;
@@ -247,11 +371,18 @@ pub async fn apply_virtual_devices(
     info!(count = devices.len(), "applying virtual devices");
     // Reloading the driver yanks its devices; a pipeline holding one wedges mid-call.
     let tx = state.audio_tx.clone();
-    audio_request(tx, |reply| Command::Stop { reply })
+    let stopped = match audio_request(tx, |reply| Command::Stop { reply })
         .await
-        .and_then(|r| r)
-        .map_err(|e| e.to_string())?;
-    let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
+        .map_err(|e| e.to_string())?
+    {
+        Ok(()) => true,
+        // An idle engine already satisfies what Stop is here to guarantee.
+        Err(AppError::NotRunning) => false,
+        Err(e) => return Err(e.to_string()),
+    };
+    if stopped {
+        let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
+    }
     tauri::async_runtime::spawn_blocking(move || virtual_device::apply_virtual_devices(devices))
         .await
         .map_err(|_| "virtual device task failed".to_string())?
@@ -358,6 +489,13 @@ pub fn webrtc_peer_stats(node_id: String) -> std::collections::HashMap<String, P
         .collect()
 }
 
+/// Jitter buffer depth in ms, the latency this node adds. Session-wide: unlike
+/// ping, it is a property of the buffer every peer plays out of.
+#[tauri::command]
+pub fn webrtc_buffer_ms(node_id: String) -> u32 {
+    webrtc::buffer_ms(&node_id)
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetReceiverStats {
@@ -365,6 +503,7 @@ pub struct NetReceiverStats {
     pub packets: u64,
     pub lost: u64,
     pub channels: u32,
+    pub buffer_ms: u32,
 }
 
 /// The DAG only binds receivers reachable from an output, so an unrouted node
@@ -384,11 +523,12 @@ pub fn net_receiver_release(node_id: String) {
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
     crate::audio::netaudio::receiver::stats(&node_id)
-        .map(|(bytes, packets, lost, channels)| NetReceiverStats {
+        .map(|(bytes, packets, lost, channels, buffer_ms)| NetReceiverStats {
             bytes,
             packets,
             lost,
             channels,
+            buffer_ms,
         })
 }
 

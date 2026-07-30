@@ -185,6 +185,19 @@ pub fn peer_pings(node_id: &str) -> HashMap<String, u32> {
     result
 }
 
+/// Jitter buffer depth in ms: the latency the receive path currently holds, and
+/// so what this node adds on top of the link's own. One value per session, not
+/// per peer -- the buffer is a property of the consumer, and every peer plays
+/// out of it.
+pub fn buffer_ms(node_id: &str) -> u32 {
+    let Some(session) = get(node_id) else { return 0 };
+    session
+        .fanout
+        .buffer_depth()
+        .map(|samples| samples * 1000 / super::OPUS_SR)
+        .unwrap_or(0)
+}
+
 /// Returns `(display_id -> (ping_ms, packets, lost))` for connected peers, as
 /// cumulative counters. The caller windows them (loss over a recent interval)
 /// so a rough patch shows up instead of being diluted by lifetime totals.

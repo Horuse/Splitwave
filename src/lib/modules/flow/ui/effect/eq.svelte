@@ -3,7 +3,9 @@
 	import type { EqNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Combobox } from '$lib/modules/form/ui';
+	import { Sliders } from '$lib/components/icons';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();
@@ -25,21 +27,6 @@
 	const CURVE_H = 70;
 	const POINTS = 200;
 
-	const PRESETS: Record<string, number[]> = {
-		Flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-		'Bass Boost': [6, 5, 4, 2, 0, 0, 0, 0, 0, 0],
-		'Treble Boost': [0, 0, 0, 0, 0, 0, 2, 4, 5, 6],
-		Vocal: [-4, -3, -1, 1, 3, 4, 4, 2, 0, -2],
-		Podcast: [-6, -4, -2, 0, 2, 3, 4, 3, 1, -1],
-		Rock: [4, 3, 1, -1, -1, 1, 3, 4, 5, 5],
-		Pop: [-1, 0, 1, 2, 3, 2, 0, -1, -1, -2],
-		Jazz: [3, 2, 1, 1, -1, -1, 0, 1, 2, 3],
-		Classical: [4, 3, 2, 0, 0, 0, -1, -1, -2, -3],
-		Electronic: [4, 3, 1, 0, -2, 1, 0, 1, 3, 4]
-	};
-
-	const presetOptions = Object.keys(PRESETS).map((name) => ({ value: name, label: name }));
-
 	function patchGains(gains: number[]) {
 		const patch = { gainsDb: gains };
 		flow.updateNodeData(id, patch);
@@ -58,19 +45,9 @@
 		patchGains(next);
 	}
 
-	function applyPreset(name: string | null) {
-		if (!name || !(name in PRESETS)) return;
-		patchGains(PRESETS[name].slice());
+	function applyPreset(p: PresetData<'eq'>) {
+		patchGains(p.gainsDb.slice());
 	}
-
-	function matchingPresetName(gains: number[]): string | null {
-		for (const [name, p] of Object.entries(PRESETS)) {
-			if (gains.every((g, i) => Math.abs(g - p[i]) < 0.05)) return name;
-		}
-		return null;
-	}
-
-	let selectedPreset = $derived(matchingPresetName(data.gainsDb));
 
 	// LR4 magnitudes — matches the Rust splitter so the curve shows true output.
 	function lr4LpfMag(f: number, fc: number): number {
@@ -198,6 +175,7 @@
 
 <Wrapper
 	label="EQ"
+	icon={Sliders}
 	accent="effect"
 	hasInput
 	hasOutput
@@ -207,12 +185,7 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex w-72 flex-col gap-1.5">
-		<Combobox
-			options={presetOptions}
-			value={selectedPreset}
-			placeholder="Custom"
-			onChange={applyPreset}
-		/>
+		<PresetBar kind="eq" {data} onApply={applyPreset} />
 
 		<svg
 			viewBox="0 0 {CURVE_W} {CURVE_H}"
@@ -242,7 +215,8 @@
 		<div class="flex gap-0.5">
 			{#each FREQUENCIES as freq, i (freq)}
 				{@const gain = data.gainsDb[i] ?? 0}
-				<div class="flex flex-1 flex-col items-center gap-0.5">
+				{@const capTop = gainToFaderPct(gain)}
+				<div class="flex flex-1 flex-col items-center gap-2">
 					<input
 						type="text"
 						inputmode="decimal"
@@ -255,7 +229,7 @@
 					/>
 					<div
 						bind:this={faderEls[i]}
-						class="nodrag nopan nowheel relative h-24 w-full cursor-ns-resize rounded-sm border border-neutral-400 bg-neutral-200/60"
+						class="nodrag nopan nowheel relative h-36 w-4 cursor-ns-resize rounded-sm border border-neutral-300 bg-neutral-100"
 						style="touch-action: none;"
 						onpointerdown={(e) => onFaderPointerDown(i, e)}
 						onpointermove={(e) => onFaderPointerMove(i, e)}
@@ -270,19 +244,31 @@
 						aria-valuemax={GAIN_MAX}
 						aria-valuenow={gain}
 					>
-						<!-- Vertical rail through centre + tick marks at ±6 / ±12 dB. -->
-						<div class="pointer-events-none absolute top-1 bottom-1 left-1/2 w-px -translate-x-1/2 bg-neutral-500/60"></div>
+						<!-- Recessed travel slot the cap rides in. -->
+						<div class="pointer-events-none absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-[1px] bg-neutral-400/60"></div>
 						{#each [12, 6, -6, -12] as tick (tick)}
 							<div
-								class="pointer-events-none absolute left-1/4 -translate-y-1/2 h-px w-1/2 bg-neutral-500/30"
+								class="pointer-events-none absolute left-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
+								style="top: {gainToFaderPct(tick)}%;"
+							></div>
+							<div
+								class="pointer-events-none absolute right-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
 								style="top: {gainToFaderPct(tick)}%;"
 							></div>
 						{/each}
-						<div class="pointer-events-none absolute top-1/2 right-0.5 left-0.5 h-px -translate-y-1/2 bg-neutral-700"></div>
+						<!-- 0 dB detent. -->
+						<div class="pointer-events-none absolute top-1/2 right-1 left-1 h-px -translate-y-1/2 bg-neutral-600/70"></div>
+						<!-- Boost/cut fill from the 0 dB detent to the cap. -->
 						<div
-							class="pointer-events-none absolute right-0 left-0 h-2 -translate-y-1/2 rounded-sm bg-amber-500 shadow"
-							style="top: {gainToFaderPct(gain)}%;"
+							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2  {gain >= 0 ? 'bg-amber-500' : 'bg-sky-500'}"
+							style={gain >= 0 ? `top: ${capTop}%; bottom: 50%;` : `top: 50%; bottom: ${100 - capTop}%;`}
 						></div>
+						<!-- Physical fader cap: slightly wider than the track, with a grip line. -->
+						<div
+							class="pointer-events-none absolute left-1/2 h-2.5 w-[166%] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-neutral-500/60 bg-neutral-300"
+							style="top: {capTop}%;"
+						>
+						</div>
 					</div>
 					<span class="font-mono text-[8px] text-neutral-900">{formatFreq(freq)}</span>
 				</div>

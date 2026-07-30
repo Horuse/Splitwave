@@ -1,7 +1,7 @@
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplitwave.app%2Fapi%2Fdownloads&query=downloads&label=downloads&color=brightgreen)](https://github.com/Horuse/Splitwave/releases/latest)
 [![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#support)
 # Splitwave
-Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
+Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more, plus your own CLAP, VST3 and AU plugins — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
 
 ![Splitwave preview](./preview.webp)
 
@@ -55,6 +55,9 @@ Virtual audio devices are not available on Windows.
 | Recording: AAC (M4A) | ✅ | ❌ | ❌ |
 | Virtual audio devices | ✅ AudioServerPlugin | ✅ PipeWire null-sinks | ❌ (no user-mode driver model) |
 | Effects, metering, file playback | ✅ | ✅ | ✅ |
+| CLAP plugins | ✅ | ✅ | ✅ |
+| VST3 plugins | ✅ | ✅ X11 | ✅ |
+| Audio Unit plugins | ✅ | ❌ | ❌ |
 
 ## Features
 
@@ -64,8 +67,16 @@ Virtual audio devices are not available on Windows.
   PCM + 32-float), FLAC, AIFF, Opus, MP3, AAC (M4A), virtual devices
 - **Effects:** Gain, Mute, Channel Balance, Saturator, 10-band Graphic EQ,
   Brick-wall Limiter with look-ahead, Compressor (with sidechain), Noise Gate
-  (with sidechain), Stereo Delay, Algorithmic Reverb (Freeverb), Level Meter,
-  EBU R128 LUFS Meter
+  (with sidechain), Noise Suppressor, De-esser, Declick, Stereo Delay,
+  Algorithmic Reverb (Freeverb), Level Meter, EBU R128 LUFS Meter, Waveform and
+  Spectrum analyzers
+- **Plugins:** host your own CLAP and VST3 plugins (all platforms) and Audio
+  Unit plugins (macOS) as effect nodes, with the native editor embedded in the
+  app, parameters editable in the node, and plugin state saved with the
+  pipeline. On Linux, plugin editors need an X11 session (XWayland works);
+  VST3 defines no Wayland embedding
+- **Presets & templates:** shared effect presets with factory defaults, plus
+  ready-made pipeline templates in the create flow
 - **Virtual devices:** create named virtual audio devices that appear system-wide.
   Use them to capture loopback audio from any app or to feed processed audio into
   apps that accept a microphone input (DAWs, Discord, etc.)
@@ -92,76 +103,8 @@ Windows has no user-mode virtual-device model, so they are unavailable there.
 
 ## Development
 
-### Prerequisites
-
-**macOS:**
-
-- macOS 13+ with Xcode Command Line Tools (`xcode-select --install`) -- gives
-  you `swiftc` and the SDKs Tauri needs.
-- [CMake](https://cmake.org) (`brew install cmake`) -- builds the bundled Opus
-  encoder.
-
-**Linux:**
-
-- A PipeWire session and these dev packages (Debian/Ubuntu names):
-  `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev`
-  `libsoup-3.0-dev libpipewire-0.3-dev clang libclang-dev libasound2-dev`
-  `libopus-dev`
-
-**Windows:**
-
-- [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/)
-  with the **Desktop development with C++** workload (MSVC + Windows SDK),
-  [CMake](https://cmake.org) (for the bundled Opus encoder), and the WebView2
-  runtime. `winget install Rustlang.Rustup Microsoft.VisualStudio.2022.BuildTools Kitware.CMake Oven-sh.Bun`
-  covers most of it.
-
-**All platforms:**
-
-- [Rust](https://rustup.rs) (stable toolchain)
-- [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
-
-### Setup
-
-```bash
-bun install
-bun run tauri dev
-```
-
-### Useful commands
-
-```bash
-bun run check                          # svelte-check + tsc
-bun run generate                       # regenerate TypeScript types from Rust (ts-rs)
-cargo check --manifest-path src-tauri/Cargo.toml
-bun run tauri build --bundles app      # local .app build (macOS)
-bun run tauri build --bundles appimage # local AppImage build (Linux)
-bun run tauri build --bundles nsis     # local installer build (Windows)
-```
-
-### Project layout
-
-```
-src/lib/modules/
-  audio/        device enumeration, meter store
-  flow/         xyflow node graph editor, sidebar, context menu
-  pipeline/     pipeline state, snapshot history, ts-rs generated types
-  form/         shared form primitives (combobox, slider)
-  error/        global error modal (Rust panics + JS errors)
-  updater/      auto-update modal + skip-version persistence
-  app_info/     OS / app version cache
-src-tauri/src/audio/
-  capture/      system + per-app capture (macos.rs SCK / linux.rs PipeWire / windows.rs WASAPI)
-  device/       device enumeration (macos.rs CoreAudio / linux.rs PipeWire / windows.rs cpal)
-  volume/       device volume (macos.rs / linux.rs / windows.rs)
-  virtual_device/  null-sink / driver management per OS (unsupported on Windows)
-  streams/      cpal stream builders (macOS + Windows)
-  playback.rs   PipeWire speaker output (Linux)
-  pipeline/     DSP engine, effects, encoders, pipeline DAG (input/, output/ per OS)
-src-tauri/native/virtual_driver/
-  SplitAudioDriver.cpp  AudioServerPlugin implementation (libASPL, macOS)
-  Info.plist            CFPlugin manifest
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for prerequisites, setup, useful commands,
+and project layout.
 
 ## License
 

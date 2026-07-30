@@ -3,6 +3,7 @@
 	import type { ChannelBalanceNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Balance } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
 	import Slider from './_slider.svelte';
 
@@ -54,6 +55,7 @@
 
 <Wrapper
 	label="Channel Balance"
+	icon={Balance}
 	accent="effect"
 	hasInput
 	hasOutput

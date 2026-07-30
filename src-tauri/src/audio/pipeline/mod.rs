@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use rtrb::Producer;
+use rtrb::{Consumer, Producer};
 use tauri::AppHandle;
 use tracing::{info, warn};
 
@@ -25,6 +25,8 @@ use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, Va
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx};
 use crate::error::{AppError, AppResult};
 
+mod cue;
+pub use cue::play as play_cue;
 mod dag;
 mod file_reader;
 mod input;
@@ -35,18 +37,22 @@ mod output;
 mod sig;
 mod worker;
 
-use dag::{build_output_graph, inputs_feeding_output, OutputGraph};
+use dag::{build_output_graph, inputs_feeding_output, OutputGraph, RING_CAPACITY_FRAMES};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
-    resolve_output, start_monitor_worker, start_net_sender_worker, start_recorder_worker,
-    start_speaker_stream, RecorderWorker, ResolvedOutput, SpeakerHandle,
+    resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
+    start_wire_sender_worker, RecorderWorker, ResolvedOutput, SpeakerHandle,
 };
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) const STATE_EVENT: &str = "audio://state";
+
+/// Overlap between a hot-swapped output's old and new bridges: one DSP block at
+/// 48 kHz plus slack, so the incoming sub-graph starts with its rings primed.
+const SWAP_PREFILL: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
 /// thread, the meter tick thread, and the effect parameter registry.
@@ -58,7 +64,7 @@ pub struct ActivePipeline {
     inputs: HashMap<String, InputState>,
     speakers: HashMap<String, SpeakerState>,
     recorders: HashMap<String, RecorderState>,
-    net_senders: HashMap<String, NetSenderState>,
+    wire_senders: HashMap<String, WireSenderState>,
     /// Populated when there are no real outputs OR when monitor nodes are present.
     monitor: Option<MonitorState>,
 
@@ -76,6 +82,9 @@ pub struct ActivePipeline {
     /// Per-source underrun counters, rebuilt each reconcile alongside the graphs.
     xrun_handles: Vec<(String, Arc<AtomicU64>)>,
     xrun_thread: Option<XrunTickThread>,
+    /// `(input_id, slot)` bridges of hot-swapping outputs, kept feeding the old
+    /// sub-graph while the new one's rings prefill. Removed after the swap.
+    stale_bridges: Vec<(String, usize)>,
 }
 
 struct InputState {
@@ -110,7 +119,7 @@ struct RecorderState {
     ctrl: WorkerCtrl,
 }
 
-struct NetSenderState {
+struct WireSenderState {
     worker: RecorderWorker,
     #[allow(dead_code)]
     sample_rate: u32,
@@ -132,7 +141,7 @@ impl ActivePipeline {
             inputs: HashMap::new(),
             speakers: HashMap::new(),
             recorders: HashMap::new(),
-            net_senders: HashMap::new(),
+            wire_senders: HashMap::new(),
             monitor: None,
             effect_registry: EffectRegistry::new(),
             effect_controls: HashMap::new(),
@@ -144,6 +153,7 @@ impl ActivePipeline {
             meter_thread: None,
             xrun_handles: Vec::new(),
             xrun_thread: None,
+            stale_bridges: Vec::new(),
         }
     }
 
@@ -187,6 +197,20 @@ impl ActivePipeline {
     pub fn update_effect(&self, node_id: &str, data: &serde_json::Value) {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
+        }
+        // Some formats' editors only redraw when the host says a parameter
+        // moved; doing it here keeps the notification (which locks) off the DSP
+        // worker. Formats that carry the change to the plugin themselves report
+        // it as unsupported, which is not a failure.
+        if let Some(map) = data.get("pluginParams").and_then(serde_json::Value::as_object) {
+            if let Some(host) = crate::audio::plugins::registry::for_node(node_id) {
+                for (id, value) in map {
+                    let (Ok(id), Some(value)) = (id.parse::<u32>(), value.as_f64()) else {
+                        continue;
+                    };
+                    let _ = host.notify_param_changed(node_id, id, value);
+                }
+            }
         }
         if let Some(bypass) = self.effect_bypasses.get(node_id) {
             if let Some(b) = data.get("bypassed").and_then(serde_json::Value::as_bool) {
@@ -236,6 +260,7 @@ impl ActivePipeline {
 
     fn teardown(&mut self) {
         self.tear_down_outputs();
+        self.stale_bridges.clear();
         self.inputs.clear();
         self.meters.clear();
         self.gr_handles.clear();
@@ -248,14 +273,14 @@ impl ActivePipeline {
         for r in self.recorders.values() {
             r.worker.stop.store(true, Ordering::SeqCst);
         }
-        for s in self.net_senders.values() {
+        for s in self.wire_senders.values() {
             s.worker.stop.store(true, Ordering::SeqCst);
         }
         if let Some(m) = &self.monitor {
             m.worker.stop.store(true, Ordering::SeqCst);
         }
         self.recorders.clear();
-        self.net_senders.clear();
+        self.wire_senders.clear();
         self.monitor = None;
         self.meter_thread = None;
         self.xrun_handles.clear();
@@ -305,11 +330,25 @@ impl ActivePipeline {
             };
             cats.insert(id.clone(), cat);
         }
+        // A fan-out node is shared via a ring whose two ends must be rebuilt
+        // together; if any cut participant is rebuilding, bump the Full ones to
+        // GraphSwap so `apply_full` rebuilds them (and re-wires the ring) too.
+        let participants = dag::plan_cuts(new_graph, monitor_mode.then_some(MONITOR_KEY)).participants();
+        let group_dirty = participants
+            .iter()
+            .any(|id| !matches!(cats.get(id), Some(Cat::Full)));
+        if group_dirty {
+            for id in &participants {
+                if let Some(cat @ Cat::Full) = cats.get_mut(id) {
+                    *cat = Cat::GraphSwap;
+                }
+            }
+        }
 
         let mut all_old: Vec<String> = Vec::new();
         all_old.extend(self.speakers.keys().cloned());
         all_old.extend(self.recorders.keys().cloned());
-        all_old.extend(self.net_senders.keys().cloned());
+        all_old.extend(self.wire_senders.keys().cloned());
         if self.monitor.is_some() {
             all_old.push(MONITOR_KEY.to_string());
         }
@@ -320,16 +359,23 @@ impl ActivePipeline {
                 continue;
             }
             // Surgically clear this output's bridges from each input. For
-            // GraphSwap, `apply_full` will route fresh ones; for Drop the
+            // GraphSwap they stay live until the swap lands (`apply_full`
+            // prefills the fresh rings first, so the old sub-graph plays on
+            // instead of the new one starting from silence); for Drop the
             // worker goes away and bridges are gone with it.
-            for state in self.inputs.values_mut() {
+            let swapping = matches!(cat, Cat::GraphSwap);
+            for (input_id, state) in self.inputs.iter_mut() {
                 if let Some(slots) = state.bridges_by_output.remove(id) {
                     for slot in slots {
-                        let _ = state.bridge_tx.remove(slot);
+                        if swapping {
+                            self.stale_bridges.push((input_id.clone(), slot));
+                        } else {
+                            let _ = state.bridge_tx.remove(slot);
+                        }
                     }
                 }
             }
-            if matches!(cat, Cat::GraphSwap) {
+            if swapping {
                 continue;
             }
             if id == MONITOR_KEY {
@@ -340,7 +386,7 @@ impl ActivePipeline {
             } else if let Some(state) = self.recorders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 drop(state);
-            } else if let Some(state) = self.net_senders.remove(id) {
+            } else if let Some(state) = self.wire_senders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 drop(state);
             } else {
@@ -418,7 +464,7 @@ impl ActivePipeline {
         let mut running: HashSet<String> = HashSet::new();
         running.extend(self.speakers.keys().cloned());
         running.extend(self.recorders.keys().cloned());
-        running.extend(self.net_senders.keys().cloned());
+        running.extend(self.wire_senders.keys().cloned());
         if self.monitor.is_some() {
             running.insert(MONITOR_KEY.to_string());
         }
@@ -444,7 +490,7 @@ impl ActivePipeline {
         if let Some(r) = self.recorders.get(id) {
             return Some(&r.sig);
         }
-        if let Some(s) = self.net_senders.get(id) {
+        if let Some(s) = self.wire_senders.get(id) {
             return Some(&s.sig);
         }
         None
@@ -468,7 +514,13 @@ fn monitor_mode(graph: &ValidGraph) -> bool {
         return true;
     }
     graph.effects.iter().any(|e| {
-        matches!(e.spec, EffectSpec::LevelMeter(_) | EffectSpec::LufsMeter(_) | EffectSpec::Waveform(_))
+        matches!(
+            e.spec,
+            EffectSpec::LevelMeter(_)
+                | EffectSpec::LufsMeter(_)
+                | EffectSpec::Waveform(_)
+                | EffectSpec::Spectrum(_)
+        )
     })
 }
 
@@ -489,9 +541,9 @@ impl ActivePipeline {
         let mut input_native_channels: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
-            // NetReceiver has no capture device; it produces at the output rate
-            // via its own UDP socket, so it needs no resolved input runtime.
-            if matches!(inp.spec, InputSpec::NetReceiver { .. }) {
+            // Network inputs have no capture device; they produce at the output
+            // rate from their own socket, so they need no resolved input runtime.
+            if matches!(inp.spec, InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. }) {
                 continue;
             }
             if let Some(state) = self.inputs.get(&inp.id) {
@@ -574,13 +626,41 @@ impl ActivePipeline {
             input_meters.insert(id.clone(), m.clone());
         }
 
+        // Fan-out plan: nodes shared across outputs (and the monitor) are
+        // computed once and read back via rings. When any participant rebuilds
+        // they all must, so producer and consumer ends of every ring are
+        // created in one pass.
+        let cut_plan = dag::plan_cuts(graph, monitor_mode.then_some(MONITOR_KEY));
+        let participants = cut_plan.participants();
+        let base_changed = |id: &str| {
+            self.current_output_sig(id) != Some(&compute_output_sig(graph, id))
+        };
+        let mut rebuild: HashSet<String> = HashSet::new();
+        for out in &graph.outputs {
+            if base_changed(&out.id) {
+                rebuild.insert(out.id.clone());
+            }
+        }
+        let group_dirty = participants.iter().any(|id| {
+            if id == MONITOR_KEY {
+                base_changed(MONITOR_KEY)
+            } else {
+                rebuild.contains(id)
+            }
+        });
+        // The monitor rebuilds via its own `needs_build` below; force the real
+        // outputs of a dirty cut group so every ring is re-wired atomically.
+        let monitor_forced = group_dirty && participants.contains(MONITOR_KEY);
+        if group_dirty {
+            rebuild.extend(participants.iter().filter(|id| *id != MONITOR_KEY).cloned());
+        }
+
         // Skip Full survivors; everything else needs a fresh sub-graph
         // (the new `OutputGraph` ships to GraphSwap workers via
         // `ctrl.send_graph`, or boots a new worker for Fresh starts).
         let mut output_runtime: HashMap<String, ResolvedOutput> = HashMap::new();
         for out in &graph.outputs {
-            let new_sig = compute_output_sig(graph, &out.id);
-            if self.current_output_sig(&out.id) == Some(&new_sig) {
+            if !rebuild.contains(&out.id) {
                 continue;
             }
             let file_sr_hint: Option<u32> = match &out.spec {
@@ -602,6 +682,13 @@ impl ActivePipeline {
         // bridges can be tracked in `InputState.bridges_by_output`.
         let mut output_graphs: HashMap<String, OutputGraph> = HashMap::new();
         let mut all_pairs: Vec<(String, String, Producer<f32>)> = Vec::new();
+        // A plugin feeding several outputs is built once per output; reset the
+        // per-reconcile claim so exactly one build owns the editor instance.
+        self.effect_registry.begin_reconcile();
+        // Ring consumers stashed by an owner build, keyed by the consuming
+        // output then node id; the consumer's build reads them as ring-sources.
+        let mut pending_cuts: HashMap<String, HashMap<String, (Consumer<f32>, u32, usize)>> =
+            HashMap::new();
         for out in &graph.outputs {
             if !output_runtime.contains_key(&out.id) {
                 continue;
@@ -611,7 +698,8 @@ impl ActivePipeline {
                 .map(|o| o.sample_rate())
                 .ok_or_else(|| AppError::Validation("missing output runtime".into()))?;
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
-            let built = build_output_graph(
+            let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
+            let mut built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
@@ -624,12 +712,33 @@ impl ActivePipeline {
                 &input_paused,
                 &input_drain,
                 &input_meters,
+                cut_leaves,
             )?;
+            // Wire publish taps for nodes this output owns and other outputs read.
+            for (node, cons) in &cut_plan.consumers {
+                if cons.is_empty() || cut_plan.owner.get(node).map(String::as_str) != Some(out.id.as_str()) {
+                    continue;
+                }
+                let Some(&(idx, width)) = built.node_meta.get(node) else {
+                    continue;
+                };
+                for o2 in cons {
+                    let (prod, consumer) = rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * width);
+                    built.graph.attach_tap(idx, prod);
+                    pending_cuts
+                        .entry(o2.clone())
+                        .or_default()
+                        .insert(node.clone(), (consumer, output_sr, width));
+                }
+            }
             for (inp_id, prod) in my_pairs {
                 all_pairs.push((out.id.clone(), inp_id, prod));
             }
             for (id, control) in built.controls {
-                self.effect_controls.entry(id).or_insert(control);
+                // Overwrite, not keep-first: a rebuilt node's control carries the
+                // live handles/queue of the current instance; a stale entry would
+                // route updates to a dropped instance.
+                self.effect_controls.insert(id, control);
             }
             for (id, bypass) in built.bypasses {
                 self.effect_bypasses.entry(id).or_insert(bypass);
@@ -653,17 +762,19 @@ impl ActivePipeline {
         let mut monitor_graph: Option<OutputGraph> = None;
         if monitor_mode {
             let new_sig = compute_output_sig(graph, MONITOR_KEY);
-            let needs_build = self
-                .monitor
-                .as_ref()
-                .map_or(true, |m| m.sig != new_sig);
+            let needs_build = monitor_forced
+                || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
             if needs_build {
                 let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
+                // Realtime: the monitor consumes live sources forever, so it must
+                // drop backlog like any other live path. Without this its ring
+                // grows unbounded whenever the DSP cannot keep up, and latency
+                // climbs for as long as the pipeline runs.
                 let built = build_output_graph(
                     None,
                     monitor_sr,
-                    false,
+                    true,
                     graph,
                     &input_native_sr,
                     &input_native_channels,
@@ -673,12 +784,16 @@ impl ActivePipeline {
                     &input_paused,
                     &input_drain,
                     &input_meters,
+                    pending_cuts.remove(MONITOR_KEY).unwrap_or_default(),
                 )?;
                 for (inp_id, prod) in my_pairs {
                     all_pairs.push((MONITOR_KEY.to_string(), inp_id, prod));
                 }
                 for (id, control) in built.controls {
-                    self.effect_controls.entry(id).or_insert(control);
+                    // Overwrite, not keep-first: a rebuilt node's control carries the
+                // live handles/queue of the current instance; a stale entry would
+                // route updates to a dropped instance.
+                self.effect_controls.insert(id, control);
                 }
                 for (id, bypass) in built.bypasses {
                     self.effect_bypasses.entry(id).or_insert(bypass);
@@ -688,6 +803,9 @@ impl ActivePipeline {
                 }
                 for l in built.lufs {
                     self.lufs.insert(l.node_id.clone(), l);
+                }
+                for g in built.gr_handles {
+                    self.gr_handles.insert(g.node_id.clone(), g);
                 }
                 for s in built.scopes {
                     self.scopes.insert(s.node_id.clone(), s);
@@ -702,10 +820,24 @@ impl ActivePipeline {
             by_input.entry(inp_id).or_default().push((out_id, prod));
         }
 
+        let mut stale = std::mem::take(&mut self.stale_bridges);
         for (input_id, tagged) in by_input {
             if self.inputs.contains_key(&input_id) {
                 let state = self.inputs.get_mut(&input_id).unwrap();
                 for (out_id, prod) in tagged {
+                    // Overlapping bridges double this input's slot use until the
+                    // swap lands; retire its stale ones early rather than fail
+                    // the reconcile on an exhausted table.
+                    if state.bridge_tx.free_slots() == 0 {
+                        stale.retain(|(id, slot)| {
+                            if id != &input_id {
+                                return true;
+                            }
+                            let _ = state.bridge_tx.remove(*slot);
+                            false
+                        });
+                        state.bridge_tx.drain_discarded();
+                    }
                     let slot = state.bridge_tx.add(prod)?;
                     state.bridges_by_output.entry(out_id).or_default().push(slot);
                 }
@@ -789,6 +921,15 @@ impl ActivePipeline {
             );
         }
 
+        self.stale_bridges = stale;
+
+        // Let the fresh rings collect a block before the swap: a worker handed a
+        // sub-graph whose sources are empty emits zero-fill until the input
+        // callback catches up, which is an audible dropout on every edit.
+        if !self.stale_bridges.is_empty() {
+            std::thread::sleep(SWAP_PREFILL);
+        }
+
         // Hot-swap the new sub-graph into an existing worker when
         // `output_spec` is unchanged and the sample rate still matches;
         // otherwise stop the old worker and start fresh.
@@ -869,17 +1010,17 @@ impl ActivePipeline {
                         },
                     );
                 }
-                ResolvedOutput::NetSender => {
+                ResolvedOutput::WireSender => {
                     let sample_rate = og.sample_rate();
-                    if let Some(state) = self.net_senders.get_mut(&out.id) {
+                    if let Some(state) = self.wire_senders.get_mut(&out.id) {
                         state.ctrl.send_graph(og)?;
                         state.sig = new_sig;
                         continue;
                     }
-                    let (worker, ctrl) = start_net_sender_worker(og)?;
-                    self.net_senders.insert(
+                    let (worker, ctrl) = start_wire_sender_worker(og)?;
+                    self.wire_senders.insert(
                         out.id.clone(),
-                        NetSenderState {
+                        WireSenderState {
                             worker,
                             sample_rate,
                             sig: new_sig,
@@ -901,6 +1042,15 @@ impl ActivePipeline {
                     sig: new_sig,
                     ctrl,
                 });
+            }
+        }
+
+        // The swapped-in graphs own the live rings now; retire the ones that fed
+        // their predecessors.
+        for (input_id, slot) in std::mem::take(&mut self.stale_bridges) {
+            if let Some(state) = self.inputs.get_mut(&input_id) {
+                let _ = state.bridge_tx.remove(slot);
+                state.bridge_tx.drain_discarded();
             }
         }
 

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
-	import { Handle, Position } from '@xyflow/svelte';
+	import { Position } from '@xyflow/svelte';
+	import Handle from '../_handle.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 	import MeterBar from '$lib/components/meter_bar.svelte';

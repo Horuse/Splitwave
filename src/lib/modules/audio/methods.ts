@@ -6,6 +6,9 @@ import type {
 	AudioStateEvent,
 	CapturePermission,
 	NativeDeviceInfo,
+	PluginDescriptor,
+	PluginParam,
+	PluginStatus,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus
@@ -14,8 +17,23 @@ import type {
 const AUDIO_STATE_EVENT = 'audio://state';
 
 export const methods = {
+	scanPlugins: (): Promise<PluginDescriptor[]> => invoke<PluginDescriptor[]>('scan_plugins'),
+	openPluginEditor: (nodeId: string, title: string): Promise<void> =>
+		invoke('open_plugin_editor', { nodeId, title }),
+	closePluginEditor: (nodeId: string): Promise<void> =>
+		invoke('close_plugin_editor', { nodeId }),
+	getPluginState: (nodeId: string): Promise<string | null> =>
+		invoke<string | null>('get_plugin_state', { nodeId }),
+	getPluginParams: (nodeId: string): Promise<PluginParam[]> =>
+		invoke<PluginParam[]>('get_plugin_params', { nodeId }),
+	pluginStatus: (nodeId: string): Promise<PluginStatus> =>
+		invoke<PluginStatus>('plugin_status', { nodeId }),
+	onPluginEditorClosed: (cb: (nodeId: string) => void): Promise<UnlistenFn> =>
+		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),
 	listOutputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_output_devices'),
+	playCue: (deviceId: string, muted: boolean, gain: number): Promise<void> =>
+		invoke('play_cue', { deviceId, muted, gain }),
 	listAudioApplications: (): Promise<AudioApplication[]> =>
 		invoke<AudioApplication[]>('list_audio_applications'),
 	getAppIcons: (bundleIds: string[]): Promise<Record<string, string>> =>
@@ -152,6 +170,8 @@ export const methods = {
 		nodeId: string
 	): Promise<Record<string, { pingMs: number; packets: number; lost: number }>> =>
 		invoke('webrtc_peer_stats', { nodeId }),
+	/** Jitter buffer depth in ms: the latency the receive path itself adds. */
+	webrtcBufferMs: (nodeId: string): Promise<number> => invoke('webrtc_buffer_ms', { nodeId }),
 	/** Binds the receive port so an unrouted node can still report its stream. */
 	netReceiverListen: (nodeId: string, port: number): Promise<void> =>
 		invoke('net_receiver_listen', { nodeId, port }),
@@ -161,8 +181,13 @@ export const methods = {
 	/** Direct-IP receive stats (cumulative), or null when the node isn't running. */
 	netReceiverStats: (
 		nodeId: string
-	): Promise<{ bytes: number; packets: number; lost: number; channels: number } | null> =>
-		invoke('net_receiver_stats', { nodeId }),
+	): Promise<{
+		bytes: number;
+		packets: number;
+		lost: number;
+		channels: number;
+		bufferMs: number;
+	} | null> => invoke('net_receiver_stats', { nodeId }),
 	/** Direct-IP send stats, or null when the node isn't running. */
 	netSenderStats: (
 		nodeId: string

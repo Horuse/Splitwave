@@ -7,6 +7,7 @@ pub mod codec;
 pub mod packet;
 pub mod receiver;
 pub mod sender;
+pub mod timeline;
 
 pub const SR: u32 = 48_000;
 /// One 20 ms Opus frame; a net channel is mono, so frames == samples.

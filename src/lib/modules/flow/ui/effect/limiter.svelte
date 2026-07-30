@@ -3,6 +3,9 @@
 	import type { LimiterNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { Limiter } from '$lib/components/icons';
+	import { PresetBar } from '$lib/modules/preset/ui';
+	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
 
@@ -23,6 +26,11 @@
 	}
 	function setLookahead(v: number) {
 		flow.updateNodeData(id, { lookaheadMs: v });
+	}
+
+	function applyPreset(p: PresetData<'limiter'>) {
+		flow.updateNodeData(id, p);
+		audioMethods.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
@@ -47,6 +55,7 @@
 
 <Wrapper
 	label="Limiter"
+	icon={Limiter}
 	accent="effect"
 	hasInput
 	hasOutput
@@ -56,6 +65,8 @@
 	onBypass={toggleBypass}
 >
 	<div class="flex flex-col gap-2">
+		<PresetBar kind="limiter" {data} onApply={applyPreset} />
+
 		<div class="flex flex-col gap-1 w-50 nowheel nodrag">
 			<svg
 				width="100%"

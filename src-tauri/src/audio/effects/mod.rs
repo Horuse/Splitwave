@@ -11,10 +11,17 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::audio::graph::EffectSpec;
+use crate::audio::plugins::HostedNode;
+
+/// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
+/// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
+const PLUGIN_MAX_BLOCK: usize = 1024;
 
 pub mod biquad;
 pub mod channel_balance;
 pub mod compressor;
+pub mod de_esser;
+pub mod declick;
 pub mod delay;
 pub mod eq;
 pub mod gain;
@@ -27,13 +34,14 @@ pub mod noise_suppressor;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
-pub mod webrtc_bridge;
 mod util;
 
 use util::{db_to_linear, num, store_f32};
 
 use channel_balance::ChannelBalanceEffect;
 use compressor::CompressorEffect;
+use de_esser::DeEsserEffect;
+use declick::DeclickEffect;
 use delay::DelayEffect;
 use eq::EqEffect;
 use gain::GainEffect;
@@ -43,7 +51,6 @@ use noise_gate::NoiseGateEffect;
 use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
-use webrtc_bridge::WebRtcBridgeEffect;
 pub use level_meter::{update_meter, LevelMeterEffect, MeterHandle};
 pub use lufs_meter::{LufsHandle, LufsMeterEffect};
 pub use waveform::{WaveformEffect, WaveformHandle};
@@ -84,7 +91,9 @@ pub enum RuntimeEffect {
     Delay(DelayEffect),
     Reverb(ReverbEffect),
     NoiseSuppressor(NoiseSuppressorEffect),
-    WebRtcBridge(WebRtcBridgeEffect),
+    Declick(DeclickEffect),
+    DeEsser(DeEsserEffect),
+    HostedPlugin(HostedNode),
 }
 
 impl RuntimeEffect {
@@ -105,7 +114,9 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.latency_frames(),
             RuntimeEffect::Reverb(e) => e.latency_frames(),
             RuntimeEffect::NoiseSuppressor(e) => e.latency_frames(),
-            RuntimeEffect::WebRtcBridge(e) => e.latency_frames(),
+            RuntimeEffect::Declick(e) => e.latency_frames(),
+            RuntimeEffect::DeEsser(e) => e.latency_frames(),
+            RuntimeEffect::HostedPlugin(e) => e.latency_frames(),
         }
     }
 
@@ -131,25 +142,12 @@ impl RuntimeEffect {
             RuntimeEffect::Delay(e) => e.process(main, frames),
             RuntimeEffect::Reverb(e) => e.process(main, frames),
             RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
-            RuntimeEffect::WebRtcBridge(e) => e.process(main, frames),
+            RuntimeEffect::Declick(e) => e.process(main, frames),
+            RuntimeEffect::DeEsser(e) => e.process(main, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process(main, frames),
         }
     }
 
-    /// Fills per-peer output handle buffers; only the WebRTC bridge has any.
-    #[inline]
-    pub fn populate_handle_bufs(&self, handle_bufs: &mut [(String, Vec<f32>)], frames: usize) {
-        if let RuntimeEffect::WebRtcBridge(e) = self {
-            e.populate_handle_bufs(handle_bufs, frames);
-        }
-    }
-
-    /// Pushes per-channel input buffers to the send rings; WebRTC bridge only.
-    #[inline]
-    pub fn push_channel_inputs(&mut self, channel_bufs: &[(String, Vec<f32>)]) {
-        if let RuntimeEffect::WebRtcBridge(e) = self {
-            e.push_channel_inputs(channel_bufs);
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -204,6 +202,19 @@ pub enum EffectControl {
     },
     NoiseSuppressor {
         controls: NoiseSuppressorControls,
+    },
+    Declick {
+        sensitivity: Arc<AtomicU32>,
+        max_width_ms: Arc<AtomicU32>,
+    },
+    DeEsser {
+        frequency: Arc<AtomicU32>,
+        threshold_db: Arc<AtomicU32>,
+        ratio: Arc<AtomicU32>,
+    },
+    Plugin {
+        // Shared with the RT `PluginNode`; UI param writes flow through it.
+        events: Arc<crate::audio::plugins::ParamRing>,
     },
 }
 
@@ -312,6 +323,35 @@ impl EffectControl {
                     store_f32(&controls.max_df_thresh_db, v);
                 }
             }
+            EffectControl::Declick { sensitivity, max_width_ms } => {
+                if let Some(v) = num(data, "sensitivity") {
+                    store_f32(sensitivity, v.clamp(0.0, 1.0));
+                }
+                if let Some(v) = num(data, "maxWidthMs") {
+                    store_f32(max_width_ms, v.clamp(0.3, 5.0));
+                }
+            }
+            EffectControl::DeEsser { frequency, threshold_db, ratio } => {
+                if let Some(v) = num(data, "frequency") {
+                    store_f32(frequency, v.clamp(2000.0, 16000.0));
+                }
+                if let Some(v) = num(data, "thresholdDb") {
+                    store_f32(threshold_db, v.clamp(-80.0, 0.0));
+                }
+                if let Some(v) = num(data, "ratio") {
+                    store_f32(ratio, v.clamp(1.0, 12.0));
+                }
+            }
+            EffectControl::Plugin { events } => {
+                // `{ pluginParams: { "<paramId>": value } }` from the node UI.
+                if let Some(map) = data.get("pluginParams").and_then(Value::as_object) {
+                    for (id, v) in map {
+                        if let (Ok(id), Some(value)) = (id.parse::<u32>(), v.as_f64()) {
+                            events.push(id, value);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -330,6 +370,9 @@ pub struct EffectBuild {
     pub scope: Option<WaveformHandle>,
     pub bypass: Arc<AtomicBool>,
     pub bypass_is_new: bool,
+    /// The effect took the node's whole width, so the pipeline must hand it
+    /// every channel at once instead of splitting into stereo pairs.
+    pub full_width: bool,
 }
 
 /// Shared atomics keyed by node id so a fan-out effect (one node feeding
@@ -342,11 +385,37 @@ pub struct EffectRegistry {
     lufs: std::collections::HashMap<String, LufsHandle>,
     gr_atomics: std::collections::HashMap<String, Arc<AtomicU32>>,
     scopes: std::collections::HashMap<String, WaveformHandle>,
+    // Per-plugin UI->RT parameter queue, reused across rebuilds so the control
+    // handed to the frontend keeps reaching the current `PluginNode`.
+    plugin_param_rings: std::collections::HashMap<String, Arc<crate::audio::plugins::ParamRing>>,
+    // Plugin node ids that already claimed the editor-target (primary) instance
+    // in the current reconcile. A node feeding several real outputs is built
+    // once per output; only the first claim owns the editor, the rest are
+    // metering/duplicate instances parked in the graveyard.
+    plugin_primary_claimed: std::collections::HashSet<String>,
 }
 
 impl EffectRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Clears per-reconcile scratch. Call once before rebuilding the graphs so
+    /// the primary-instance claim is decided fresh each pass.
+    pub fn begin_reconcile(&mut self) {
+        self.plugin_primary_claimed.clear();
+    }
+}
+
+impl Drop for EffectRegistry {
+    /// A host keeps its own instance per plugin node so the UI thread can reach
+    /// it. Nothing else marks the end of a pipeline's life, so the registry
+    /// releases those holds as it goes; the instances themselves live on until
+    /// their RT nodes are dropped too.
+    fn drop(&mut self) {
+        for node_id in self.plugin_param_rings.keys() {
+            crate::audio::plugins::registry::forget(node_id);
+        }
     }
 }
 
@@ -354,7 +423,12 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
-    realtime: bool,
+    // False when building the monitor graph: a plugin instantiated there is a
+    // metering-only duplicate, not the one its editor window attaches to.
+    primary: bool,
+    // Channels this node carries. An effect that can take them all says so
+    // through `EffectBuild::full_width`; the rest are driven one pair at a time.
+    channels: usize,
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -379,6 +453,7 @@ pub fn instantiate_effect(
         scope,
         bypass: bypass.clone(),
         bypass_is_new,
+        full_width: false,
     };
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
@@ -470,7 +545,20 @@ pub fn instantiate_effect(
                 None, None, None, None, None,
             ),
             None => {
-                let (e, handle) = WaveformEffect::new(d, node_id.to_string());
+                let (e, handle) = WaveformEffect::new(d, node_id.to_string(), sample_rate);
+                registry.scopes.insert(node_id.to_string(), handle.clone());
+                mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
+            }
+        },
+        // Spectrum reuses the scope's time-domain capture and SCOPE_EVENT
+        // transport; the UI runs the FFT. No distinct runtime effect is needed.
+        EffectSpec::Spectrum(_) => match registry.scopes.get(node_id) {
+            Some(handle) => mk(
+                RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
+                None, None, None, None, None,
+            ),
+            None => {
+                let (e, handle) = WaveformEffect::new_for(node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(RuntimeEffect::Waveform(e), None, None, None, None, Some(handle))
             }
@@ -482,6 +570,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::Limiter(LimiterEffect::from_state(
                         ceiling.clone(),
@@ -490,7 +583,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {
@@ -513,6 +606,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::Compressor(CompressorEffect::from_state(
                         threshold_db.clone(),
@@ -524,7 +622,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {
@@ -546,6 +644,11 @@ pub fn instantiate_effect(
                 let gr_arc = registry.gr_atomics.get(node_id)
                     .cloned()
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
+                registry.gr_atomics.insert(node_id.to_string(), gr_arc.clone());
+                // Republished on every rebuild: without this the meter thread
+                // loses the handle after the first reconcile and the readout
+                // freezes at its initial value.
+                let gr = GrHandle { node_id: node_id.to_string(), gr_lin: gr_arc.clone() };
                 mk(
                     RuntimeEffect::NoiseGate(NoiseGateEffect::from_state(
                         threshold_db.clone(),
@@ -556,7 +659,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         gr_arc,
                     )),
-                    None, None, None, None, None,
+                    None, None, None, Some(gr), None,
                 )
             }
             _ => {
@@ -614,32 +717,99 @@ pub fn instantiate_effect(
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }
         },
-        EffectSpec::WebRtcBridge { node_id: ref nid, opus_bitrate, opus_application, channels } => {
-            use crate::audio::webrtc;
-            use rtrb::RingBuffer;
-            // ~1 s of stereo audio at the graph rate per channel; drained by the
-            // encode task.
-            const SEND_RING: usize = 96_000;
-            let count = channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32) as usize;
-            let mut send_producers = Vec::with_capacity(count);
-            let mut send_consumers = Vec::with_capacity(count);
-            for _ in 0..count {
-                let (p, c) = RingBuffer::<f32>::new(SEND_RING);
-                send_producers.push(p);
-                send_consumers.push(c);
-            }
-            let session = webrtc::get_or_create(nid.as_str(), opus_bitrate, opus_application);
-            session.set_send_consumers(send_consumers, sample_rate);
-            let receiver = crate::audio::stream_recv::ChannelReceiver::new(
-                session.register_bridge(sample_rate, realtime),
-            );
-            mk(
-                RuntimeEffect::WebRtcBridge(WebRtcBridgeEffect {
-                    send_producers,
-                    receiver,
-                }),
+        EffectSpec::Declick(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::Declick { sensitivity, max_width_ms }) => mk(
+                RuntimeEffect::Declick(DeclickEffect::from_state(
+                    sensitivity.clone(),
+                    max_width_ms.clone(),
+                    sample_rate,
+                )),
                 None, None, None, None, None,
-            )
+            ),
+            _ => {
+                let (e, c) = DeclickEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                mk(RuntimeEffect::Declick(e), Some(c), None, None, None, None)
+            }
+        },
+        EffectSpec::DeEsser(d) => match registry.controls.get(node_id) {
+            Some(EffectControl::DeEsser { frequency, threshold_db, ratio }) => mk(
+                RuntimeEffect::DeEsser(DeEsserEffect::from_state(
+                    frequency.clone(),
+                    threshold_db.clone(),
+                    ratio.clone(),
+                    sample_rate,
+                )),
+                None, None, None, None, None,
+            ),
+            _ => {
+                let (e, c) = DeEsserEffect::new(d, sample_rate);
+                registry.controls.insert(node_id.to_string(), c.clone());
+                mk(RuntimeEffect::DeEsser(e), Some(c), None, None, None, None)
+            }
+        },
+        EffectSpec::Plugin { format, ref path, ref plugin_id, ref state, .. } => {
+            // Empty path == node not yet configured: inert passthrough, not a
+            // failure. Silence is reserved for a real load error below.
+            if path.is_empty() {
+                crate::audio::plugins::registry::forget(node_id);
+                let muted = Arc::new(AtomicBool::new(false));
+                return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
+            }
+            // Surfaced as a load failure rather than guessed at: a path without
+            // a format is stored data we cannot act on.
+            let Some(format) = format else {
+                tracing::error!(node_id, path, "plugin node has no format");
+                let muted = Arc::new(AtomicBool::new(true));
+                return mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None);
+            };
+            // Claimed only once the instance actually exists (below): a burned
+            // claim would leave the node with no editor target while the
+            // previous plugin stayed installed behind it.
+            let primary = primary && !registry.plugin_primary_claimed.contains(node_id);
+            // Every stereo pair shares the persistent per-node broadcast ring
+            // (kept across rebuilds); each pair reads it through its own cursor,
+            // so a UI write reaches all pairs, not just the first.
+            let ring = registry
+                .plugin_param_rings
+                .entry(node_id.to_string())
+                .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
+                .clone();
+            let request = crate::audio::plugins::host_api::ActivateRequest {
+                node_id,
+                path,
+                plugin_id,
+                sample_rate,
+                max_frames: PLUGIN_MAX_BLOCK,
+                channels,
+                state: state.as_deref(),
+                primary,
+                params: ring.clone(),
+            };
+            match crate::audio::plugins::registry::activate(format, request) {
+                // Only the editor-target build publishes the control, so the UI
+                // writes reach the audible instance.
+                Ok(node) => {
+                    if primary {
+                        registry.plugin_primary_claimed.insert(node_id.to_string());
+                    }
+                    let control = primary.then_some(EffectControl::Plugin { events: ring });
+                    // The plugin took the node whole, so the pipeline must stop
+                    // splitting it into pairs and hand it every channel.
+                    let full_width = node.channels() == channels;
+                    let mut build =
+                        mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None);
+                    build.full_width = full_width;
+                    build
+                }
+                Err(e) => {
+                    // Surface as silence, never a passthrough that hides the failure.
+                    tracing::error!(node_id, path, plugin_id, error = %e, "plugin failed to load");
+                    crate::audio::plugins::registry::forget(node_id);
+                    let muted = Arc::new(AtomicBool::new(true));
+                    mk(RuntimeEffect::Mute(MuteEffect::from_state(muted)), None, None, None, None, None)
+                }
+            }
         }
     }
 }

@@ -5,12 +5,20 @@
 #include <aspl/ControlRequestHandler.hpp>
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
+#include <fcntl.h>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
+
+// Writable by group staff so the app can swap it without root; coreaudiod reads it.
+static const char* kConfigDir  = "/Library/Application Support/Splitwave";
+static const char* kConfigPath = "/Library/Application Support/Splitwave/devices.plist";
 
 struct DeviceRing {
     static constexpr uint32_t kFrames = 16384;
@@ -25,9 +33,12 @@ struct DeviceRing {
 
 class SplitIOHandler : public aspl::IORequestHandler,
                        public aspl::ControlRequestHandler {
+    // Owned, not borrowed: a removed device may still have IO in flight.
+    std::shared_ptr<DeviceRing> ringOwner_;
     DeviceRing& ring_;
 public:
-    explicit SplitIOHandler(DeviceRing& r) : ring_(r) {}
+    explicit SplitIOHandler(std::shared_ptr<DeviceRing> r)
+        : ringOwner_(std::move(r)), ring_(*ringOwner_) {}
 
     void OnWriteMixedOutput(
         const std::shared_ptr<aspl::Stream>&,
@@ -78,10 +89,8 @@ static std::string CFStr(CFStringRef s) {
 }
 
 static std::vector<DeviceConfig> ReadConfig() {
-    CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.horuse.splitwave.audio"));
-    if (!bundle) return {};
-
-    CFURLRef url = CFBundleCopyResourceURL(bundle, CFSTR("devices"), CFSTR("plist"), nullptr);
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+        nullptr, (const UInt8*)kConfigPath, strlen(kConfigPath), false);
     if (!url) return {};
 
     CFReadStreamRef stream = CFReadStreamCreateWithFile(nullptr, url);
@@ -123,8 +132,16 @@ static std::vector<DeviceConfig> ReadConfig() {
     return out;
 }
 
-static std::vector<std::unique_ptr<DeviceRing>>      gRings;
-static std::vector<std::shared_ptr<SplitIOHandler>>  gHandlers;
+struct DeviceEntry {
+    std::shared_ptr<aspl::Device>   device;
+    std::shared_ptr<SplitIOHandler> handler;
+    uint32_t                        channels;
+};
+
+static std::shared_ptr<aspl::Context>     gContext;
+static std::shared_ptr<aspl::Plugin>      gPlugin;
+static std::map<std::string, DeviceEntry> gDevices;
+static std::mutex                         gDevicesMutex;
 
 // libASPL streams default to 16-bit int; our IO is float.
 static AudioStreamBasicDescription FloatFormat(UInt32 channels) {
@@ -141,43 +158,105 @@ static AudioStreamBasicDescription FloatFormat(UInt32 channels) {
     return f;
 }
 
-static std::shared_ptr<aspl::Driver> CreateDriver() {
-    auto context = std::make_shared<aspl::Context>();
-    auto plugin  = std::make_shared<aspl::Plugin>(context);
+static DeviceEntry BuildDevice(const DeviceConfig& cfg) {
+    auto ring    = std::make_shared<DeviceRing>(cfg.channels);
+    auto handler = std::make_shared<SplitIOHandler>(ring);
 
-    for (const auto& cfg : ReadConfig()) {
-        auto ring    = std::make_unique<DeviceRing>(cfg.channels);
-        auto handler = std::make_shared<SplitIOHandler>(*ring);
+    aspl::DeviceParameters params;
+    params.Name         = cfg.name;
+    params.Manufacturer = "Splitwave";
+    params.DeviceUID    = "com.horuse.splitwave.audio." + cfg.id;
+    params.ModelUID     = "com.horuse.splitwave.audio.model";
+    params.SampleRate   = 48000;
+    params.ChannelCount = cfg.channels;
+    params.EnableMixing = true;
 
-        aspl::DeviceParameters params;
-        params.Name         = cfg.name;
-        params.Manufacturer = "Splitwave";
-        params.DeviceUID    = "com.horuse.splitwave.audio." + cfg.id;
-        params.ModelUID     = "com.horuse.splitwave.audio.model";
-        params.SampleRate   = 48000;
-        params.ChannelCount = cfg.channels;
-        params.EnableMixing = true;
+    auto device = std::make_shared<aspl::Device>(gContext, params);
+    device->SetIOHandler(handler);
+    device->SetControlHandler(handler);
 
-        auto device = std::make_shared<aspl::Device>(context, params);
-        device->SetIOHandler(handler);
-        device->SetControlHandler(handler);
+    aspl::StreamParameters outStream;
+    outStream.Direction = aspl::Direction::Output;
+    outStream.Format = FloatFormat(params.ChannelCount);
+    device->AddStreamWithControlsAsync(outStream);
 
-        aspl::StreamParameters outStream;
-        outStream.Direction = aspl::Direction::Output;
-        outStream.Format = FloatFormat(params.ChannelCount);
-        device->AddStreamWithControlsAsync(outStream);
+    aspl::StreamParameters inStream;
+    inStream.Direction = aspl::Direction::Input;
+    inStream.Format = FloatFormat(params.ChannelCount);
+    device->AddStreamWithControlsAsync(inStream);
 
-        aspl::StreamParameters inStream;
-        inStream.Direction = aspl::Direction::Input;
-        inStream.Format = FloatFormat(params.ChannelCount);
-        device->AddStreamWithControlsAsync(inStream);
+    return {device, handler, cfg.channels};
+}
 
-        plugin->AddDevice(device);
-        gHandlers.push_back(handler);
-        gRings.push_back(std::move(ring));
+// Reconciles the live device set against the config file. A channel count change
+// cannot be applied in place, so it becomes a remove followed by an add.
+static void SyncDevices() {
+    const auto configs = ReadConfig();
+    std::lock_guard<std::mutex> lock(gDevicesMutex);
+
+    for (auto it = gDevices.begin(); it != gDevices.end();) {
+        const auto* cfg = [&]() -> const DeviceConfig* {
+            for (const auto& c : configs) if (c.id == it->first) return &c;
+            return nullptr;
+        }();
+        if (!cfg || cfg->channels != it->second.channels
+                 || cfg->name != it->second.device->GetName()) {
+            gPlugin->RemoveDevice(it->second.device);
+            it = gDevices.erase(it);
+        } else {
+            ++it;
+        }
     }
 
-    return std::make_shared<aspl::Driver>(context, plugin);
+    for (const auto& cfg : configs) {
+        if (gDevices.count(cfg.id)) continue;
+        auto entry = BuildDevice(cfg);
+        gPlugin->AddDevice(entry.device);
+        gDevices.emplace(cfg.id, std::move(entry));
+    }
+}
+
+static void StartConfigWatcher();
+
+// The config is replaced by atomic rename, so the file's inode dies with every
+// write: the watch has to sit on the enclosing directory.
+static void StartConfigWatcher() {
+    int fd = open(kConfigDir, O_EVTONLY);
+    if (fd < 0) return;
+
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+    dispatch_source_t src = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_VNODE, fd, DISPATCH_VNODE_WRITE | DISPATCH_VNODE_RENAME
+            | DISPATCH_VNODE_DELETE, queue);
+    if (!src) { close(fd); return; }
+
+    dispatch_source_set_event_handler(src, ^{
+        const unsigned long flags = dispatch_source_get_data(src);
+        SyncDevices();
+        // The watched directory itself went away; re-arm on whatever replaced it.
+        if (flags & (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME)) {
+            dispatch_source_cancel(src);
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), queue, ^{
+                    StartConfigWatcher();
+                });
+        }
+    });
+    dispatch_source_set_cancel_handler(src, ^{
+        close(fd);
+        dispatch_release(src);
+    });
+    dispatch_resume(src);
+}
+
+static std::shared_ptr<aspl::Driver> CreateDriver() {
+    gContext = std::make_shared<aspl::Context>();
+    gPlugin  = std::make_shared<aspl::Plugin>(gContext);
+
+    auto driver = std::make_shared<aspl::Driver>(gContext, gPlugin);
+    SyncDevices();
+    StartConfigWatcher();
+    return driver;
 }
 
 extern "C" void* EntryPoint(CFAllocatorRef, CFUUIDRef typeUUID) {

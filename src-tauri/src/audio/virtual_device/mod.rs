@@ -11,7 +11,7 @@ fn default_channels() -> u32 {
 }
 
 // Bump with any driver bundle change; keep in sync with Info.plist CFBundleVersion.
-pub const DRIVER_VERSION: u32 = 3;
+pub const DRIVER_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

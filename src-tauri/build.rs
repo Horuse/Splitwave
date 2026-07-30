@@ -172,6 +172,7 @@ fn build_virtual_driver() {
         "-arch", "x86_64",
         "-mmacosx-version-min=13.0",
         "-O2",
+        "-fblocks",
         "-framework", "CoreAudio",
         "-framework", "CoreFoundation",
         "-I", libaspl_dir.join("include").to_str().unwrap(),

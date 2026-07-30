@@ -79,7 +79,7 @@
 		try {
 			await methods.installVirtualDriver();
 			status = await methods.virtualDriverStatus();
-			// fresh bundle has no devices.plist; Apply rewrites it
+			// a fresh install has no device config yet; Apply writes it
 			if (devices.length > 0) dirty = true;
 		} catch (e) {
 			error = String(e);
@@ -260,11 +260,7 @@
 		{#if dirty}
 			<div class="warning-block">
 				<strong>Changes not applied</strong>
-				{#if isLinux}
-					Press Apply to update the system audio devices.
-				{:else}
-					Press Apply to update the system audio devices. macOS will briefly interrupt audio playback.
-				{/if}
+				Press Apply to update the system audio devices.
 			</div>
 		{/if}
 

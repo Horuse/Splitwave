@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0]
 
 ### Added
+- **Virtual device apply without root** - device changes are picked up through
+  a watched shared config instead of requiring elevated privileges.
 - **Plugin hosting** - load your own plugins as effect nodes: CLAP and VST3 on
   every platform, Audio Unit on macOS. The plugin's own editor opens in a native
   window, its parameters are editable in the node itself, and its state is saved

@@ -1,6 +1,7 @@
 //! Pacing source for the DSP worker.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -83,6 +84,70 @@ impl ClockSource for SystemClockTicker {
         };
         self.next_deadline = Some(anchor + self.period);
         !stop.load(Ordering::SeqCst)
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+}
+
+/// Cap on the sleep between ring-level checks, so `stop` stays responsive
+/// even when the ring is far above target.
+const FILL_CLOCK_MAX_SLEEP: Duration = Duration::from_millis(5);
+
+/// Paces the speaker DSP worker off the speaker ring's own fill level rather
+/// than a wall-clock deadline. A late block just means the ring is below
+/// target, so the worker produces the next block immediately and never loses
+/// the notion of "how far behind" the way a deadline reset would.
+pub struct DeviceFillClock {
+    sample_rate: u32,
+    block_frames: usize,
+    target_frames: usize,
+    level: Arc<AtomicI64>,
+    /// The ring has reached its target at least once. Until then the empty
+    /// ring is the startup prefill, not a worker that fell behind.
+    primed: bool,
+}
+
+impl DeviceFillClock {
+    pub fn new(
+        sample_rate: u32,
+        block_frames: usize,
+        target_frames: usize,
+        level: Arc<AtomicI64>,
+    ) -> Self {
+        Self {
+            sample_rate,
+            block_frames,
+            target_frames,
+            level,
+            primed: false,
+        }
+    }
+}
+
+impl ClockSource for DeviceFillClock {
+    fn wait_for_tick(&mut self, stop: &AtomicBool) -> bool {
+        loop {
+            if stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            let queued = self.level.load(Ordering::Relaxed).max(0) as usize;
+            if queued + self.block_frames <= self.target_frames {
+                // Less than one block of headroom left in the ring -- the
+                // worker isn't staying ahead of the device.
+                if self.primed && queued < self.block_frames {
+                    health::bump(&health::CLOCK_LATE_BLOCKS, 1);
+                }
+                return true;
+            }
+            self.primed = true;
+            let overshoot = queued + self.block_frames - self.target_frames;
+            let drain = Duration::from_nanos(
+                (overshoot as u64 * 1_000_000_000) / self.sample_rate.max(1) as u64,
+            );
+            thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));
+        }
     }
 
     fn sample_rate(&self) -> u32 {

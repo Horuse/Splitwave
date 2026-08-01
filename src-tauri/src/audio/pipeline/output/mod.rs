@@ -1,15 +1,15 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use rtrb::Producer;
+use rtrb::{Producer, RingBuffer};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
-use crate::audio::clock::{ClockSource, SystemClockTicker};
+use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
@@ -41,6 +41,11 @@ const RECORDER_DEFAULT_SR: u32 = 48_000;
 // buffered span stays ~340 ms @ 48 kHz at any channel count, absorbing cpal /
 // scheduler jitter and output-clock drift.
 pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 16_384;
+
+// Ring headroom the fill clock paces the worker towards: enough to absorb a
+// DSP-side spike without the device clock -- not the wall clock -- ever
+// seeing an empty ring. 3 blocks = 64 ms @ 48 kHz / DSP_BLOCK_FRAMES.
+pub(super) const SPEAKER_TARGET_FILL_BLOCKS: usize = 3;
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
@@ -118,10 +123,32 @@ impl Drop for RecorderWorker {
     }
 }
 
-// Shared by both platforms' `start_speaker_stream`: a Clock-paced worker that
-// mixes the output sub-graph and bulk-pushes blocks into the speaker ring.
+// Builds the speaker ring plus the cpal-side `fill` closure and a fill-level
+// handle shared with the worker's sink -- one ring shape for all platforms.
+pub(super) fn speaker_ring(
+    out_channels: usize,
+) -> (
+    Producer<f32>,
+    impl FnMut(&mut [f32], usize) + Send + 'static,
+    Arc<AtomicI64>,
+) {
+    let (producer, mut consumer) =
+        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
+    let level = Arc::new(AtomicI64::new(0));
+    let level_cb = level.clone();
+    let fill = move |out: &mut [f32], _frames: usize| {
+        let read = streams::bulk_pop(&mut consumer, out);
+        level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
+    };
+    (producer, fill, level)
+}
+
+// Shared by both platforms' `start_speaker_stream`: a device-fill-paced
+// worker that mixes the output sub-graph and bulk-pushes blocks into the
+// speaker ring.
 pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
+    level: Arc<AtomicI64>,
     sample_rate: u32,
     channels: usize,
     graph: OutputGraph,
@@ -130,15 +157,21 @@ pub(super) fn spawn_speaker_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
-    let clock: Box<dyn ClockSource> =
-        Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
+    let target_frames = SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES;
+    let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
+        sample_rate,
+        DSP_BLOCK_FRAMES,
+        target_frames,
+        level.clone(),
+    ));
     let pacing = WorkerPacing::Clock(clock);
     let join = thread::Builder::new()
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             worker.run(stop_thread, pacing, |block| {
                 update_meter(&meter, block, channels);
-                streams::bulk_push(&mut producer, block);
+                let written = streams::bulk_push(&mut producer, block);
+                level.fetch_add((written / channels) as i64, Ordering::Relaxed);
                 Ok(())
             });
         })

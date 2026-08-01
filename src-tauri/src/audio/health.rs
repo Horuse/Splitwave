@@ -23,7 +23,9 @@ counters! {
     OUTPUT_UNDERRUN_SAMPLES,
     /// Samples dropped pushing into a full ring (consumer fell behind).
     RING_OVERRUN_SAMPLES,
-    /// Worker blocks whose clock deadline had already passed on wake.
+    /// Worker blocks produced with no clock slack left: a wall-clock deadline
+    /// already passed on wake, or (device-paced speaker workers) the ring had
+    /// less than one block of headroom.
     CLOCK_LATE_BLOCKS,
     /// Worst single deadline miss, microseconds (monotonic high-water mark).
     CLOCK_LATE_MAX_US,

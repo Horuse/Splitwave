@@ -17,13 +17,15 @@
 //! allocator to free the ring buffer. `BroadcastTx::drain_discarded`
 //! collects the returned producers and drops them on main.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::streams::bulk_push;
+use crate::audio::health;
+use crate::audio::streams::bulk_push_counted;
 use crate::error::{AppError, AppResult};
 
 /// Maximum subscribers per input. 32 covers any plausible pipeline (each
@@ -35,8 +37,33 @@ pub const BRIDGE_CAPACITY: usize = 32;
 /// removes back-to-back; 4x capacity keeps the cmd queue from saturating.
 const CMD_QUEUE_CAPACITY: usize = BRIDGE_CAPACITY * 4;
 
+/// Per-subscriber capture-side counters for one broadcast slot. Handed back
+/// to the pipeline at `add()` time so it can pair a slot with the SourceMeta
+/// of the DSP source reading the other end of the same ring -- the global
+/// `health::CAPTURE_RING_OVERRUN_SAMPLES` total can't tell which input ring
+/// is the one overflowing.
+#[derive(Clone)]
+pub struct CaptureStats {
+    /// Samples successfully written to this slot's ring.
+    pub fed: Arc<AtomicU64>,
+    /// Samples offered but dropped because the ring was full.
+    pub dropped: Arc<AtomicU64>,
+}
+
+impl CaptureStats {
+    fn new() -> Self {
+        Self {
+            fed: Arc::new(AtomicU64::new(0)),
+            dropped: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// One broadcast subscriber: the ring's Producer end plus its capture stats.
+type Slot = (Producer<f32>, CaptureStats);
+
 enum BroadcastCmd {
-    Add { slot: usize, producer: Producer<f32> },
+    Add { slot: usize, producer: Producer<f32>, stats: CaptureStats },
     Remove { slot: usize },
 }
 
@@ -49,20 +76,20 @@ pub struct BroadcastTx {
     used: Vec<bool>,
     /// RT returns removed producers here so they drop on main, not on the
     /// audio callback thread.
-    discarded_rx: Consumer<Producer<f32>>,
+    discarded_rx: Consumer<Slot>,
 }
 
 /// RT-thread side. Owns the Producer slot vec; lives inside the input
 /// callback closure.
 pub struct BroadcastRx {
     cmds: Consumer<BroadcastCmd>,
-    slots: Vec<Option<Producer<f32>>>,
-    discarded_tx: Producer<Producer<f32>>,
+    slots: Vec<Option<Slot>>,
+    discarded_tx: Producer<Slot>,
 }
 
 pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
     let (cmd_tx, cmd_rx) = RingBuffer::<BroadcastCmd>::new(CMD_QUEUE_CAPACITY);
-    let (disc_tx, disc_rx) = RingBuffer::<Producer<f32>>::new(CMD_QUEUE_CAPACITY);
+    let (disc_tx, disc_rx) = RingBuffer::<Slot>::new(CMD_QUEUE_CAPACITY);
     let mut slots = Vec::with_capacity(BRIDGE_CAPACITY);
     let mut used = Vec::with_capacity(BRIDGE_CAPACITY);
     for _ in 0..BRIDGE_CAPACITY {
@@ -85,19 +112,23 @@ pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
 
 impl BroadcastTx {
     /// Register `producer` for broadcast. Returns the slot index used to
-    /// remove it later. Errors if all slots are taken or the cmd queue is
-    /// momentarily full (caller should retry after a reconcile cycle).
-    pub fn add(&mut self, producer: Producer<f32>) -> AppResult<usize> {
+    /// remove it later, plus that slot's capture-side counters -- the
+    /// caller hands these to the matching SourceMeta so the tick thread can
+    /// log fed/dropped alongside the consumed side of the same ring.
+    /// Errors if all slots are taken or the cmd queue is momentarily full
+    /// (caller should retry after a reconcile cycle).
+    pub fn add(&mut self, producer: Producer<f32>) -> AppResult<(usize, CaptureStats)> {
         let slot = self
             .used
             .iter()
             .position(|&b| !b)
             .ok_or_else(|| AppError::Validation("input broadcast slots exhausted".into()))?;
+        let stats = CaptureStats::new();
         self.cmds
-            .push(BroadcastCmd::Add { slot, producer })
+            .push(BroadcastCmd::Add { slot, producer, stats: stats.clone() })
             .map_err(|_| AppError::Stream("input broadcast cmd queue full".into()))?;
         self.used[slot] = true;
-        Ok(slot)
+        Ok((slot, stats))
     }
 
     /// Slots still available for `add`.
@@ -134,14 +165,14 @@ impl BroadcastRx {
     pub fn apply_commands(&mut self) {
         while let Ok(cmd) = self.cmds.pop() {
             match cmd {
-                BroadcastCmd::Add { slot, producer } => {
+                BroadcastCmd::Add { slot, producer, stats } => {
                     // If slot already had a Producer, return it to main
                     // before overwriting (defensive -- `BroadcastTx::add`
                     // only picks free slots, so this branch is rare).
                     if let Some(prev) = self.slots[slot].take() {
                         let _ = self.discarded_tx.push(prev);
                     }
-                    self.slots[slot] = Some(producer);
+                    self.slots[slot] = Some((producer, stats));
                 }
                 BroadcastCmd::Remove { slot } => {
                     if let Some(p) = self.slots[slot].take() {
@@ -152,13 +183,19 @@ impl BroadcastRx {
         }
     }
 
-    /// Broadcast `samples` to every active slot. RT-safe -- `bulk_push`
+    /// Broadcast `samples` to every active slot. RT-safe -- `bulk_push_counted`
     /// reserves via one CAS per slot and never blocks.
     #[inline]
     pub fn broadcast(&mut self, samples: &[f32]) {
         for slot in self.slots.iter_mut() {
-            if let Some(p) = slot {
-                bulk_push(p, samples);
+            if let Some((p, stats)) = slot {
+                let written =
+                    bulk_push_counted(p, samples, &health::CAPTURE_RING_OVERRUN_SAMPLES);
+                stats.fed.fetch_add(written as u64, Ordering::Relaxed);
+                let dropped = (samples.len() - written) as u64;
+                if dropped > 0 {
+                    stats.dropped.fetch_add(dropped, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -171,8 +208,8 @@ impl BroadcastRx {
         self.slots
             .iter()
             .filter_map(|s| s.as_ref())
-            .filter(|p| !p.is_abandoned())
-            .map(|p| p.buffer().capacity() - p.slots())
+            .filter(|(p, _)| !p.is_abandoned())
+            .map(|(p, _)| p.buffer().capacity() - p.slots())
             .max()
     }
 
@@ -194,7 +231,7 @@ impl BroadcastRx {
                 if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
                     return;
                 }
-                let Some(p) = self.slots[i].as_mut() else { break };
+                let Some((p, _)) = self.slots[i].as_mut() else { break };
                 // A consumer that went away leaves its ring full forever.
                 if p.is_abandoned() {
                     break;
@@ -218,6 +255,11 @@ impl BroadcastRx {
                     chunk.commit_all();
                     written += take;
                 }
+            }
+            // Blocking push never drops (it waits for room), so only fed
+            // needs updating here -- dropped stays at its initial 0.
+            if let Some((_, stats)) = self.slots[i].as_ref() {
+                stats.fed.fetch_add(written as u64, Ordering::Relaxed);
             }
         }
     }

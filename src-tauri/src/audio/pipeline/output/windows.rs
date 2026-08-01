@@ -14,7 +14,7 @@ use crate::error::AppResult;
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerWorker};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -49,7 +49,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
     info!(
         device = %device_name,
@@ -61,7 +61,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, fill, level) = speaker_ring(spec.out_channels);
+    let (producer, fill, level, io) = speaker_ring(spec.out_channels);
     let app_err = app.clone();
     let dead_cb = dead.clone();
     let node_id_cb = node_id.to_string();
@@ -96,5 +96,6 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         },
         ctrl,
         dead,
+        io,
     ))
 }

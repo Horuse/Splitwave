@@ -11,10 +11,12 @@ use crate::audio::effects::{
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
+use crate::audio::health;
 use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
-use crate::audio::streams::bulk_push;
+use crate::audio::input_bridge::CaptureStats;
+use crate::audio::streams::bulk_push_counted;
 use crate::error::{AppError, AppResult};
 
 /// Ring buffer length in frames per source; multiplied by the source's channel
@@ -105,7 +107,9 @@ impl StagingRing {
             self.tail = if self.tail + 1 == cap { 0 } else { self.tail + 1 };
         }
         self.len += take;
-        self.dropped = self.dropped.saturating_add((src.len() - take) as u64);
+        let overrun = (src.len() - take) as u64;
+        self.dropped = self.dropped.saturating_add(overrun);
+        health::bump(&health::STAGING_OVERRUN_SAMPLES, overrun);
     }
 }
 
@@ -151,6 +155,72 @@ impl DagNode {
     }
 }
 
+/// Per-source counters + gauge read by the non-RT tick thread (`meter::spawn_xrun_thread`).
+/// Every write is `Ordering::Relaxed` -- RT-safe, no allocation, no other sync.
+#[derive(Clone)]
+pub(super) struct SourceStats {
+    /// Samples zero-filled on genuine mid-stream underrun (ring ran dry while streaming).
+    pub xrun: Arc<AtomicU64>,
+    /// Samples silenced because the source delivered nothing for longer than
+    /// `STALL_THRESHOLD`. Silent by design, but it is still missing audio.
+    pub stalled: Arc<AtomicU64>,
+    /// Samples discarded by the backlog trim in `fill_block`.
+    pub trimmed: Arc<AtomicU64>,
+    /// Samples actually read out of the source ring.
+    pub consumed: Arc<AtomicU64>,
+    /// Ring occupancy (samples) at the end of the last `fill_block`. A gauge,
+    /// not a counter -- plain `store`, no accumulation.
+    pub level: Arc<AtomicU64>,
+}
+
+impl SourceStats {
+    fn new() -> Self {
+        Self {
+            xrun: Arc::new(AtomicU64::new(0)),
+            stalled: Arc::new(AtomicU64::new(0)),
+            trimmed: Arc::new(AtomicU64::new(0)),
+            consumed: Arc::new(AtomicU64::new(0)),
+            level: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// Identifies one source for the tick thread: its counters plus enough
+/// context (channel count, native rate) to convert sample deltas into a frame
+/// rate comparable against real time.
+#[derive(Clone)]
+pub(super) struct SourceMeta {
+    pub label: String,
+    pub stats: SourceStats,
+    pub channels: usize,
+    pub native_sr: u32,
+    /// Graph id of the captured input this source reads, for matching against
+    /// the broadcast slot's `CaptureStats` once the bridge wires it up. `None`
+    /// for ring-sources and network producers -- they don't go through a
+    /// capture broadcast.
+    pub input_id: Option<String>,
+    /// Owning output id (or "monitor"), the other half of the key that
+    /// disambiguates one input feeding several outputs.
+    pub output_id: String,
+    /// Capture-side fed/dropped counters, filled in by `pipeline/mod.rs`
+    /// after `BroadcastTx::add` returns them for this source's ring.
+    pub capture: Option<CaptureStats>,
+}
+
+/// Identifies one output for the tick thread: its per-block counter plus the
+/// sample rate that defines its expected block cadence. `channels` and `io`
+/// are only meaningful for speaker outputs -- `build_output_graph` doesn't
+/// know the device's real channel count yet, so the caller fills both in
+/// after `start_speaker_stream` returns (see `pipeline/mod.rs`).
+#[derive(Clone)]
+pub(super) struct OutputMeta {
+    pub label: String,
+    pub blocks: Arc<AtomicU64>,
+    pub sample_rate: u32,
+    pub channels: usize,
+    pub io: Option<super::output::SpeakerIo>,
+}
+
 struct SourceState {
     label: String,
     channels: usize,
@@ -174,9 +244,7 @@ struct SourceState {
     meter: Option<MeterHandle>,
     // Per-channel taps ("chK") drawn off this source.
     handle_bufs: Vec<(String, Vec<f32>)>,
-    // Counts samples zero-filled on genuine mid-stream underrun (ring ran dry
-    // while streaming). A non-RT tick thread reads it to surface xruns.
-    xrun: Arc<AtomicU64>,
+    stats: SourceStats,
 }
 
 impl SourceState {
@@ -251,6 +319,8 @@ impl SourceState {
                 let drop = excess - excess % self.channels;
                 if let Ok(chunk) = self.consumer.read_chunk(drop) {
                     chunk.commit_all();
+                    self.stats.trimmed.fetch_add(drop as u64, Ordering::Relaxed);
+                    health::bump(&health::SOURCE_TRIM_DROPPED_SAMPLES, drop as u64);
                 }
             }
         }
@@ -265,10 +335,12 @@ impl SourceState {
                 }
                 // A stalled/paused source silences by design; only a source that
                 // is actively streaming and ran dry mid-block is a real xrun.
-                if !self.is_stalled() {
-                    self.xrun
-                        .fetch_add((need - written) as u64, Ordering::Relaxed);
-                }
+                let counter = if self.is_stalled() {
+                    &self.stats.stalled
+                } else {
+                    &self.stats.xrun
+                };
+                counter.fetch_add((need - written) as u64, Ordering::Relaxed);
                 break;
             }
             let n = self.out_pending.pop_into(&mut self.out_buf[written..]);
@@ -303,6 +375,9 @@ impl SourceState {
                 }
             }
         }
+        self.stats
+            .level
+            .store(self.consumer.slots() as u64, Ordering::Relaxed);
     }
 
     fn try_refill_one_chunk(&mut self) {
@@ -318,6 +393,7 @@ impl SourceState {
                     self.input_staging.extend_from_slice(first);
                     self.input_staging.extend_from_slice(second);
                     chunk.commit_all();
+                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -343,6 +419,7 @@ impl SourceState {
                     self.chunk_tmp.extend_from_slice(first);
                     self.chunk_tmp.extend_from_slice(second);
                     chunk.commit_all();
+                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -672,6 +749,10 @@ pub(super) struct OutputGraph {
     out_channels: usize,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
+    /// Blocks produced by `process_block`. A clone lives in this build's
+    /// `BuiltOutputGraph::output` so the non-RT tick thread can compare this
+    /// worker's real block rate against `sample_rate / DSP_BLOCK_FRAMES`.
+    blocks: Arc<AtomicU64>,
 }
 
 impl OutputGraph {
@@ -715,6 +796,7 @@ impl OutputGraph {
     /// Fill `output` (`DSP_BLOCK_FRAMES * out_channels` long) with one block of
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
+        self.blocks.fetch_add(1, Ordering::Relaxed);
         for node in &mut self.nodes {
             match node {
                 DagNode::Source(s) => s.fill_block(),
@@ -748,7 +830,7 @@ impl OutputGraph {
                 }
                 for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
                     if let Some(prod) = cons.send_producers.get_mut(i) {
-                        bulk_push(prod, buf);
+                        bulk_push_counted(prod, buf, &health::TAP_RING_OVERRUN_SAMPLES);
                     }
                 }
                 continue;
@@ -801,7 +883,7 @@ impl OutputGraph {
                 }
                 // Publish the processed block to every consuming output's ring.
                 for prod in eff.taps.iter_mut() {
-                    bulk_push(prod, &eff.out_buf);
+                    bulk_push_counted(prod, &eff.out_buf, &health::TAP_RING_OVERRUN_SAMPLES);
                 }
             }
         }
@@ -829,7 +911,8 @@ pub(super) struct BuiltOutputGraph {
     pub lufs: Vec<LufsHandle>,
     pub gr_handles: Vec<GrHandle>,
     pub scopes: Vec<WaveformHandle>,
-    pub xruns: Vec<(String, Arc<AtomicU64>)>,
+    pub sources: Vec<SourceMeta>,
+    pub output: OutputMeta,
     /// Effect node id -> (node index, channel width). Used to attach publish
     /// taps to nodes that fan out to other outputs.
     pub node_meta: HashMap<String, (usize, usize)>,
@@ -930,7 +1013,7 @@ pub(super) fn build_output_graph(
     let mut lufs: Vec<LufsHandle> = Vec::new();
     let mut gr_handles: Vec<GrHandle> = Vec::new();
     let mut scopes: Vec<WaveformHandle> = Vec::new();
-    let mut xruns: Vec<(String, Arc<AtomicU64>)> = Vec::new();
+    let mut sources: Vec<SourceMeta> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
     // Per-node channel width; effects inherit the max width of their upstreams.
     let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
@@ -940,6 +1023,15 @@ pub(super) fn build_output_graph(
         // from the ring instead of rebuilding the whole upstream chain.
         if let Some((consumer, owner_sr, width)) = cut_leaves.remove(id) {
             let source = ring_source(id, consumer, owner_sr, output_sr, width, realtime, valid)?;
+            sources.push(SourceMeta {
+                label: format!("{} out={}", source.label, output_id.unwrap_or("monitor")),
+                stats: source.stats.clone(),
+                channels: width,
+                native_sr: owner_sr,
+                input_id: None,
+                output_id: output_id.unwrap_or("monitor").to_string(),
+                capture: None,
+            });
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
@@ -1050,8 +1142,16 @@ pub(super) fn build_output_graph(
                 }
             };
             let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
-            let xrun = Arc::new(AtomicU64::new(0));
-            xruns.push((label.clone(), xrun.clone()));
+            let stats = SourceStats::new();
+            sources.push(SourceMeta {
+                label: label.clone(),
+                stats: stats.clone(),
+                channels: source_channels,
+                native_sr: input_sr,
+                input_id: Some(id.clone()),
+                output_id: output_id.unwrap_or("monitor").to_string(),
+                capture: None,
+            });
             let source = SourceState {
                 label,
                 channels: source_channels,
@@ -1074,7 +1174,7 @@ pub(super) fn build_output_graph(
                 last_drain_gen: 0,
                 meter: input_meters.get(id).cloned(),
                 handle_bufs: source_handle_bufs,
-                xrun,
+                stats,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1248,6 +1348,10 @@ pub(super) fn build_output_graph(
         }
     }
 
+    // Matches the source label style (`out=<id>` / "monitor").
+    let out_label = output_id.map(|id| format!("out={id}")).unwrap_or_else(|| "monitor".to_string());
+    let blocks = Arc::new(AtomicU64::new(0));
+
     // A wire sender (direct-IP or WebRTC) is a terminal Consumer node inside the
     // DAG (not a summed output terminal): it sums per-channel inputs and pushes
     // them into send rings drained by a background transmitter.
@@ -1348,6 +1452,7 @@ pub(super) fn build_output_graph(
                 out_channels: 2,
                 nodes,
                 terminals: Vec::new(),
+                blocks: blocks.clone(),
             },
             controls,
             bypasses,
@@ -1355,7 +1460,8 @@ pub(super) fn build_output_graph(
             lufs,
             gr_handles,
             scopes,
-            xruns,
+            sources,
+            output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
             node_meta,
         });
     }
@@ -1404,6 +1510,7 @@ pub(super) fn build_output_graph(
             out_channels: 2,
             nodes,
             terminals,
+            blocks: blocks.clone(),
         },
         controls,
         bypasses,
@@ -1411,7 +1518,8 @@ pub(super) fn build_output_graph(
         lufs,
         gr_handles,
         scopes,
-        xruns,
+        sources,
+        output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
         node_meta,
     })
 }
@@ -1475,7 +1583,7 @@ fn ring_source(
         last_drain_gen: 0,
         meter: None,
         handle_bufs,
-        xrun: Arc::new(AtomicU64::new(0)),
+        stats: SourceStats::new(),
     })
 }
 

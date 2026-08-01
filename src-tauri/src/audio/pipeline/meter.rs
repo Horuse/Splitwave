@@ -1,7 +1,7 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -10,6 +10,9 @@ use tracing::warn;
 use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::health;
 
+use super::dag::{OutputMeta, SourceMeta, DSP_BLOCK_FRAMES};
+use super::output::LIVE_SPEAKER_FILLS;
+
 const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
 const GR_EVENT: &str = "audio://gr";
@@ -17,6 +20,9 @@ const SCOPE_EVENT: &str = "audio://scope";
 const METER_TICK: Duration = Duration::from_millis(33);
 
 const XRUN_TICK: Duration = Duration::from_millis(1000);
+/// Fraction a measured rate may drift from its real-time expectation before
+/// it's worth a log line; below this, scheduler jitter is normal.
+const RATE_DEVIATION: f64 = 0.02;
 
 pub(super) struct XrunTickThread {
     stop: Arc<AtomicBool>,
@@ -32,27 +38,201 @@ impl Drop for XrunTickThread {
     }
 }
 
-/// Polls per-source underrun counters once a second and logs the delta. A
-/// growing count means our DSP path starved (ring ran dry mid-block); silence
-/// with a flat count points downstream to the device/driver instead.
-pub(super) fn spawn_xrun_thread(handles: Vec<(String, Arc<AtomicU64>)>) -> XrunTickThread {
+/// Polls per-source and per-output counters once a second and logs whatever
+/// looks wrong: a growing xrun/trim count, or a consumed/produced rate that
+/// has drifted from real time by more than `RATE_DEVIATION`. A healthy run
+/// stays silent. Real elapsed time is measured with `Instant` rather than
+/// assumed to be exactly `XRUN_TICK`, since `thread::sleep` only guarantees
+/// "at least".
+pub(super) fn spawn_xrun_thread(
+    sources: Vec<SourceMeta>,
+    outputs: Vec<OutputMeta>,
+) -> XrunTickThread {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let join = thread::Builder::new()
         .name("xrun-tick".into())
         .spawn(move || {
-            let mut last: Vec<u64> = vec![0; handles.len()];
+            let mut last_xrun: Vec<u64> =
+                sources.iter().map(|s| s.stats.xrun.load(Ordering::Relaxed)).collect();
+            let mut last_stalled: Vec<u64> =
+                sources.iter().map(|s| s.stats.stalled.load(Ordering::Relaxed)).collect();
+            let mut last_trimmed: Vec<u64> =
+                sources.iter().map(|s| s.stats.trimmed.load(Ordering::Relaxed)).collect();
+            let mut last_consumed: Vec<u64> =
+                sources.iter().map(|s| s.stats.consumed.load(Ordering::Relaxed)).collect();
+            let mut last_fed: Vec<u64> = sources
+                .iter()
+                .map(|s| s.capture.as_ref().map_or(0, |c| c.fed.load(Ordering::Relaxed)))
+                .collect();
+            let mut last_dropped: Vec<u64> = sources
+                .iter()
+                .map(|s| s.capture.as_ref().map_or(0, |c| c.dropped.load(Ordering::Relaxed)))
+                .collect();
+            let mut last_blocks: Vec<u64> =
+                outputs.iter().map(|o| o.blocks.load(Ordering::Relaxed)).collect();
+            let mut last_requested: Vec<u64> = outputs
+                .iter()
+                .map(|o| o.io.as_ref().map_or(0, |io| io.requested.load(Ordering::Relaxed)))
+                .collect();
+            let mut last_read: Vec<u64> = outputs
+                .iter()
+                .map(|o| o.io.as_ref().map_or(0, |io| io.read.load(Ordering::Relaxed)))
+                .collect();
+            let mut last_callbacks: Vec<u64> = outputs
+                .iter()
+                .map(|o| o.io.as_ref().map_or(0, |io| io.callbacks.load(Ordering::Relaxed)))
+                .collect();
             let mut last_global: Vec<u64> = health::snapshot().iter().map(|(_, v)| *v).collect();
+            let mut last_tick = Instant::now();
             while !stop_thread.load(Ordering::SeqCst) {
                 thread::sleep(XRUN_TICK);
-                for (i, (label, counter)) in handles.iter().enumerate() {
-                    let now = counter.load(Ordering::Relaxed);
-                    let delta = now.saturating_sub(last[i]);
-                    last[i] = now;
-                    if delta > 0 {
-                        warn!(source = %label, underrun_samples = delta, "DSP underrun");
+                let now = Instant::now();
+                let elapsed_secs = now.duration_since(last_tick).as_secs_f64();
+                last_tick = now;
+
+                for (i, s) in sources.iter().enumerate() {
+                    let xrun_now = s.stats.xrun.load(Ordering::Relaxed);
+                    let stalled_now = s.stats.stalled.load(Ordering::Relaxed);
+                    let trimmed_now = s.stats.trimmed.load(Ordering::Relaxed);
+                    let consumed_now = s.stats.consumed.load(Ordering::Relaxed);
+                    let xrun_delta = xrun_now.saturating_sub(last_xrun[i]);
+                    let stalled_delta = stalled_now.saturating_sub(last_stalled[i]);
+                    let trimmed_delta = trimmed_now.saturating_sub(last_trimmed[i]);
+                    let consumed_delta = consumed_now.saturating_sub(last_consumed[i]);
+                    last_xrun[i] = xrun_now;
+                    last_stalled[i] = stalled_now;
+                    last_trimmed[i] = trimmed_now;
+                    last_consumed[i] = consumed_now;
+
+                    let consumed_frames = consumed_delta / s.channels.max(1) as u64;
+                    let expected_frames = s.native_sr as f64 * elapsed_secs;
+                    let off_rate = expected_frames > 0.0
+                        && ((consumed_frames as f64 - expected_frames).abs() / expected_frames)
+                            > RATE_DEVIATION;
+
+                    // Capture-side fed/dropped, only present for sources fed by a
+                    // capture broadcast (mic/system-audio/app/file); ring-sources
+                    // and network producers stay `None`.
+                    let capture_delta = s.capture.as_ref().map(|c| {
+                        let fed_now = c.fed.load(Ordering::Relaxed);
+                        let dropped_now = c.dropped.load(Ordering::Relaxed);
+                        let fed_delta = fed_now.saturating_sub(last_fed[i]);
+                        let dropped_delta = dropped_now.saturating_sub(last_dropped[i]);
+                        last_fed[i] = fed_now;
+                        last_dropped[i] = dropped_now;
+                        (fed_delta, dropped_delta)
+                    });
+                    let dropped_delta = capture_delta.map_or(0, |(_, d)| d);
+
+                    if xrun_delta > 0
+                        || stalled_delta > 0
+                        || trimmed_delta > 0
+                        || off_rate
+                        || dropped_delta > 0
+                    {
+                        let ring_level_samples = s.stats.level.load(Ordering::Relaxed);
+                        match capture_delta {
+                            Some((fed_delta, dropped_delta)) => {
+                                let fed_frames = fed_delta / s.channels.max(1) as u64;
+                                warn!(
+                                    source = %s.label,
+                                    consumed_frames,
+                                    expected_frames = expected_frames.round() as u64,
+                                    trimmed_samples = trimmed_delta,
+                                    xrun_samples = xrun_delta,
+                                    stalled_samples = stalled_delta,
+                                    ring_level_samples,
+                                    fed_frames,
+                                    dropped_samples = dropped_delta,
+                                    "source rate anomaly"
+                                );
+                            }
+                            None => {
+                                warn!(
+                                    source = %s.label,
+                                    consumed_frames,
+                                    expected_frames = expected_frames.round() as u64,
+                                    trimmed_samples = trimmed_delta,
+                                    xrun_samples = xrun_delta,
+                                    stalled_samples = stalled_delta,
+                                    ring_level_samples,
+                                    "source rate anomaly"
+                                );
+                            }
+                        }
                     }
                 }
+
+                for (i, o) in outputs.iter().enumerate() {
+                    let blocks_now = o.blocks.load(Ordering::Relaxed);
+                    let blocks_delta = blocks_now.saturating_sub(last_blocks[i]);
+                    last_blocks[i] = blocks_now;
+
+                    let expected_blocks =
+                        o.sample_rate as f64 / DSP_BLOCK_FRAMES as f64 * elapsed_secs;
+                    let blocks_off_rate = expected_blocks > 0.0
+                        && ((blocks_delta as f64 - expected_blocks).abs() / expected_blocks)
+                            > RATE_DEVIATION;
+
+                    // Device-pull diagnostics: distinguishes "device asking for
+                    // far more than real time implies" from "ring nobody fills",
+                    // which the global OUTPUT_UNDERRUN_SAMPLES counter can't tell
+                    // apart since it's summed across every output.
+                    let io = o.io.as_ref().map(|io| {
+                        let requested_now = io.requested.load(Ordering::Relaxed);
+                        let read_now = io.read.load(Ordering::Relaxed);
+                        let callbacks_now = io.callbacks.load(Ordering::Relaxed);
+                        let requested_delta = requested_now.saturating_sub(last_requested[i]);
+                        let read_delta = read_now.saturating_sub(last_read[i]);
+                        let callbacks_delta = callbacks_now.saturating_sub(last_callbacks[i]);
+                        last_requested[i] = requested_now;
+                        last_read[i] = read_now;
+                        last_callbacks[i] = callbacks_now;
+                        (requested_delta, read_delta, callbacks_delta)
+                    });
+                    let io_off_rate = io.is_some_and(|(requested_delta, _, _)| {
+                        let expected_samples =
+                            o.sample_rate as f64 * o.channels as f64 * elapsed_secs;
+                        expected_samples > 0.0
+                            && ((requested_delta as f64 - expected_samples).abs()
+                                / expected_samples)
+                                > RATE_DEVIATION
+                    });
+
+                    if blocks_off_rate || io_off_rate {
+                        match io {
+                            Some((requested_samples, read_samples, callbacks)) => warn!(
+                                output = %o.label,
+                                blocks = blocks_delta,
+                                expected_blocks = expected_blocks.round() as u64,
+                                requested_samples,
+                                read_samples,
+                                callbacks,
+                                "output block rate anomaly"
+                            ),
+                            None => warn!(
+                                output = %o.label,
+                                blocks = blocks_delta,
+                                expected_blocks = expected_blocks.round() as u64,
+                                "output block rate anomaly"
+                            ),
+                        }
+                    }
+                }
+
+                // A stream that outlived its worker keeps calling back and
+                // draining a ring nobody fills, which shows up in the global
+                // underrun total but in no output's own counters.
+                let live_fills = LIVE_SPEAKER_FILLS.load(Ordering::Relaxed);
+                let speaker_outputs = outputs.iter().filter(|o| o.io.is_some()).count() as i64;
+                if live_fills != speaker_outputs {
+                    warn!(
+                        live_speaker_streams = live_fills,
+                        speaker_outputs, "orphan speaker streams"
+                    );
+                }
+
                 // High-water mark, not a running total: read-and-reset so the
                 // next window reports its own worst miss rather than this one's.
                 let worst_late_us = health::CLOCK_LATE_MAX_US.swap(0, Ordering::Relaxed);

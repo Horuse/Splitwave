@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::audio::health;
 use crate::audio::resample::MultiResamplerOut;
-use crate::audio::streams::bulk_push;
+use crate::audio::streams::bulk_push_counted;
 
 /// Decoded network audio is always carried at 48 kHz, one channel per stream.
 pub const SR: u32 = 48_000;
@@ -129,7 +130,7 @@ pub fn broadcast_push(broadcast: &ChannelBroadcast, seq: u16, packets: u16, samp
     let mut prods = broadcast.prods.lock().unwrap();
     prods.retain(|p| !p.is_abandoned());
     for p in prods.iter_mut() {
-        bulk_push(p, samples);
+        bulk_push_counted(p, samples, &health::NET_RING_OVERRUN_SAMPLES);
     }
     let mut state = broadcast.state.lock().unwrap();
     state.pos_end = extend_seq(seq, state.pos_end) + 1;
@@ -420,7 +421,7 @@ impl FanoutRegistry {
                 if lead > 0 {
                     pad.clear();
                     pad.resize(lead.min(CONSUMER_RING / 2), 0.0);
-                    bulk_push(&mut prod, &pad);
+                    bulk_push_counted(&mut prod, &pad, &health::NET_RING_OVERRUN_SAMPLES);
                 }
                 bc.prods.lock().unwrap().push(prod);
                 map.lock().unwrap().insert(
@@ -491,7 +492,7 @@ impl FanoutRegistry {
                 if open > 0 {
                     pad.clear();
                     pad.resize(open, 0.0);
-                    bulk_push(&mut prod, &pad);
+                    bulk_push_counted(&mut prod, &pad, &health::NET_RING_OVERRUN_SAMPLES);
                 }
                 bc.prods.lock().unwrap().push(prod);
                 taps.insert(

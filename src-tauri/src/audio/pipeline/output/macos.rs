@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerWorker};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -60,7 +60,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     let device_name = spec
         .device
         .name()
@@ -98,9 +98,10 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
     let mut level_holder: Option<Arc<AtomicI64>> = None;
+    let mut io_holder: Option<SpeakerIo> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, fill, level) = speaker_ring(spec.out_channels);
+        let (producer, fill, level, io) = speaker_ring(spec.out_channels);
         let app_err = app.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
@@ -121,6 +122,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             Ok(s) => {
                 producer_holder = Some(producer);
                 level_holder = Some(level);
+                io_holder = Some(io);
                 stream_holder = Some(s);
                 break;
             }
@@ -137,6 +139,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     }
     let producer = producer_holder.expect("loop sets producer on success or returns Err");
     let level = level_holder.expect("loop sets level on success or returns Err");
+    let io = io_holder.expect("loop sets io on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
     let (worker_handle, ctrl) = spawn_speaker_worker(
@@ -151,5 +154,6 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         SpeakerHandle { _stream: stream, _worker: worker_handle },
         ctrl,
         dead,
+        io,
     ))
 }

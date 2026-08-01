@@ -21,8 +21,21 @@ macro_rules! counters {
 counters! {
     /// Samples zero-filled into a device output because the ring ran dry.
     OUTPUT_UNDERRUN_SAMPLES,
-    /// Samples dropped pushing into a full ring (consumer fell behind).
-    RING_OVERRUN_SAMPLES,
+    /// Samples dropped by the capture broadcast into a per-output input ring
+    /// (input_bridge.rs) -- a DSP source fell behind the capture callback.
+    CAPTURE_RING_OVERRUN_SAMPLES,
+    /// Samples dropped pushing into a network receiver ring (stream_recv.rs).
+    NET_RING_OVERRUN_SAMPLES,
+    /// Samples dropped by a DAG fan-out tap or wire-sender push (dag.rs) --
+    /// another output or a wire consumer fell behind this node's block rate.
+    TAP_RING_OVERRUN_SAMPLES,
+    /// Samples dropped pushing into the speaker worker's output ring
+    /// (pipeline/output/mod.rs) -- the cpal callback fell behind the worker.
+    SPEAKER_RING_OVERRUN_SAMPLES,
+    /// Input samples discarded by a source's backlog trim (SourceState::fill_block).
+    SOURCE_TRIM_DROPPED_SAMPLES,
+    /// Samples dropped by a StagingRing overrun (producer outran the drain).
+    STAGING_OVERRUN_SAMPLES,
     /// Worker blocks produced with no clock slack left: a wall-clock deadline
     /// already passed on wake, or (device-paced speaker workers) the ring had
     /// less than one block of headroom.

@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -123,6 +123,52 @@ impl Drop for RecorderWorker {
     }
 }
 
+// Per-callback counters for diagnosing the device's actual pull rate against
+// the DSP worker's supply rate -- distinguishes "device asking for more than
+// real time implies" from "ring nobody fills". Read once a second by the
+// non-RT tick thread (`meter::spawn_xrun_thread`); every write here is
+// `Ordering::Relaxed`, no allocation, no other sync.
+#[derive(Clone)]
+pub(super) struct SpeakerIo {
+    /// Samples cpal's `fill` was asked for (`out.len()`), summed across callbacks.
+    pub requested: Arc<AtomicU64>,
+    /// Samples actually popped off the ring (`bulk_pop`'s return), summed across callbacks.
+    pub read: Arc<AtomicU64>,
+    /// Number of `fill` invocations.
+    pub callbacks: Arc<AtomicU64>,
+}
+
+impl SpeakerIo {
+    fn new() -> Self {
+        Self {
+            requested: Arc::new(AtomicU64::new(0)),
+            read: Arc::new(AtomicU64::new(0)),
+            callbacks: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// Speaker `fill` closures currently alive. The closure lives inside the cpal
+/// stream, so this counts streams the device still calls back into. Exceeding
+/// the number of speaker outputs means a stream outlived its worker and is
+/// draining a ring nobody fills.
+pub(super) static LIVE_SPEAKER_FILLS: AtomicI64 = AtomicI64::new(0);
+
+struct FillGuard;
+
+impl FillGuard {
+    fn new() -> Self {
+        LIVE_SPEAKER_FILLS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for FillGuard {
+    fn drop(&mut self) {
+        LIVE_SPEAKER_FILLS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 // Builds the speaker ring plus the cpal-side `fill` closure and a fill-level
 // handle shared with the worker's sink -- one ring shape for all platforms.
 pub(super) fn speaker_ring(
@@ -131,16 +177,24 @@ pub(super) fn speaker_ring(
     Producer<f32>,
     impl FnMut(&mut [f32], usize) + Send + 'static,
     Arc<AtomicI64>,
+    SpeakerIo,
 ) {
     let (producer, mut consumer) =
         RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
+    let io = SpeakerIo::new();
+    let io_cb = io.clone();
+    let guard = FillGuard::new();
     let fill = move |out: &mut [f32], _frames: usize| {
+        let _keep_alive = &guard;
         let read = streams::bulk_pop(&mut consumer, out);
         level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
+        io_cb.requested.fetch_add(out.len() as u64, Ordering::Relaxed);
+        io_cb.read.fetch_add(read as u64, Ordering::Relaxed);
+        io_cb.callbacks.fetch_add(1, Ordering::Relaxed);
     };
-    (producer, fill, level)
+    (producer, fill, level, io)
 }
 
 // Shared by both platforms' `start_speaker_stream`: a device-fill-paced
@@ -170,7 +224,11 @@ pub(super) fn spawn_speaker_worker(
         .spawn(move || {
             worker.run(stop_thread, pacing, |block| {
                 update_meter(&meter, block, channels);
-                let written = streams::bulk_push(&mut producer, block);
+                let written = streams::bulk_push_counted(
+                    &mut producer,
+                    block,
+                    &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
+                );
                 level.fetch_add((written / channels) as i64, Ordering::Relaxed);
                 Ok(())
             });

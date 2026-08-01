@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::audio::graph::EffectSpec;
-use crate::audio::plugins::HostedNode;
+use crate::audio::plugins::host_api::HostedEffect;
 
 /// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
 /// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
@@ -31,7 +31,7 @@ pub mod lufs_meter;
 pub mod mute;
 pub mod noise_gate;
 pub mod noise_suppressor;
-mod offload;
+pub(crate) mod offload;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
@@ -94,7 +94,7 @@ pub enum RuntimeEffect {
     NoiseSuppressor(NoiseSuppressorEffect),
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
-    HostedPlugin(HostedNode),
+    HostedPlugin(HostedEffect),
 }
 
 impl RuntimeEffect {
@@ -802,8 +802,10 @@ pub fn instantiate_effect(
                     // The plugin took the node whole, so the pipeline must stop
                     // splitting it into pairs and hand it every channel.
                     let full_width = node.channels() == channels;
-                    let mut build =
-                        mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None);
+                    let mut build = mk(
+                        RuntimeEffect::HostedPlugin(HostedEffect::new(node, realtime)),
+                        control, None, None, None, None,
+                    );
                     build.full_width = full_width;
                     build
                 }

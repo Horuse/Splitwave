@@ -13,7 +13,6 @@ use tracing::warn;
 
 use crate::audio::health;
 use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
-use crate::audio::streams::bulk_push_counted;
 
 // The RT side pops a block immediately after pushing it, so the return ring
 // must already hold a full block: that prefill is the offload's latency.
@@ -21,7 +20,7 @@ const PAD_FRAMES: usize = DSP_BLOCK_FRAMES;
 const RING_FRAMES: usize = DSP_BLOCK_FRAMES * 16;
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-/// Stereo-interleaved block processing, run on the offload thread.
+/// Interleaved block processing, run on the offload thread.
 pub trait BlockProcessor: Send {
     /// Consume `input` and append exactly `input.len()` samples to `output`.
     fn process(&mut self, input: &[f32], output: &mut Vec<f32>);
@@ -32,14 +31,50 @@ pub struct Offload {
     from_worker: Consumer<f32>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
+    width: usize,
+}
+
+// A partial write must not split a frame: a short tail would shift every later
+// frame's channel order by one sample.
+fn push_aligned(prod: &mut Producer<f32>, samples: &[f32], width: usize) -> usize {
+    let want = samples.len();
+    if want == 0 {
+        return 0;
+    }
+    let avail = prod.slots();
+    let to_write = want.min(avail) - want.min(avail) % width;
+    health::bump(&health::OFFLOAD_RING_OVERRUN_SAMPLES, (want - to_write) as u64);
+    if to_write == 0 {
+        return 0;
+    }
+    if let Ok(mut chunk) = prod.write_chunk(to_write) {
+        let (first, second) = chunk.as_mut_slices();
+        let n1 = first.len();
+        first.copy_from_slice(&samples[..n1]);
+        let n2 = second.len();
+        if n2 > 0 {
+            second.copy_from_slice(&samples[n1..n1 + n2]);
+        }
+        chunk.commit_all();
+    }
+    to_write
 }
 
 impl Offload {
-    pub fn spawn<P: BlockProcessor + 'static>(name: &'static str, mut processor: P) -> Option<Self> {
-        let (to_worker, mut worker_in) = RingBuffer::<f32>::new(RING_FRAMES * 2);
-        let (mut worker_out, from_worker) = RingBuffer::<f32>::new(RING_FRAMES * 2);
+    pub fn spawn<P: BlockProcessor + 'static>(
+        name: &'static str,
+        processor: P,
+        width: usize,
+    ) -> Result<Self, P> {
+        if width == 0 {
+            tracing::error!(name, "offload: width must be at least 1");
+            return Err(processor);
+        }
 
-        match worker_out.write_chunk(PAD_FRAMES * 2) {
+        let (to_worker, mut worker_in) = RingBuffer::<f32>::new(RING_FRAMES * width);
+        let (mut worker_out, from_worker) = RingBuffer::<f32>::new(RING_FRAMES * width);
+
+        match worker_out.write_chunk(PAD_FRAMES * width) {
             Ok(mut chunk) => {
                 let (first, second) = chunk.as_mut_slices();
                 first.fill(0.0);
@@ -48,17 +83,24 @@ impl Offload {
             }
             Err(e) => {
                 tracing::error!(name, error = %e, "offload: failed to prefill return ring pad");
-                return None;
+                return Err(processor);
             }
         }
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
+        // Handoff cell rather than moving `processor` straight into the closure:
+        // a failed `Builder::spawn` drops its closure internally with no way to
+        // recover a moved value, so the cell is how the caller gets it back.
+        let handoff = Arc::new(std::sync::Mutex::new(Some(processor)));
+        let handoff_thread = handoff.clone();
         let join = match thread::Builder::new().name(format!("offload:{name}")).spawn(move || {
-            let mut scratch = vec![0.0f32; DSP_BLOCK_FRAMES * 2];
-            let mut out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
+            let mut processor = handoff_thread.lock().unwrap().take().expect("processor handed off");
+            let mut scratch = vec![0.0f32; DSP_BLOCK_FRAMES * width];
+            let mut out = Vec::with_capacity(DSP_BLOCK_FRAMES * width);
             while !stop_thread.load(Ordering::Relaxed) {
-                let avail = worker_in.slots() & !1; // whole stereo frames only
+                let avail = worker_in.slots();
+                let avail = avail - avail % width; // whole frames only
                 if avail == 0 {
                     thread::sleep(POLL_INTERVAL);
                     continue;
@@ -76,17 +118,19 @@ impl Offload {
                 }
                 out.clear();
                 processor.process(&scratch[..n], &mut out);
-                bulk_push_counted(&mut worker_out, &out, &health::OFFLOAD_RING_OVERRUN_SAMPLES);
+                push_aligned(&mut worker_out, &out, width);
             }
         }) {
             Ok(j) => j,
             Err(e) => {
                 warn!(name, error = %e, "offload: failed to spawn worker thread");
-                return None;
+                // The closure never ran, so it never took the cell's contents.
+                let processor = handoff.lock().unwrap().take().expect("processor handed off");
+                return Err(processor);
             }
         };
 
-        Some(Self { to_worker, from_worker, stop, join: Some(join) })
+        Ok(Self { to_worker, from_worker, stop, join: Some(join), width })
     }
 
     /// RT thread only: no allocations, locks, or syscalls.
@@ -95,14 +139,15 @@ impl Offload {
         if want == 0 {
             return;
         }
-        bulk_push_counted(&mut self.to_worker, samples, &health::OFFLOAD_RING_OVERRUN_SAMPLES);
+        push_aligned(&mut self.to_worker, samples, self.width);
 
         // A starve leaves the return ring permanently deeper than the pad; trim
         // back so the declared latency stays true.
-        let pad = PAD_FRAMES * 2;
+        let pad = PAD_FRAMES * self.width;
         let avail = self.from_worker.slots();
         if avail > want + pad {
-            let excess = (avail - want - pad) & !1;
+            let excess = avail - want - pad;
+            let excess = excess - excess % self.width;
             if excess > 0 {
                 if let Ok(chunk) = self.from_worker.read_chunk(excess) {
                     chunk.commit_all();
@@ -161,7 +206,7 @@ mod tests {
 
     #[test]
     fn offload_roundtrip_delays_by_pad() {
-        let mut offload = Offload::spawn("test", Passthrough).expect("spawn offload");
+        let Ok(mut offload) = Offload::spawn("test", Passthrough, 2) else { panic!("spawn offload") };
 
         let mut fed = Vec::new();
         let mut got = Vec::new();
@@ -181,6 +226,40 @@ mod tests {
         }
 
         let pad = PAD_FRAMES * 2;
+        for (i, &v) in got.iter().enumerate().take(pad) {
+            assert_eq!(v, 0.0, "expected zero pad at index {i}");
+        }
+        for i in pad..got.len() {
+            assert_eq!(got[i], fed[i - pad], "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn offload_roundtrip_handles_wide_blocks() {
+        const WIDTH: usize = 6;
+        let Ok(mut offload) = Offload::spawn("test-wide", Passthrough, WIDTH) else {
+            panic!("spawn offload")
+        };
+
+        let mut fed = Vec::new();
+        let mut got = Vec::new();
+        let mut counter = 0.0f32;
+
+        for _ in 0..8 {
+            let mut block = vec![0.0f32; DSP_BLOCK_FRAMES * WIDTH];
+            for f in 0..DSP_BLOCK_FRAMES {
+                for c in 0..WIDTH {
+                    block[f * WIDTH + c] = counter;
+                }
+                counter += 1.0;
+            }
+            fed.extend_from_slice(&block);
+            offload.process(&mut block);
+            got.extend_from_slice(&block);
+            thread::sleep(Duration::from_millis(30));
+        }
+
+        let pad = PAD_FRAMES * WIDTH;
         for (i, &v) in got.iter().enumerate().take(pad) {
             assert_eq!(v, 0.0, "expected zero pad at index {i}");
         }

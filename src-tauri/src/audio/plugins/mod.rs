@@ -27,7 +27,7 @@ pub mod scan;
 
 #[cfg(target_os = "macos")]
 pub use au_host::AuNode;
-pub use host_api::{HostedNode, PluginParamInfo, PluginStatus};
+pub use host_api::{PluginParamInfo, PluginStatus};
 pub use node::PluginNode;
 pub use param_ring::ParamRing;
 

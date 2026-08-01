@@ -146,12 +146,15 @@ impl NoiseSuppressorEffect {
             let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
             return Self { backend: Some(Backend::Inline { worker, out }), latency: model_latency };
         }
-        match Offload::spawn("noise_suppressor", worker) {
-            Some(offload) => {
+        match Offload::spawn("noise_suppressor", worker, 2) {
+            Ok(offload) => {
                 let latency = model_latency + offload.latency_frames();
                 Self { backend: Some(Backend::Offloaded(offload)), latency }
             }
-            None => Self { backend: None, latency: 0 },
+            Err(worker) => {
+                let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
+                Self { backend: Some(Backend::Inline { worker, out }), latency: model_latency }
+            }
         }
     }
 }

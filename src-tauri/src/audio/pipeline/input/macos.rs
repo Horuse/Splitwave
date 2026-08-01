@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
+use tracing::error;
 
 use crate::audio::device::{self, DeviceKind};
 use crate::audio::effects::MeterHandle;
 use crate::audio::graph::{InputSpec, ValidInput};
+use crate::audio::health;
 use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
@@ -82,6 +84,8 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         } => {
             let app_err = app.clone();
             let err_cb = move |e: cpal::StreamError| {
+                health::bump(&health::STREAM_ERRORS, 1);
+                error!(error = %e, "input stream error");
                 let _ = app_err.emit(
                     STATE_EVENT,
                     json!({ "kind": "error", "message": format!("input: {e}") }),

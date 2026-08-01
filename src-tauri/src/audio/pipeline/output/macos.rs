@@ -7,9 +7,10 @@ use cpal::traits::DeviceTrait;
 use rtrb::RingBuffer;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
+use crate::audio::health;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
@@ -107,8 +108,10 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         let app_err = app.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
-        let err_cb = move |_e: cpal::StreamError| {
+        let err_cb = move |e: cpal::StreamError| {
             dead_cb.store(true, Ordering::Relaxed);
+            health::bump(&health::STREAM_ERRORS, 1);
+            error!(node_id = %node_id_cb, error = %e, "speaker stream error");
             let _ = app_err.emit("audio://speaker_error", json!({ "nodeId": node_id_cb }));
         };
         match streams::build_output_stream(

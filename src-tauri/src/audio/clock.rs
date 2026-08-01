@@ -4,6 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::audio::health;
+
+const LATE_REPORT_THRESHOLD: Duration = Duration::from_millis(2);
+
 pub trait ClockSource: Send + 'static {
     /// Returns `false` when `stop` is set; `true` on each tick.
     fn wait_for_tick(&mut self, stop: &AtomicBool) -> bool;
@@ -61,8 +65,21 @@ impl ClockSource for SystemClockTicker {
                 thread::sleep(d - now);
                 d
             }
-            Some(d) if now - d <= self.catchup_max => d,
-            _ => now,
+            Some(d) => {
+                let late = now - d;
+                // Sub-threshold lateness is scheduler jitter the next deadline
+                // absorbs; only a real block-scale miss is worth reporting.
+                if late >= LATE_REPORT_THRESHOLD {
+                    health::bump(&health::CLOCK_LATE_BLOCKS, 1);
+                    health::raise_max(&health::CLOCK_LATE_MAX_US, late.as_micros() as u64);
+                }
+                if late <= self.catchup_max {
+                    d
+                } else {
+                    now
+                }
+            }
+            None => now,
         };
         self.next_deadline = Some(anchor + self.period);
         !stop.load(Ordering::SeqCst)

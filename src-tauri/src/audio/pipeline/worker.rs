@@ -7,6 +7,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
 
 use crate::audio::clock::ClockSource;
+use crate::audio::health;
 use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
@@ -135,6 +136,7 @@ impl DspWorker {
                 return true;
             }
             if started.elapsed() >= AVAILABILITY_MAX_WAIT {
+                health::bump(&health::AVAILABILITY_TIMEOUTS, 1);
                 return true;
             }
             thread::sleep(AVAILABILITY_POLL);

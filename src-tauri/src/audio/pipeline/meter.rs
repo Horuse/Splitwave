@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
 use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
+use crate::audio::health;
 
 const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
@@ -41,6 +42,7 @@ pub(super) fn spawn_xrun_thread(handles: Vec<(String, Arc<AtomicU64>)>) -> XrunT
         .name("xrun-tick".into())
         .spawn(move || {
             let mut last: Vec<u64> = vec![0; handles.len()];
+            let mut last_global: Vec<u64> = health::snapshot().iter().map(|(_, v)| *v).collect();
             while !stop_thread.load(Ordering::SeqCst) {
                 thread::sleep(XRUN_TICK);
                 for (i, (label, counter)) in handles.iter().enumerate() {
@@ -49,6 +51,19 @@ pub(super) fn spawn_xrun_thread(handles: Vec<(String, Arc<AtomicU64>)>) -> XrunT
                     last[i] = now;
                     if delta > 0 {
                         warn!(source = %label, underrun_samples = delta, "DSP underrun");
+                    }
+                }
+                // High-water mark, not a running total: read-and-reset so the
+                // next window reports its own worst miss rather than this one's.
+                let worst_late_us = health::CLOCK_LATE_MAX_US.swap(0, Ordering::Relaxed);
+                for (i, (name, now)) in health::snapshot().iter().enumerate() {
+                    if *name == health::CLOCK_LATE_MAX_US_NAME {
+                        continue;
+                    }
+                    let delta = now.saturating_sub(last_global[i]);
+                    last_global[i] = *now;
+                    if delta > 0 {
+                        warn!(counter = %name, delta, total = now, worst_late_us, "audio glitch");
                     }
                 }
             }

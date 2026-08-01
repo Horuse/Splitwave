@@ -6,8 +6,10 @@ use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;
 
 use crate::audio::graph::NoiseSuppressorData;
+use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
 use crate::audio::resample::MultiResampler;
 
+use super::offload::{BlockProcessor, Offload};
 use super::util::load_f32;
 use super::{Effect, EffectControl};
 
@@ -28,8 +30,19 @@ pub struct NoiseSuppressorControls {
 }
 
 pub struct NoiseSuppressorEffect {
+    backend: Option<Backend>,
+    latency: usize,
+}
+
+enum Backend {
+    Offloaded(Offload),
+    // An offline render outruns the offload thread and would read back silence.
+    Inline { worker: ModelWorker, out: Vec<f32> },
+}
+
+struct ModelWorker {
     ctl: NoiseSuppressorControls,
-    state: Option<ModelState>,
+    state: ModelState,
     last: Params,
 }
 
@@ -54,8 +67,8 @@ impl Params {
     }
 }
 
-// DfTract holds Rc, so it is !Send. Its graph is only ever moved by exclusive
-// ownership (SPSC ring), never shared across threads.
+// DfTract holds Rc, so it is !Send. Ownership transfers to the offload thread
+// once and stays there; it is never shared.
 struct SendModel(DfTract);
 unsafe impl Send for SendModel {}
 
@@ -110,7 +123,7 @@ struct ModelState {
 }
 
 impl NoiseSuppressorEffect {
-    pub fn new(d: NoiseSuppressorData, sample_rate: u32) -> (Self, EffectControl) {
+    pub fn new(d: NoiseSuppressorData, sample_rate: u32, realtime: bool) -> (Self, EffectControl) {
         let ctl = NoiseSuppressorControls {
             atten_lim_db: Arc::new(AtomicU32::new(d.attenuation_limit_db.to_bits())),
             pf_beta: Arc::new(AtomicU32::new(d.post_filter_beta.max(0.0).to_bits())),
@@ -119,15 +132,26 @@ impl NoiseSuppressorEffect {
             max_df_thresh_db: Arc::new(AtomicU32::new(d.max_df_thresh_db.to_bits())),
         };
         let control = EffectControl::NoiseSuppressor { controls: ctl.clone() };
-        (Self::from_state(ctl, sample_rate), control)
+        (Self::from_state(ctl, sample_rate, realtime), control)
     }
 
-    pub fn from_state(ctl: NoiseSuppressorControls, sample_rate: u32) -> Self {
+    pub fn from_state(ctl: NoiseSuppressorControls, sample_rate: u32, realtime: bool) -> Self {
         let initial = Params::load(&ctl);
-        Self {
-            ctl,
-            state: ModelState::build(initial, sample_rate),
-            last: initial,
+        let Some(state) = ModelState::build(initial, sample_rate) else {
+            return Self { backend: None, latency: 0 };
+        };
+        let model_latency = state.latency;
+        let worker = ModelWorker { ctl, state, last: initial };
+        if !realtime {
+            let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
+            return Self { backend: Some(Backend::Inline { worker, out }), latency: model_latency };
+        }
+        match Offload::spawn("noise_suppressor", worker) {
+            Some(offload) => {
+                let latency = model_latency + offload.latency_frames();
+                Self { backend: Some(Backend::Offloaded(offload)), latency }
+            }
+            None => Self { backend: None, latency: 0 },
         }
     }
 }
@@ -193,14 +217,9 @@ impl ModelState {
     }
 }
 
-impl Effect for NoiseSuppressorEffect {
-    fn process(&mut self, samples: &mut [f32], frames: usize) {
-        if frames == 0 {
-            return;
-        }
-        let Some(s) = self.state.as_mut() else {
-            return;
-        };
+impl BlockProcessor for ModelWorker {
+    fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
+        let s = &mut self.state;
 
         let now = Params::load(&self.ctl);
         if now != self.last {
@@ -216,12 +235,10 @@ impl Effect for NoiseSuppressorEffect {
             self.last = now;
         }
 
-        let stereo = &mut samples[..frames * 2];
-
         s.mid48.clear();
         match s.resample.as_mut() {
-            None => s.mid48.extend_from_slice(stereo),
-            Some(r) => r.to_model(stereo, &mut s.mid48),
+            None => s.mid48.extend_from_slice(input),
+            Some(r) => r.to_model(input, &mut s.mid48),
         }
 
         s.enh48.clear();
@@ -245,13 +262,30 @@ impl Effect for NoiseSuppressorEffect {
             Some(r) => r.from_model(&s.enh48, s.hop, &mut s.out),
         }
 
-        for f in stereo.chunks_exact_mut(2) {
-            f[0] = s.out.pop_front().unwrap_or(0.0);
-            f[1] = s.out.pop_front().unwrap_or(0.0);
+        for _ in 0..input.len() / 2 {
+            output.push(s.out.pop_front().unwrap_or(0.0));
+            output.push(s.out.pop_front().unwrap_or(0.0));
+        }
+    }
+}
+
+impl Effect for NoiseSuppressorEffect {
+    fn process(&mut self, samples: &mut [f32], frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        match self.backend.as_mut() {
+            Some(Backend::Offloaded(o)) => o.process(&mut samples[..frames * 2]),
+            Some(Backend::Inline { worker, out }) => {
+                out.clear();
+                worker.process(&samples[..frames * 2], out);
+                samples[..frames * 2].copy_from_slice(out);
+            }
+            None => {}
         }
     }
 
     fn latency_frames(&self) -> usize {
-        self.state.as_ref().map_or(0, |s| s.latency)
+        self.latency
     }
 }

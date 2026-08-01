@@ -46,6 +46,14 @@ counters! {
     AVAILABILITY_TIMEOUTS,
     /// Fatal cpal stream errors reported via the error callback.
     STREAM_ERRORS,
+    /// Samples zero-filled on the RT thread because an offloaded effect's
+    /// worker had not returned the block in time.
+    OFFLOAD_STARVED_SAMPLES,
+    /// Samples discarded to restore an offload return ring to its declared
+    /// pad after a starve left it permanently deeper.
+    OFFLOAD_RESYNC_DROPPED_SAMPLES,
+    /// Samples dropped pushing into an offload ring (either direction).
+    OFFLOAD_RING_OVERRUN_SAMPLES,
 }
 
 /// Name of the high-water-mark counter, whose delta is meaningless.

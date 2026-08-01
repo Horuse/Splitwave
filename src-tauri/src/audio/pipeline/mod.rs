@@ -27,7 +27,7 @@ use crate::error::{AppError, AppResult};
 
 mod cue;
 pub use cue::play as play_cue;
-mod dag;
+pub(crate) mod dag;
 mod file_reader;
 mod input;
 mod meter;

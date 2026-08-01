@@ -28,7 +28,7 @@ pub(super) const RING_CAPACITY_FRAMES: usize = 48_000;
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
 
-pub(super) const DSP_BLOCK_FRAMES: usize = 1024;
+pub const DSP_BLOCK_FRAMES: usize = 1024;
 
 const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;
 
@@ -1236,7 +1236,7 @@ pub(super) fn build_output_graph(
             // width and may take it whole, the way a DAW instantiates one
             // multichannel plugin instead of several stereo ones.
             let build = instantiate_effect(
-                &effect.spec, id, output_sr, true, eff_channels, registry,
+                &effect.spec, id, output_sr, realtime, true, eff_channels, registry,
             );
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
@@ -1325,7 +1325,7 @@ pub(super) fn build_output_graph(
                 // Extra pairs exist only when the node is driven pairwise, so
                 // each is asked for stereo rather than the node's full width.
                 let extra =
-                    instantiate_effect(&effect.spec, id, output_sr, false, 2, registry);
+                    instantiate_effect(&effect.spec, id, output_sr, realtime, false, 2, registry);
                 effects.push(extra.effect);
             }
             id_to_index.insert(id.clone(), nodes.len());

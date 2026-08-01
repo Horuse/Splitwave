@@ -31,6 +31,7 @@ pub mod lufs_meter;
 pub mod mute;
 pub mod noise_gate;
 pub mod noise_suppressor;
+mod offload;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
@@ -423,6 +424,9 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
+    // False for file-recording outputs: an offline render outruns real time,
+    // so an expensive effect must process in place instead of on a worker.
+    realtime: bool,
     // False when building the monitor graph: a plugin instantiated there is a
     // metering-only duplicate, not the one its editor window attaches to.
     primary: bool,
@@ -708,11 +712,12 @@ pub fn instantiate_effect(
                 RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
                     controls.clone(),
                     sample_rate,
+                    realtime,
                 )),
                 None, None, None, None, None,
             ),
             _ => {
-                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate);
+                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate, realtime);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }

@@ -4,10 +4,13 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use audio_thread_priority::{
+    demote_current_thread_from_real_time, promote_current_thread_to_real_time, RtPriorityHandle,
+};
 use rtrb::{Producer, RingBuffer};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle};
@@ -197,6 +200,34 @@ pub(super) fn speaker_ring(
     (producer, fill, level, io)
 }
 
+// Held for the worker's lifetime: dropping the handle restores normal scheduling.
+struct RtThread(Option<RtPriorityHandle>);
+
+impl RtThread {
+    fn promote(worker: &'static str, sample_rate: u32) -> Self {
+        match promote_current_thread_to_real_time(DSP_BLOCK_FRAMES as u32, sample_rate) {
+            Ok(handle) => {
+                info!(worker, "worker thread promoted to real-time");
+                Self(Some(handle))
+            }
+            Err(e) => {
+                warn!(worker, error = %e, "real-time promotion failed, running at normal priority");
+                Self(None)
+            }
+        }
+    }
+}
+
+impl Drop for RtThread {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            if let Err(e) = demote_current_thread_from_real_time(handle) {
+                warn!(error = %e, "real-time demotion failed");
+            }
+        }
+    }
+}
+
 // Shared by both platforms' `start_speaker_stream`: a device-fill-paced
 // worker that mixes the output sub-graph and bulk-pushes blocks into the
 // speaker ring.
@@ -222,6 +253,7 @@ pub(super) fn spawn_speaker_worker(
     let join = thread::Builder::new()
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
+            let _rt = RtThread::promote("speaker", sample_rate);
             worker.run(stop_thread, pacing, |block| {
                 update_meter(&meter, block, channels);
                 let written = streams::bulk_push_counted(
@@ -247,12 +279,14 @@ pub(super) fn start_monitor_worker(
     // availability (that's for file rendering, which may outrun real time). This
     // keeps meters/scopes at real time and, crucially, consumes network-sourced
     // audio (WebRTC) at the rate it arrives instead of draining its jitter buffer.
-    let ticker = SystemClockTicker::new(graph.sample_rate(), DSP_BLOCK_FRAMES);
+    let sample_rate = graph.sample_rate();
+    let ticker = SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES);
     let (worker, ctrl) = dsp_worker(graph);
     let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("monitor".into())
         .spawn(move || {
+            let _rt = RtThread::promote("monitor", sample_rate);
             worker.run(stop_thread, pacing, |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn monitor worker: {e}")))?;
@@ -276,12 +310,14 @@ pub(super) fn start_wire_sender_worker(
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
-    let ticker = SystemClockTicker::with_catchup(graph.sample_rate(), DSP_BLOCK_FRAMES, 8);
+    let sample_rate = graph.sample_rate();
+    let ticker = SystemClockTicker::with_catchup(sample_rate, DSP_BLOCK_FRAMES, 8);
     let (worker, ctrl) = dsp_worker(graph);
     let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("netsender".into())
         .spawn(move || {
+            let _rt = RtThread::promote("netsender", sample_rate);
             worker.run(stop_thread, pacing, |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn net sender worker: {e}")))?;
@@ -308,6 +344,7 @@ pub(super) fn start_recorder_worker(
     let (worker, ctrl) = dsp_worker(graph);
     let pacing = WorkerPacing::OnAvailability;
 
+    // No real-time promotion: this worker is availability-paced and blocks on encoder file I/O.
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {

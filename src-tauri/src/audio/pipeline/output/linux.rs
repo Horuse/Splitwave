@@ -8,7 +8,7 @@ use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
@@ -20,6 +20,7 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _playback: crate::audio::playback::Playback,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -56,7 +57,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _playback: playback, _worker: worker_handle },
+        SpeakerHandle { _playback: playback, _worker: worker_handle, _alive: StreamGuard::new() },
         ctrl,
         dead,
         io,

@@ -11,7 +11,7 @@ use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::health;
 
 use super::dag::{OutputMeta, SourceMeta, DSP_BLOCK_FRAMES};
-use super::output::LIVE_SPEAKER_FILLS;
+use super::output::LIVE_SPEAKER_STREAMS;
 
 const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
@@ -224,11 +224,11 @@ pub(super) fn spawn_xrun_thread(
                 // A stream that outlived its worker keeps calling back and
                 // draining a ring nobody fills, which shows up in the global
                 // underrun total but in no output's own counters.
-                let live_fills = LIVE_SPEAKER_FILLS.load(Ordering::Relaxed);
+                let live_streams = LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed);
                 let speaker_outputs = outputs.iter().filter(|o| o.io.is_some()).count() as i64;
-                if live_fills != speaker_outputs {
+                if live_streams != speaker_outputs {
                     warn!(
-                        live_speaker_streams = live_fills,
+                        live_speaker_streams = live_streams,
                         speaker_outputs, "orphan speaker streams"
                     );
                 }

@@ -2,7 +2,11 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use cpal::traits::StreamTrait;
 use tauri::AppHandle;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use tracing::warn;
 
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
@@ -37,6 +41,23 @@ pub(super) enum InputHandle {
     Cpal(cpal::Stream),
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
+}
+
+// cpal's coreaudio backend never stops a non-default device's AudioUnit just
+// because the `Stream` handle went out of scope -- a device-alive listener it
+// registers internally holds another strong reference to the same stream (see
+// the speaker-side `SpeakerHandle` for the full explanation), so the capture
+// callback keeps broadcasting into subscriber rings nobody drains anymore.
+// `pause` reaches the device through `&self` and stops it regardless.
+impl Drop for InputHandle {
+    fn drop(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let InputHandle::Cpal(stream) = self {
+            if let Err(e) = stream.pause() {
+                warn!(error = %e, "failed to pause input stream on teardown");
+            }
+        }
+    }
 }
 
 pub(super) enum ResolvedInput {

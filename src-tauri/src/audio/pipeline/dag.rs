@@ -1766,7 +1766,33 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
 
 #[cfg(test)]
 mod tests {
-    use super::{add_mapped, DSP_BLOCK_FRAMES};
+    use super::{add_mapped, DelayLine, DSP_BLOCK_FRAMES};
+
+    // Latency compensation on a branch that bypasses a latent effect must be a
+    // pure delay: same samples, same order, only shifted.
+    #[test]
+    fn delay_line_shifts_without_losing_samples() {
+        const PAD_FRAMES: usize = 482;
+        let mut line = DelayLine::new(PAD_FRAMES, 2);
+        let mut fed: Vec<f32> = Vec::new();
+        let mut got: Vec<f32> = Vec::new();
+        for b in 0..4 {
+            let mut input = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            for f in 0..DSP_BLOCK_FRAMES {
+                let v = (b * DSP_BLOCK_FRAMES + f) as f32;
+                input[f * 2] = v;
+                input[f * 2 + 1] = -v;
+            }
+            fed.extend_from_slice(&input);
+            let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            line.process_and_add(&input, &mut dst);
+            got.extend_from_slice(&dst);
+        }
+        let shift = PAD_FRAMES * 2;
+        for i in shift..got.len() {
+            assert_eq!(got[i], fed[i - shift], "sample {i} differs");
+        }
+    }
 
     #[test]
     fn add_mapped_maps_by_channel() {

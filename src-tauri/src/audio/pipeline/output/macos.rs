@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use cpal::traits::DeviceTrait;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -35,6 +35,22 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
+}
+
+// cpal's coreaudio backend registers a device-alive property listener for any
+// non-default device (which `device::find` always returns -- see its comment)
+// whose callback closure holds another clone of the `Stream`'s inner `Arc`.
+// That's a permanent reference cycle: dropping our `_stream` handle alone
+// never reaches refcount zero, so the AudioUnit is never disposed and keeps
+// calling `fill` on a ring nobody drains anymore. `pause` reaches the
+// AudioUnit through `&self` and stops it for real, independent of the cycle.
+impl Drop for SpeakerHandle {
+    fn drop(&mut self) {
+        if let Err(e) = self._stream.pause() {
+            warn!(error = %e, "failed to pause speaker stream on teardown");
+        }
+    }
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -151,7 +167,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _stream: stream, _worker: worker_handle },
+        SpeakerHandle { _stream: stream, _worker: worker_handle, _alive: StreamGuard::new() },
         ctrl,
         dead,
         io,

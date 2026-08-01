@@ -148,24 +148,26 @@ impl SpeakerIo {
     }
 }
 
-/// Speaker `fill` closures currently alive. The closure lives inside the cpal
-/// stream, so this counts streams the device still calls back into. Exceeding
-/// the number of speaker outputs means a stream outlived its worker and is
-/// draining a ring nobody fills.
-pub(super) static LIVE_SPEAKER_FILLS: AtomicI64 = AtomicI64::new(0);
+/// Speaker streams still able to call back into us. Counts handles rather than
+/// `fill` closures: cpal's coreaudio backend leaks the closure itself (see
+/// `SpeakerHandle`'s Drop), so a closure-based count would never come back
+/// down even once the stream is stopped. Exceeding the number of speaker
+/// outputs means a stream outlived its worker.
+pub(super) static LIVE_SPEAKER_STREAMS: AtomicI64 = AtomicI64::new(0);
 
-struct FillGuard;
+/// Held by `SpeakerHandle` so the count follows the stream's real lifetime.
+pub(super) struct StreamGuard;
 
-impl FillGuard {
-    fn new() -> Self {
-        LIVE_SPEAKER_FILLS.fetch_add(1, Ordering::Relaxed);
+impl StreamGuard {
+    pub(super) fn new() -> Self {
+        LIVE_SPEAKER_STREAMS.fetch_add(1, Ordering::Relaxed);
         Self
     }
 }
 
-impl Drop for FillGuard {
+impl Drop for StreamGuard {
     fn drop(&mut self) {
-        LIVE_SPEAKER_FILLS.fetch_sub(1, Ordering::Relaxed);
+        LIVE_SPEAKER_STREAMS.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -185,9 +187,7 @@ pub(super) fn speaker_ring(
     let level_cb = level.clone();
     let io = SpeakerIo::new();
     let io_cb = io.clone();
-    let guard = FillGuard::new();
     let fill = move |out: &mut [f32], _frames: usize| {
-        let _keep_alive = &guard;
         let read = streams::bulk_pop(&mut consumer, out);
         level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
         io_cb.requested.fetch_add(out.len() as u64, Ordering::Relaxed);

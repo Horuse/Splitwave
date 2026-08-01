@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cpal::traits::DeviceTrait;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
 use crate::audio::health;
@@ -14,7 +14,7 @@ use crate::error::AppResult;
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -29,6 +29,18 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
+}
+
+// `Stream::drop` isn't guaranteed to stop the underlying device (cpal's macOS
+// backend never does for a non-default device, see the macOS SpeakerHandle);
+// call `pause` explicitly so teardown doesn't depend on that guarantee here too.
+impl Drop for SpeakerHandle {
+    fn drop(&mut self) {
+        if let Err(e) = self._stream.pause() {
+            warn!(error = %e, "failed to pause speaker stream on teardown");
+        }
+    }
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -93,6 +105,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         SpeakerHandle {
             _stream: stream,
             _worker: worker_handle,
+            _alive: StreamGuard::new(),
         },
         ctrl,
         dead,

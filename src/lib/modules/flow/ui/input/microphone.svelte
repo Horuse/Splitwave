@@ -12,6 +12,9 @@
 	import { Mic, Add } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
+	import { platform } from '@tauri-apps/plugin-os';
+
+	const supportsVirtualDevices = platform() !== 'windows';
 
 	type MicrophoneNodeType = Node<MicrophoneNodeData, 'microphone'>;
 	let { id, data }: NodeProps<MicrophoneNodeType> = $props();
@@ -121,14 +124,16 @@
 		>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
-				<ComboboxAction
-					label="Add virtual device"
-					icon={Add}
-					onclick={() => {
-						close();
-						goto('/virtual-devices');
-					}}
-				/>
+				{#if supportsVirtualDevices}
+					<ComboboxAction
+						label="Add virtual device"
+						icon={Add}
+						onclick={() => {
+							close();
+							goto('/virtual-devices');
+						}}
+					/>
+				{/if}
 			{/snippet}
 		</Combobox>
 		{#if missing}

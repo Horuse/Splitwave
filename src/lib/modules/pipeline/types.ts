@@ -52,8 +52,15 @@ export type FileRecordingNodeData = XyData<FileRecordingData>;
 export type GainNodeData = XyData<GainData>;
 // FE-only, invisible to the engine: `hotkey` is a Tauri accelerator that toggles
 // `muted`, the `cue*` pair configures the spoken confirmation on toggle.
+// `pushToTalk` swaps the hotkey from a toggle to hold-to-unmute.
 export type MuteNodeData = XyData<
-	MuteData & { hotkey?: string; cueEnabled?: boolean; cueDeviceId?: string; cueVolume?: number }
+	MuteData & {
+		hotkey?: string;
+		cueEnabled?: boolean;
+		cueDeviceId?: string;
+		cueVolume?: number;
+		pushToTalk?: boolean;
+	}
 >;
 export type ChannelBalanceNodeData = XyData<ChannelBalanceData>;
 export type SaturatorNodeData = XyData<SaturatorData>;

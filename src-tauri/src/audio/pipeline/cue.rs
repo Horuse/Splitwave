@@ -16,6 +16,9 @@ use crate::error::{AppError, AppResult};
 // need no per-platform resource path at playback time.
 const MUTED_MP3: &[u8] = include_bytes!("../../../assets/cues/muted.mp3");
 const UNMUTED_MP3: &[u8] = include_bytes!("../../../assets/cues/unmuted.mp3");
+// Push-to-talk toggles far too often for the spoken clips.
+const BEEP_OFF_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_off.mp3");
+const BEEP_ON_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_on.mp3");
 
 const RESAMPLE_CHUNK: usize = 1024;
 // Slack after the clip ends so the device drains before the stream is dropped.
@@ -23,12 +26,18 @@ const DRAIN: Duration = Duration::from_millis(120);
 
 /// Blocks for the length of the clip: the cpal stream is `!Send`, so it has to
 /// be built, held and dropped on one thread. Call from a blocking task.
-pub fn play(device_id: &str, muted: bool, gain: f32) -> AppResult<()> {
+pub fn play(device_id: &str, muted: bool, gain: f32, beep: bool) -> AppResult<()> {
     let spec = super::output::resolve_speaker(device_id)?;
     let channels = spec.out_channels.max(1);
     let gain = gain.clamp(0.0, 1.0);
 
-    let mono = decode_mono(if muted { MUTED_MP3 } else { UNMUTED_MP3 }, spec.sample_rate)?;
+    let clip = match (beep, muted) {
+        (false, true) => MUTED_MP3,
+        (false, false) => UNMUTED_MP3,
+        (true, true) => BEEP_OFF_MP3,
+        (true, false) => BEEP_ON_MP3,
+    };
+    let mono = decode_mono(clip, spec.sample_rate)?;
     let duration = Duration::from_secs_f32(mono.len() as f32 / spec.sample_rate as f32);
 
     let mut pos = 0_usize;

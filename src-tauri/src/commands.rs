@@ -171,9 +171,9 @@ pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub async fn play_cue(device_id: String, muted: bool, gain: f32) -> AppResult<()> {
+pub async fn play_cue(device_id: String, muted: bool, gain: f32, beep: bool) -> AppResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::audio::pipeline::play_cue(&device_id, muted, gain)
+        crate::audio::pipeline::play_cue(&device_id, muted, gain, beep)
     })
     .await
         .map_err(|_| AppError::Stream("cue task failed".into()))?

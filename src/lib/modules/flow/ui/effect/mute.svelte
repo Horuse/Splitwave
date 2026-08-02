@@ -24,33 +24,61 @@
 
 	// Reads through the live node store rather than the `data` snapshot: the
 	// shortcut handler is registered once per accelerator and would otherwise
-	// keep toggling off a value captured at registration time.
-	function toggle() {
+	// act on a value captured at registration time.
+	// `beep` swaps the spoken clip for a 0.2 s tone: push-to-talk toggles far too
+	// often for "muted" / "unmuted" to be usable.
+	function setMuted(muted: boolean, beep = false) {
 		const current = flow.getNode(id)?.data as MuteNodeData | undefined;
-		if (!current) return;
-		const patch = { muted: !current.muted };
+		if (!current || current.muted === muted) return;
+		const patch = { muted };
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
 		if (current.cueEnabled && current.cueDeviceId) {
 			audioMethods
-				.playCue(current.cueDeviceId, patch.muted, (current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100)
+				.playCue(
+					current.cueDeviceId,
+					muted,
+					(current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100,
+					beep
+				)
 				.catch(() => {});
 		}
 	}
 
+	function toggle() {
+		const current = flow.getNode(id)?.data as MuteNodeData | undefined;
+		if (current) setMuted(!current.muted);
+	}
+
+	function setPushToTalk(enabled: boolean) {
+		flow.updateNodeData(id, { pushToTalk: enabled });
+		if (enabled) setMuted(true, true);
+	}
+
+	// Deriving the primitives keeps the effect from re-registering on every
+	// `muted` write: xyflow replaces the whole `data` object on each update.
+	let hotkey = $derived(data.hotkey);
+	let pushToTalk = $derived(data.pushToTalk ?? false);
+
 	$effect(() => {
-		const hotkey = data.hotkey;
 		if (!hotkey) return;
+		const key = hotkey;
+		const ptt = pushToTalk;
 
 		let live = true;
 		// A leftover registration from a previous mount (HMR, node re-render)
 		// makes `register` fail with "already registered"; clear it first.
-		unregister(hotkey)
+		unregister(key)
 			.catch(() => {})
 			.then(() => {
 				if (!live) return;
-				return register(hotkey, (e) => {
-					if (live && e.state === 'Pressed') toggle();
+				return register(key, (e) => {
+					if (!live) return;
+					if (ptt) {
+						setMuted(e.state === 'Released', true);
+					} else if (e.state === 'Pressed') {
+						toggle();
+					}
 				});
 			})
 			.then(() => {
@@ -62,7 +90,7 @@
 
 		return () => {
 			live = false;
-			unregister(hotkey).catch(() => {});
+			unregister(key).catch(() => {});
 		};
 	});
 
@@ -184,6 +212,17 @@
 
 	{#if bindError}
 		<p class="mt-1 w-40 text-[10px] break-words text-red-500">{bindError}</p>
+	{/if}
+
+	{#if data.hotkey}
+		<div class="nodrag nopan mt-2 w-40">
+			<Toggle
+				size="sm"
+				checked={data.pushToTalk ?? false}
+				label="Push-to-talk"
+				onChange={setPushToTalk}
+			/>
+		</div>
 	{/if}
 
 	<div class="nodrag nopan mt-3 flex w-40 flex-col gap-1 border-t border-neutral-400 pt-2">

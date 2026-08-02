@@ -32,8 +32,8 @@ export const methods = {
 		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),
 	listOutputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_output_devices'),
-	playCue: (deviceId: string, muted: boolean, gain: number): Promise<void> =>
-		invoke('play_cue', { deviceId, muted, gain }),
+	playCue: (deviceId: string, muted: boolean, gain: number, beep = false): Promise<void> =>
+		invoke('play_cue', { deviceId, muted, gain, beep }),
 	listAudioApplications: (): Promise<AudioApplication[]> =>
 		invoke<AudioApplication[]>('list_audio_applications'),
 	getAppIcons: (bundleIds: string[]): Promise<Record<string, string>> =>

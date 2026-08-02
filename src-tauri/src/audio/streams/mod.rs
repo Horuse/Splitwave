@@ -1,11 +1,15 @@
 //! Cross-platform SPSC ring helpers plus the cpal stream builders.
 //!
-//! `bulk_pop` / `bulk_push` move whole blocks between the pipeline and the
+//! `bulk_pop` / `bulk_push_counted` move whole blocks between the pipeline and the
 //! audio callback on every platform. The cpal `build_*_stream` builders back
 //! macOS (CoreAudio) and Windows (WASAPI); Linux opens its mic via
 //! `capture/linux.rs` and its speaker via `playback.rs`, so it skips them.
 
+use std::sync::atomic::AtomicU64;
+
 use rtrb::Producer;
+
+use crate::audio::health;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod cpal_stream;
@@ -14,11 +18,12 @@ pub use cpal_stream::{build_input_stream, build_output_stream};
 
 /// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
 /// read (consumer faster than producer) is zero-filled -- that's the device
-/// playing silence, not glitching.
-pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) {
+/// playing silence, not glitching. Returns the number of samples actually
+/// read, so callers tracking ring fill level can subtract it.
+pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) -> usize {
     let want = dst.len();
     if want == 0 {
-        return;
+        return 0;
     }
     let avail = cons.slots();
     let to_read = want.min(avail);
@@ -37,22 +42,30 @@ pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) {
     for s in &mut dst[to_read..] {
         *s = 0.0;
     }
+    health::bump(&health::OUTPUT_UNDERRUN_SAMPLES, (want - to_read) as u64);
+    to_read
 }
 
 /// Bulk push via one `write_chunk` reservation -- one atomic-CAS per block
 /// instead of one per sample. On overflow only the head fits and the rest is
 /// dropped (consumer is behind anyway; staying RT-safe beats blocking).
-pub fn bulk_push(prod: &mut Producer<f32>, samples: &[f32]) {
+/// Returns the number of samples actually written, so callers tracking ring
+/// fill level stay in step with the ring after a dropped tail.
+///
+/// `counter` names which ring this call site is feeding, so overruns can be
+/// told apart by call site instead of summing into one global total.
+pub fn bulk_push_counted(prod: &mut Producer<f32>, samples: &[f32], counter: &AtomicU64) -> usize {
     let want = samples.len();
     if want == 0 {
-        return;
+        return 0;
     }
     let avail = prod.slots();
     // Even count only: a partial (odd) write on overflow would shift every
     // later frame's L/R by one sample, permanently desyncing the stereo pair.
     let to_write = want.min(avail) & !1;
+    health::bump(counter, (want - to_write) as u64);
     if to_write == 0 {
-        return;
+        return 0;
     }
     if let Ok(mut chunk) = prod.write_chunk(to_write) {
         let (first, second) = chunk.as_mut_slices();
@@ -64,4 +77,5 @@ pub fn bulk_push(prod: &mut Producer<f32>, samples: &[f32]) {
         }
         chunk.commit_all();
     }
+    to_write
 }

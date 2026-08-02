@@ -1,20 +1,20 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cpal::traits::DeviceTrait;
-use rtrb::RingBuffer;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
+use crate::audio::health;
 use crate::audio::streams;
 use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -29,6 +29,18 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
+}
+
+// `Stream::drop` isn't guaranteed to stop the underlying device (cpal's macOS
+// backend never does for a non-default device, see the macOS SpeakerHandle);
+// call `pause` explicitly so teardown doesn't depend on that guarantee here too.
+impl Drop for SpeakerHandle {
+    fn drop(&mut self) {
+        if let Err(e) = self._stream.pause() {
+            warn!(error = %e, "failed to pause speaker stream on teardown");
+        }
+    }
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -49,7 +61,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
     info!(
         device = %device_name,
@@ -61,16 +73,14 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut consumer) =
-        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
-    let fill = move |out: &mut [f32], _frames: usize| {
-        streams::bulk_pop(&mut consumer, out);
-    };
+    let (producer, fill, level, io) = speaker_ring(spec.out_channels);
     let app_err = app.clone();
     let dead_cb = dead.clone();
     let node_id_cb = node_id.to_string();
-    let err_cb = move |_e: cpal::StreamError| {
+    let err_cb = move |e: cpal::StreamError| {
         dead_cb.store(true, Ordering::Relaxed);
+        health::bump(&health::STREAM_ERRORS, 1);
+        error!(node_id = %node_id_cb, error = %e, "speaker stream error");
         let _ = app_err.emit("audio://speaker_error", json!({ "nodeId": node_id_cb }));
     };
 
@@ -83,14 +93,22 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         err_cb,
     )?;
 
-    let (worker_handle, ctrl) =
-        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
+    let (worker_handle, ctrl) = spawn_speaker_worker(
+        producer,
+        level,
+        spec.sample_rate,
+        spec.out_channels,
+        graph,
+        meter,
+    )?;
     Ok((
         SpeakerHandle {
             _stream: stream,
             _worker: worker_handle,
+            _alive: StreamGuard::new(),
         },
         ctrl,
         dead,
+        io,
     ))
 }

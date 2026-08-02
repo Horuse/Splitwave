@@ -16,7 +16,9 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use super::{ParamRing, PluginFormat, PluginNode};
+use crate::audio::effects::offload::{BlockProcessor, Offload};
 use crate::audio::effects::Effect;
+use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
 
 /// Emitted with the node id when a plugin editor window is closed via its
 /// titlebar, so the frontend node can reset its open/close button.
@@ -118,6 +120,70 @@ impl Effect for HostedNode {
             HostedNode::Au(n) => n.latency_frames(),
             HostedNode::Vst3(n) => n.latency_frames(),
         }
+    }
+}
+
+// Feeds the offload thread; the node itself keeps writing in place.
+struct HostedProcessor {
+    node: HostedNode,
+    width: usize,
+    scratch: Vec<f32>,
+}
+
+impl BlockProcessor for HostedProcessor {
+    fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
+        self.scratch.clear();
+        self.scratch.extend_from_slice(input);
+        let frames = input.len() / self.width;
+        self.node.process(&mut self.scratch, frames);
+        output.extend_from_slice(&self.scratch);
+    }
+}
+
+/// A hosted plugin, run either on the offload thread or in place.
+pub struct HostedEffect {
+    backend: HostedBackend,
+    channels: usize,
+    latency: usize,
+}
+
+enum HostedBackend {
+    Offloaded(Offload),
+    // An offline render outruns the offload thread and would read back silence.
+    Inline { node: HostedNode },
+}
+
+impl HostedEffect {
+    pub fn new(node: HostedNode, realtime: bool) -> Self {
+        let latency = node.latency_frames();
+        let width = node.channels();
+        if !realtime {
+            return Self { backend: HostedBackend::Inline { node }, channels: width, latency };
+        }
+        let processor = HostedProcessor { node, width, scratch: Vec::with_capacity(DSP_BLOCK_FRAMES * width) };
+        match Offload::spawn("plugin", processor, width) {
+            Ok(o) => {
+                let latency = latency + o.latency_frames();
+                Self { backend: HostedBackend::Offloaded(o), channels: width, latency }
+            }
+            Err(p) => Self { backend: HostedBackend::Inline { node: p.node }, channels: width, latency },
+        }
+    }
+}
+
+impl Effect for HostedEffect {
+    fn process(&mut self, samples: &mut [f32], frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        match &mut self.backend {
+            HostedBackend::Offloaded(o) => o.process(&mut samples[..frames * self.channels]),
+            HostedBackend::Inline { node } => node.process(samples, frames),
+        }
+    }
+
+    fn latency_frames(&self) -> usize {
+        self.latency
     }
 }
 

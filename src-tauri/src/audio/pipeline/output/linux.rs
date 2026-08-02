@@ -1,16 +1,14 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use rtrb::RingBuffer;
 use tauri::AppHandle;
 use tracing::info;
 
-use crate::audio::streams;
 use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
@@ -22,6 +20,7 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _playback: crate::audio::playback::Playback,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -38,23 +37,29 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
     _app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut consumer) =
-        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
-    let fill = move |out: &mut [f32]| {
-        streams::bulk_pop(&mut consumer, out);
+    let (producer, mut fill, level, io) = speaker_ring(spec.out_channels);
+    let fill_pw = move |out: &mut [f32]| {
+        fill(out, 0);
         out.len()
     };
-    let playback = crate::audio::playback::Playback::start(&spec.node_id, fill)?;
+    let playback = crate::audio::playback::Playback::start(&spec.node_id, fill_pw)?;
 
-    let (worker_handle, ctrl) =
-        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
+    let (worker_handle, ctrl) = spawn_speaker_worker(
+        producer,
+        level,
+        spec.sample_rate,
+        spec.out_channels,
+        graph,
+        meter,
+    )?;
     Ok((
-        SpeakerHandle { _playback: playback, _worker: worker_handle },
+        SpeakerHandle { _playback: playback, _worker: worker_handle, _alive: StreamGuard::new() },
         ctrl,
         dead,
+        io,
     ))
 }

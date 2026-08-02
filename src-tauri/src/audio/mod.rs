@@ -3,6 +3,7 @@ pub mod device;
 pub mod effects;
 pub mod engine;
 pub mod graph;
+pub mod health;
 pub mod capture;
 pub mod input_bridge;
 #[cfg(target_os = "macos")]

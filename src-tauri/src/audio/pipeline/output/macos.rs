@@ -1,22 +1,22 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use cpal::traits::DeviceTrait;
-use rtrb::RingBuffer;
+use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
+use crate::audio::health;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, SpeakerWorker, SPEAKER_RING_CAPACITY_FRAMES};
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -35,6 +35,22 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
+    _alive: StreamGuard,
+}
+
+// cpal's coreaudio backend registers a device-alive property listener for any
+// non-default device (which `device::find` always returns -- see its comment)
+// whose callback closure holds another clone of the `Stream`'s inner `Arc`.
+// That's a permanent reference cycle: dropping our `_stream` handle alone
+// never reaches refcount zero, so the AudioUnit is never disposed and keeps
+// calling `fill` on a ring nobody drains anymore. `pause` reaches the
+// AudioUnit through `&self` and stops it for real, independent of the cycle.
+impl Drop for SpeakerHandle {
+    fn drop(&mut self) {
+        if let Err(e) = self._stream.pause() {
+            warn!(error = %e, "failed to pause speaker stream on teardown");
+        }
+    }
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -60,7 +76,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
-) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>)> {
+) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     let device_name = spec
         .device
         .name()
@@ -97,18 +113,18 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let dead = Arc::new(AtomicBool::new(false));
 
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
+    let mut level_holder: Option<Arc<AtomicI64>> = None;
+    let mut io_holder: Option<SpeakerIo> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, mut consumer) =
-            RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * spec.out_channels);
-        let fill = move |out: &mut [f32], _frames: usize| {
-            streams::bulk_pop(&mut consumer, out);
-        };
+        let (producer, fill, level, io) = speaker_ring(spec.out_channels);
         let app_err = app.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
-        let err_cb = move |_e: cpal::StreamError| {
+        let err_cb = move |e: cpal::StreamError| {
             dead_cb.store(true, Ordering::Relaxed);
+            health::bump(&health::STREAM_ERRORS, 1);
+            error!(node_id = %node_id_cb, error = %e, "speaker stream error");
             let _ = app_err.emit("audio://speaker_error", json!({ "nodeId": node_id_cb }));
         };
         match streams::build_output_stream(
@@ -121,6 +137,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         ) {
             Ok(s) => {
                 producer_holder = Some(producer);
+                level_holder = Some(level);
+                io_holder = Some(io);
                 stream_holder = Some(s);
                 break;
             }
@@ -136,13 +154,22 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         }
     }
     let producer = producer_holder.expect("loop sets producer on success or returns Err");
+    let level = level_holder.expect("loop sets level on success or returns Err");
+    let io = io_holder.expect("loop sets io on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
-    let (worker_handle, ctrl) =
-        spawn_speaker_worker(producer, spec.sample_rate, spec.out_channels, graph, meter)?;
+    let (worker_handle, ctrl) = spawn_speaker_worker(
+        producer,
+        level,
+        spec.sample_rate,
+        spec.out_channels,
+        graph,
+        meter,
+    )?;
     Ok((
-        SpeakerHandle { _stream: stream, _worker: worker_handle },
+        SpeakerHandle { _stream: stream, _worker: worker_handle, _alive: StreamGuard::new() },
         ctrl,
         dead,
+        io,
     ))
 }

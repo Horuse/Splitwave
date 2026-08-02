@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::audio::graph::EffectSpec;
-use crate::audio::plugins::HostedNode;
+use crate::audio::plugins::host_api::HostedEffect;
 
 /// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
 /// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
@@ -31,6 +31,7 @@ pub mod lufs_meter;
 pub mod mute;
 pub mod noise_gate;
 pub mod noise_suppressor;
+pub(crate) mod offload;
 pub mod waveform;
 pub mod reverb;
 pub mod saturator;
@@ -93,7 +94,7 @@ pub enum RuntimeEffect {
     NoiseSuppressor(NoiseSuppressorEffect),
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
-    HostedPlugin(HostedNode),
+    HostedPlugin(HostedEffect),
 }
 
 impl RuntimeEffect {
@@ -423,6 +424,9 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
+    // False for file-recording outputs: an offline render outruns real time,
+    // so an expensive effect must process in place instead of on a worker.
+    realtime: bool,
     // False when building the monitor graph: a plugin instantiated there is a
     // metering-only duplicate, not the one its editor window attaches to.
     primary: bool,
@@ -708,11 +712,12 @@ pub fn instantiate_effect(
                 RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
                     controls.clone(),
                     sample_rate,
+                    realtime,
                 )),
                 None, None, None, None, None,
             ),
             _ => {
-                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate);
+                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate, realtime);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::NoiseSuppressor(e), Some(c), None, None, None, None)
             }
@@ -797,8 +802,10 @@ pub fn instantiate_effect(
                     // The plugin took the node whole, so the pipeline must stop
                     // splitting it into pairs and hand it every channel.
                     let full_width = node.channels() == channels;
-                    let mut build =
-                        mk(RuntimeEffect::HostedPlugin(node), control, None, None, None, None);
+                    let mut build = mk(
+                        RuntimeEffect::HostedPlugin(HostedEffect::new(node, realtime)),
+                        control, None, None, None, None,
+                    );
                     build.full_width = full_width;
                     build
                 }

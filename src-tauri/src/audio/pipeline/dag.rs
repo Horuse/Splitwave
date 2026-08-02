@@ -11,10 +11,12 @@ use crate::audio::effects::{
     MeterHandle, WaveformHandle, RuntimeEffect,
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
+use crate::audio::health;
 use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
-use crate::audio::streams::bulk_push;
+use crate::audio::input_bridge::CaptureStats;
+use crate::audio::streams::bulk_push_counted;
 use crate::error::{AppError, AppResult};
 
 /// Ring buffer length in frames per source; multiplied by the source's channel
@@ -26,7 +28,7 @@ pub(super) const RING_CAPACITY_FRAMES: usize = 48_000;
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
 
-pub(super) const DSP_BLOCK_FRAMES: usize = 1024;
+pub const DSP_BLOCK_FRAMES: usize = 1024;
 
 const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;
 
@@ -39,6 +41,12 @@ const STALL_THRESHOLD: Duration = Duration::from_millis(150);
 
 const SOURCE_BACKLOG_HIGH_BLOCKS: usize = 4;
 const SOURCE_BACKLOG_LOW_BLOCKS: usize = 2;
+/// Ceiling on one block's trim. Backlog drains over a few seconds instead of
+/// vanishing in a single splice, which is what makes it inaudible.
+const TRIM_MAX_FRAMES_PER_BLOCK: usize = 64;
+/// Crossfade length across a trim's cut. Long enough to kill the step, short
+/// enough that the replayed audio reads as texture rather than an echo.
+const SPLICE_FADE_FRAMES: usize = 32;
 
 /// Fixed-capacity FIFO; allocates once. Overrun clamps and counts drops --
 /// wrapping the write head past the read head would corrupt subsequent pops.
@@ -105,7 +113,9 @@ impl StagingRing {
             self.tail = if self.tail + 1 == cap { 0 } else { self.tail + 1 };
         }
         self.len += take;
-        self.dropped = self.dropped.saturating_add((src.len() - take) as u64);
+        let overrun = (src.len() - take) as u64;
+        self.dropped = self.dropped.saturating_add(overrun);
+        health::bump(&health::STAGING_OVERRUN_SAMPLES, overrun);
     }
 }
 
@@ -151,12 +161,84 @@ impl DagNode {
     }
 }
 
+/// Per-source counters + gauge read by the non-RT tick thread (`meter::spawn_xrun_thread`).
+/// Every write is `Ordering::Relaxed` -- RT-safe, no allocation, no other sync.
+#[derive(Clone)]
+pub(super) struct SourceStats {
+    /// Samples zero-filled on genuine mid-stream underrun (ring ran dry while streaming).
+    pub xrun: Arc<AtomicU64>,
+    /// Samples silenced because the source delivered nothing for longer than
+    /// `STALL_THRESHOLD`. Silent by design, but it is still missing audio.
+    pub stalled: Arc<AtomicU64>,
+    /// Samples discarded by the backlog trim in `fill_block`.
+    pub trimmed: Arc<AtomicU64>,
+    /// Samples actually read out of the source ring.
+    pub consumed: Arc<AtomicU64>,
+    /// Ring occupancy (samples) at the end of the last `fill_block`. A gauge,
+    /// not a counter -- plain `store`, no accumulation.
+    pub level: Arc<AtomicU64>,
+}
+
+impl SourceStats {
+    fn new() -> Self {
+        Self {
+            xrun: Arc::new(AtomicU64::new(0)),
+            stalled: Arc::new(AtomicU64::new(0)),
+            trimmed: Arc::new(AtomicU64::new(0)),
+            consumed: Arc::new(AtomicU64::new(0)),
+            level: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// Identifies one source for the tick thread: its counters plus enough
+/// context (channel count, native rate) to convert sample deltas into a frame
+/// rate comparable against real time.
+#[derive(Clone)]
+pub(super) struct SourceMeta {
+    pub label: String,
+    pub stats: SourceStats,
+    pub channels: usize,
+    pub native_sr: u32,
+    /// Native-rate frames this source consumes per block. The rate check needs
+    /// it as the counter's step size, since a window boundary can misattribute
+    /// a whole block.
+    pub frames_per_block: usize,
+    /// Graph id of the captured input this source reads, for matching against
+    /// the broadcast slot's `CaptureStats` once the bridge wires it up. `None`
+    /// for ring-sources and network producers -- they don't go through a
+    /// capture broadcast.
+    pub input_id: Option<String>,
+    /// Owning output id (or "monitor"), the other half of the key that
+    /// disambiguates one input feeding several outputs.
+    pub output_id: String,
+    /// Capture-side fed/dropped counters, filled in by `pipeline/mod.rs`
+    /// after `BroadcastTx::add` returns them for this source's ring.
+    pub capture: Option<CaptureStats>,
+}
+
+/// Identifies one output for the tick thread: its per-block counter plus the
+/// sample rate that defines its expected block cadence. `channels` and `io`
+/// are only meaningful for speaker outputs -- `build_output_graph` doesn't
+/// know the device's real channel count yet, so the caller fills both in
+/// after `start_speaker_stream` returns (see `pipeline/mod.rs`).
+#[derive(Clone)]
+pub(super) struct OutputMeta {
+    pub label: String,
+    pub blocks: Arc<AtomicU64>,
+    pub sample_rate: u32,
+    pub channels: usize,
+    pub io: Option<super::output::SpeakerIo>,
+}
+
 struct SourceState {
     label: String,
     channels: usize,
     consumer: Consumer<f32>,
     resampler: Option<MultiResampler>,
     input_staging: Vec<f32>,
+    /// Holds a trim's crossfaded join until the refill path picks it up.
+    splice_tmp: Vec<f32>,
     out_pending: StagingRing,
     chunk_tmp: Vec<f32>,
     out_buf: Vec<f32>,
@@ -174,9 +256,7 @@ struct SourceState {
     meter: Option<MeterHandle>,
     // Per-channel taps ("chK") drawn off this source.
     handle_bufs: Vec<(String, Vec<f32>)>,
-    // Counts samples zero-filled on genuine mid-stream underrun (ring ran dry
-    // while streaming). A non-RT tick thread reads it to surface xruns.
-    xrun: Arc<AtomicU64>,
+    stats: SourceStats,
 }
 
 impl SourceState {
@@ -241,16 +321,22 @@ impl SourceState {
                 return;
             }
         }
-        // Drop input backlog past HIGH down to LOW so latency stays bounded.
+        // Trim input backlog toward LOW so latency stays bounded, a slice per
+        // block and spliced rather than cut: drift needs a trickle, and one
+        // discard of hundreds of milliseconds is an audible tear.
         if self.realtime {
             let have = self.consumer.slots();
             let high = self.input_samples_per_block * SOURCE_BACKLOG_HIGH_BLOCKS;
             if have > high {
                 let low = self.input_samples_per_block * SOURCE_BACKLOG_LOW_BLOCKS;
-                let excess = have - low;
+                let fade = SPLICE_FADE_FRAMES * self.channels;
+                let budget = TRIM_MAX_FRAMES_PER_BLOCK * self.channels;
+                let excess = (have - low).min(budget);
                 let drop = excess - excess % self.channels;
-                if let Ok(chunk) = self.consumer.read_chunk(drop) {
-                    chunk.commit_all();
+                // The splice reads a fade-out and a fade-in around the cut, so
+                // the ring has to hold both on top of what it discards.
+                if drop > 0 && have >= drop + 2 * fade {
+                    self.splice_trim(drop, fade);
                 }
             }
         }
@@ -265,10 +351,12 @@ impl SourceState {
                 }
                 // A stalled/paused source silences by design; only a source that
                 // is actively streaming and ran dry mid-block is a real xrun.
-                if !self.is_stalled() {
-                    self.xrun
-                        .fetch_add((need - written) as u64, Ordering::Relaxed);
-                }
+                let counter = if self.is_stalled() {
+                    &self.stats.stalled
+                } else {
+                    &self.stats.xrun
+                };
+                counter.fetch_add((need - written) as u64, Ordering::Relaxed);
                 break;
             }
             let n = self.out_pending.pop_into(&mut self.out_buf[written..]);
@@ -303,6 +391,44 @@ impl SourceState {
                 }
             }
         }
+        self.stats
+            .level
+            .store(self.consumer.slots() as u64, Ordering::Relaxed);
+    }
+
+    /// Removes `drop` samples from the input ring, crossfading the `fade`
+    /// samples before the cut into the `fade` after it. The joined slice leads
+    /// the stream through `input_staging`, so the listener hears one short
+    /// blend instead of a step.
+    fn splice_trim(&mut self, drop: usize, fade: usize) {
+        self.splice_tmp.clear();
+        let Ok(outgoing) = self.consumer.read_chunk(fade) else {
+            return;
+        };
+        let (first, second) = outgoing.as_slices();
+        self.splice_tmp.extend_from_slice(first);
+        self.splice_tmp.extend_from_slice(second);
+        outgoing.commit_all();
+
+        if let Ok(cut) = self.consumer.read_chunk(drop) {
+            cut.commit_all();
+        }
+
+        if let Ok(incoming) = self.consumer.read_chunk(fade) {
+            let (first, second) = incoming.as_slices();
+            crossfade_into(&mut self.splice_tmp, first, second, self.channels);
+            incoming.commit_all();
+        }
+
+        self.input_staging.extend_from_slice(&self.splice_tmp);
+        // What left the ring, versus what the stream actually loses: the
+        // fade-out is re-injected, so only the cut and the fade-in are gone.
+        let popped = (drop + 2 * fade) as u64;
+        let removed = (drop + fade) as u64;
+        self.stats.consumed.fetch_add(popped, Ordering::Relaxed);
+        self.stats.trimmed.fetch_add(removed, Ordering::Relaxed);
+        health::bump(&health::SOURCE_TRIM_DROPPED_SAMPLES, removed);
+        self.last_pop_at = Instant::now();
     }
 
     fn try_refill_one_chunk(&mut self) {
@@ -318,6 +444,7 @@ impl SourceState {
                     self.input_staging.extend_from_slice(first);
                     self.input_staging.extend_from_slice(second);
                     chunk.commit_all();
+                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -335,7 +462,14 @@ impl SourceState {
             self.input_staging.drain(..needed);
         } else {
             self.chunk_tmp.clear();
-            let want = RESAMPLE_CHUNK * self.channels;
+            let mut want = RESAMPLE_CHUNK * self.channels;
+            // A splice staged its joined frames ahead of the ring.
+            if !self.input_staging.is_empty() {
+                let n = self.input_staging.len().min(want);
+                self.chunk_tmp.extend_from_slice(&self.input_staging[..n]);
+                self.input_staging.drain(..n);
+                want -= n;
+            }
             let avail = self.consumer.slots().min(want);
             if avail > 0 {
                 if let Ok(chunk) = self.consumer.read_chunk(avail) {
@@ -343,6 +477,7 @@ impl SourceState {
                     self.chunk_tmp.extend_from_slice(first);
                     self.chunk_tmp.extend_from_slice(second);
                     chunk.commit_all();
+                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -511,6 +646,22 @@ fn parse_stereo(handle: &str) -> Option<usize> {
     handle.strip_prefix("st").and_then(|s| s.parse::<usize>().ok())
 }
 
+/// Channel width an edge actually carries. A `chK`/`stA` source handle taps a
+/// slice of its node, so the node's own width would be wrong.
+fn edge_channels(
+    nodes: &[DagNode],
+    node_channels: &[usize],
+    idx: usize,
+    source_handle: Option<&str>,
+) -> usize {
+    match source_handle {
+        Some(h) if tap_handle_width(h).is_some() => {
+            nodes[idx].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
+        }
+        _ => node_channels[idx],
+    }
+}
+
 /// A per-channel tap handle (`chK` mono or `stA` stereo) and its channel width.
 #[inline]
 fn tap_handle_width(handle: &str) -> Option<usize> {
@@ -623,43 +774,52 @@ fn add_block_at(src: &[f32], dst: &mut [f32], off: usize) {
     }
 }
 
+/// Pure time shift. It deliberately does no channel mapping: the caller adds
+/// the shifted block through the same `add_*` path an undelayed edge takes, so
+/// routing, upmix and downmix cannot drift between the two.
+/// Blends `dst` (the audio before a trim's cut) into the audio after it, given
+/// as a ring's two halves. Both ends stay continuous: frame 0 is pure `dst` and
+/// the last frame is pure incoming, so neither join is a step.
+fn crossfade_into(dst: &mut [f32], first: &[f32], second: &[f32], channels: usize) {
+    let span = (SPLICE_FADE_FRAMES - 1).max(1) as f32;
+    for (i, s) in first.iter().chain(second.iter()).enumerate() {
+        if i >= dst.len() {
+            break;
+        }
+        let w = ((i / channels) as f32 / span).min(1.0);
+        dst[i] = dst[i] * (1.0 - w) + s * w;
+    }
+}
+
 struct DelayLine {
     buf: Box<[f32]>,
+    scratch: Box<[f32]>,
     pos: usize,
-    channels: usize,
 }
 
 impl DelayLine {
     fn new(delay_frames: usize, channels: usize) -> Self {
         Self {
             buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
+            scratch: vec![0.0; DSP_BLOCK_FRAMES * channels].into_boxed_slice(),
             pos: 0,
-            channels,
         }
     }
 
-    fn process_and_add(&mut self, input: &[f32], dst: &mut [f32]) {
+    fn delayed<'a>(&'a mut self, input: &'a [f32]) -> &'a [f32] {
         let cap = self.buf.len();
         if cap == 0 {
-            add_mapped(input, dst);
-            return;
+            return input;
         }
-        let src_ch = self.channels;
-        let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
-        let n = src_ch.min(dst_ch);
-        let frames = input.len() / src_ch;
+        let n = input.len().min(self.scratch.len());
         let mut pos = self.pos;
-        for f in 0..frames {
-            for c in 0..src_ch {
-                let delayed = self.buf[pos];
-                self.buf[pos] = input[f * src_ch + c];
-                if c < n {
-                    dst[f * dst_ch + c] += delayed;
-                }
-                pos = if pos + 1 == cap { 0 } else { pos + 1 };
-            }
+        for i in 0..n {
+            self.scratch[i] = self.buf[pos];
+            self.buf[pos] = input[i];
+            pos = if pos + 1 == cap { 0 } else { pos + 1 };
         }
         self.pos = pos;
+        &self.scratch[..n]
     }
 }
 
@@ -672,6 +832,10 @@ pub(super) struct OutputGraph {
     out_channels: usize,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
+    /// Blocks produced by `process_block`. A clone lives in this build's
+    /// `BuiltOutputGraph::output` so the non-RT tick thread can compare this
+    /// worker's real block rate against `sample_rate / DSP_BLOCK_FRAMES`.
+    blocks: Arc<AtomicU64>,
 }
 
 impl OutputGraph {
@@ -715,6 +879,7 @@ impl OutputGraph {
     /// Fill `output` (`DSP_BLOCK_FRAMES * out_channels` long) with one block of
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
+        self.blocks.fetch_add(1, Ordering::Relaxed);
         for node in &mut self.nodes {
             match node {
                 DagNode::Source(s) => s.fill_block(),
@@ -734,21 +899,23 @@ impl OutputGraph {
                 }
                 for edge in &mut cons.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                    let target = edge.target_handle.as_deref();
+                    let src = match &mut edge.delay {
+                        Some(d) => d.delayed(src),
+                        None => src,
+                    };
                     let Some((_, buf)) = cons
                         .channel_bufs
                         .iter_mut()
-                        .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                        .find(|(h, _)| Some(h.as_str()) == target)
                     else {
                         continue;
                     };
-                    match &mut edge.delay {
-                        Some(d) => d.process_and_add(src, buf),
-                        None => add_mapped(src, buf),
-                    }
+                    add_mapped(src, buf);
                 }
                 for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
                     if let Some(prod) = cons.send_producers.get_mut(i) {
-                        bulk_push(prod, buf);
+                        bulk_push_counted(prod, buf, &health::TAP_RING_OVERRUN_SAMPLES);
                     }
                 }
                 continue;
@@ -760,11 +927,14 @@ impl OutputGraph {
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     let route = edge.target_handle.as_deref().and_then(target_route);
-                    match (&mut edge.delay, route) {
-                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
-                        (None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
-                        (None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
-                        (None, None) => add_mapped(src, &mut eff.out_buf),
+                    let src = match &mut edge.delay {
+                        Some(d) => d.delayed(src),
+                        None => src,
+                    };
+                    match route {
+                        Some((off, 1)) => add_to_channel(src, &mut eff.out_buf, off),
+                        Some((off, _)) => add_block_at(src, &mut eff.out_buf, off),
+                        None => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -774,10 +944,11 @@ impl OutputGraph {
                     for edge in &mut eff.sidechain {
                         let src =
                             head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                        match &mut edge.delay {
-                            Some(d) => d.process_and_add(src, sc_buf),
-                            None => add_mapped(src, sc_buf),
-                        }
+                        let src = match &mut edge.delay {
+                            Some(d) => d.delayed(src),
+                            None => src,
+                        };
+                        add_mapped(src, sc_buf);
                     }
                 }
                 if !eff.bypass.load(Ordering::Relaxed) {
@@ -801,7 +972,7 @@ impl OutputGraph {
                 }
                 // Publish the processed block to every consuming output's ring.
                 for prod in eff.taps.iter_mut() {
-                    bulk_push(prod, &eff.out_buf);
+                    bulk_push_counted(prod, &eff.out_buf, &health::TAP_RING_OVERRUN_SAMPLES);
                 }
             }
         }
@@ -811,11 +982,14 @@ impl OutputGraph {
         for terminal in &mut self.terminals {
             let src =
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
-            match (&mut terminal.delay, terminal.route) {
-                (Some(d), _) => d.process_and_add(src, output),
-                (None, Some((off, 1))) => add_to_channel(src, output, off),
-                (None, Some((off, _))) => add_block_at(src, output, off),
-                (None, None) => add_mapped(src, output),
+            let src = match &mut terminal.delay {
+                Some(d) => d.delayed(src),
+                None => src,
+            };
+            match terminal.route {
+                Some((off, 1)) => add_to_channel(src, output, off),
+                Some((off, _)) => add_block_at(src, output, off),
+                None => add_mapped(src, output),
             }
         }
     }
@@ -829,7 +1003,8 @@ pub(super) struct BuiltOutputGraph {
     pub lufs: Vec<LufsHandle>,
     pub gr_handles: Vec<GrHandle>,
     pub scopes: Vec<WaveformHandle>,
-    pub xruns: Vec<(String, Arc<AtomicU64>)>,
+    pub sources: Vec<SourceMeta>,
+    pub output: OutputMeta,
     /// Effect node id -> (node index, channel width). Used to attach publish
     /// taps to nodes that fan out to other outputs.
     pub node_meta: HashMap<String, (usize, usize)>,
@@ -930,7 +1105,7 @@ pub(super) fn build_output_graph(
     let mut lufs: Vec<LufsHandle> = Vec::new();
     let mut gr_handles: Vec<GrHandle> = Vec::new();
     let mut scopes: Vec<WaveformHandle> = Vec::new();
-    let mut xruns: Vec<(String, Arc<AtomicU64>)> = Vec::new();
+    let mut sources: Vec<SourceMeta> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
     // Per-node channel width; effects inherit the max width of their upstreams.
     let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
@@ -940,6 +1115,16 @@ pub(super) fn build_output_graph(
         // from the ring instead of rebuilding the whole upstream chain.
         if let Some((consumer, owner_sr, width)) = cut_leaves.remove(id) {
             let source = ring_source(id, consumer, owner_sr, output_sr, width, realtime, valid)?;
+            sources.push(SourceMeta {
+                label: format!("{} out={}", source.label, output_id.unwrap_or("monitor")),
+                stats: source.stats.clone(),
+                channels: width,
+                native_sr: owner_sr,
+                frames_per_block: source.input_samples_per_block / width.max(1),
+                input_id: None,
+                output_id: output_id.unwrap_or("monitor").to_string(),
+                capture: None,
+            });
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
             node_latencies.push(0);
@@ -1050,14 +1235,26 @@ pub(super) fn build_output_graph(
                 }
             };
             let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
-            let xrun = Arc::new(AtomicU64::new(0));
-            xruns.push((label.clone(), xrun.clone()));
+            let stats = SourceStats::new();
+            sources.push(SourceMeta {
+                label: label.clone(),
+                stats: stats.clone(),
+                channels: source_channels,
+                native_sr: input_sr,
+                frames_per_block: input_frames_per_block as usize,
+                input_id: Some(id.clone()),
+                output_id: output_id.unwrap_or("monitor").to_string(),
+                capture: None,
+            });
             let source = SourceState {
                 label,
                 channels: source_channels,
                 consumer,
                 resampler,
-                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * source_channels + 8),
+                input_staging: Vec::with_capacity(
+                    (RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * source_channels + 8,
+                ),
+                splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * source_channels),
                 out_pending: StagingRing::with_capacity(staging_cap),
                 chunk_tmp: Vec::with_capacity(out_max * source_channels),
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * source_channels],
@@ -1074,7 +1271,7 @@ pub(super) fn build_output_graph(
                 last_drain_gen: 0,
                 meter: input_meters.get(id).cloned(),
                 handle_bufs: source_handle_bufs,
-                xrun,
+                stats,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1109,12 +1306,7 @@ pub(super) fn build_output_graph(
             // the edge width is the tap buffer's, not the source node's full width.
             let upstream_w = main_upstream
                 .iter()
-                .map(|(i, sh, _)| match sh.as_deref() {
-                    Some(h) if tap_handle_width(h).is_some() => {
-                        nodes[*i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
-                    }
-                    _ => node_channels[*i],
-                })
+                .map(|(i, sh, _)| edge_channels(&nodes, &node_channels, *i, sh.as_deref()))
                 .max()
                 .unwrap_or(2);
             let target_w = main_upstream
@@ -1136,7 +1328,7 @@ pub(super) fn build_output_graph(
             // width and may take it whole, the way a DAW instantiates one
             // multichannel plugin instead of several stereo ones.
             let build = instantiate_effect(
-                &effect.spec, id, output_sr, true, eff_channels, registry,
+                &effect.spec, id, output_sr, realtime, true, eff_channels, registry,
             );
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
@@ -1161,12 +1353,13 @@ pub(super) fn build_output_graph(
                              source_handle: Option<String>,
                              target_handle: Option<String>| {
                 let pad = max_upstream - node_latencies[src_idx];
+                let width = edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
                 IncomingEdge {
                     src_idx,
                     source_handle,
                     target_handle,
                     delay: if pad > 0 {
-                        Some(DelayLine::new(pad, node_channels[src_idx]))
+                        Some(DelayLine::new(pad, width))
                     } else {
                         None
                     },
@@ -1225,7 +1418,7 @@ pub(super) fn build_output_graph(
                 // Extra pairs exist only when the node is driven pairwise, so
                 // each is asked for stereo rather than the node's full width.
                 let extra =
-                    instantiate_effect(&effect.spec, id, output_sr, false, 2, registry);
+                    instantiate_effect(&effect.spec, id, output_sr, realtime, false, 2, registry);
                 effects.push(extra.effect);
             }
             id_to_index.insert(id.clone(), nodes.len());
@@ -1247,6 +1440,10 @@ pub(super) fn build_output_graph(
             node_channels.push(eff_channels);
         }
     }
+
+    // Matches the source label style (`out=<id>` / "monitor").
+    let out_label = output_id.map(|id| format!("out={id}")).unwrap_or_else(|| "monitor".to_string());
+    let blocks = Arc::new(AtomicU64::new(0));
 
     // A wire sender (direct-IP or WebRTC) is a terminal Consumer node inside the
     // DAG (not a summed output terminal): it sums per-channel inputs and pushes
@@ -1271,12 +1468,13 @@ pub(super) fn build_output_graph(
             .into_iter()
             .map(|(idx, source_handle, target_handle)| {
                 let pad = max_up - node_latencies[idx];
+                let width = edge_channels(&nodes, &node_channels, idx, source_handle.as_deref());
                 IncomingEdge {
                     src_idx: idx,
                     source_handle,
                     target_handle,
                     delay: if pad > 0 {
-                        Some(DelayLine::new(pad, node_channels[idx]))
+                        Some(DelayLine::new(pad, width))
                     } else {
                         None
                     },
@@ -1348,6 +1546,7 @@ pub(super) fn build_output_graph(
                 out_channels: 2,
                 nodes,
                 terminals: Vec::new(),
+                blocks: blocks.clone(),
             },
             controls,
             bypasses,
@@ -1355,7 +1554,8 @@ pub(super) fn build_output_graph(
             lufs,
             gr_handles,
             scopes,
-            xruns,
+            sources,
+            output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
             node_meta,
         });
     }
@@ -1382,12 +1582,14 @@ pub(super) fn build_output_graph(
                 .into_iter()
                 .map(|(src_idx, source_handle, route)| {
                     let pad = max_upstream - node_latencies[src_idx];
+                    let width =
+                        edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
                     TerminalEdge {
                         src_idx,
                         source_handle,
                         route,
                         delay: if pad > 0 {
-                            Some(DelayLine::new(pad, node_channels[src_idx]))
+                            Some(DelayLine::new(pad, width))
                         } else {
                             None
                         },
@@ -1404,6 +1606,7 @@ pub(super) fn build_output_graph(
             out_channels: 2,
             nodes,
             terminals,
+            blocks: blocks.clone(),
         },
         controls,
         bypasses,
@@ -1411,7 +1614,8 @@ pub(super) fn build_output_graph(
         lufs,
         gr_handles,
         scopes,
-        xruns,
+        sources,
+        output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
         node_meta,
     })
 }
@@ -1461,7 +1665,8 @@ fn ring_source(
         channels,
         consumer,
         resampler,
-        input_staging: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
+        input_staging: Vec::with_capacity((RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * channels + 8),
+        splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * channels),
         out_pending: StagingRing::with_capacity(RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels),
         chunk_tmp: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
         out_buf: vec![0.0; DSP_BLOCK_FRAMES * channels],
@@ -1475,7 +1680,7 @@ fn ring_source(
         last_drain_gen: 0,
         meter: None,
         handle_bufs,
-        xrun: Arc::new(AtomicU64::new(0)),
+        stats: SourceStats::new(),
     })
 }
 
@@ -1658,7 +1863,86 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
 
 #[cfg(test)]
 mod tests {
-    use super::{add_mapped, DSP_BLOCK_FRAMES};
+    use super::{add_mapped, crossfade_into, DelayLine, DSP_BLOCK_FRAMES, SPLICE_FADE_FRAMES};
+
+    // Latency compensation on a branch that bypasses a latent effect must be a
+    // pure delay: same samples, same order, only shifted.
+    #[test]
+    fn delay_line_shifts_without_losing_samples() {
+        const PAD_FRAMES: usize = 482;
+        let mut line = DelayLine::new(PAD_FRAMES, 2);
+        let mut fed: Vec<f32> = Vec::new();
+        let mut got: Vec<f32> = Vec::new();
+        for b in 0..4 {
+            let mut input = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            for f in 0..DSP_BLOCK_FRAMES {
+                let v = (b * DSP_BLOCK_FRAMES + f) as f32;
+                input[f * 2] = v;
+                input[f * 2 + 1] = -v;
+            }
+            fed.extend_from_slice(&input);
+            let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            add_mapped(line.delayed(&input), &mut dst);
+            got.extend_from_slice(&dst);
+        }
+        let shift = PAD_FRAMES * 2;
+        for i in shift..got.len() {
+            assert_eq!(got[i], fed[i - shift], "sample {i} differs");
+        }
+    }
+
+    // A mono tap drawn off a stereo node carries one channel, not two. Sizing
+    // the line by the node's width instead of the edge's dropped half of every
+    // block and paired consecutive samples as L/R, doubling the pitch.
+    #[test]
+    fn delay_line_fills_a_whole_mono_block() {
+        const PAD_FRAMES: usize = 482;
+        let mut line = DelayLine::new(PAD_FRAMES, 1);
+        let mut fed: Vec<f32> = Vec::new();
+        let mut got: Vec<f32> = Vec::new();
+        for b in 0..4 {
+            let mut input = vec![0.0_f32; DSP_BLOCK_FRAMES];
+            for (f, s) in input.iter_mut().enumerate() {
+                *s = (b * DSP_BLOCK_FRAMES + f) as f32 + 1.0;
+            }
+            fed.extend_from_slice(&input);
+            let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            add_mapped(line.delayed(&input), &mut dst);
+            got.extend_from_slice(&dst);
+        }
+        // Mono upmixes to both channels, and no frame of any block stays silent.
+        for b in 1..4 {
+            for f in 0..DSP_BLOCK_FRAMES {
+                let i = b * DSP_BLOCK_FRAMES * 2 + f * 2;
+                assert_ne!(got[i], 0.0, "left silent at block {b} frame {f}");
+                assert_eq!(got[i], got[i + 1], "channels differ at block {b} frame {f}");
+            }
+        }
+        for f in PAD_FRAMES..fed.len() {
+            assert_eq!(got[f * 2], fed[f - PAD_FRAMES], "frame {f} differs");
+        }
+    }
+
+    // A trim's join must be continuous at both ends, or the splice it was meant
+    // to hide becomes two smaller steps.
+    #[test]
+    fn crossfade_joins_without_a_step() {
+        const CH: usize = 2;
+        let mut dst = vec![1.0_f32; SPLICE_FADE_FRAMES * CH];
+        let incoming = vec![0.0_f32; SPLICE_FADE_FRAMES * CH];
+        crossfade_into(&mut dst, &incoming, &[], CH);
+
+        assert_eq!(dst[0], 1.0, "first frame must stay pure outgoing");
+        assert_eq!(dst[1], 1.0, "both channels of the first frame agree");
+        let last = (SPLICE_FADE_FRAMES - 1) * CH;
+        assert_eq!(dst[last], 0.0, "last frame must reach pure incoming");
+        assert_eq!(dst[last + 1], 0.0, "both channels of the last frame agree");
+
+        for f in 1..SPLICE_FADE_FRAMES {
+            assert!(dst[f * CH] < dst[(f - 1) * CH], "fade must be monotonic");
+            assert_eq!(dst[f * CH], dst[f * CH + 1], "channels share a weight");
+        }
+    }
 
     #[test]
     fn add_mapped_maps_by_channel() {

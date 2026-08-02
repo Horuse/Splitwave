@@ -109,24 +109,6 @@ jobs:
                   prerelease: false
                   args: --bundles appimage,deb,rpm
 
-            - name: Build Flatpak bundle
-              run: |
-                  set -euxo pipefail
-                  sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
-                  flatpak remote-add --if-not-exists --user flathub \
-                    https://flathub.org/repo/flathub.flatpakrepo
-                  flatpak install -y --user flathub \
-                    org.gnome.Platform//48 org.gnome.Sdk//48
-                  version="${GITHUB_REF_NAME#v}"
-                  sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"$version\" date=\"$(date -u +%F)\"|" \
-                    flatpak/com.horuse.splitwave.metainfo.xml
-                  cp "$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)" \
-                    flatpak/splitwave.deb
-                  flatpak-builder --force-clean --user --disable-cache \
-                    --repo=flatpak/repo flatpak/build flatpak/com.horuse.splitwave.yml
-                  flatpak build-bundle flatpak/repo \
-                    "flatpak/Splitwave_${version}_x86_64.flatpak" com.horuse.splitwave
-
             # linuxdeploy bundles libwayland/libpipewire/libspa; on newer Mesa they
             # shadow the host libs and break EGL/PipeWire. Drop them, use the host's.
             - name: Strip bundled host libs from AppImage
@@ -187,7 +169,6 @@ jobs:
                       src-tauri/target/release/bundle/appimage/*.AppImage
                       src-tauri/target/release/bundle/appimage/*.AppImage.sig
                       latest.json
-                      flatpak/*.flatpak
 
     windows:
         # Runs after macOS so the draft release already exists to upload into.

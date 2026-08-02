@@ -41,6 +41,12 @@ const STALL_THRESHOLD: Duration = Duration::from_millis(150);
 
 const SOURCE_BACKLOG_HIGH_BLOCKS: usize = 4;
 const SOURCE_BACKLOG_LOW_BLOCKS: usize = 2;
+/// Ceiling on one block's trim. Backlog drains over a few seconds instead of
+/// vanishing in a single splice, which is what makes it inaudible.
+const TRIM_MAX_FRAMES_PER_BLOCK: usize = 64;
+/// Crossfade length across a trim's cut. Long enough to kill the step, short
+/// enough that the replayed audio reads as texture rather than an echo.
+const SPLICE_FADE_FRAMES: usize = 32;
 
 /// Fixed-capacity FIFO; allocates once. Overrun clamps and counts drops --
 /// wrapping the write head past the read head would corrupt subsequent pops.
@@ -231,6 +237,8 @@ struct SourceState {
     consumer: Consumer<f32>,
     resampler: Option<MultiResampler>,
     input_staging: Vec<f32>,
+    /// Holds a trim's crossfaded join until the refill path picks it up.
+    splice_tmp: Vec<f32>,
     out_pending: StagingRing,
     chunk_tmp: Vec<f32>,
     out_buf: Vec<f32>,
@@ -313,18 +321,22 @@ impl SourceState {
                 return;
             }
         }
-        // Drop input backlog past HIGH down to LOW so latency stays bounded.
+        // Trim input backlog toward LOW so latency stays bounded, a slice per
+        // block and spliced rather than cut: drift needs a trickle, and one
+        // discard of hundreds of milliseconds is an audible tear.
         if self.realtime {
             let have = self.consumer.slots();
             let high = self.input_samples_per_block * SOURCE_BACKLOG_HIGH_BLOCKS;
             if have > high {
                 let low = self.input_samples_per_block * SOURCE_BACKLOG_LOW_BLOCKS;
-                let excess = have - low;
+                let fade = SPLICE_FADE_FRAMES * self.channels;
+                let budget = TRIM_MAX_FRAMES_PER_BLOCK * self.channels;
+                let excess = (have - low).min(budget);
                 let drop = excess - excess % self.channels;
-                if let Ok(chunk) = self.consumer.read_chunk(drop) {
-                    chunk.commit_all();
-                    self.stats.trimmed.fetch_add(drop as u64, Ordering::Relaxed);
-                    health::bump(&health::SOURCE_TRIM_DROPPED_SAMPLES, drop as u64);
+                // The splice reads a fade-out and a fade-in around the cut, so
+                // the ring has to hold both on top of what it discards.
+                if drop > 0 && have >= drop + 2 * fade {
+                    self.splice_trim(drop, fade);
                 }
             }
         }
@@ -384,6 +396,41 @@ impl SourceState {
             .store(self.consumer.slots() as u64, Ordering::Relaxed);
     }
 
+    /// Removes `drop` samples from the input ring, crossfading the `fade`
+    /// samples before the cut into the `fade` after it. The joined slice leads
+    /// the stream through `input_staging`, so the listener hears one short
+    /// blend instead of a step.
+    fn splice_trim(&mut self, drop: usize, fade: usize) {
+        self.splice_tmp.clear();
+        let Ok(outgoing) = self.consumer.read_chunk(fade) else {
+            return;
+        };
+        let (first, second) = outgoing.as_slices();
+        self.splice_tmp.extend_from_slice(first);
+        self.splice_tmp.extend_from_slice(second);
+        outgoing.commit_all();
+
+        if let Ok(cut) = self.consumer.read_chunk(drop) {
+            cut.commit_all();
+        }
+
+        if let Ok(incoming) = self.consumer.read_chunk(fade) {
+            let (first, second) = incoming.as_slices();
+            crossfade_into(&mut self.splice_tmp, first, second, self.channels);
+            incoming.commit_all();
+        }
+
+        self.input_staging.extend_from_slice(&self.splice_tmp);
+        // What left the ring, versus what the stream actually loses: the
+        // fade-out is re-injected, so only the cut and the fade-in are gone.
+        let popped = (drop + 2 * fade) as u64;
+        let removed = (drop + fade) as u64;
+        self.stats.consumed.fetch_add(popped, Ordering::Relaxed);
+        self.stats.trimmed.fetch_add(removed, Ordering::Relaxed);
+        health::bump(&health::SOURCE_TRIM_DROPPED_SAMPLES, removed);
+        self.last_pop_at = Instant::now();
+    }
+
     fn try_refill_one_chunk(&mut self) {
         if let Some(rs) = &mut self.resampler {
             let needed = rs.chunk_in() * self.channels;
@@ -415,7 +462,14 @@ impl SourceState {
             self.input_staging.drain(..needed);
         } else {
             self.chunk_tmp.clear();
-            let want = RESAMPLE_CHUNK * self.channels;
+            let mut want = RESAMPLE_CHUNK * self.channels;
+            // A splice staged its joined frames ahead of the ring.
+            if !self.input_staging.is_empty() {
+                let n = self.input_staging.len().min(want);
+                self.chunk_tmp.extend_from_slice(&self.input_staging[..n]);
+                self.input_staging.drain(..n);
+                want -= n;
+            }
             let avail = self.consumer.slots().min(want);
             if avail > 0 {
                 if let Ok(chunk) = self.consumer.read_chunk(avail) {
@@ -723,6 +777,20 @@ fn add_block_at(src: &[f32], dst: &mut [f32], off: usize) {
 /// Pure time shift. It deliberately does no channel mapping: the caller adds
 /// the shifted block through the same `add_*` path an undelayed edge takes, so
 /// routing, upmix and downmix cannot drift between the two.
+/// Blends `dst` (the audio before a trim's cut) into the audio after it, given
+/// as a ring's two halves. Both ends stay continuous: frame 0 is pure `dst` and
+/// the last frame is pure incoming, so neither join is a step.
+fn crossfade_into(dst: &mut [f32], first: &[f32], second: &[f32], channels: usize) {
+    let span = (SPLICE_FADE_FRAMES - 1).max(1) as f32;
+    for (i, s) in first.iter().chain(second.iter()).enumerate() {
+        if i >= dst.len() {
+            break;
+        }
+        let w = ((i / channels) as f32 / span).min(1.0);
+        dst[i] = dst[i] * (1.0 - w) + s * w;
+    }
+}
+
 struct DelayLine {
     buf: Box<[f32]>,
     scratch: Box<[f32]>,
@@ -1183,7 +1251,10 @@ pub(super) fn build_output_graph(
                 channels: source_channels,
                 consumer,
                 resampler,
-                input_staging: Vec::with_capacity(RESAMPLE_CHUNK * source_channels + 8),
+                input_staging: Vec::with_capacity(
+                    (RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * source_channels + 8,
+                ),
+                splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * source_channels),
                 out_pending: StagingRing::with_capacity(staging_cap),
                 chunk_tmp: Vec::with_capacity(out_max * source_channels),
                 out_buf: vec![0.0; DSP_BLOCK_FRAMES * source_channels],
@@ -1594,7 +1665,8 @@ fn ring_source(
         channels,
         consumer,
         resampler,
-        input_staging: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
+        input_staging: Vec::with_capacity((RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * channels + 8),
+        splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * channels),
         out_pending: StagingRing::with_capacity(RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels),
         chunk_tmp: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
         out_buf: vec![0.0; DSP_BLOCK_FRAMES * channels],
@@ -1791,7 +1863,7 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
 
 #[cfg(test)]
 mod tests {
-    use super::{add_mapped, DelayLine, DSP_BLOCK_FRAMES};
+    use super::{add_mapped, crossfade_into, DelayLine, DSP_BLOCK_FRAMES, SPLICE_FADE_FRAMES};
 
     // Latency compensation on a branch that bypasses a latent effect must be a
     // pure delay: same samples, same order, only shifted.
@@ -1848,6 +1920,27 @@ mod tests {
         }
         for f in PAD_FRAMES..fed.len() {
             assert_eq!(got[f * 2], fed[f - PAD_FRAMES], "frame {f} differs");
+        }
+    }
+
+    // A trim's join must be continuous at both ends, or the splice it was meant
+    // to hide becomes two smaller steps.
+    #[test]
+    fn crossfade_joins_without_a_step() {
+        const CH: usize = 2;
+        let mut dst = vec![1.0_f32; SPLICE_FADE_FRAMES * CH];
+        let incoming = vec![0.0_f32; SPLICE_FADE_FRAMES * CH];
+        crossfade_into(&mut dst, &incoming, &[], CH);
+
+        assert_eq!(dst[0], 1.0, "first frame must stay pure outgoing");
+        assert_eq!(dst[1], 1.0, "both channels of the first frame agree");
+        let last = (SPLICE_FADE_FRAMES - 1) * CH;
+        assert_eq!(dst[last], 0.0, "last frame must reach pure incoming");
+        assert_eq!(dst[last + 1], 0.0, "both channels of the last frame agree");
+
+        for f in 1..SPLICE_FADE_FRAMES {
+            assert!(dst[f * CH] < dst[(f - 1) * CH], "fade must be monotonic");
+            assert_eq!(dst[f * CH], dst[f * CH + 1], "channels share a weight");
         }
     }
 

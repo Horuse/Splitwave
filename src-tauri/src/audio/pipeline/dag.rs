@@ -588,6 +588,22 @@ fn parse_stereo(handle: &str) -> Option<usize> {
     handle.strip_prefix("st").and_then(|s| s.parse::<usize>().ok())
 }
 
+/// Channel width an edge actually carries. A `chK`/`stA` source handle taps a
+/// slice of its node, so the node's own width would be wrong.
+fn edge_channels(
+    nodes: &[DagNode],
+    node_channels: &[usize],
+    idx: usize,
+    source_handle: Option<&str>,
+) -> usize {
+    match source_handle {
+        Some(h) if tap_handle_width(h).is_some() => {
+            nodes[idx].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
+        }
+        _ => node_channels[idx],
+    }
+}
+
 /// A per-channel tap handle (`chK` mono or `stA` stereo) and its channel width.
 #[inline]
 fn tap_handle_width(handle: &str) -> Option<usize> {
@@ -700,43 +716,38 @@ fn add_block_at(src: &[f32], dst: &mut [f32], off: usize) {
     }
 }
 
+/// Pure time shift. It deliberately does no channel mapping: the caller adds
+/// the shifted block through the same `add_*` path an undelayed edge takes, so
+/// routing, upmix and downmix cannot drift between the two.
 struct DelayLine {
     buf: Box<[f32]>,
+    scratch: Box<[f32]>,
     pos: usize,
-    channels: usize,
 }
 
 impl DelayLine {
     fn new(delay_frames: usize, channels: usize) -> Self {
         Self {
             buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
+            scratch: vec![0.0; DSP_BLOCK_FRAMES * channels].into_boxed_slice(),
             pos: 0,
-            channels,
         }
     }
 
-    fn process_and_add(&mut self, input: &[f32], dst: &mut [f32]) {
+    fn delayed<'a>(&'a mut self, input: &'a [f32]) -> &'a [f32] {
         let cap = self.buf.len();
         if cap == 0 {
-            add_mapped(input, dst);
-            return;
+            return input;
         }
-        let src_ch = self.channels;
-        let dst_ch = dst.len() / DSP_BLOCK_FRAMES;
-        let n = src_ch.min(dst_ch);
-        let frames = input.len() / src_ch;
+        let n = input.len().min(self.scratch.len());
         let mut pos = self.pos;
-        for f in 0..frames {
-            for c in 0..src_ch {
-                let delayed = self.buf[pos];
-                self.buf[pos] = input[f * src_ch + c];
-                if c < n {
-                    dst[f * dst_ch + c] += delayed;
-                }
-                pos = if pos + 1 == cap { 0 } else { pos + 1 };
-            }
+        for i in 0..n {
+            self.scratch[i] = self.buf[pos];
+            self.buf[pos] = input[i];
+            pos = if pos + 1 == cap { 0 } else { pos + 1 };
         }
         self.pos = pos;
+        &self.scratch[..n]
     }
 }
 
@@ -816,17 +827,19 @@ impl OutputGraph {
                 }
                 for edge in &mut cons.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                    let target = edge.target_handle.as_deref();
+                    let src = match &mut edge.delay {
+                        Some(d) => d.delayed(src),
+                        None => src,
+                    };
                     let Some((_, buf)) = cons
                         .channel_bufs
                         .iter_mut()
-                        .find(|(h, _)| Some(h.as_str()) == edge.target_handle.as_deref())
+                        .find(|(h, _)| Some(h.as_str()) == target)
                     else {
                         continue;
                     };
-                    match &mut edge.delay {
-                        Some(d) => d.process_and_add(src, buf),
-                        None => add_mapped(src, buf),
-                    }
+                    add_mapped(src, buf);
                 }
                 for (i, (_, buf)) in cons.channel_bufs.iter().enumerate() {
                     if let Some(prod) = cons.send_producers.get_mut(i) {
@@ -842,11 +855,14 @@ impl OutputGraph {
                 for edge in &mut eff.incoming {
                     let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
                     let route = edge.target_handle.as_deref().and_then(target_route);
-                    match (&mut edge.delay, route) {
-                        (Some(d), _) => d.process_and_add(src, &mut eff.out_buf),
-                        (None, Some((off, 1))) => add_to_channel(src, &mut eff.out_buf, off),
-                        (None, Some((off, _))) => add_block_at(src, &mut eff.out_buf, off),
-                        (None, None) => add_mapped(src, &mut eff.out_buf),
+                    let src = match &mut edge.delay {
+                        Some(d) => d.delayed(src),
+                        None => src,
+                    };
+                    match route {
+                        Some((off, 1)) => add_to_channel(src, &mut eff.out_buf, off),
+                        Some((off, _)) => add_block_at(src, &mut eff.out_buf, off),
+                        None => add_mapped(src, &mut eff.out_buf),
                     }
                 }
                 if let Some(sc_buf) = eff.sidechain_buf.as_mut() {
@@ -856,10 +872,11 @@ impl OutputGraph {
                     for edge in &mut eff.sidechain {
                         let src =
                             head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                        match &mut edge.delay {
-                            Some(d) => d.process_and_add(src, sc_buf),
-                            None => add_mapped(src, sc_buf),
-                        }
+                        let src = match &mut edge.delay {
+                            Some(d) => d.delayed(src),
+                            None => src,
+                        };
+                        add_mapped(src, sc_buf);
                     }
                 }
                 if !eff.bypass.load(Ordering::Relaxed) {
@@ -893,11 +910,14 @@ impl OutputGraph {
         for terminal in &mut self.terminals {
             let src =
                 self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
-            match (&mut terminal.delay, terminal.route) {
-                (Some(d), _) => d.process_and_add(src, output),
-                (None, Some((off, 1))) => add_to_channel(src, output, off),
-                (None, Some((off, _))) => add_block_at(src, output, off),
-                (None, None) => add_mapped(src, output),
+            let src = match &mut terminal.delay {
+                Some(d) => d.delayed(src),
+                None => src,
+            };
+            match terminal.route {
+                Some((off, 1)) => add_to_channel(src, output, off),
+                Some((off, _)) => add_block_at(src, output, off),
+                None => add_mapped(src, output),
             }
         }
     }
@@ -1209,12 +1229,7 @@ pub(super) fn build_output_graph(
             // the edge width is the tap buffer's, not the source node's full width.
             let upstream_w = main_upstream
                 .iter()
-                .map(|(i, sh, _)| match sh.as_deref() {
-                    Some(h) if tap_handle_width(h).is_some() => {
-                        nodes[*i].out_buf_for_handle(Some(h)).len() / DSP_BLOCK_FRAMES
-                    }
-                    _ => node_channels[*i],
-                })
+                .map(|(i, sh, _)| edge_channels(&nodes, &node_channels, *i, sh.as_deref()))
                 .max()
                 .unwrap_or(2);
             let target_w = main_upstream
@@ -1261,12 +1276,13 @@ pub(super) fn build_output_graph(
                              source_handle: Option<String>,
                              target_handle: Option<String>| {
                 let pad = max_upstream - node_latencies[src_idx];
+                let width = edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
                 IncomingEdge {
                     src_idx,
                     source_handle,
                     target_handle,
                     delay: if pad > 0 {
-                        Some(DelayLine::new(pad, node_channels[src_idx]))
+                        Some(DelayLine::new(pad, width))
                     } else {
                         None
                     },
@@ -1375,12 +1391,13 @@ pub(super) fn build_output_graph(
             .into_iter()
             .map(|(idx, source_handle, target_handle)| {
                 let pad = max_up - node_latencies[idx];
+                let width = edge_channels(&nodes, &node_channels, idx, source_handle.as_deref());
                 IncomingEdge {
                     src_idx: idx,
                     source_handle,
                     target_handle,
                     delay: if pad > 0 {
-                        Some(DelayLine::new(pad, node_channels[idx]))
+                        Some(DelayLine::new(pad, width))
                     } else {
                         None
                     },
@@ -1488,12 +1505,14 @@ pub(super) fn build_output_graph(
                 .into_iter()
                 .map(|(src_idx, source_handle, route)| {
                     let pad = max_upstream - node_latencies[src_idx];
+                    let width =
+                        edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
                     TerminalEdge {
                         src_idx,
                         source_handle,
                         route,
                         delay: if pad > 0 {
-                            Some(DelayLine::new(pad, node_channels[src_idx]))
+                            Some(DelayLine::new(pad, width))
                         } else {
                             None
                         },
@@ -1785,12 +1804,44 @@ mod tests {
             }
             fed.extend_from_slice(&input);
             let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
-            line.process_and_add(&input, &mut dst);
+            add_mapped(line.delayed(&input), &mut dst);
             got.extend_from_slice(&dst);
         }
         let shift = PAD_FRAMES * 2;
         for i in shift..got.len() {
             assert_eq!(got[i], fed[i - shift], "sample {i} differs");
+        }
+    }
+
+    // A mono tap drawn off a stereo node carries one channel, not two. Sizing
+    // the line by the node's width instead of the edge's dropped half of every
+    // block and paired consecutive samples as L/R, doubling the pitch.
+    #[test]
+    fn delay_line_fills_a_whole_mono_block() {
+        const PAD_FRAMES: usize = 482;
+        let mut line = DelayLine::new(PAD_FRAMES, 1);
+        let mut fed: Vec<f32> = Vec::new();
+        let mut got: Vec<f32> = Vec::new();
+        for b in 0..4 {
+            let mut input = vec![0.0_f32; DSP_BLOCK_FRAMES];
+            for (f, s) in input.iter_mut().enumerate() {
+                *s = (b * DSP_BLOCK_FRAMES + f) as f32 + 1.0;
+            }
+            fed.extend_from_slice(&input);
+            let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * 2];
+            add_mapped(line.delayed(&input), &mut dst);
+            got.extend_from_slice(&dst);
+        }
+        // Mono upmixes to both channels, and no frame of any block stays silent.
+        for b in 1..4 {
+            for f in 0..DSP_BLOCK_FRAMES {
+                let i = b * DSP_BLOCK_FRAMES * 2 + f * 2;
+                assert_ne!(got[i], 0.0, "left silent at block {b} frame {f}");
+                assert_eq!(got[i], got[i + 1], "channels differ at block {b} frame {f}");
+            }
+        }
+        for f in PAD_FRAMES..fed.len() {
+            assert_eq!(got[f * 2], fed[f - PAD_FRAMES], "frame {f} differs");
         }
     }
 

@@ -26,6 +26,8 @@
 		/** Footer pinned below the list, e.g. `ComboboxAction` / `RescanButton`
 		 * rows. Receives a `close` callback so an action can dismiss the panel. */
 		footer?: Snippet<[() => void]>;
+		/** Fired when the panel opens, so the owner can re-scan its option source. */
+		onOpen?: () => void;
 	}
 
 	let {
@@ -36,7 +38,8 @@
 		onChange,
 		size = 'md',
 		class: ClassName,
-		footer
+		footer,
+		onOpen
 	}: Props = $props();
 
 	let open = $state(false);
@@ -56,6 +59,7 @@
 
 	function openPanel() {
 		open = true;
+		onOpen?.();
 		search = '';
 		activeIndex = Math.max(
 			0,

@@ -67,6 +67,7 @@
 			placeholder="— Select application —"
 			emptyHint="No audible apps"
 			onChange={setApp}
+			onOpen={() => refresh()}
 		>
 			{#snippet footer()}
 				<RescanButton onRescan={refresh} />

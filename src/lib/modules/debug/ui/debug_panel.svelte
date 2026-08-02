@@ -3,7 +3,8 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import type { Update } from '@tauri-apps/plugin-updater';
 	import { errorStore } from '$lib/modules/error';
-	import { updaterStore } from '$lib/modules/updater';
+	import { updaterStore, latestRelease } from '$lib/modules/updater';
+	import { getCachedAppInfo } from '$lib/modules/app_info';
 	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
 
 	let open = $state(false);
@@ -43,18 +44,24 @@
 		});
 	}
 
-	function fakeUpdateAvailable() {
+	// Uses the real latest GitHub release so the modal shows notes of the shape
+	// users actually get.
+	async function fakeUpdateAvailable() {
+		const release = await latestRelease();
 		const stub = {
-			version: '0.2.0',
-			currentVersion: '0.1.0',
+			version: release?.version ?? '0.0.0',
+			currentVersion: getCachedAppInfo()?.appVersion ?? '0.0.0',
 			date: new Date().toISOString(),
-			body: 'Bug fixes and performance improvements.',
 			downloadAndInstall: async () => {},
 			download: async () => {},
 			install: async () => {},
 			close: async () => {}
 		} as unknown as Update;
-		updaterStore.state = { phase: 'available', update: stub };
+		updaterStore.state = {
+			phase: 'available',
+			update: stub,
+			notes: release?.notes ?? 'Could not reach the GitHub releases API.'
+		};
 	}
 
 	function fakeDownloading() {

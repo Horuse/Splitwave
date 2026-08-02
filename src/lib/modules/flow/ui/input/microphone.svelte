@@ -117,6 +117,7 @@
 			value={data.deviceId ?? null}
 			placeholder="— Select microphone —"
 			onChange={setDevice}
+			onOpen={() => refresh()}
 		>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />

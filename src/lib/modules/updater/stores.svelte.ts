@@ -4,7 +4,7 @@ export type UpdateState =
 	| { phase: 'idle' }
 	| { phase: 'checking' }
 	| { phase: 'up_to_date' }
-	| { phase: 'available'; update: Update }
+	| { phase: 'available'; update: Update; notes: string | null }
 	| { phase: 'downloading'; update: Update; downloaded: number; total: number | null }
 	| { phase: 'installing'; update: Update }
 	| { phase: 'error'; message: string };

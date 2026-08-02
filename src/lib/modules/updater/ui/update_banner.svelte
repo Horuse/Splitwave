@@ -3,6 +3,7 @@
 	import { installUpdate, skipVersion } from '../methods';
 	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
+	import Markdown from '$lib/components/markdown.svelte';
 	import { Checkmark } from '$lib/components/icons';
 	import { getCachedAppInfo } from '$lib/modules/app_info';
 
@@ -79,8 +80,11 @@
 				<p class="mb-3 text-xs text-neutral-900">
 					A new version is ready to install. Your work will be saved before restarting.
 				</p>
-				{#if s.update.body}
-					<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{s.update.body}</pre>
+				{#if s.notes}
+					<Markdown
+						source={s.notes}
+						class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 text-xs leading-relaxed text-neutral-1100"
+					/>
 				{/if}
 			{:else if s.phase === 'downloading'}
 				<div class="flex flex-col gap-3">

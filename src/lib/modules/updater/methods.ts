@@ -38,11 +38,48 @@ export async function checkForUpdates(silent = false): Promise<void> {
 			updaterStore.state = { phase: 'idle' };
 			return;
 		}
-		updaterStore.state = { phase: 'available', update };
+		updaterStore.state = {
+			phase: 'available',
+			update,
+			notes: (await releaseNotes(update.version)) ?? update.body ?? null
+		};
 	} catch (e) {
 		const message = await diagnoseError(e);
 		updaterStore.state = silent ? { phase: 'idle' } : { phase: 'error', message };
 	}
+}
+
+const RELEASES_API = 'https://api.github.com/repos/Horuse/Splitwave/releases';
+
+export interface Release {
+	version: string;
+	notes: string | null;
+}
+
+/** `null` when the release is unreachable. */
+async function fetchRelease(path: string): Promise<Release | null> {
+	try {
+		const res = await fetch(RELEASES_API + path, {
+			headers: { Accept: 'application/vnd.github+json' }
+		});
+		if (!res.ok) return null;
+		const json = await res.json();
+		const body = typeof json.body === 'string' ? json.body.trim() : '';
+		const tag = typeof json.tag_name === 'string' ? json.tag_name : '';
+		return { version: tag.replace(/^v/, ''), notes: body || null };
+	} catch {
+		return null;
+	}
+}
+
+/** The release description on GitHub, so `latest.json` doesn't have to carry
+ * the changelog. */
+async function releaseNotes(version: string): Promise<string | null> {
+	return (await fetchRelease(`/tags/v${version}`))?.notes ?? null;
+}
+
+export function latestRelease(): Promise<Release | null> {
+	return fetchRelease('/latest');
 }
 
 async function diagnoseError(e: unknown): Promise<string> {

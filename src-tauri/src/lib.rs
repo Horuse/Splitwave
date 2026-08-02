@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod error;
+mod logs;
 mod state;
 
 use std::path::PathBuf;
@@ -155,11 +156,16 @@ pub fn reinstall_panic_hook() {
 pub fn run() {
     install_panic_hook();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    tracing_subscriber::registry()
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with(tracing_subscriber::fmt::layer())
+        .with(logs::RingLayer)
         .try_init()
         .ok();
 
@@ -206,6 +212,8 @@ pub fn run() {
             commands::get_plugin_params,
             commands::plugin_status,
             commands::take_crash_reports,
+            commands::get_logs,
+            commands::clear_logs,
             commands::debug_panic,
             commands::list_input_devices,
             commands::list_output_devices,

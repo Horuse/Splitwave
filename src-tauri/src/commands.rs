@@ -140,6 +140,16 @@ pub fn take_crash_reports() -> Vec<serde_json::Value> {
     crate::take_crash_reports()
 }
 
+#[tauri::command]
+pub fn get_logs() -> Vec<crate::logs::LogLine> {
+    crate::logs::snapshot()
+}
+
+#[tauri::command]
+pub fn clear_logs() {
+    crate::logs::clear();
+}
+
 /// Dev-only: panics on the main thread to exercise the crash-persistence path
 /// (a real panic, not a faked event). Crashes the app on purpose.
 #[tauri::command]

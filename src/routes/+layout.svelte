@@ -15,6 +15,8 @@
 	import { ModalRender } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { AboutModal } from '$lib/modules/about/ui';
+	import { logStore } from '$lib/modules/logs';
+	import { LogsModal } from '$lib/modules/logs/ui';
 	import { platform } from '@tauri-apps/plugin-os';
 
 	const isDev = import.meta.env.DEV;
@@ -86,7 +88,17 @@
 		else pipelineStore.editorActions?.undo();
 	}
 
+	// Cmd/Ctrl+Shift+L opens the log viewer. Shipped in release builds too --
+	// it is the only way to read engine logs on a user's machine.
+	function onLogsHotkey(e: KeyboardEvent) {
+		if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'l') return;
+		e.preventDefault();
+		logStore.open = !logStore.open;
+	}
+
 	onMount(() => {
+		logStore.installConsoleCapture();
+		window.addEventListener('keydown', onLogsHotkey);
 		installErrorHandlers().catch(() => {});
 		loadAppInfo().catch(() => {});
 		audioStore.init().catch(() => {});
@@ -107,6 +119,7 @@
 	onDestroy(() => {
 		unlistenMenu?.();
 		window.removeEventListener('keydown', onKeydown);
+		window.removeEventListener('keydown', onLogsHotkey);
 		audioStore.destroy();
 	});
 </script>
@@ -118,6 +131,10 @@
 </main>
 
 <ErrorModal />
+
+{#if logStore.open}
+	<LogsModal />
+{/if}
 
 <ModalRender />
 

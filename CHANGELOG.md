@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0]
 
 ### Added
+
+- **Log viewer** - Cmd/Ctrl+Shift+L opens an in-app log window in every build,
+  showing engine and interface logs together with level filtering, search and
+  one-click copy.
 - **Virtual device apply without root** - device changes are picked up through
   a watched shared config instead of requiring elevated privileges.
 - **Plugin hosting** - load your own plugins as effect nodes: CLAP and VST3 on
@@ -37,11 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Node icons and a refreshed modal design.
 
 ### Changed
+
 - Plugins receive the node's full channel width instead of being forced into
   stereo.
 - Effect nodes got a visual pass.
+- Device and application dropdowns rescan when opened, so a device plugged in
+  while the app was running shows up without pressing Rescan.
 
 ### Fixed
+
 - Cables that point at a channel a device does not have are now flagged, and
   edges left dangling blink with a warning on the node.
 - Fan-out nodes are computed once and shared, monitoring included, instead of
@@ -55,10 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-06-07
 
 ### Added
+
 - Numeric readouts on sliders are now editable.
 - EQ faders snap in 0.1 dB steps for finer control.
 
 ### Fixed
+
 - Virtual audio device no longer produces garbled audio when used as a
   microphone, including when several apps capture it at once (stream format
   mismatch).
@@ -66,11 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-06-05
 
 ### Added
+
 - Noise Suppressor exposes advanced controls: a DeepFilterNet post-filter toggle
   and adjustable processing thresholds.
 - New app icons and refreshed branding.
 
 ### Fixed
+
 - Audio file playback no longer drops audio under bursty load - file sources
   keep their backlog instead of being trimmed.
 - "Reveal in folder" works for recordings, and transport buttons have tooltips.
@@ -82,10 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-06-03
 
 ### Added
+
 - Full Linux support (#2) and Windows support (#4), both experimental.
 - Noise Suppressor node for speech denoising, powered by DeepFilterNet3.
 
 ### Fixed
+
 - Errors show as toast notifications instead of in the header.
 - Lower and more stable microphone latency.
 - Correct output device selection for Bluetooth headsets with identical names.
@@ -93,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-05-20
 
 ### Added
+
 - Multi-format audio file decoding - the Audio File node plays more than WAV.
 - Audio File transport controls: pause, stop and skip.
 - Input volume control for App Audio, System Audio and Audio File.
@@ -100,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection.
 
 ### Fixed
+
 - Speaker: more reliable device selection, by always enumerating devices.
 - Speaker: the output stream recovers when the system default device switches.
 - Updater: the up-to-date modal shows only on a manual menu check.
@@ -108,9 +124,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-05-18
 
 ### Added
+
 - macOS Intel (x86_64) support alongside Apple Silicon.
 
 ### Fixed
+
 - Crash when stopping audio capture.
 - Audio recording stability issues.
 
@@ -119,6 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial release.
 
 ### Added
+
 - Inputs: microphone, system audio capture, per-app audio capture, audio file
   playback with loop and auto-stop.
 - Outputs: speaker, and file recording in WAV, FLAC, AIFF, Opus, MP3 and AAC.

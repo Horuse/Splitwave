@@ -278,6 +278,9 @@ impl ActivePipeline {
 
     // Signal all recorders before joining any so they cover the same wall-clock window.
     fn tear_down_outputs(&mut self) {
+        // Before anything is dismantled: its next tick would measure a window
+        // that straddles teardown and report the shortfall as an anomaly.
+        self.xrun_thread = None;
         self.speakers.clear();
         for r in self.recorders.values() {
             r.worker.stop.store(true, Ordering::SeqCst);
@@ -294,7 +297,6 @@ impl ActivePipeline {
         self.meter_thread = None;
         self.source_stats.clear();
         self.output_stats.clear();
-        self.xrun_thread = None;
         self.effect_controls.clear();
         self.effect_bypasses.clear();
         // Input meters live with their inputs and survive this teardown;

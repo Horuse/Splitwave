@@ -194,6 +194,10 @@ pub(super) struct SourceMeta {
     pub stats: SourceStats,
     pub channels: usize,
     pub native_sr: u32,
+    /// Native-rate frames this source consumes per block. The rate check needs
+    /// it as the counter's step size, since a window boundary can misattribute
+    /// a whole block.
+    pub frames_per_block: usize,
     /// Graph id of the captured input this source reads, for matching against
     /// the broadcast slot's `CaptureStats` once the bridge wires it up. `None`
     /// for ring-sources and network producers -- they don't go through a
@@ -1048,6 +1052,7 @@ pub(super) fn build_output_graph(
                 stats: source.stats.clone(),
                 channels: width,
                 native_sr: owner_sr,
+                frames_per_block: source.input_samples_per_block / width.max(1),
                 input_id: None,
                 output_id: output_id.unwrap_or("monitor").to_string(),
                 capture: None,
@@ -1168,6 +1173,7 @@ pub(super) fn build_output_graph(
                 stats: stats.clone(),
                 channels: source_channels,
                 native_sr: input_sr,
+                frames_per_block: input_frames_per_block as usize,
                 input_id: Some(id.clone()),
                 output_id: output_id.unwrap_or("monitor").to_string(),
                 capture: None,

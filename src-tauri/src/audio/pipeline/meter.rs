@@ -24,6 +24,15 @@ const XRUN_TICK: Duration = Duration::from_millis(1000);
 /// it's worth a log line; below this, scheduler jitter is normal.
 const RATE_DEVIATION: f64 = 0.02;
 
+/// True when `measured` has drifted from `expected` by more than both the
+/// relative tolerance and the counter's own step size. Counters advance one
+/// whole block at a time, so a window boundary always misattributes up to one
+/// of them: at 1024 frames that alone is 2.1% of a second, which
+/// `RATE_DEVIATION` would flag on every healthy run.
+fn off_rate(measured: f64, expected: f64, quantum: f64) -> bool {
+    expected > 0.0 && (measured - expected).abs() > (expected * RATE_DEVIATION).max(quantum * 1.5)
+}
+
 pub(super) struct XrunTickThread {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
@@ -85,6 +94,11 @@ pub(super) fn spawn_xrun_thread(
                 .collect();
             let mut last_global: Vec<u64> = health::snapshot().iter().map(|(_, v)| *v).collect();
             let mut last_tick = Instant::now();
+            // The first window spans the pipeline coming up: rings prefill and
+            // sources come online tens of ms apart, so its deltas describe the
+            // startup transient, not a defect. Baselines still advance through
+            // it so the second window starts clean.
+            let mut warmup = true;
             while !stop_thread.load(Ordering::SeqCst) {
                 thread::sleep(XRUN_TICK);
                 let now = Instant::now();
@@ -105,12 +119,6 @@ pub(super) fn spawn_xrun_thread(
                     last_trimmed[i] = trimmed_now;
                     last_consumed[i] = consumed_now;
 
-                    let consumed_frames = consumed_delta / s.channels.max(1) as u64;
-                    let expected_frames = s.native_sr as f64 * elapsed_secs;
-                    let off_rate = expected_frames > 0.0
-                        && ((consumed_frames as f64 - expected_frames).abs() / expected_frames)
-                            > RATE_DEVIATION;
-
                     // Capture-side fed/dropped, only present for sources fed by a
                     // capture broadcast (mic/system-audio/app/file); ring-sources
                     // and network producers stay `None`.
@@ -125,11 +133,38 @@ pub(super) fn spawn_xrun_thread(
                     });
                     let dropped_delta = capture_delta.map_or(0, |(_, d)| d);
 
-                    if xrun_delta > 0
-                        || stalled_delta > 0
-                        || trimmed_delta > 0
-                        || off_rate
-                        || dropped_delta > 0
+                    let consumed_frames = consumed_delta / s.channels.max(1) as u64;
+                    let wallclock_frames = s.native_sr as f64 * elapsed_secs;
+                    // A capture-backed source is measured against what its
+                    // producer actually delivered: an app playing nothing feeds
+                    // nothing, and the question here is whether the pipeline
+                    // keeps up with its inputs, not whether an input is busy.
+                    let expected_frames = match capture_delta {
+                        Some((fed_delta, _)) => {
+                            (fed_delta / s.channels.max(1) as u64) as f64
+                        }
+                        None => wallclock_frames,
+                    };
+                    let off_rate = off_rate(
+                        consumed_frames as f64,
+                        expected_frames,
+                        s.frames_per_block as f64,
+                    );
+                    // Under-delivery makes every stall and xrun in this window
+                    // the designed response to an idle source. It also hides a
+                    // capture that is genuinely failing, which surfaces through
+                    // its own stream-error and source-online logging instead.
+                    let producer_short = capture_delta.is_some_and(|_| {
+                        expected_frames < wallclock_frames - s.frames_per_block as f64
+                    });
+
+                    if !warmup
+                        && !producer_short
+                        && (xrun_delta > 0
+                            || stalled_delta > 0
+                            || trimmed_delta > 0
+                            || off_rate
+                            || dropped_delta > 0)
                     {
                         let ring_level_samples = s.stats.level.load(Ordering::Relaxed);
                         match capture_delta {
@@ -138,7 +173,7 @@ pub(super) fn spawn_xrun_thread(
                                 warn!(
                                     source = %s.label,
                                     consumed_frames,
-                                    expected_frames = expected_frames.round() as u64,
+                                    expected_frames = wallclock_frames.round() as u64,
                                     trimmed_samples = trimmed_delta,
                                     xrun_samples = xrun_delta,
                                     stalled_samples = stalled_delta,
@@ -152,7 +187,7 @@ pub(super) fn spawn_xrun_thread(
                                 warn!(
                                     source = %s.label,
                                     consumed_frames,
-                                    expected_frames = expected_frames.round() as u64,
+                                    expected_frames = wallclock_frames.round() as u64,
                                     trimmed_samples = trimmed_delta,
                                     xrun_samples = xrun_delta,
                                     stalled_samples = stalled_delta,
@@ -171,9 +206,7 @@ pub(super) fn spawn_xrun_thread(
 
                     let expected_blocks =
                         o.sample_rate as f64 / DSP_BLOCK_FRAMES as f64 * elapsed_secs;
-                    let blocks_off_rate = expected_blocks > 0.0
-                        && ((blocks_delta as f64 - expected_blocks).abs() / expected_blocks)
-                            > RATE_DEVIATION;
+                    let blocks_off_rate = off_rate(blocks_delta as f64, expected_blocks, 1.0);
 
                     // Device-pull diagnostics: distinguishes "device asking for
                     // far more than real time implies" from "ring nobody fills",
@@ -191,16 +224,20 @@ pub(super) fn spawn_xrun_thread(
                         last_callbacks[i] = callbacks_now;
                         (requested_delta, read_delta, callbacks_delta)
                     });
-                    let io_off_rate = io.is_some_and(|(requested_delta, _, _)| {
+                    let io_off_rate = io.is_some_and(|(requested_delta, _, callbacks_delta)| {
                         let expected_samples =
                             o.sample_rate as f64 * o.channels as f64 * elapsed_secs;
-                        expected_samples > 0.0
-                            && ((requested_delta as f64 - expected_samples).abs()
-                                / expected_samples)
-                                > RATE_DEVIATION
+                        // The device's own buffer size, measured rather than
+                        // assumed: cpal opens with `BufferSize::Default`.
+                        let quantum = if callbacks_delta > 0 {
+                            requested_delta as f64 / callbacks_delta as f64
+                        } else {
+                            0.0
+                        };
+                        off_rate(requested_delta as f64, expected_samples, quantum)
                     });
 
-                    if blocks_off_rate || io_off_rate {
+                    if !warmup && (blocks_off_rate || io_off_rate) {
                         match io {
                             Some((requested_samples, read_samples, callbacks)) => warn!(
                                 output = %o.label,
@@ -242,10 +279,11 @@ pub(super) fn spawn_xrun_thread(
                     }
                     let delta = now.saturating_sub(last_global[i]);
                     last_global[i] = *now;
-                    if delta > 0 {
+                    if !warmup && delta > 0 {
                         warn!(counter = %name, delta, total = now, worst_late_us, "audio glitch");
                     }
                 }
+                warmup = false;
             }
         })
         .expect("spawn xrun tick thread");

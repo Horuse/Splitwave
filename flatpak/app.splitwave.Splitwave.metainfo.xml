@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.horuse.splitwave</id>
+  <id>app.splitwave.Splitwave</id>
   <name>Splitwave</name>
   <summary>Node-based audio router</summary>
-  <developer id="com.horuse">
+  <developer id="app.splitwave">
     <name>Horuse</name>
   </developer>
 
@@ -24,11 +24,11 @@
       <li>Level meters, loudness metering and spectrum analysis</li>
     </ul>
     <p>
-      Recordings can be written as WAV, FLAC, AIFF, MP3, Opus or AAC.
+      Recordings can be written as WAV, FLAC, AIFF, MP3 or Opus.
     </p>
   </description>
 
-  <launchable type="desktop-id">com.horuse.splitwave.desktop</launchable>
+  <launchable type="desktop-id">app.splitwave.Splitwave.desktop</launchable>
 
   <url type="homepage">https://splitwave.app</url>
   <url type="bugtracker">https://github.com/Horuse/Splitwave/issues</url>
@@ -36,7 +36,7 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/Horuse/Splitwave/main/preview.webp</image>
+      <image>https://raw.githubusercontent.com/Horuse/Splitwave/6f1cb9395275d2892bdea67faee9fd534c03af89/preview.webp</image>
       <caption>The node graph editor</caption>
     </screenshot>
   </screenshots>
@@ -44,6 +44,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="1.0.0" date="2026-07-27" />
+    <release version="1.0.0" date="2026-08-03">
+      <url type="details">https://github.com/Horuse/Splitwave/releases/tag/v1.0.0</url>
+      <description>
+        <p>First stable release.</p>
+        <ul>
+          <li>Node graph routing for microphones, system audio, per-app capture and audio files</li>
+          <li>Effect chain with EQ, dynamics, reverb, delay, noise suppression and metering</li>
+          <li>Recording to WAV, FLAC, AIFF, MP3 or Opus</li>
+          <li>Virtual output devices backed by PipeWire null sinks</li>
+        </ul>
+      </description>
+    </release>
   </releases>
 </component>

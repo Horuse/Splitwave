@@ -1,63 +1,53 @@
-use std::process::Command;
-
 use crate::audio::device::DeviceKind;
+use crate::audio::pw_ctl::{self, DefaultRoute};
 use crate::audio::pw_enum;
 
-// wpctl takes @DEFAULT_*@ or a numeric node id. Default routes use the alias;
-// named devices resolve through the registry to their current node id.
-fn target(kind: DeviceKind, name: &str) -> Option<String> {
-    match name {
-        "default" | "pipewire" | "sysdefault" => Some(
-            match kind {
-                DeviceKind::Input => "@DEFAULT_AUDIO_SOURCE@",
-                DeviceKind::Output => "@DEFAULT_AUDIO_SINK@",
-            }
-            .to_string(),
-        ),
-        _ => resolve_id(kind, name).map(|id| id.to_string()),
+fn route(kind: DeviceKind) -> DefaultRoute {
+    match kind {
+        DeviceKind::Input => DefaultRoute::Source,
+        DeviceKind::Output => DefaultRoute::Sink,
     }
 }
 
-fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
-    let class = match kind {
+fn media_class(kind: DeviceKind) -> &'static str {
+    match kind {
         DeviceKind::Input => "Audio/Source",
         DeviceKind::Output => "Audio/Sink",
+    }
+}
+
+// Default routes resolve through the "default" metadata object; named devices
+// resolve straight through the registry to their current node id.
+fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
+    let target = match name {
+        "default" | "pipewire" | "sysdefault" => pw_ctl::default_node_name(route(kind)).ok()??,
+        _ => name.to_string(),
     };
-    let nodes = pw_enum::nodes_by_class(class).ok()?;
-    nodes.into_iter().find(|n| n.name == name).map(|n| n.id)
+    let nodes = pw_enum::nodes_by_class(media_class(kind)).ok()?;
+    nodes.into_iter().find(|n| n.name == target).map(|n| n.id)
 }
 
 pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
-    let id = target(kind, name)?;
-    let out = Command::new("wpctl").args(["get-volume", &id]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    if s.contains("[MUTED]") {
+    let id = resolve_id(kind, name)?;
+    let volume = pw_ctl::node_volume(id).ok()?;
+    if volume.mute {
         return Some(0.0);
     }
-    let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(v.clamp(0.0, 1.0))
+    // channelVolumes is per channel; the UI carries a single scalar
+    let peak = volume.channel_volumes.into_iter().fold(0.0f32, f32::max);
+    Some(peak.clamp(0.0, 1.0))
 }
 
 pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
-    let Some(id) = target(kind, name) else {
+    let Some(id) = resolve_id(kind, name) else {
         return false;
     };
-    if scalar <= 0.0 {
-        return run(&["set-mute", &id, "1"]);
-    }
-    if !run(&["set-mute", &id, "0"]) {
+    let Ok(current) = pw_ctl::node_volume(id) else {
         return false;
+    };
+    let channels = current.channel_volumes.len();
+    if scalar <= 0.0 {
+        return pw_ctl::set_node_volume(id, channels, 0.0, true).is_ok();
     }
-    run(&["set-volume", &id, &format!("{scalar:.4}")])
-}
-
-fn run(args: &[&str]) -> bool {
-    Command::new("wpctl")
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    pw_ctl::set_node_volume(id, channels, scalar, false).is_ok()
 }

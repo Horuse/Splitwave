@@ -13,6 +13,8 @@ pub mod encoders;
 #[cfg(target_os = "linux")]
 pub mod playback;
 #[cfg(target_os = "linux")]
+pub mod pw_ctl;
+#[cfg(target_os = "linux")]
 pub mod pw_enum;
 pub mod netaudio;
 pub mod pipeline;

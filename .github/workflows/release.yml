@@ -112,20 +112,24 @@ jobs:
             - name: Build Flatpak bundle
               run: |
                   set -euxo pipefail
-                  sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+                  sudo apt-get install -y --no-install-recommends flatpak
                   flatpak remote-add --if-not-exists --user flathub \
-                    https://flathub.org/repo/flathub.flatpakrepo
+                    https://dl.flathub.org/repo/flathub.flatpakrepo
                   flatpak install -y --user flathub \
-                    org.gnome.Platform//48 org.gnome.Sdk//48
+                    org.flatpak.Builder org.gnome.Platform//50 org.gnome.Sdk//50
                   version="${GITHUB_REF_NAME#v}"
-                  sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"$version\" date=\"$(date -u +%F)\"|" \
-                    flatpak/com.horuse.splitwave.metainfo.xml
+                  # release notes are authored in the metainfo; a missing entry
+                  # means the tag would ship undocumented changes
+                  grep -q "<release version=\"$version\"" \
+                    flatpak/app.splitwave.Splitwave.metainfo.xml
+                  flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+                    appstream flatpak/app.splitwave.Splitwave.metainfo.xml
                   cp "$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -1)" \
                     flatpak/splitwave.deb
-                  flatpak-builder --force-clean --user --disable-cache \
-                    --repo=flatpak/repo flatpak/build flatpak/com.horuse.splitwave.yml
+                  flatpak run org.flatpak.Builder --force-clean --user --disable-cache \
+                    --repo=flatpak/repo flatpak/build flatpak/app.splitwave.Splitwave.yml
                   flatpak build-bundle flatpak/repo \
-                    "flatpak/Splitwave_${version}_x86_64.flatpak" com.horuse.splitwave
+                    "flatpak/Splitwave_${version}_x86_64.flatpak" app.splitwave.Splitwave
 
             # linuxdeploy bundles libwayland/libpipewire/libspa; on newer Mesa they
             # shadow the host libs and break EGL/PipeWire. Drop them, use the host's.

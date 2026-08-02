@@ -1,8 +1,8 @@
 use std::path::PathBuf;
-use std::process::Command;
 
 use tauri::AppHandle;
 
+use crate::audio::pw_ctl;
 use crate::audio::pw_enum::nodes_by_class;
 
 use super::{VirtualDeviceConfig, VirtualDriverStatus};
@@ -10,8 +10,15 @@ use super::{VirtualDeviceConfig, VirtualDriverStatus};
 const CONF_NAME: &str = "50-splitwave-sinks.conf";
 const NODE_PREFIX: &str = "splitwave";
 
+// Under flatpak XDG_CONFIG_HOME points at the private per-app config, which the
+// host PipeWire never reads; the host dir is bind-mounted at its real path.
 fn conf_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("pipewire/pipewire.conf.d").join(CONF_NAME))
+    let base = if std::path::Path::new("/.flatpak-info").exists() {
+        PathBuf::from(std::env::var_os("HOME")?).join(".config")
+    } else {
+        dirs::config_dir()?
+    };
+    Some(base.join("pipewire/pipewire.conf.d").join(CONF_NAME))
 }
 
 // node.name is the stable handle, node.description is the label shown in
@@ -33,13 +40,9 @@ fn positions(channels: u32) -> String {
 }
 
 pub fn status() -> VirtualDriverStatus {
-    // Native PipeWire (no PulseAudio/pactl dependency). Success means a session
-    // is reachable, which is all we need to create null-sinks.
-    let ok = Command::new("pw-cli")
-        .args(["info", "0"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    // Native PipeWire (no PulseAudio/pactl dependency). A reachable session is
+    // all we need to create null-sinks.
+    let ok = nodes_by_class("Audio/Sink").is_ok();
     VirtualDriverStatus {
         installed: ok,
         installed_version: None,
@@ -103,23 +106,14 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
 
 // Create the sink in the running session so it shows up immediately. The .conf
 // only takes effect on the next PipeWire start; object.linger keeps the node
-// alive after pw-cli disconnects.
+// alive after the control client disconnects.
 fn create_runtime_sink(id: &str, label: &str, channels: u32) -> Result<(), String> {
-    let props = format!(
-        "{{ factory.name=support.null-audio-sink node.name={NODE_PREFIX}.{id} node.description=\"{label}\" media.class=Audio/Sink audio.position=[ {} ] object.linger=true }}",
-        positions(channels)
-    );
-    let out = Command::new("pw-cli")
-        .args(["create-node", "adapter", props.as_str()])
-        .output()
-        .map_err(|e| format!("pw-cli create-node: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "pw-cli create-node failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
+    pw_ctl::create_null_sink(
+        format!("{NODE_PREFIX}.{id}"),
+        label.to_string(),
+        format!("[ {} ]", positions(channels)),
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn unload_runtime_sinks() {
@@ -129,8 +123,7 @@ fn unload_runtime_sinks() {
     };
     for n in nodes {
         if n.name.starts_with(&prefix) {
-            let id = n.id.to_string();
-            let _ = Command::new("pw-cli").args(["destroy", id.as_str()]).status();
+            let _ = pw_ctl::destroy_node(n.id);
         }
     }
 }

@@ -13,126 +13,117 @@ export const TEMPLATES: Template[] = [
 		edges: []
 	},
 	{
-		id: 'podcast',
+		id: 'push-to-talk',
 		accent: 'emerald',
-		name: 'Podcast',
-		description: 'Two mics, each gated and compressed, recorded to one file with live monitoring.',
+		name: 'Push to talk',
+		description: 'Mic straight to your virtual mic, muted by default so you decide when to speak.',
 		nodes: [
-			{ key: 'mic1', kind: 'microphone', position: { x: 0, y: 0 } },
-			{ key: 'gate1', kind: 'noiseGate', position: { x: COL, y: 0 } },
-			{ key: 'comp1', kind: 'compressor', position: { x: COL * 2, y: 0 } },
-			{ key: 'eq1', kind: 'eq', position: { x: COL * 3, y: 0 } },
-
-			{ key: 'mic2', kind: 'microphone', position: { x: 0, y: ROW * 2 } },
-			{ key: 'gate2', kind: 'noiseGate', position: { x: COL, y: ROW * 2 } },
-			{ key: 'comp2', kind: 'compressor', position: { x: COL * 2, y: ROW * 2 } },
-			{ key: 'eq2', kind: 'eq', position: { x: COL * 3, y: ROW * 2 } },
-
-			{
-				key: 'rec',
-				kind: 'fileRecording',
-				position: { x: COL * 4.4, y: ROW * 0.5 },
-				data: { channels: 2 }
-			},
-			{ key: 'spk', kind: 'speaker', position: { x: COL * 4.4, y: ROW * 1.6 } }
+			{ key: 'mic', kind: 'microphone', position: { x: 0, y: 0 } },
+			{ key: 'mute', kind: 'mute', position: { x: COL, y: 0 } },
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 2, y: 0 } }
 		],
 		edges: [
-			{ from: 'mic1', to: 'gate1' },
-			{ from: 'gate1', to: 'comp1' },
-			{ from: 'comp1', to: 'eq1' },
-			{ from: 'mic2', to: 'gate2' },
-			{ from: 'gate2', to: 'comp2' },
-			{ from: 'comp2', to: 'eq2' },
-
-			{ from: 'eq1', to: 'rec', toCh: 1 },
-			{ from: 'eq2', to: 'rec', toCh: 2 },
-			{ from: 'eq1', to: 'spk', toCh: 1 },
-			{ from: 'eq2', to: 'spk', toCh: 2 }
+			{ from: 'mic', to: 'mute' },
+			{ from: 'mute', to: 'spk' }
 		]
 	},
 	{
-		id: 'streaming-voice',
+		id: 'voice-ducking',
 		accent: 'sky',
-		name: 'Streaming voice',
-		description: 'One mic cleaned up and levelled, with a loudness readout for broadcast targets.',
+		name: 'Voice ducking',
+		description: 'Talking automatically lowers app audio, so game or music volume drops while you speak.',
 		nodes: [
 			{ key: 'mic', kind: 'microphone', position: { x: 0, y: 0 } },
-			{ key: 'ns', kind: 'noiseSuppressor', position: { x: COL, y: 0 } },
-			{ key: 'comp', kind: 'compressor', position: { x: COL * 2, y: 0 } },
-			{ key: 'lim', kind: 'limiter', position: { x: COL * 3, y: 0 } },
-			{ key: 'spk', kind: 'speaker', position: { x: COL * 4.2, y: 0 } },
-			{ key: 'loud', kind: 'lufsMeter', position: { x: COL * 4.2, y: ROW } }
+			{ key: 'mute', kind: 'mute', position: { x: COL, y: 0 } },
+
+			{ key: 'app', kind: 'appAudio', position: { x: 0, y: ROW * 1.6 } },
+			{
+				key: 'comp',
+				kind: 'compressor',
+				position: { x: COL, y: ROW * 1.6 },
+				data: {
+					thresholdDb: -35,
+					ratio: 5,
+					attackMs: 100,
+					releaseMs: 1000,
+					kneeDb: 0,
+					makeupDb: 0
+				}
+			},
+
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 2, y: ROW * 0.8 } }
 		],
 		edges: [
-			{ from: 'mic', to: 'ns' },
-			{ from: 'ns', to: 'comp' },
-			{ from: 'comp', to: 'lim' },
-			{ from: 'lim', to: 'spk' },
-			{ from: 'lim', to: 'loud' }
+			{ from: 'mic', to: 'mute' },
+			{ from: 'mute', to: 'spk', fromCh: 1, toCh: 1 },
+			{ from: 'mute', to: 'spk', fromCh: 1, toCh: 2 },
+			{ from: 'mic', to: 'comp', toHandle: 'sidechain' },
+
+			{ from: 'app', to: 'comp', fromCh: 1, toCh: 1 },
+			{ from: 'app', to: 'comp', fromCh: 2, toCh: 2 },
+			{ from: 'comp', to: 'spk', fromCh: 1, toCh: 1 },
+			{ from: 'comp', to: 'spk', fromCh: 2, toCh: 2 }
 		]
 	},
 	{
-		id: 'record-system-audio',
+		id: 'safe-game-audio',
 		accent: 'violet',
-		name: 'Record system audio',
-		description: 'Everything the system plays, metered and written to a file in stereo.',
+		name: 'Safe game audio',
+		description: 'App audio capped by a limiter so sudden loud sounds never blast your speakers.',
 		nodes: [
-			{ key: 'src', kind: 'systemAudio', position: { x: 0, y: 0 } },
-			{ key: 'meter', kind: 'levelMeter', position: { x: COL * 1.2, y: 0 } },
-			{
-				key: 'rec',
-				kind: 'fileRecording',
-				position: { x: COL * 2.4, y: 0 },
-				data: { channels: 2 }
-			}
+			{ key: 'app', kind: 'appAudio', position: { x: 0, y: 0 } },
+			{ key: 'lim', kind: 'limiter', position: { x: COL, y: 0 } },
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 2, y: 0 } }
 		],
 		edges: [
-			{ from: 'src', to: 'meter', fromCh: 1, toCh: 1 },
-			{ from: 'src', to: 'meter', fromCh: 2, toCh: 2 },
-			{ from: 'meter', to: 'rec', fromCh: 1, toCh: 1 },
-			{ from: 'meter', to: 'rec', fromCh: 2, toCh: 2 }
+			{ from: 'app', to: 'lim' },
+			{ from: 'lim', to: 'spk' }
 		]
 	},
 	{
-		id: 'record-app-audio',
+		id: 'clean-mic',
 		accent: 'amber',
-		name: 'Record app audio',
-		description: 'Capture a single application, metered and written to a file in stereo.',
+		name: 'Clean mic',
+		description: 'Mic with clicks and background noise stripped before it reaches your virtual mic.',
 		nodes: [
-			{ key: 'src', kind: 'appAudio', position: { x: 0, y: 0 } },
-			{ key: 'meter', kind: 'levelMeter', position: { x: COL * 1.2, y: 0 } },
-			{
-				key: 'rec',
-				kind: 'fileRecording',
-				position: { x: COL * 2.4, y: 0 },
-				data: { channels: 2 }
-			}
+			{ key: 'mic', kind: 'microphone', position: { x: 0, y: 0 } },
+			{ key: 'declick', kind: 'declick', position: { x: COL, y: 0 } },
+			{ key: 'gate', kind: 'noiseGate', position: { x: COL * 2, y: 0 } },
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 3, y: 0 } }
 		],
 		edges: [
-			{ from: 'src', to: 'meter', fromCh: 1, toCh: 1 },
-			{ from: 'src', to: 'meter', fromCh: 2, toCh: 2 },
-			{ from: 'meter', to: 'rec', fromCh: 1, toCh: 1 },
-			{ from: 'meter', to: 'rec', fromCh: 2, toCh: 2 }
+			{ from: 'mic', to: 'declick' },
+			{ from: 'declick', to: 'gate' },
+			{ from: 'gate', to: 'spk' }
 		]
 	},
 	{
-		id: 'remote-guest',
+		id: 'full-voice-and-ducking',
 		accent: 'rose',
-		name: 'Remote guest',
+		name: 'Full voice + ducking',
 		description:
-			'Send a processed mic to WebRTC peers. Peer outputs appear once someone connects, so wire the return side yourself.',
+			'Mic denoised and ducking app audio when you speak, app audio limited so it never overloads.',
 		nodes: [
 			{ key: 'mic', kind: 'microphone', position: { x: 0, y: 0 } },
 			{ key: 'ns', kind: 'noiseSuppressor', position: { x: COL, y: 0 } },
 			{ key: 'comp', kind: 'compressor', position: { x: COL * 2, y: 0 } },
-			{ key: 'rtc', kind: 'webRtcCollaborator', position: { x: COL * 3.2, y: 0 } },
-			{ key: 'spk', kind: 'speaker', position: { x: COL * 3.2, y: ROW * 1.4 } }
+
+			{ key: 'app', kind: 'appAudio', position: { x: 0, y: ROW * 1.6 } },
+			{ key: 'lim', kind: 'limiter', position: { x: COL * 2, y: ROW * 1.6 } },
+
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 3, y: ROW * 0.8 } }
 		],
 		edges: [
 			{ from: 'mic', to: 'ns' },
 			{ from: 'ns', to: 'comp' },
-			{ from: 'comp', to: 'rtc' },
-			{ from: 'comp', to: 'spk' }
+			{ from: 'comp', to: 'spk', fromCh: 1, toCh: 1 },
+			{ from: 'comp', to: 'spk', fromCh: 1, toCh: 2 },
+			{ from: 'app', to: 'comp', toHandle: 'sidechain' },
+
+			{ from: 'app', to: 'lim', fromCh: 1, toCh: 1 },
+			{ from: 'app', to: 'lim', fromCh: 2, toCh: 2 },
+			{ from: 'lim', to: 'spk', fromCh: 1, toCh: 1 },
+			{ from: 'lim', to: 'spk', fromCh: 2, toCh: 2 }
 		]
 	}
 ];

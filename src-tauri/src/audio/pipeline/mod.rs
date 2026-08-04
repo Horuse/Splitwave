@@ -883,6 +883,10 @@ impl ActivePipeline {
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
                 let paused = new_input_paused.remove(&input_id);
                 let drain = new_input_drain.remove(&input_id);
+                // Stale slots name the bridge that died with the previous
+                // InputState. The fresh table numbers its slots from zero, so
+                // retiring them by index later would cut the live subscriber.
+                stale.retain(|(id, _)| id != &input_id);
                 let (mut bridge_tx, bridge_rx) = broadcast_channel();
                 let mut bridges_by_output: HashMap<String, Vec<usize>> = HashMap::new();
                 for (out_id, prod) in tagged {
@@ -939,6 +943,7 @@ impl ActivePipeline {
                 .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits())));
             let paused = new_input_paused.remove(&input_id);
             let drain = new_input_drain.remove(&input_id);
+            stale.retain(|(id, _)| id != &input_id);
             let (bridge_tx, bridge_rx) = broadcast_channel();
             let handle =
                 start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), Some(meter), &app)?;

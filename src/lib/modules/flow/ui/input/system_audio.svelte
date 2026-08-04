@@ -129,14 +129,14 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })}
 			/>
+			<Toggle
+				size="sm"
+				label="Mute original"
+				hint="Silences captured audio on its own output, so only this graph plays it"
+				checked={data.muteOriginal ?? true}
+				onChange={(v) => flow.updateNodeData(id, { muteOriginal: v })}
+			/>
 		{/if}
-		<Toggle
-			size="sm"
-			label="Mute original"
-			hint="Silences captured audio on its own output, so only this graph plays it"
-			checked={data.muteOriginal ?? true}
-			onChange={(v) => flow.updateNodeData(id, { muteOriginal: v })}
-		/>
 		<Slider
 			label="Volume"
 			value={volumePct}

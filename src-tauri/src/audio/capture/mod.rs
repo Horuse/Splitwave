@@ -15,6 +15,4 @@ pub use linux::Capture;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-mod windows_session;
-#[cfg(target_os = "windows")]
 pub use windows::{loopback_mix_rate, Capture};

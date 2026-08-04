@@ -93,17 +93,13 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::SystemAudio {
             sample_rate,
             exclude_current_app,
-            mute_original,
         } => {
             info!(
                 sample_rate,
-                exclude_current_app,
-                mute_original,
-                "starting system-audio capture (WASAPI loopback)"
+                exclude_current_app, "starting system-audio capture (WASAPI loopback)"
             );
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
-                mute_original,
                 sample_rate,
                 LOOPBACK_CHANNELS as u32,
                 bridge,
@@ -113,12 +109,10 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::AppAudio {
             sample_rate,
             bundle_id,
-            mute_original,
         } => {
-            info!(sample_rate, %bundle_id, mute_original, "starting app-audio capture (WASAPI process loopback)");
+            info!(sample_rate, %bundle_id, "starting app-audio capture (WASAPI process loopback)");
             let capture = crate::audio::capture::Capture::start_app(
                 &bundle_id,
-                mute_original,
                 sample_rate,
                 LOOPBACK_CHANNELS as u32,
                 bridge,

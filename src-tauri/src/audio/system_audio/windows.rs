@@ -151,6 +151,11 @@ unsafe fn process_exe_path(pid: u32) -> Option<String> {
     Some(String::from_utf16_lossy(&buf[..len as usize]))
 }
 
+/// Exe base name of a live process, the same key the app picker stores.
+pub fn exe_base_name(pid: u32) -> Option<String> {
+    unsafe { process_exe_path(pid) }.map(|p| base_name(&p))
+}
+
 fn base_name(path: &str) -> String {
     path.rsplit(['\\', '/']).next().unwrap_or(path).to_string()
 }

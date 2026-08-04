@@ -24,6 +24,8 @@ use windows::Win32::System::Variant::VT_BLOB;
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
+use super::windows_session::{SessionMute, Target};
+
 const TARGET_RATE: u32 = 48_000;
 const TARGET_CHANNELS: u16 = 2;
 // 200 ms shared-mode buffer; we drain it by polling.
@@ -32,6 +34,9 @@ const BUFFER_HNS: i64 = 2_000_000;
 pub struct Capture {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Dropped after the capture thread joins, so the sessions stay silent for
+    /// as long as we are the ones playing their audio.
+    _mute: Option<SessionMute>,
 }
 
 impl Drop for Capture {
@@ -46,15 +51,18 @@ impl Drop for Capture {
 impl Capture {
     pub fn start_system(
         _exclude_current_app: bool,
+        mute_original: bool,
         _sample_rate: u32,
         _channels: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
-        Ok(spawn(bridge, run_loopback))
+        let mute = mute_original.then(|| SessionMute::apply(Target::AllButSelf));
+        Ok(spawn(bridge, mute, run_loopback))
     }
 
     pub fn start_app(
         bundle_id: &str,
+        mute_original: bool,
         _sample_rate: u32,
         _channels: u32,
         bridge: BroadcastRx,
@@ -62,7 +70,8 @@ impl Capture {
         let pid = crate::audio::system_audio::pid_for_exe(bundle_id).ok_or_else(|| {
             AppError::Stream(format!("no active audio session found for {bundle_id:?}"))
         })?;
-        Ok(spawn(bridge, move |stop, bridge| {
+        let mute = mute_original.then(|| SessionMute::apply(Target::Exe(bundle_id.to_string())));
+        Ok(spawn(bridge, mute, move |stop, bridge| {
             run_process_loopback(pid, stop, bridge)
         }))
     }
@@ -70,6 +79,7 @@ impl Capture {
 
 fn spawn(
     bridge: BroadcastRx,
+    mute: Option<SessionMute>,
     run: impl FnOnce(Arc<AtomicBool>, BroadcastRx) -> AppResult<()> + Send + 'static,
 ) -> Capture {
     let stop = Arc::new(AtomicBool::new(false));
@@ -82,6 +92,7 @@ fn spawn(
     Capture {
         stop,
         thread: Some(thread),
+        _mute: mute,
     }
 }
 

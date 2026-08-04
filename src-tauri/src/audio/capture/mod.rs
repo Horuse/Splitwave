@@ -10,6 +10,8 @@ pub use macos_backend::{capture_rate, uses_taps, Capture};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod linux_mute;
+#[cfg(target_os = "linux")]
 pub use linux::Capture;
 
 #[cfg(target_os = "windows")]

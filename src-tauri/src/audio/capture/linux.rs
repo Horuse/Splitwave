@@ -8,6 +8,8 @@ use pw::spa::pod::Pod;
 
 use crate::error::{AppError, AppResult};
 
+use super::linux_mute::MuteRedirect;
+
 struct Terminate;
 
 struct UserData {
@@ -17,6 +19,9 @@ struct UserData {
 pub struct Capture {
     sender: pw::channel::Sender<Terminate>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Dropped after `Drop` has joined the capture thread, so the app is handed
+    /// back to its normal sink only once nothing reads the null sink anymore.
+    _redirect: Option<MuteRedirect>,
 }
 
 impl Drop for Capture {
@@ -31,18 +36,30 @@ impl Drop for Capture {
 impl Capture {
     // Monitor of the default sink (whole-system audio).
     pub fn start_system(callback: impl FnMut(&[f32]) + Send + 'static) -> AppResult<Self> {
-        spawn(None, true, Box::new(callback))
+        spawn(None, true, None, Box::new(callback))
     }
 
-    // Tap a specific app's output stream, found by binary/name.
+    // Tap a specific app's output stream, found by binary/name. With
+    // `mute_original` the app is moved onto a null sink of ours instead, so its
+    // audio reaches the speakers only through the graph.
     pub fn start_app(
         binary: &str,
+        mute_original: bool,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        let serial = resolve_serial(binary)?.ok_or_else(|| {
+        let node = resolve_node(binary)?.ok_or_else(|| {
             AppError::Stream(format!("no audio stream found for {binary:?}"))
         })?;
-        spawn(Some(serial.to_string()), false, Box::new(callback))
+        if !mute_original {
+            return spawn(Some(node.serial.to_string()), false, None, Box::new(callback));
+        }
+        let redirect = MuteRedirect::apply(node.id)?;
+        spawn(
+            Some(redirect.sink_name().to_string()),
+            true,
+            Some(redirect),
+            Box::new(callback),
+        )
     }
 
     // Capture a real source node (microphone) by node.name.
@@ -50,7 +67,7 @@ impl Capture {
         node_name: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(node_name.to_string()), false, Box::new(callback))
+        spawn(Some(node_name.to_string()), false, None, Box::new(callback))
     }
 
     // Capture the monitor of a specific sink by its node.name.
@@ -58,13 +75,14 @@ impl Capture {
         sink_node_name: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(sink_node_name.to_string()), true, Box::new(callback))
+        spawn(Some(sink_node_name.to_string()), true, None, Box::new(callback))
     }
 }
 
 fn spawn(
     target: Option<String>,
     capture_sink: bool,
+    redirect: Option<MuteRedirect>,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
@@ -73,7 +91,11 @@ fn spawn(
             tracing::error!("pipewire capture: {e:?}");
         }
     });
-    Ok(Capture { sender, thread: Some(thread) })
+    Ok(Capture {
+        sender,
+        thread: Some(thread),
+        _redirect: redirect,
+    })
 }
 
 fn run(
@@ -159,22 +181,27 @@ fn run(
     Ok(())
 }
 
-// TARGET_OBJECT takes the node's object.serial, so resolve it from the binary
-// reported on the app's output stream.
-fn resolve_serial(binary: &str) -> AppResult<Option<u32>> {
-    let binary = binary.to_string();
-    std::thread::spawn(move || serial_snapshot(&binary))
-        .join()
-        .map_err(|_| AppError::Host("pipewire serial lookup thread panicked".into()))?
+/// TARGET_OBJECT takes `object.serial`, while the metadata store addresses a
+/// node by its `id`; retargeting needs both.
+pub struct AppNode {
+    pub id: u32,
+    pub serial: u32,
 }
 
-fn serial_snapshot(binary: &str) -> AppResult<Option<u32>> {
+fn resolve_node(binary: &str) -> AppResult<Option<AppNode>> {
+    let binary = binary.to_string();
+    std::thread::spawn(move || node_snapshot(&binary))
+        .join()
+        .map_err(|_| AppError::Host("pipewire node lookup thread panicked".into()))?
+}
+
+fn node_snapshot(binary: &str) -> AppResult<Option<AppNode>> {
     let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(pw_err)?;
     let context = pw::context::ContextRc::new(&mainloop, None).map_err(pw_err)?;
     let core = context.connect_rc(None).map_err(pw_err)?;
     let registry = core.get_registry_rc().map_err(pw_err)?;
 
-    let found: Rc<RefCell<Option<u32>>> = Rc::new(RefCell::new(None));
+    let found: Rc<RefCell<Option<AppNode>>> = Rc::new(RefCell::new(None));
     let found_cb = found.clone();
     let want = binary.to_string();
 
@@ -198,7 +225,10 @@ fn serial_snapshot(binary: &str) -> AppResult<Option<u32>> {
                 return;
             }
             if let Some(serial) = props.get("object.serial").and_then(|s| s.parse().ok()) {
-                found_cb.borrow_mut().get_or_insert(serial);
+                found_cb.borrow_mut().get_or_insert(AppNode {
+                    id: global.id,
+                    serial,
+                });
             }
         })
         .register();
@@ -215,8 +245,8 @@ fn serial_snapshot(binary: &str) -> AppResult<Option<u32>> {
         .register();
 
     mainloop.run();
-    let serial = *found.borrow();
-    Ok(serial)
+    let node = found.borrow_mut().take();
+    Ok(node)
 }
 
 fn pw_err(e: impl std::fmt::Display) -> AppError {

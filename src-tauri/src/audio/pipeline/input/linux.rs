@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use tauri::AppHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
@@ -67,7 +67,13 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             };
             Ok(InputHandle::Capture(capture))
         }
-        ResolvedInput::SystemAudio { .. } => {
+        ResolvedInput::SystemAudio { mute_original, .. } => {
+            // Silencing the whole system means making our null sink the default
+            // one, which outlives a crash and leaves the desktop mute; the app
+            // node retarget behind App Audio carries no such risk.
+            if mute_original {
+                warn!("mute original is not supported for system audio on Linux");
+            }
             info!("starting system-audio capture (PipeWire sink monitor)");
             let mut bridge = bridge;
             let capture = crate::audio::capture::Capture::start_system(move |samples| {
@@ -76,13 +82,21 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             })?;
             Ok(InputHandle::Capture(capture))
         }
-        ResolvedInput::AppAudio { bundle_id, .. } => {
-            info!(%bundle_id, "starting app-audio capture (PipeWire tap)");
+        ResolvedInput::AppAudio {
+            bundle_id,
+            mute_original,
+            ..
+        } => {
+            info!(%bundle_id, mute_original, "starting app-audio capture (PipeWire)");
             let mut bridge = bridge;
-            let capture = crate::audio::capture::Capture::start_app(&bundle_id, move |samples| {
-                bridge.apply_commands();
-                bridge.broadcast(samples);
-            })?;
+            let capture = crate::audio::capture::Capture::start_app(
+                &bundle_id,
+                mute_original,
+                move |samples| {
+                    bridge.apply_commands();
+                    bridge.broadcast(samples);
+                },
+            )?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {

@@ -13,11 +13,12 @@
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	// Only Core Audio process taps can silence the original; WASAPI loopback and
-	// PipeWire monitors always leave it audible.
+	// macOS mutes the tapped process, Linux retargets it onto a null sink.
+	// WASAPI process loopback reads past session volume, so muting there kills
+	// the capture too and the option is hidden.
 	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
 	const isPreview = getContext(PREVIEW_CTX) === true;
-	const isMac = isPreview || platform() === 'macos';
+	const canMuteOriginal = isPreview || platform() !== 'windows';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -84,7 +85,7 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}
-		{#if isMac}
+		{#if canMuteOriginal}
 			<Toggle
 				size="sm"
 				label="Mute original"

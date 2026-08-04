@@ -44,20 +44,21 @@ Virtual audio devices are not available on Windows.
 
 ## Platform support
 
-| Feature | macOS | Linux | Windows |
-| --- | :---: | :---: | :---: |
-| Mic / speaker device I/O | ✅ | ✅ | ✅ |
-| System audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ WASAPI loopback |
-| Per-app audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ Process Loopback (Win10 2004+) |
-| App icons in the picker | ✅ | ✅ | ✅ |
-| Device volume control | ✅ | ✅ | ✅ |
-| Recording: WAV / FLAC / AIFF / MP3 / Opus | ✅ | ✅ | ✅ |
-| Recording: AAC (M4A) | ✅ | ❌ | ❌ |
-| Virtual audio devices | ✅ AudioServerPlugin | ✅ PipeWire null-sinks | ❌ (no user-mode driver model) |
-| Effects, metering, file playback | ✅ | ✅ | ✅ |
-| CLAP plugins | ✅ | ✅ | ✅ |
-| VST3 plugins | ✅ | ✅ X11 | ✅ |
-| Audio Unit plugins | ✅ | ❌ | ❌ |
+| Feature                                   |        macOS        |         Linux         |             Windows              |
+|-------------------------------------------|:-------------------:|:---------------------:|:--------------------------------:|
+| Mic / speaker device I/O                  |          ✅          |           ✅           |                ✅                 |
+| System audio capture                      | ✅ ScreenCaptureKit  |      ✅ PipeWire       |        ✅ WASAPI loopback         |
+| Per-app audio capture                     | ✅ ScreenCaptureKit  |      ✅ PipeWire       | ✅ Process Loopback (Win10 2004+) |
+| Mute original while capturing an app      |          ✅          |           ✅           |                ❌                 |
+| App icons in the picker                   |          ✅          |           ✅           |                ✅                 |
+| Device volume control                     |          ✅          |           ✅           |                ✅                 |
+| Recording: WAV / FLAC / AIFF / MP3 / Opus |          ✅          |           ✅           |                ✅                 |
+| Recording: AAC (M4A)                      |          ✅          |           ❌           |                ❌                 |
+| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks |                ❌                 |
+| Effects, metering, file playback          |          ✅          |           ✅           |                ✅                 |
+| CLAP plugins                              |          ✅          |           ✅           |                ✅                 |
+| VST3 plugins                              |          ✅          |         ✅ X11         |                ✅                 |
+| Audio Unit plugins                        |          ✅          |           ❌           |                ❌                 |
 
 ## Features
 

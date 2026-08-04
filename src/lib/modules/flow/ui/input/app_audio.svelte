@@ -4,12 +4,20 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { Apps } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
-	import { onDestroy, onMount } from 'svelte';
+	import { onNodeAction, PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { getContext, onDestroy, onMount } from 'svelte';
+	import { platform } from '@tauri-apps/plugin-os';
+
+	// Only Core Audio process taps can silence the original; WASAPI loopback and
+	// PipeWire monitors always leave it audible.
+	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const isMac = isPreview || platform() === 'macos';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -75,6 +83,15 @@
 		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
+		{/if}
+		{#if isMac}
+			<Toggle
+				size="sm"
+				label="Mute original"
+				hint="Silences the app on its own output, so only this graph plays it"
+				checked={data.muteOriginal ?? true}
+				onChange={(v) => flow.updateNodeData(id, { muteOriginal: v })}
+			/>
 		{/if}
 		<Slider
 			label="Volume"

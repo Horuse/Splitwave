@@ -55,11 +55,20 @@ pub fn capture_rate() -> u32 {
 }
 
 impl Capture {
-    pub fn start_app(bundle_id: &str, sample_rate: u32, bridge: BroadcastRx) -> AppResult<Self> {
+    pub fn start_app(
+        bundle_id: &str,
+        mute_original: bool,
+        sample_rate: u32,
+        bridge: BroadcastRx,
+    ) -> AppResult<Self> {
         match backend() {
             Backend::Tap => {
-                info!(%bundle_id, "starting app-audio capture (Core Audio process tap)");
-                Ok(Capture::Tap(TapCapture::start_app(bundle_id, bridge)?))
+                info!(%bundle_id, mute_original, "starting app-audio capture (Core Audio process tap)");
+                Ok(Capture::Tap(TapCapture::start_app(
+                    bundle_id,
+                    mute_original,
+                    bridge,
+                )?))
             }
             Backend::Sck => {
                 info!(%bundle_id, "starting app-audio capture (ScreenCaptureKit, macOS < 14.4)");
@@ -75,6 +84,7 @@ impl Capture {
 
     pub fn start_system(
         exclude_current_app: bool,
+        mute_original: bool,
         sample_rate: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
@@ -82,10 +92,11 @@ impl Capture {
             Backend::Tap => {
                 info!(
                     exclude_current_app,
-                    "starting system-audio capture (Core Audio process tap)"
+                    mute_original, "starting system-audio capture (Core Audio process tap)"
                 );
                 Ok(Capture::Tap(TapCapture::start_system(
                     exclude_current_app,
+                    mute_original,
                     bridge,
                 )?))
             }

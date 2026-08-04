@@ -124,6 +124,8 @@ pub struct MicrophoneData {
 pub struct SystemAudioData {
     #[serde(default = "default_true")]
     pub exclude_current_app: bool,
+    #[serde(default = "default_true")]
+    pub mute_original: bool,
     #[serde(default = "default_one")]
     pub volume: f32,
 }
@@ -139,6 +141,8 @@ fn default_one() -> f32 {
 #[ts(export)]
 pub struct AppAudioData {
     pub bundle_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub mute_original: bool,
     #[serde(default = "default_one")]
     pub volume: f32,
 }
@@ -521,8 +525,14 @@ fn default_codec() -> NetCodec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSpec {
     Microphone { device_id: String },
-    SystemAudio { exclude_current_app: bool },
-    AppAudio { bundle_id: String },
+    SystemAudio {
+        exclude_current_app: bool,
+        mute_original: bool,
+    },
+    AppAudio {
+        bundle_id: String,
+        mute_original: bool,
+    },
     AudioFile { file_path: String },
     NetReceiver { port: u16 },
     /// Receive half of a WebRTC collaborator: audio arriving from peers, tapped
@@ -880,6 +890,7 @@ fn resolve_inputs(
                 let data: SystemAudioData = parse(n.data, "SystemAudio")?;
                 let spec = InputSpec::SystemAudio {
                     exclude_current_app: data.exclude_current_app,
+                    mute_original: data.mute_original,
                 };
                 (spec, data.volume, true)
             }
@@ -889,6 +900,7 @@ fn resolve_inputs(
                     bundle_id: data
                         .bundle_id
                         .ok_or_else(|| miss(&n.id, "App Audio has no application selected"))?,
+                    mute_original: data.mute_original,
                 };
                 (spec, data.volume, true)
             }

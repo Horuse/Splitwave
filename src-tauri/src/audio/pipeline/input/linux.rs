@@ -18,13 +18,19 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
         }),
         InputSpec::SystemAudio {
             exclude_current_app,
+            mute_original,
         } => Ok(ResolvedInput::SystemAudio {
             sample_rate: SCK_SR,
             exclude_current_app: *exclude_current_app,
+            mute_original: *mute_original,
         }),
-        InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
+        InputSpec::AppAudio {
+            bundle_id,
+            mute_original,
+        } => Ok(ResolvedInput::AppAudio {
             sample_rate: SCK_SR,
             bundle_id: bundle_id.clone(),
+            mute_original: *mute_original,
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
         InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. } => {

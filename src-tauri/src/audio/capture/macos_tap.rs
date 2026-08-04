@@ -69,12 +69,14 @@ extern "C" {
     fn ba_tap_start_app(
         handle: *mut c_void,
         bundle_id: *const c_char,
+        mute_original: i32,
         callback: SampleCallback,
         user_data: *mut c_void,
     ) -> i32;
     fn ba_tap_start_system(
         handle: *mut c_void,
         exclude_current_app: i32,
+        mute_original: i32,
         callback: SampleCallback,
         user_data: *mut c_void,
     ) -> i32;
@@ -145,7 +147,13 @@ extern "C" fn sample_trampoline(
 }
 
 impl TapCapture {
-    pub fn start_app(bundle_id: &str, bridge: BroadcastRx) -> AppResult<Self> {
+    /// `mute_original` silences the tapped app on the output device, so the
+    /// listener hears only the graph's copy instead of both summed.
+    pub fn start_app(
+        bundle_id: &str,
+        mute_original: bool,
+        bridge: BroadcastRx,
+    ) -> AppResult<Self> {
         let bundle_cstr = CString::new(bundle_id)
             .map_err(|_| AppError::Validation("bundle id contains nul byte".into()))?;
         Self::start(
@@ -153,15 +161,26 @@ impl TapCapture {
             &format!("app audio capture ({bundle_id})"),
             bridge,
             |handle, callback, user_data| unsafe {
-                ba_tap_start_app(handle, bundle_cstr.as_ptr(), callback, user_data)
+                ba_tap_start_app(
+                    handle,
+                    bundle_cstr.as_ptr(),
+                    if mute_original { 1 } else { 0 },
+                    callback,
+                    user_data,
+                )
             },
         )
     }
 
     /// When `exclude_current_app` is set our own output is dropped from the
     /// mix, which prevents a feedback loop when System Audio is routed back
-    /// through Splitwave.
-    pub fn start_system(exclude_current_app: bool, bridge: BroadcastRx) -> AppResult<Self> {
+    /// through Splitwave. `mute_original` silences everything the tap covers on
+    /// the output device, leaving only the graph's copy audible.
+    pub fn start_system(
+        exclude_current_app: bool,
+        mute_original: bool,
+        bridge: BroadcastRx,
+    ) -> AppResult<Self> {
         Self::start(
             "system".to_string(),
             "system audio capture",
@@ -170,6 +189,7 @@ impl TapCapture {
                 ba_tap_start_system(
                     handle,
                     if exclude_current_app { 1 } else { 0 },
+                    if mute_original { 1 } else { 0 },
                     callback,
                     user_data,
                 )
@@ -235,6 +255,7 @@ impl TapCapture {
 
 impl Drop for TapCapture {
     fn drop(&mut self) {
+        info!(label = %self.state.label, "tap: stopping");
         self.state.shutting_down.store(true, Ordering::Release);
         unsafe { ba_tap_stop(self.handle) };
         unsafe { ba_tap_destroy(self.handle) };

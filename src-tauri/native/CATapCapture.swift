@@ -160,8 +160,8 @@ private func ownProcessObject() -> AudioObjectID? {
 
 @available(macOS 14.4, *)
 private enum TapMode {
-    case system(excludeCurrentApp: Bool)
-    case application(bundleID: String)
+    case system(excludeCurrentApp: Bool, muteOriginal: Bool)
+    case application(bundleID: String, muteOriginal: Bool)
 }
 
 @available(macOS 14.4, *)
@@ -182,7 +182,7 @@ private final class Tap {
 
     private var callback: TapSampleCallback?
     private var userData: UnsafeMutableRawPointer?
-    private var mode: TapMode = .system(excludeCurrentApp: true)
+    private var mode: TapMode = .system(excludeCurrentApp: true, muteOriginal: false)
     /// Every process object belonging to the target app.
     private var candidates: [AudioObjectID] = []
     /// The subset actually rendering output, which is what the tap is built
@@ -236,28 +236,31 @@ private final class Tap {
         switch mode {
         case .system:
             return []
-        case .application(let bundleID):
+        case .application(let bundleID, _):
             return candidateProcesses(forBundleID: bundleID)
         }
     }
 
     private func description(for processes: [AudioObjectID]) -> CATapDescription {
         let desc: CATapDescription
+        let muteOriginal: Bool
         switch mode {
-        case .system(let excludeCurrentApp):
+        case .system(let excludeCurrentApp, let mute):
             // Empty exclusion list means the whole system mix.
             let excluded = excludeCurrentApp ? [ownProcessObject()].compactMap { $0 } : []
             desc = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
-        case .application:
+            muteOriginal = mute
+        case .application(_, let mute):
             desc = CATapDescription(stereoMixdownOfProcesses: processes)
+            muteOriginal = mute
         }
         desc.uuid = UUID()
         desc.name = "Splitwave Capture"
         desc.isPrivate = true
-        // Leave the process's own output audible; the initialiser already set
-        // isExclusive to match the chosen mode and flipping it inverts the
-        // process list into silence.
-        desc.muteBehavior = .unmuted
+        // Muting the tapped processes keeps the graph's copy from summing with
+        // the original on the way to the speakers. isExclusive is left as the
+        // initialiser set it: flipping it inverts the process list into silence.
+        desc.muteBehavior = muteOriginal ? .muted : .unmuted
         return desc
     }
 
@@ -354,12 +357,21 @@ private final class Tap {
             AudioDeviceDestroyIOProcID(aggregateID, procID)
         }
         ioProcID = nil
+        // A tap that outlives teardown keeps its mute behaviour applied to the
+        // target processes, so a failure here is silence, not a leak we can
+        // ignore.
         if aggregateID != 0 {
-            AudioHardwareDestroyAggregateDevice(aggregateID)
+            let err = AudioHardwareDestroyAggregateDevice(aggregateID)
+            if err != noErr {
+                NSLog("BA-TAP failed to destroy aggregate \(aggregateID): \(err)")
+            }
             aggregateID = 0
         }
         if tapID != AudioObjectID(kAudioObjectUnknown) {
-            AudioHardwareDestroyProcessTap(tapID)
+            let err = AudioHardwareDestroyProcessTap(tapID)
+            if err != noErr {
+                NSLog("BA-TAP failed to destroy tap \(tapID): \(err)")
+            }
             tapID = AudioObjectID(kAudioObjectUnknown)
         }
     }
@@ -490,13 +502,17 @@ public func ba_tap_destroy(_ handle: OpaquePointer) {
 public func ba_tap_start_app(
     _ handle: OpaquePointer,
     _ bundleIDC: UnsafePointer<CChar>,
+    _ muteOriginal: Int32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
     if #available(macOS 14.4, *) {
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
-            mode: .application(bundleID: String(cString: bundleIDC)),
+            mode: .application(
+                bundleID: String(cString: bundleIDC),
+                muteOriginal: muteOriginal != 0
+            ),
             callback: callback,
             userData: userData
         )
@@ -508,13 +524,17 @@ public func ba_tap_start_app(
 public func ba_tap_start_system(
     _ handle: OpaquePointer,
     _ excludeCurrentApp: Int32,
+    _ muteOriginal: Int32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
     if #available(macOS 14.4, *) {
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
-            mode: .system(excludeCurrentApp: excludeCurrentApp != 0),
+            mode: .system(
+                excludeCurrentApp: excludeCurrentApp != 0,
+                muteOriginal: muteOriginal != 0
+            ),
             callback: callback,
             userData: userData
         )

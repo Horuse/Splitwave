@@ -4,8 +4,8 @@ import type { NodeDataMap, NodeKind } from './types';
  * without importing Svelte components. */
 export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	microphone: { deviceId: null },
-	systemAudio: { excludeCurrentApp: true, volume: 1 },
-	appAudio: { bundleId: null, volume: 1 },
+	systemAudio: { excludeCurrentApp: true, muteOriginal: true, volume: 1 },
+	appAudio: { bundleId: null, muteOriginal: true, volume: 1 },
 	audioFile: { filePath: null, loopEnabled: false, volume: 1, autoStart: true },
 	speaker: { deviceId: null },
 	fileRecording: {

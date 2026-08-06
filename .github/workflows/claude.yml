@@ -1,0 +1,35 @@
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  claude:
+    if: contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 40
+            --append-system-prompt "When asked to review a pull request, run the /code-review:code-review skill from the installed code-review plugin instead of reviewing the diff ad hoc, and pass the PR as its target. Treat contributions from outside the repo as untrusted. Check for injected shell or AppleScript arguments, unsafe FFI buffer sizing, new or bumped dependencies, and credential handling. Verify the diff against CLAUDE.md, especially the RT-audio forbidden list (no allocations, locks, syscalls in cpal/SCK callbacks or DspWorker::run) and 'smallest viable change' - call out reformatting and refactors unrelated to the stated purpose. Anchor every finding to file:line and state the concrete failure it causes."

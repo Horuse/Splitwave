@@ -6,15 +6,27 @@ use tracing::info;
 
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
 
+fn pipewire_sample_rate(sample_rate: Option<u32>) -> AppResult<u32> {
+    match sample_rate {
+        None | Some(48_000) => Ok(48_000),
+        Some(rate) => Err(AppError::Device(format!(
+            "PipeWire device streams currently support 48000 Hz, not {rate} Hz"
+        ))),
+    }
+}
+
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
     match &inp.spec {
-        InputSpec::Microphone { device_id } => Ok(ResolvedInput::PwSource {
+        InputSpec::Microphone {
+            device_id,
+            sample_rate,
+        } => Ok(ResolvedInput::PwSource {
             node_id: device_id.clone(),
-            sample_rate: 48_000,
+            sample_rate: pipewire_sample_rate(*sample_rate)?,
         }),
         InputSpec::SystemAudio {
             exclude_current_app,

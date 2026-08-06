@@ -17,7 +17,12 @@ const CONFIG_PATH: &str = "/Library/Application Support/Splitwave/devices.plist"
 // Reject paths that would escape single-quote shell quoting or the enclosing AppleScript string.
 fn shell_safe(path: &Path) -> Result<&str, String> {
     let s = path.to_str().ok_or("path is not valid UTF-8")?;
-    if s.contains('\'') || s.contains('"') || s.contains('\\') || s.contains('\n') || s.contains('\r') {
+    if s.contains('\'')
+        || s.contains('"')
+        || s.contains('\\')
+        || s.contains('\n')
+        || s.contains('\r')
+    {
         return Err(format!("path contains unsafe characters: {s}"));
     }
     Ok(s)
@@ -36,11 +41,8 @@ fn write_temp_plist(content: &str) -> Result<TempPlist, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos();
-    let path = Path::new(CONFIG_DIR).join(format!(
-        ".devices.plist.{}.{}",
-        std::process::id(),
-        nanos
-    ));
+    let path =
+        Path::new(CONFIG_DIR).join(format!(".devices.plist.{}.{}", std::process::id(), nanos));
     let f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -48,8 +50,11 @@ fn write_temp_plist(content: &str) -> Result<TempPlist, String> {
         .open(&path)
         .map_err(|e| format!("create temp plist: {e}"))?;
     let guard = TempPlist(path);
-    { let mut f = f; f.write_all(content.as_bytes()) }
-        .map_err(|e| format!("write temp plist: {e}"))?;
+    {
+        let mut f = f;
+        f.write_all(content.as_bytes())
+    }
+    .map_err(|e| format!("write temp plist: {e}"))?;
     Ok(guard)
 }
 
@@ -69,10 +74,11 @@ fn build_plist(devices: &[VirtualDeviceConfig]) -> String {
     );
     for d in devices {
         plist.push_str(&format!(
-            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t</dict>\n",
+            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t\t<key>sampleRate</key><integer>{}</integer>\n\t</dict>\n",
             xml_escape(&d.id),
             xml_escape(&d.name),
-            d.channels.clamp(1, 256)
+            d.channels.clamp(1, 256),
+            d.sample_rate.clamp(8_000, 384_000)
         ));
     }
     plist.push_str("</array>\n</plist>\n");
@@ -90,8 +96,7 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
     }
 
     let tmp = write_temp_plist(&build_plist(&devices))?;
-    std::fs::rename(&tmp.0, CONFIG_PATH)
-        .map_err(|e| format!("write device config: {e}"))?;
+    std::fs::rename(&tmp.0, CONFIG_PATH).map_err(|e| format!("write device config: {e}"))?;
 
     info!(count = devices.len(), "virtual devices applied");
     Ok(())
@@ -100,13 +105,22 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
 pub fn status() -> VirtualDriverStatus {
     let dst = Path::new(HAL_DIR).join(DRIVER_NAME);
     let installed = dst.exists();
-    let installed_version = if installed { read_bundle_version(&dst) } else { None };
+    let installed_version = if installed {
+        read_bundle_version(&dst)
+    } else {
+        None
+    };
     // unknown version on an installed bundle = pre-versioning, treat as stale.
     // A missing config dir also needs a privileged pass to recreate it.
     let needs_update = installed
         && (installed_version.map_or(true, |v| v < super::DRIVER_VERSION)
             || !Path::new(CONFIG_DIR).is_dir());
-    info!(installed, ?installed_version, needs_update, "virtual driver status");
+    info!(
+        installed,
+        ?installed_version,
+        needs_update,
+        "virtual driver status"
+    );
     VirtualDriverStatus {
         installed,
         installed_version,
@@ -126,18 +140,21 @@ fn read_bundle_version(bundle: &Path) -> Option<u32> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok()
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok()
 }
 
 pub fn install(app: &AppHandle) -> Result<(), String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?;
+    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let src = resource_dir.join(DRIVER_NAME);
 
     if !src.exists() {
-        return Err(format!("driver bundle not found in app resources: {}", src.display()));
+        return Err(format!(
+            "driver bundle not found in app resources: {}",
+            src.display()
+        ));
     }
 
     // Destination is a constant. Only src (resource_dir) is dynamic — validate it.

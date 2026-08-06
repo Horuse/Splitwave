@@ -29,8 +29,8 @@
 	);
 
 	const DATA_OVERRIDES: Partial<Record<NodeKind, Record<string, unknown>>> = {
-		microphone: { deviceId: 'splitwave' },
-		speaker: { deviceId: 'splitwave' }
+		microphone: { deviceId: 'splitwave', sampleRate: null },
+		speaker: { deviceId: 'splitwave', sampleRate: null }
 	};
 
 	function dataFor(kind: NodeKind): Record<string, unknown> {
@@ -42,7 +42,7 @@
 	<div class="flex flex-col gap-10 p-10">
 		{#each categoryOrder as cat (cat)}
 			<section class="flex flex-col gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-900">
+				<h2 class="text-xs font-semibold tracking-wider text-neutral-900 uppercase">
 					{categoryLabel[cat]}
 				</h2>
 				<div class="flex flex-wrap items-start gap-6">

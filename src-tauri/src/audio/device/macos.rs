@@ -19,6 +19,7 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
         .map_err(|_| AppError::Device(format!("device {name:?} has {} channels", hal.channels)))?;
     Ok(NativeDeviceInfo {
         sample_rate: hal.sample_rate,
+        sample_rates: hal.sample_rates,
         channels,
         sample_format: "f32",
     })
@@ -26,14 +27,20 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
 
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     Ok(unique_named(
-        macos_hal::list_input_devices().into_iter().map(|d| d.name).collect(),
+        macos_hal::list_input_devices()
+            .into_iter()
+            .map(|d| d.name)
+            .collect(),
         DeviceKind::Input,
     ))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     Ok(unique_named(
-        macos_hal::list_output_devices().into_iter().map(|d| d.name).collect(),
+        macos_hal::list_output_devices()
+            .into_iter()
+            .map(|d| d.name)
+            .collect(),
         DeviceKind::Output,
     ))
 }

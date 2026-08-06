@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
+	import {
+		useSvelteFlow,
+		useUpdateNodeInternals,
+		type Node,
+		type NodeProps
+	} from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -15,6 +20,10 @@
 	import { platform } from '@tauri-apps/plugin-os';
 
 	const supportsVirtualDevices = platform() !== 'windows';
+	const DEFAULT_SAMPLE_RATE = 48_000;
+	const MIN_SAMPLE_RATE = 8_000;
+	const MAX_SAMPLE_RATE = 384_000;
+	const SAMPLE_RATE_PRESETS = [44_100, 48_000, 88_200, 96_000, 192_000];
 
 	type MicrophoneNodeType = Node<MicrophoneNodeData, 'microphone'>;
 	let { id, data }: NodeProps<MicrophoneNodeType> = $props();
@@ -29,7 +38,18 @@
 	let unsupported = $state(false);
 
 	function setDevice(value: string | null) {
-		flow.updateNodeData(id, { deviceId: value });
+		flow.updateNodeData(id, { deviceId: value, sampleRate: null });
+	}
+
+	function clampSampleRate(value: number) {
+		return Math.min(
+			Math.max(Math.round(value) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE),
+			MAX_SAMPLE_RATE
+		);
+	}
+
+	function setSampleRate(value: number | null) {
+		flow.updateNodeData(id, { sampleRate: value === null ? null : clampSampleRate(value) });
 	}
 
 	async function refresh() {
@@ -110,6 +130,7 @@
 	let gainPct = $derived(gain === null ? 0 : gain * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+	let effectiveSampleRate = $derived(data.sampleRate ?? info?.sampleRate ?? DEFAULT_SAMPLE_RATE);
 </script>
 
 <Wrapper label="Microphone" accent="input" icon={Mic}>
@@ -142,6 +163,52 @@
 			<span class="font-mono text-[10px] text-neutral-900">
 				{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
 			</span>
+			<div class="flex flex-col gap-1 text-[10px] text-neutral-900">
+				<div class="flex items-center gap-1">
+					<span>Sample rate</span>
+					<button
+						type="button"
+						class={[
+							'ml-auto rounded-md border px-1.5 py-0.5 text-[9px] transition-colors',
+							data.sampleRate == null
+								? 'border-neutral-800 bg-neutral-600 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
+						]}
+						onclick={() => setSampleRate(null)}
+					>
+						Auto ({formatRate(info.sampleRate)})
+					</button>
+				</div>
+				<div class="flex items-center overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100">
+					<input
+						class="h-7 min-w-0 flex-1 [appearance:textfield] bg-transparent text-center font-mono text-xs tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+						type="number"
+						min={MIN_SAMPLE_RATE}
+						max={MAX_SAMPLE_RATE}
+						step="1"
+						value={effectiveSampleRate}
+						onchange={(e) =>
+							setSampleRate((e.currentTarget as HTMLInputElement).valueAsNumber)}
+					/>
+					<span class="border-l border-neutral-400 px-2 font-mono text-[10px]">Hz</span>
+				</div>
+				<div class="flex flex-wrap gap-1">
+					{#each SAMPLE_RATE_PRESETS as preset (preset)}
+						<button
+							type="button"
+							class={[
+								'rounded-md border px-1.5 py-0.5 font-mono text-[9px] tabular-nums transition-colors',
+								data.sampleRate === preset
+									? 'border-neutral-800 bg-neutral-600 text-theme'
+									: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
+							]}
+							onclick={() => setSampleRate(preset)}
+						>
+							{formatRate(preset)}
+						</button>
+					{/each}
+				</div>
+			</div>
 		{/if}
 
 		{#if data.deviceId && !missing}
@@ -161,10 +228,7 @@
 					onChange={setGainPct}
 				/>
 			{/if}
-			<InputMeter
-				nodeId={id}
-				channelCount={channelCount}
-			/>
+			<InputMeter nodeId={id} {channelCount} />
 		{/if}
 	</div>
 </Wrapper>

@@ -27,7 +27,7 @@ const DRAIN: Duration = Duration::from_millis(120);
 /// Blocks for the length of the clip: the cpal stream is `!Send`, so it has to
 /// be built, held and dropped on one thread. Call from a blocking task.
 pub fn play(device_id: &str, muted: bool, gain: f32, beep: bool) -> AppResult<()> {
-    let spec = super::output::resolve_speaker(device_id)?;
+    let spec = super::output::resolve_speaker(device_id, None)?;
     let channels = spec.out_channels.max(1);
     let gain = gain.clamp(0.0, 1.0);
 
@@ -82,7 +82,12 @@ fn decode_mono(bytes: &'static [u8], target_rate: u32) -> AppResult<Vec<f32>> {
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let mut format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| AppError::Stream(format!("probe cue: {e}")))?;
 
     let (track_id, src_rate, params) = {

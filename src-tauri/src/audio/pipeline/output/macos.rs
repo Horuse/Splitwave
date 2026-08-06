@@ -53,9 +53,12 @@ impl Drop for SpeakerHandle {
     }
 }
 
-pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+pub(in crate::audio::pipeline) fn resolve_speaker(
+    device_id: &str,
+    sample_rate: Option<u32>,
+) -> AppResult<SpeakerResolved> {
     let device = device::find(DeviceKind::Output, device_id)?;
-    let native = native_config(DeviceKind::Output, &device, device_id)?;
+    let native = native_config(DeviceKind::Output, &device, device_id, sample_rate)?;
     Ok(SpeakerResolved {
         device,
         config: native.config,
@@ -77,10 +80,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
-    let device_name = spec
-        .device
-        .name()
-        .unwrap_or_else(|_| "<unknown>".into());
+    let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
     info!(
         device = %device_name,
         sample_rate = spec.sample_rate,
@@ -167,7 +167,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _stream: stream, _worker: worker_handle, _alive: StreamGuard::new() },
+        SpeakerHandle {
+            _stream: stream,
+            _worker: worker_handle,
+            _alive: StreamGuard::new(),
+        },
         ctrl,
         dead,
         io,

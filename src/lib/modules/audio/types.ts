@@ -44,6 +44,7 @@ export interface PluginParam {
 
 export interface NativeDeviceInfo {
 	sampleRate: number;
+	sampleRates: number[];
 	channels: number;
 	sampleFormat: string;
 }
@@ -69,6 +70,7 @@ export interface VirtualDeviceConfig {
 	id: string;
 	name: string;
 	channels: number;
+	sampleRate: number;
 }
 
 export type AudioStateEvent =

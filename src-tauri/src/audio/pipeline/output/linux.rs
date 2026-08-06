@@ -4,11 +4,20 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tracing::info;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
 use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
+
+fn pipewire_sample_rate(sample_rate: Option<u32>) -> AppResult<u32> {
+    match sample_rate {
+        None | Some(48_000) => Ok(48_000),
+        Some(rate) => Err(AppError::Device(format!(
+            "PipeWire device streams currently support 48000 Hz, not {rate} Hz"
+        ))),
+    }
+}
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
@@ -23,10 +32,13 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
     _alive: StreamGuard,
 }
 
-pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+pub(in crate::audio::pipeline) fn resolve_speaker(
+    device_id: &str,
+    sample_rate: Option<u32>,
+) -> AppResult<SpeakerResolved> {
     Ok(SpeakerResolved {
         node_id: device_id.to_string(),
-        sample_rate: 48_000,
+        sample_rate: pipewire_sample_rate(sample_rate)?,
         out_channels: 2,
     })
 }
@@ -57,7 +69,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _playback: playback, _worker: worker_handle, _alive: StreamGuard::new() },
+        SpeakerHandle {
+            _playback: playback,
+            _worker: worker_handle,
+            _alive: StreamGuard::new(),
+        },
         ctrl,
         dead,
         io,

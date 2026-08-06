@@ -116,6 +116,8 @@ pub enum NodeCategory {
 #[ts(export)]
 pub struct MicrophoneData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -161,6 +163,8 @@ pub struct AudioFileData {
 #[ts(export)]
 pub struct SpeakerData {
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
@@ -210,9 +214,13 @@ pub enum OpusApplication {
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[ts(export)]
 pub enum RecordingFormat {
-    Wav { #[serde(rename = "bitDepth")] bit_depth: WavBitDepth },
+    Wav {
+        #[serde(rename = "bitDepth")]
+        bit_depth: WavBitDepth,
+    },
     Flac {
-        #[serde(rename = "bitDepth")] bit_depth: FlacBitDepth,
+        #[serde(rename = "bitDepth")]
+        bit_depth: FlacBitDepth,
         compression: FlacCompression,
     },
     Opus {
@@ -220,13 +228,15 @@ pub enum RecordingFormat {
         application: OpusApplication,
     },
     Mp3 {
-        #[serde(rename = "bitrateKbps")] bitrate_kbps: u32,
+        #[serde(rename = "bitrateKbps")]
+        bitrate_kbps: u32,
     },
     Aac {
         bitrate: u32,
     },
     Aiff {
-        #[serde(rename = "bitDepth")] bit_depth: AiffBitDepth,
+        #[serde(rename = "bitDepth")]
+        bit_depth: AiffBitDepth,
     },
 }
 
@@ -520,11 +530,22 @@ fn default_codec() -> NetCodec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSpec {
-    Microphone { device_id: String },
-    SystemAudio { exclude_current_app: bool },
-    AppAudio { bundle_id: String },
-    AudioFile { file_path: String },
-    NetReceiver { port: u16 },
+    Microphone {
+        device_id: String,
+        sample_rate: Option<u32>,
+    },
+    SystemAudio {
+        exclude_current_app: bool,
+    },
+    AppAudio {
+        bundle_id: String,
+    },
+    AudioFile {
+        file_path: String,
+    },
+    NetReceiver {
+        port: u16,
+    },
     /// Receive half of a WebRTC collaborator: audio arriving from peers, tapped
     /// per peer and per channel out of the session's jitter buffer.
     WebRtcRecv {
@@ -536,8 +557,15 @@ pub enum InputSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputSpec {
-    Speaker { device_id: String },
-    FileRecording { file_path: String, format: RecordingFormat, channels: u16 },
+    Speaker {
+        device_id: String,
+        sample_rate: Option<u32>,
+    },
+    FileRecording {
+        file_path: String,
+        format: RecordingFormat,
+        channels: u16,
+    },
     NetSender {
         node_id: String,
         target: SocketAddr,
@@ -848,7 +876,6 @@ impl GraphSpec {
             edges,
         })
     }
-
 }
 
 /// `routed` are inputs on a real path to a terminal — they must resolve or
@@ -867,56 +894,57 @@ fn resolve_inputs(
         }
         let resolved = (|| -> AppResult<(InputSpec, f32, bool)> {
             Ok(match n.kind {
-            NodeKind::Microphone => {
-                let data: MicrophoneData = parse(n.data, "Microphone")?;
-                let spec = InputSpec::Microphone {
-                    device_id: data
-                        .device_id
-                        .ok_or_else(|| miss(&n.id, "Microphone has no device selected"))?,
-                };
-                (spec, 1.0f32, true)
-            }
-            NodeKind::SystemAudio => {
-                let data: SystemAudioData = parse(n.data, "SystemAudio")?;
-                let spec = InputSpec::SystemAudio {
-                    exclude_current_app: data.exclude_current_app,
-                };
-                (spec, data.volume, true)
-            }
-            NodeKind::AppAudio => {
-                let data: AppAudioData = parse(n.data, "AppAudio")?;
-                let spec = InputSpec::AppAudio {
-                    bundle_id: data
-                        .bundle_id
-                        .ok_or_else(|| miss(&n.id, "App Audio has no application selected"))?,
-                };
-                (spec, data.volume, true)
-            }
-            NodeKind::AudioFile => {
-                let data: AudioFileData = parse(n.data, "AudioFile")?;
-                let spec = InputSpec::AudioFile {
-                    file_path: data
-                        .file_path
-                        .ok_or_else(|| miss(&n.id, "Audio File has no file selected"))?,
-                };
-                (spec, data.volume, data.auto_start)
-            }
-            NodeKind::NetReceiver => {
-                let data: NetReceiverData = parse(n.data, "NetReceiver")?;
-                (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
-            }
-            // Receive half of a collaborator: the session is keyed by the
-            // UI node, so the split suffix comes back off.
-            NodeKind::WebRtcCollaborator => {
-                let data: WebRtcCollaboratorData = parse(n.data, "WebRtcCollaborator")?;
-                let spec = InputSpec::WebRtcRecv {
-                    node_id: n.id.strip_suffix(RECV_SUFFIX).unwrap_or(&n.id).to_string(),
-                    opus_bitrate: data.opus_bitrate,
-                    opus_application: data.opus_application,
-                };
-                (spec, 1.0f32, true)
-            }
-            _ => unreachable!(),
+                NodeKind::Microphone => {
+                    let data: MicrophoneData = parse(n.data, "Microphone")?;
+                    let spec = InputSpec::Microphone {
+                        device_id: data
+                            .device_id
+                            .ok_or_else(|| miss(&n.id, "Microphone has no device selected"))?,
+                        sample_rate: data.sample_rate,
+                    };
+                    (spec, 1.0f32, true)
+                }
+                NodeKind::SystemAudio => {
+                    let data: SystemAudioData = parse(n.data, "SystemAudio")?;
+                    let spec = InputSpec::SystemAudio {
+                        exclude_current_app: data.exclude_current_app,
+                    };
+                    (spec, data.volume, true)
+                }
+                NodeKind::AppAudio => {
+                    let data: AppAudioData = parse(n.data, "AppAudio")?;
+                    let spec = InputSpec::AppAudio {
+                        bundle_id: data
+                            .bundle_id
+                            .ok_or_else(|| miss(&n.id, "App Audio has no application selected"))?,
+                    };
+                    (spec, data.volume, true)
+                }
+                NodeKind::AudioFile => {
+                    let data: AudioFileData = parse(n.data, "AudioFile")?;
+                    let spec = InputSpec::AudioFile {
+                        file_path: data
+                            .file_path
+                            .ok_or_else(|| miss(&n.id, "Audio File has no file selected"))?,
+                    };
+                    (spec, data.volume, data.auto_start)
+                }
+                NodeKind::NetReceiver => {
+                    let data: NetReceiverData = parse(n.data, "NetReceiver")?;
+                    (InputSpec::NetReceiver { port: data.port }, 1.0f32, true)
+                }
+                // Receive half of a collaborator: the session is keyed by the
+                // UI node, so the split suffix comes back off.
+                NodeKind::WebRtcCollaborator => {
+                    let data: WebRtcCollaboratorData = parse(n.data, "WebRtcCollaborator")?;
+                    let spec = InputSpec::WebRtcRecv {
+                        node_id: n.id.strip_suffix(RECV_SUFFIX).unwrap_or(&n.id).to_string(),
+                        opus_bitrate: data.opus_bitrate,
+                        opus_application: data.opus_application,
+                    };
+                    (spec, 1.0f32, true)
+                }
+                _ => unreachable!(),
             })
         })();
         let (spec, volume, auto_start) = match resolved {
@@ -947,6 +975,7 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                     device_id: data
                         .device_id
                         .ok_or_else(|| miss(&n.id, "Speaker has no device selected"))?,
+                    sample_rate: data.sample_rate,
                 }
             }
             NodeKind::FileRecording => {
@@ -985,7 +1014,9 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                 OutputSpec::NetSender {
                     node_id: n.id.clone(),
                     target: SocketAddr::new(ip, data.port),
-                    channels: data.channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
+                    channels: data
+                        .channels
+                        .clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
                     codec: data.codec,
                     opus_bitrate: data.opus_bitrate,
                     opus_application: data.opus_application,
@@ -1092,9 +1123,7 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
         NodeKind::NoiseGate => EffectSpec::NoiseGate(parse(n.data, "NoiseGate")?),
         NodeKind::Delay => EffectSpec::Delay(parse(n.data, "Delay")?),
         NodeKind::Reverb => EffectSpec::Reverb(parse(n.data, "Reverb")?),
-        NodeKind::NoiseSuppressor => {
-            EffectSpec::NoiseSuppressor(parse(n.data, "NoiseSuppressor")?)
-        }
+        NodeKind::NoiseSuppressor => EffectSpec::NoiseSuppressor(parse(n.data, "NoiseSuppressor")?),
         NodeKind::Declick => EffectSpec::Declick(parse(n.data, "Declick")?),
         NodeKind::DeEsser => EffectSpec::DeEsser(parse(n.data, "DeEsser")?),
         NodeKind::Plugin => {
@@ -1132,7 +1161,10 @@ fn check_acyclic(nodes: &[RoleNode<'_>], outgoing: &HashMap<&str, Vec<&str>>) ->
         InProgress,
         Done,
     }
-    let mut marks: HashMap<&str, Mark> = nodes.iter().map(|n| (n.id.as_str(), Mark::Unseen)).collect();
+    let mut marks: HashMap<&str, Mark> = nodes
+        .iter()
+        .map(|n| (n.id.as_str(), Mark::Unseen))
+        .collect();
     for n in nodes {
         if marks[n.id.as_str()] == Mark::Unseen {
             visit(n.id.as_str(), outgoing, &mut marks)?;
@@ -1148,7 +1180,9 @@ fn check_acyclic(nodes: &[RoleNode<'_>], outgoing: &HashMap<&str, Vec<&str>>) ->
         match marks.get(cur).copied().unwrap_or(Mark::Unseen) {
             Mark::Done => return Ok(()),
             Mark::InProgress => {
-                return Err(AppError::Validation(format!("cycle detected at node {cur}")));
+                return Err(AppError::Validation(format!(
+                    "cycle detected at node {cur}"
+                )));
             }
             Mark::Unseen => {}
         }
@@ -1168,11 +1202,19 @@ mod tests {
     use super::*;
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
-        NodeSpec { id: id.to_string(), kind, data }
+        NodeSpec {
+            id: id.to_string(),
+            kind,
+            data,
+        }
     }
 
     fn mic(id: &str) -> NodeSpec {
-        node(id, NodeKind::Microphone, serde_json::json!({ "deviceId": "dev" }))
+        node(
+            id,
+            NodeKind::Microphone,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
     }
 
     fn collab(id: &str) -> NodeSpec {
@@ -1184,10 +1226,20 @@ mod tests {
     }
 
     fn speaker(id: &str) -> NodeSpec {
-        node(id, NodeKind::Speaker, serde_json::json!({ "deviceId": "dev" }))
+        node(
+            id,
+            NodeKind::Speaker,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
     }
 
-    fn edge(id: &str, source: &str, source_handle: Option<&str>, target: &str, target_handle: Option<&str>) -> EdgeSpec {
+    fn edge(
+        id: &str,
+        source: &str,
+        source_handle: Option<&str>,
+        target: &str,
+        target_handle: Option<&str>,
+    ) -> EdgeSpec {
         EdgeSpec {
             id: id.to_string(),
             source: source.to_string(),
@@ -1207,10 +1259,16 @@ mod tests {
         // The send half is a destination in its own right: no speaker, no meter,
         // and no monitor needed for the mic to reach peers.
         assert_eq!(v.outputs.len(), 1);
-        assert!(matches!(v.outputs[0].spec, OutputSpec::WebRtcSend { channels: 1, .. }));
+        assert!(matches!(
+            v.outputs[0].spec,
+            OutputSpec::WebRtcSend { channels: 1, .. }
+        ));
         assert_eq!(v.outputs[0].id, "w");
         assert_eq!(v.inputs.len(), 1);
-        assert!(!v.inputs.iter().any(|i| matches!(i.spec, InputSpec::WebRtcRecv { .. })));
+        assert!(!v
+            .inputs
+            .iter()
+            .any(|i| matches!(i.spec, InputSpec::WebRtcRecv { .. })));
     }
 
     #[test]
@@ -1226,7 +1284,10 @@ mod tests {
         assert!(
             matches!(&v.inputs[0].spec, InputSpec::WebRtcRecv { node_id, .. } if node_id == "w")
         );
-        assert!(!v.outputs.iter().any(|o| matches!(o.spec, OutputSpec::WebRtcSend { .. })));
+        assert!(!v
+            .outputs
+            .iter()
+            .any(|o| matches!(o.spec, OutputSpec::WebRtcSend { .. })));
         assert_eq!(v.edges[0].from, "w#recv");
     }
 
@@ -1248,8 +1309,13 @@ mod tests {
 
     #[test]
     fn unwired_collaborator_is_not_a_routing_error() {
-        let g = GraphSpec { nodes: vec![collab("w")], edges: vec![] };
-        let v = g.validate().expect("an unwired collaborator is a destination in waiting");
+        let g = GraphSpec {
+            nodes: vec![collab("w")],
+            edges: vec![],
+        };
+        let v = g
+            .validate()
+            .expect("an unwired collaborator is a destination in waiting");
         assert!(v.inputs.is_empty());
         assert!(v.outputs.is_empty());
     }

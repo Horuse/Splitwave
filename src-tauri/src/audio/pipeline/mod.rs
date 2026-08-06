@@ -20,7 +20,9 @@ use rtrb::{Consumer, Producer};
 use tauri::AppHandle;
 use tracing::{info, warn};
 
-use crate::audio::effects::{EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle};
+use crate::audio::effects::{
+    EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
+};
 use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats};
 use crate::error::{AppError, AppResult};
@@ -211,7 +213,10 @@ impl ActivePipeline {
         // moved; doing it here keeps the notification (which locks) off the DSP
         // worker. Formats that carry the change to the plugin themselves report
         // it as unsupported, which is not a failure.
-        if let Some(map) = data.get("pluginParams").and_then(serde_json::Value::as_object) {
+        if let Some(map) = data
+            .get("pluginParams")
+            .and_then(serde_json::Value::as_object)
+        {
             if let Some(host) = crate::audio::plugins::registry::for_node(node_id) {
                 for (id, value) in map {
                     let (Ok(id), Some(value)) = (id.parse::<u32>(), value.as_f64()) else {
@@ -345,7 +350,8 @@ impl ActivePipeline {
         // A fan-out node is shared via a ring whose two ends must be rebuilt
         // together; if any cut participant is rebuilding, bump the Full ones to
         // GraphSwap so `apply_full` rebuilds them (and re-wires the ring) too.
-        let participants = dag::plan_cuts(new_graph, monitor_mode.then_some(MONITOR_KEY)).participants();
+        let participants =
+            dag::plan_cuts(new_graph, monitor_mode.then_some(MONITOR_KEY)).participants();
         let group_dirty = participants
             .iter()
             .any(|id| !matches!(cats.get(id), Some(Cat::Full)));
@@ -425,22 +431,19 @@ impl ActivePipeline {
         let old_input_specs: HashMap<&str, &InputSpec> = self
             .current
             .as_ref()
-            .map(|g| {
-                g.inputs
-                    .iter()
-                    .map(|i| (i.id.as_str(), &i.spec))
-                    .collect()
-            })
+            .map(|g| g.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect())
             .unwrap_or_default();
         let to_drop: Vec<String> = self
             .inputs
             .keys()
-            .filter(|id| match (
-                old_input_specs.get(id.as_str()),
-                new_input_specs.get(id.as_str()),
-            ) {
-                (Some(o), Some(n)) if o == n => false,
-                _ => true,
+            .filter(|id| {
+                match (
+                    old_input_specs.get(id.as_str()),
+                    new_input_specs.get(id.as_str()),
+                ) {
+                    (Some(o), Some(n)) if o == n => false,
+                    _ => true,
+                }
             })
             .cloned()
             .collect();
@@ -460,10 +463,16 @@ impl ActivePipeline {
         let Some(current) = &self.current else {
             return false;
         };
-        let cur_inputs: HashMap<&str, &InputSpec> =
-            current.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
-        let new_inputs: HashMap<&str, &InputSpec> =
-            graph.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect();
+        let cur_inputs: HashMap<&str, &InputSpec> = current
+            .inputs
+            .iter()
+            .map(|i| (i.id.as_str(), &i.spec))
+            .collect();
+        let new_inputs: HashMap<&str, &InputSpec> = graph
+            .inputs
+            .iter()
+            .map(|i| (i.id.as_str(), &i.spec))
+            .collect();
         if cur_inputs != new_inputs {
             return false;
         }
@@ -556,7 +565,10 @@ impl ActivePipeline {
         for inp in &graph.inputs {
             // Network inputs have no capture device; they produce at the output
             // rate from their own socket, so they need no resolved input runtime.
-            if matches!(inp.spec, InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. }) {
+            if matches!(
+                inp.spec,
+                InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. }
+            ) {
                 continue;
             }
             if let Some(state) = self.inputs.get(&inp.id) {
@@ -578,7 +590,7 @@ impl ActivePipeline {
                 .inputs
                 .iter()
                 .filter_map(|i| match &i.spec {
-                    InputSpec::Microphone { device_id } => Some(device_id.as_str()),
+                    InputSpec::Microphone { device_id, .. } => Some(device_id.as_str()),
                     _ => None,
                 })
                 .collect();
@@ -602,10 +614,14 @@ impl ActivePipeline {
         let mut new_input_meters: HashMap<String, MeterHandle> = HashMap::new();
         for inp in &graph.inputs {
             if !self.inputs.contains_key(&inp.id) {
-                new_input_volumes.insert(inp.id.clone(), Arc::new(AtomicU32::new(inp.volume.to_bits())));
+                new_input_volumes.insert(
+                    inp.id.clone(),
+                    Arc::new(AtomicU32::new(inp.volume.to_bits())),
+                );
                 new_input_meters.insert(inp.id.clone(), MeterHandle::new(inp.id.clone()));
                 if matches!(&inp.spec, InputSpec::AudioFile { .. }) {
-                    new_input_paused.insert(inp.id.clone(), Arc::new(AtomicBool::new(!inp.auto_start)));
+                    new_input_paused
+                        .insert(inp.id.clone(), Arc::new(AtomicBool::new(!inp.auto_start)));
                     new_input_drain.insert(inp.id.clone(), Arc::new(AtomicU64::new(0)));
                 }
             }
@@ -645,9 +661,8 @@ impl ActivePipeline {
         // created in one pass.
         let cut_plan = dag::plan_cuts(graph, monitor_mode.then_some(MONITOR_KEY));
         let participants = cut_plan.participants();
-        let base_changed = |id: &str| {
-            self.current_output_sig(id) != Some(&compute_output_sig(graph, id))
-        };
+        let base_changed =
+            |id: &str| self.current_output_sig(id) != Some(&compute_output_sig(graph, id));
         let mut rebuild: HashSet<String> = HashSet::new();
         for out in &graph.outputs {
             if base_changed(&out.id) {
@@ -734,14 +749,17 @@ impl ActivePipeline {
             )?;
             // Wire publish taps for nodes this output owns and other outputs read.
             for (node, cons) in &cut_plan.consumers {
-                if cons.is_empty() || cut_plan.owner.get(node).map(String::as_str) != Some(out.id.as_str()) {
+                if cons.is_empty()
+                    || cut_plan.owner.get(node).map(String::as_str) != Some(out.id.as_str())
+                {
                     continue;
                 }
                 let Some(&(idx, width)) = built.node_meta.get(node) else {
                     continue;
                 };
                 for o2 in cons {
-                    let (prod, consumer) = rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * width);
+                    let (prod, consumer) =
+                        rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * width);
                     built.graph.attach_tap(idx, prod);
                     pending_cuts
                         .entry(o2.clone())
@@ -782,8 +800,8 @@ impl ActivePipeline {
         let mut monitor_graph: Option<OutputGraph> = None;
         if monitor_mode {
             let new_sig = compute_output_sig(graph, MONITOR_KEY);
-            let needs_build = monitor_forced
-                || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
+            let needs_build =
+                monitor_forced || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
             if needs_build {
                 let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
@@ -811,9 +829,9 @@ impl ActivePipeline {
                 }
                 for (id, control) in built.controls {
                     // Overwrite, not keep-first: a rebuilt node's control carries the
-                // live handles/queue of the current instance; a stale entry would
-                // route updates to a dropped instance.
-                self.effect_controls.insert(id, control);
+                    // live handles/queue of the current instance; a stale entry would
+                    // route updates to a dropped instance.
+                    self.effect_controls.insert(id, control);
                 }
                 for (id, bypass) in built.bypasses {
                     self.effect_bypasses.entry(id).or_insert(bypass);
@@ -866,7 +884,11 @@ impl ActivePipeline {
                     }
                     let (slot, capture) = state.bridge_tx.add(prod)?;
                     captured.push((input_id.clone(), out_id.clone(), capture));
-                    state.bridges_by_output.entry(out_id).or_default().push(slot);
+                    state
+                        .bridges_by_output
+                        .entry(out_id)
+                        .or_default()
+                        .push(slot);
                 }
             } else {
                 let resolved = input_runtime.remove(&input_id).ok_or_else(|| {
@@ -874,7 +896,8 @@ impl ActivePipeline {
                 })?;
                 let sample_rate = resolved.sample_rate();
                 let channels = resolved.native_channels();
-                let meter = new_input_meters.remove(&input_id)
+                let meter = new_input_meters
+                    .remove(&input_id)
                     .unwrap_or_else(|| MeterHandle::new(input_id.clone()));
                 self.meters.insert(input_id.clone(), meter);
 
@@ -909,9 +932,11 @@ impl ActivePipeline {
         }
 
         for (input_id, out_id, capture) in captured {
-            if let Some(meta) = self.source_stats.iter_mut().find(|s| {
-                s.input_id.as_deref() == Some(input_id.as_str()) && s.output_id == out_id
-            }) {
+            if let Some(meta) = self
+                .source_stats
+                .iter_mut()
+                .find(|s| s.input_id.as_deref() == Some(input_id.as_str()) && s.output_id == out_id)
+            {
                 meta.capture = Some(capture);
             }
         }
@@ -940,8 +965,14 @@ impl ActivePipeline {
             let paused = new_input_paused.remove(&input_id);
             let drain = new_input_drain.remove(&input_id);
             let (bridge_tx, bridge_rx) = broadcast_channel();
-            let handle =
-                start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), Some(meter), &app)?;
+            let handle = start_input_stream(
+                &input_id,
+                resolved,
+                bridge_rx,
+                paused.clone(),
+                Some(meter),
+                &app,
+            )?;
             self.inputs.insert(
                 input_id,
                 InputState {
@@ -1128,24 +1159,35 @@ impl ActivePipeline {
         // Respawn the meter tick thread so it picks up new/changed
         // handles. The old thread (if any) was dropped by `teardown_*` /
         // `prepare_for_reconcile`.
-        self.meter_thread = if self.meters.is_empty() && self.lufs.is_empty() && self.gr_handles.is_empty() && self.scopes.is_empty() {
+        self.meter_thread = if self.meters.is_empty()
+            && self.lufs.is_empty()
+            && self.gr_handles.is_empty()
+            && self.scopes.is_empty()
+        {
             None
         } else {
             let meters_snapshot: Vec<MeterHandle> = self.meters.values().cloned().collect();
             let lufs_snapshot: Vec<LufsHandle> = self.lufs.values().cloned().collect();
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
-            Some(spawn_meter_thread(app, meters_snapshot, lufs_snapshot, gr_snapshot, scopes_snapshot))
+            Some(spawn_meter_thread(
+                app,
+                meters_snapshot,
+                lufs_snapshot,
+                gr_snapshot,
+                scopes_snapshot,
+            ))
         };
 
         self.xrun_thread = if self.source_stats.is_empty() && self.output_stats.is_empty() {
             None
         } else {
-            Some(spawn_xrun_thread(self.source_stats.clone(), self.output_stats.clone()))
+            Some(spawn_xrun_thread(
+                self.source_stats.clone(),
+                self.output_stats.clone(),
+            ))
         };
 
         Ok(())
     }
 }
-
-

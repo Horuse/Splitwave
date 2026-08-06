@@ -31,6 +31,7 @@ pub(in crate::audio::pipeline) fn native_config(
     kind: DeviceKind,
     _device: &cpal::Device,
     name: &str,
+    requested_sample_rate: Option<u32>,
 ) -> AppResult<NativeConfig> {
     use crate::audio::macos_hal;
     let hal = match kind {
@@ -43,19 +44,28 @@ pub(in crate::audio::pipeline) fn native_config(
         ))
     })?;
 
-    let channels: u16 = hal
-        .channels
-        .try_into()
-        .map_err(|_| AppError::Device(format!("device {name:?} has {} channels (too many)", hal.channels)))?;
+    let channels: u16 = hal.channels.try_into().map_err(|_| {
+        AppError::Device(format!(
+            "device {name:?} has {} channels (too many)",
+            hal.channels
+        ))
+    })?;
+    // CoreAudio's "available nominal sample rates" is the hardware/driver's
+    // native clock list, not the complete set of rates an AUHAL stream can open.
+    // Many devices, especially Bluetooth/virtual/aggregate routes, report a
+    // tiny or stale nominal list even though CoreAudio can sample-rate-convert
+    // an app stream. Try the user's requested stream rate and let the stream
+    // builder return the real error if this route truly cannot open it.
+    let sample_rate = requested_sample_rate.unwrap_or(hal.sample_rate);
 
     Ok(NativeConfig {
         config: cpal::StreamConfig {
             channels,
-            sample_rate: cpal::SampleRate(hal.sample_rate),
+            sample_rate: cpal::SampleRate(sample_rate),
             buffer_size: cpal::BufferSize::Default,
         },
         sample_format: cpal::SampleFormat::F32,
-        sample_rate: hal.sample_rate,
+        sample_rate,
         channels,
     })
 }
@@ -68,13 +78,30 @@ pub(in crate::audio::pipeline) fn native_config(
     kind: DeviceKind,
     device: &cpal::Device,
     name: &str,
+    requested_sample_rate: Option<u32>,
 ) -> AppResult<NativeConfig> {
     use cpal::traits::DeviceTrait;
-    let supported = match kind {
-        DeviceKind::Input => device.default_input_config(),
-        DeviceKind::Output => device.default_output_config(),
-    }
-    .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
+    let supported = if let Some(rate) = requested_sample_rate {
+        let mut configs = match kind {
+            DeviceKind::Input => device.supported_input_configs(),
+            DeviceKind::Output => device.supported_output_configs(),
+        }
+        .map_err(|e| AppError::Device(format!("supported configs for {name:?}: {e}")))?;
+        configs
+            .find(|cfg| cfg.min_sample_rate().0 <= rate && rate <= cfg.max_sample_rate().0)
+            .map(|cfg| cfg.with_sample_rate(cpal::SampleRate(rate)))
+            .ok_or_else(|| {
+                AppError::Device(format!(
+                    "{kind:?} device {name:?} does not support {rate} Hz"
+                ))
+            })?
+    } else {
+        match kind {
+            DeviceKind::Input => device.default_input_config(),
+            DeviceKind::Output => device.default_output_config(),
+        }
+        .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?
+    };
 
     let sample_rate = supported.sample_rate().0;
     let channels = supported.channels();

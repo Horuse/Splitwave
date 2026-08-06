@@ -43,9 +43,12 @@ impl Drop for SpeakerHandle {
     }
 }
 
-pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+pub(in crate::audio::pipeline) fn resolve_speaker(
+    device_id: &str,
+    sample_rate: Option<u32>,
+) -> AppResult<SpeakerResolved> {
     let device = device::find(DeviceKind::Output, device_id)?;
-    let native = native_config(DeviceKind::Output, &device, device_id)?;
+    let native = native_config(DeviceKind::Output, &device, device_id, sample_rate)?;
     Ok(SpeakerResolved {
         device,
         config: native.config,

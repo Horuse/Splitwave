@@ -20,9 +20,12 @@ const LOOPBACK_CHANNELS: usize = 2;
 
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
     match &inp.spec {
-        InputSpec::Microphone { device_id } => {
+        InputSpec::Microphone {
+            device_id,
+            sample_rate,
+        } => {
             let device = device::find(DeviceKind::Input, device_id)?;
-            let native = native_config(DeviceKind::Input, &device, device_id)?;
+            let native = native_config(DeviceKind::Input, &device, device_id, *sample_rate)?;
             Ok(ResolvedInput::Cpal {
                 device,
                 config: native.config,
@@ -31,7 +34,9 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
                 sample_rate: native.sample_rate,
             })
         }
-        InputSpec::SystemAudio { exclude_current_app } => Ok(ResolvedInput::SystemAudio {
+        InputSpec::SystemAudio {
+            exclude_current_app,
+        } => Ok(ResolvedInput::SystemAudio {
             sample_rate: crate::audio::capture::loopback_mix_rate().unwrap_or(SCK_SR),
             exclude_current_app: *exclude_current_app,
         }),

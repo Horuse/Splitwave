@@ -461,14 +461,31 @@ public func ba_tap_available() -> Int32 {
     return 0
 }
 
-/// Nominal sample rate of the current default output device, which the tap
-/// format follows. 0 when unavailable.
+/// Sample rate of a process tap's own format. This deliberately does not read
+/// the default output device's nominal rate: aggregate/tap creation can expose
+/// a different conversion format, and the Rust graph needs the rate the tap
+/// will actually deliver before it wires source resamplers.
 @_cdecl("ba_tap_default_rate")
 public func ba_tap_default_rate() -> Double {
-    guard let device = defaultOutputDevice(),
-          let rate = readValue(device, kAudioDevicePropertyNominalSampleRate, Double(0))
-    else { return 0 }
-    return rate
+    if #available(macOS 14.4, *) {
+        let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        desc.uuid = UUID()
+        desc.name = "Splitwave Format Probe"
+        desc.isPrivate = true
+        desc.muteBehavior = .unmuted
+
+        var tap = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateProcessTap(desc, &tap) == noErr,
+              tap != AudioObjectID(kAudioObjectUnknown)
+        else { return 0 }
+        defer { AudioHardwareDestroyProcessTap(tap) }
+
+        guard let asbd = readValue(tap, kAudioTapPropertyFormat, AudioStreamBasicDescription()),
+              asbd.mSampleRate > 0
+        else { return 0 }
+        return asbd.mSampleRate
+    }
+    return 0
 }
 
 @_cdecl("ba_tap_create")

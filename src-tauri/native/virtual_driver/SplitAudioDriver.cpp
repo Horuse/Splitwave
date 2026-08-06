@@ -76,7 +76,12 @@ public:
     }
 };
 
-struct DeviceConfig { std::string id; std::string name; uint32_t channels; };
+struct DeviceConfig {
+    std::string id;
+    std::string name;
+    uint32_t    channels;
+    double      sampleRate;
+};
 
 static std::string CFStr(CFStringRef s) {
     if (!s) return {};
@@ -126,7 +131,14 @@ static std::vector<DeviceConfig> ReadConfig() {
             CFNumberGetValue(ch, kCFNumberIntType, &v);
             if (v >= 1 && v <= 256) channels = (uint32_t)v;
         }
-        if (!id.empty() && !name.empty()) out.push_back({id, name, channels});
+        double sampleRate = 48000.0;
+        CFNumberRef sr = (CFNumberRef)CFDictionaryGetValue(d, CFSTR("sampleRate"));
+        if (sr && CFGetTypeID(sr) == CFNumberGetTypeID()) {
+            double v = 0.0;
+            CFNumberGetValue(sr, kCFNumberDoubleType, &v);
+            if (v >= 8000.0 && v <= 384000.0) sampleRate = v;
+        }
+        if (!id.empty() && !name.empty()) out.push_back({id, name, channels, sampleRate});
     }
     CFRelease(plist);
     return out;
@@ -136,6 +148,7 @@ struct DeviceEntry {
     std::shared_ptr<aspl::Device>   device;
     std::shared_ptr<SplitIOHandler> handler;
     uint32_t                        channels;
+    double                          sampleRate;
 };
 
 static std::shared_ptr<aspl::Context>     gContext;
@@ -144,9 +157,9 @@ static std::map<std::string, DeviceEntry> gDevices;
 static std::mutex                         gDevicesMutex;
 
 // libASPL streams default to 16-bit int; our IO is float.
-static AudioStreamBasicDescription FloatFormat(UInt32 channels) {
+static AudioStreamBasicDescription FloatFormat(UInt32 channels, double sampleRate) {
     AudioStreamBasicDescription f = {};
-    f.mSampleRate       = 48000;
+    f.mSampleRate       = sampleRate;
     f.mFormatID         = kAudioFormatLinearPCM;
     f.mFormatFlags      = kAudioFormatFlagIsFloat | kAudioFormatFlagsNativeEndian |
                           kAudioFormatFlagIsPacked;
@@ -167,7 +180,7 @@ static DeviceEntry BuildDevice(const DeviceConfig& cfg) {
     params.Manufacturer = "Splitwave";
     params.DeviceUID    = "com.horuse.splitwave.audio." + cfg.id;
     params.ModelUID     = "com.horuse.splitwave.audio.model";
-    params.SampleRate   = 48000;
+    params.SampleRate   = cfg.sampleRate;
     params.ChannelCount = cfg.channels;
     params.EnableMixing = true;
 
@@ -177,15 +190,15 @@ static DeviceEntry BuildDevice(const DeviceConfig& cfg) {
 
     aspl::StreamParameters outStream;
     outStream.Direction = aspl::Direction::Output;
-    outStream.Format = FloatFormat(params.ChannelCount);
+    outStream.Format = FloatFormat(params.ChannelCount, params.SampleRate);
     device->AddStreamWithControlsAsync(outStream);
 
     aspl::StreamParameters inStream;
     inStream.Direction = aspl::Direction::Input;
-    inStream.Format = FloatFormat(params.ChannelCount);
+    inStream.Format = FloatFormat(params.ChannelCount, params.SampleRate);
     device->AddStreamWithControlsAsync(inStream);
 
-    return {device, handler, cfg.channels};
+    return {device, handler, cfg.channels, cfg.sampleRate};
 }
 
 // Reconciles the live device set against the config file. A channel count change
@@ -200,6 +213,7 @@ static void SyncDevices() {
             return nullptr;
         }();
         if (!cfg || cfg->channels != it->second.channels
+                 || cfg->sampleRate != it->second.sampleRate
                  || cfg->name != it->second.device->GetName()) {
             gPlugin->RemoveDevice(it->second.device);
             it = gDevices.erase(it);

@@ -18,6 +18,7 @@ pub struct DeviceInfo {
 #[serde(rename_all = "camelCase")]
 pub struct NativeDeviceInfo {
     pub sample_rate: u32,
+    pub sample_rates: Vec<u32>,
     pub channels: u16,
     pub sample_format: &'static str,
 }

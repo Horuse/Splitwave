@@ -35,6 +35,8 @@ const K_AUDIO_HARDWARE_PROPERTY_DEVICES: AudioObjectPropertySelector = fourcc(b"
 const K_AUDIO_DEVICE_PROPERTY_STREAMS: AudioObjectPropertySelector = fourcc(b"stm#");
 const K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION: AudioObjectPropertySelector = fourcc(b"slay");
 const K_AUDIO_DEVICE_PROPERTY_NOMINAL_SAMPLE_RATE: AudioObjectPropertySelector = fourcc(b"nsrt");
+const K_AUDIO_DEVICE_PROPERTY_AVAILABLE_NOMINAL_SAMPLE_RATES: AudioObjectPropertySelector =
+    fourcc(b"nsr#");
 const K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR: AudioObjectPropertySelector = fourcc(b"volm");
 const K_AUDIO_DEVICE_PROPERTY_MUTE: AudioObjectPropertySelector = fourcc(b"mute");
 const K_AUDIO_OBJECT_PROPERTY_NAME: AudioObjectPropertySelector = fourcc(b"lnam");
@@ -60,6 +62,13 @@ struct AudioBuffer {
 struct AudioBufferList {
     m_number_buffers: u32,
     m_buffers: [AudioBuffer; 1],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct AudioValueRange {
+    m_minimum: f64,
+    m_maximum: f64,
 }
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x08000100;
@@ -190,10 +199,7 @@ unsafe fn device_uid(device_id: AudioObjectID) -> Option<String> {
 /// AUHAL requires this to bind the device for I/O — devices with a static
 /// channel layout but no stream objects (typical of non-routable aliases)
 /// can't be opened and must not appear in the user-facing list.
-unsafe fn has_streams_in_scope(
-    device_id: AudioObjectID,
-    scope: AudioObjectPropertyScope,
-) -> bool {
+unsafe fn has_streams_in_scope(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> bool {
     let addr = AudioObjectPropertyAddress {
         selector: K_AUDIO_DEVICE_PROPERTY_STREAMS,
         scope,
@@ -206,18 +212,14 @@ unsafe fn has_streams_in_scope(
     (size as usize / mem::size_of::<AudioObjectID>()) > 0
 }
 
-unsafe fn channel_count_in_scope(
-    device_id: AudioObjectID,
-    scope: AudioObjectPropertyScope,
-) -> u32 {
+unsafe fn channel_count_in_scope(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> u32 {
     let addr = AudioObjectPropertyAddress {
         selector: K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION,
         scope,
         element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
     };
     let mut size: u32 = 0;
-    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0
-        || size == 0
+    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0 || size == 0
     {
         return 0;
     }
@@ -286,6 +288,7 @@ unsafe fn all_device_ids() -> Vec<AudioObjectID> {
 pub struct HalDevice {
     pub name: String,
     pub sample_rate: u32,
+    pub sample_rates: Vec<u32>,
     pub channels: u32,
 }
 
@@ -315,6 +318,75 @@ unsafe fn nominal_sample_rate(device_id: AudioObjectID) -> Option<u32> {
     }
 }
 
+const COMMON_SAMPLE_RATES: &[u32] = &[
+    8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+    352_800, 384_000,
+];
+
+unsafe fn available_nominal_sample_rate_ranges(device_id: AudioObjectID) -> Vec<AudioValueRange> {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_AVAILABLE_NOMINAL_SAMPLE_RATES,
+        scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut size: u32 = 0;
+    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0 || size == 0
+    {
+        return Vec::new();
+    }
+    let count = size as usize / mem::size_of::<AudioValueRange>();
+    let mut ranges = vec![
+        AudioValueRange {
+            m_minimum: 0.0,
+            m_maximum: 0.0,
+        };
+        count
+    ];
+    let mut io_size = size;
+    if AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut io_size,
+        ranges.as_mut_ptr() as *mut c_void,
+    ) != 0
+    {
+        return Vec::new();
+    }
+    ranges
+        .into_iter()
+        .filter(|r| {
+            r.m_minimum.is_finite()
+                && r.m_maximum.is_finite()
+                && r.m_minimum > 0.0
+                && r.m_maximum >= r.m_minimum
+        })
+        .collect()
+}
+
+unsafe fn available_nominal_sample_rates(device_id: AudioObjectID, current: u32) -> Vec<u32> {
+    let ranges = available_nominal_sample_rate_ranges(device_id);
+    let mut rates = vec![current];
+    for r in &ranges {
+        let min = r.m_minimum.round() as u32;
+        let max = r.m_maximum.round() as u32;
+        if min == max {
+            rates.push(min);
+        } else {
+            rates.extend(
+                COMMON_SAMPLE_RATES
+                    .iter()
+                    .copied()
+                    .filter(|rate| min <= *rate && *rate <= max),
+            );
+        }
+    }
+    rates.sort_unstable();
+    rates.dedup();
+    rates
+}
+
 fn list_by_scope(scope: AudioObjectPropertyScope) -> Vec<HalDevice> {
     let mut out = Vec::new();
     unsafe {
@@ -335,9 +407,11 @@ fn list_by_scope(scope: AudioObjectPropertyScope) -> Vec<HalDevice> {
             let Some(sample_rate) = nominal_sample_rate(id) else {
                 continue;
             };
+            let sample_rates = available_nominal_sample_rates(id, sample_rate);
             out.push(HalDevice {
                 name,
                 sample_rate,
+                sample_rates,
                 channels,
             });
         }
@@ -388,8 +462,7 @@ fn find_device_id(name: &str, scope: AudioObjectPropertyScope) -> Option<AudioOb
 /// True for our own private CATap capture aggregate; CoreAudio hands a
 /// process its own private aggregates, so they must be hidden from the menus.
 unsafe fn is_tap_aggregate(device_id: AudioObjectID) -> bool {
-    device_uid(device_id)
-        .is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
+    device_uid(device_id).is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
 }
 
 unsafe fn read_volume_for_element(
@@ -504,11 +577,7 @@ pub fn device_volume(kind: crate::audio::device::DeviceKind, name: &str) -> Opti
 }
 
 /// Returns false when the property isn't settable.
-pub fn set_device_volume(
-    kind: crate::audio::device::DeviceKind,
-    name: &str,
-    scalar: f32,
-) -> bool {
+pub fn set_device_volume(kind: crate::audio::device::DeviceKind, name: &str, scalar: f32) -> bool {
     let scope = scope_for(kind);
     let Some(device_id) = find_device_id(name, scope) else {
         return false;
@@ -521,7 +590,8 @@ pub fn set_device_volume(
             write_volume_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, 0.0);
             write_volume_for_element(device_id, scope, 1, 0.0);
             write_volume_for_element(device_id, scope, 2, 0.0);
-            if write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, true) {
+            if write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, true)
+            {
                 return true;
             }
             let l = write_mute_for_element(device_id, scope, 1, true);
@@ -529,10 +599,20 @@ pub fn set_device_volume(
             return l || r;
         }
         // Non-zero: clear mute so audio can pass through, then apply scalar.
-        let _ = write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, false);
+        let _ = write_mute_for_element(
+            device_id,
+            scope,
+            K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+            false,
+        );
         let _ = write_mute_for_element(device_id, scope, 1, false);
         let _ = write_mute_for_element(device_id, scope, 2, false);
-        if write_volume_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, scalar) {
+        if write_volume_for_element(
+            device_id,
+            scope,
+            K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+            scalar,
+        ) {
             return true;
         }
         let l = write_volume_for_element(device_id, scope, 1, scalar);

@@ -1,17 +1,24 @@
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VirtualDeviceConfig {
     pub id: String,
     pub name: String,
     #[serde(default = "default_channels")]
     pub channels: u32,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: u32,
 }
 
 fn default_channels() -> u32 {
     2
 }
 
+fn default_sample_rate() -> u32 {
+    48_000
+}
+
 // Bump with any driver bundle change; keep in sync with Info.plist CFBundleVersion.
-pub const DRIVER_VERSION: u32 = 4;
+pub const DRIVER_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

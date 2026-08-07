@@ -11,11 +11,11 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::clap_registry::ClapHost;
-use super::vst3_registry::Vst3Host;
 #[cfg(target_os = "macos")]
 use super::au_host::AuHost;
+use super::clap_registry::ClapHost;
 use super::host_api::{ActivateRequest, HostedNode, PluginHost};
+use super::vst3_registry::Vst3Host;
 use super::PluginFormat;
 
 fn host_for(format: PluginFormat) -> &'static dyn PluginHost {

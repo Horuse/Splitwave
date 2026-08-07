@@ -27,7 +27,11 @@ impl MuteEffect {
 
     pub fn from_state(muted: Arc<AtomicBool>) -> Self {
         Self {
-            current: if muted.load(Ordering::Relaxed) { 0.0 } else { 1.0 },
+            current: if muted.load(Ordering::Relaxed) {
+                0.0
+            } else {
+                1.0
+            },
             muted,
         }
     }
@@ -36,7 +40,11 @@ impl MuteEffect {
 impl Effect for MuteEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let target = if self.muted.load(Ordering::Relaxed) { 0.0 } else { 1.0 };
+        let target = if self.muted.load(Ordering::Relaxed) {
+            0.0
+        } else {
+            1.0
+        };
         if self.current >= 1.0 && target >= 1.0 {
             return;
         }
@@ -64,7 +72,10 @@ mod tests {
 
     #[test]
     fn mute_zeros() {
-        let (mut e, _) = MuteEffect::new(MuteData { muted: true, bypassed: false });
+        let (mut e, _) = MuteEffect::new(MuteData {
+            muted: true,
+            bypassed: false,
+        });
         let mut buf = [0.5, -0.5, 0.3, -0.3];
         e.process(&mut buf, 2);
         assert_eq!(buf, [0.0, 0.0, 0.0, 0.0]);
@@ -72,7 +83,10 @@ mod tests {
 
     #[test]
     fn mute_control_unmutes_live() {
-        let (mut e, c) = MuteEffect::new(MuteData { muted: true, bypassed: false });
+        let (mut e, c) = MuteEffect::new(MuteData {
+            muted: true,
+            bypassed: false,
+        });
         c.apply_update(&serde_json::json!({ "muted": false }));
         let mut buf = [0.5_f32, -0.5];
         e.process(&mut buf, 1);

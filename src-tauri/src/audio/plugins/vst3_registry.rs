@@ -147,7 +147,9 @@ fn parent_handle(window: &tauri::Window) -> Result<usize, String> {
             RawWindowHandle::Xcb(h) => Ok(h.window.get() as usize),
             // VST3 defines no Wayland platform type, so there is nothing to
             // parent into; running the session under XWayland is the way out.
-            other => Err(format!("VST3 editors need an X11 or Win32 window, got {other:?}")),
+            other => Err(format!(
+                "VST3 editors need an X11 or Win32 window, got {other:?}"
+            )),
         }
     }
 }
@@ -225,7 +227,9 @@ impl PluginHost for Vst3Host {
         param_id: u32,
         value: f64,
     ) -> Result<(), Unsupported> {
-        with_slot(node_id, move |slot| slot.instance.set_param(param_id, value));
+        with_slot(node_id, move |slot| {
+            slot.instance.set_param(param_id, value)
+        });
         Ok(())
     }
 
@@ -263,7 +267,6 @@ impl PluginHost for Vst3Host {
             })
         })?
     }
-
 
     /// Already on the main thread by contract, so the view is dropped here
     /// rather than marshalled: the window's own close handler calls this, and

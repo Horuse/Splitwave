@@ -99,7 +99,12 @@ pub struct MultiResampler {
 }
 
 impl MultiResampler {
-    pub fn new(from_rate: u32, to_rate: u32, chunk_size: usize, channels: usize) -> AppResult<Self> {
+    pub fn new(
+        from_rate: u32,
+        to_rate: u32,
+        chunk_size: usize,
+        channels: usize,
+    ) -> AppResult<Self> {
         let ratio = to_rate as f64 / from_rate as f64;
         let inner = SincFixedIn::<f32>::new(ratio, 1.05, sinc_params(), chunk_size, channels)
             .map_err(|e| AppError::Stream(format!("resampler init: {e}")))?;

@@ -43,10 +43,12 @@ pub(in crate::audio::pipeline) fn native_config(
         ))
     })?;
 
-    let channels: u16 = hal
-        .channels
-        .try_into()
-        .map_err(|_| AppError::Device(format!("device {name:?} has {} channels (too many)", hal.channels)))?;
+    let channels: u16 = hal.channels.try_into().map_err(|_| {
+        AppError::Device(format!(
+            "device {name:?} has {} channels (too many)",
+            hal.channels
+        ))
+    })?;
 
     Ok(NativeConfig {
         config: cpal::StreamConfig {

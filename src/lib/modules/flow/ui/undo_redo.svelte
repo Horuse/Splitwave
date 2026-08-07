@@ -46,24 +46,10 @@
 </script>
 
 <div class="flex items-center gap-1">
-	<button
-		type="button"
-		class="button-header size-7"
-		class:active={undoActive}
-		title="Undo (⌘Z)"
-		disabled={!canUndo}
-		onclick={onUndo}
-	>
+	<button type="button" class="button-header size-7" class:active={undoActive} title="Undo (⌘Z)" disabled={!canUndo} onclick={onUndo}>
 		<ArrowUndo class="h-4 w-4" />
 	</button>
-	<button
-		type="button"
-		class="button-header size-7"
-		class:active={redoActive}
-		title="Redo (⇧⌘Z)"
-		disabled={!canRedo}
-		onclick={onRedo}
-	>
+	<button type="button" class="button-header size-7" class:active={redoActive} title="Redo (⇧⌘Z)" disabled={!canRedo} onclick={onRedo}>
 		<ArrowRedo class="h-4 w-4" />
 	</button>
 </div>

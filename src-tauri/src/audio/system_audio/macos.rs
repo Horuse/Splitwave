@@ -26,7 +26,9 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
     let mut paths = bundle_path_cache().lock().unwrap();
 
     for app in apps.iter() {
-        let Some(bundle_id) = bundle_identifier(&app) else { continue };
+        let Some(bundle_id) = bundle_identifier(&app) else {
+            continue;
+        };
         let name = localized_name(&app).unwrap_or_else(|| bundle_id.clone());
         if !paths.contains_key(&bundle_id) {
             if let Some(path) = bundle_path(&app) {
@@ -34,7 +36,11 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
             }
         }
         if seen.insert(bundle_id.clone()) {
-            out.push(AudioApplication { bundle_id, name, icon: None });
+            out.push(AudioApplication {
+                bundle_id,
+                name,
+                icon: None,
+            });
         }
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -126,7 +132,11 @@ fn icon_name_from_plist(path: &std::path::Path) -> Option<String> {
     let start = after_key.find("<string>")? + "<string>".len();
     let end = after_key[start..].find("</string>")?;
     let name = after_key[start..start + end].trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn icns_png(data: &[u8]) -> Option<Vec<u8>> {
@@ -138,8 +148,7 @@ fn icns_png(data: &[u8]) -> Option<Vec<u8>> {
     let mut pos = 8usize;
     while pos + 8 <= data.len() {
         let tag = &data[pos..pos + 4];
-        let size =
-            u32::from_be_bytes(data[pos + 4..pos + 8].try_into().ok()?) as usize;
+        let size = u32::from_be_bytes(data[pos + 4..pos + 8].try_into().ok()?) as usize;
         if size < 8 {
             break;
         }

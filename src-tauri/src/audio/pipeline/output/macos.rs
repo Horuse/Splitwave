@@ -77,10 +77,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
-    let device_name = spec
-        .device
-        .name()
-        .unwrap_or_else(|_| "<unknown>".into());
+    let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
     info!(
         device = %device_name,
         sample_rate = spec.sample_rate,
@@ -167,7 +164,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _stream: stream, _worker: worker_handle, _alive: StreamGuard::new() },
+        SpeakerHandle {
+            _stream: stream,
+            _worker: worker_handle,
+            _alive: StreamGuard::new(),
+        },
         ctrl,
         dead,
         io,

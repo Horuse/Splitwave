@@ -16,7 +16,11 @@ pub fn device_info(_kind: DeviceKind, _name: &str) -> AppResult<NativeDeviceInfo
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     let mut out: Vec<DeviceInfo> = nodes_by_class("Audio/Source")?
         .into_iter()
-        .map(|n| DeviceInfo { id: n.name, name: n.description, kind: DeviceKind::Input })
+        .map(|n| DeviceInfo {
+            id: n.name,
+            name: n.description,
+            kind: DeviceKind::Input,
+        })
         .collect();
     // Every sink exposes a monitor we can record; offer them as inputs too.
     for sink in nodes_by_class("Audio/Sink")? {
@@ -32,6 +36,10 @@ pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     Ok(nodes_by_class("Audio/Sink")?
         .into_iter()
-        .map(|n| DeviceInfo { id: n.name, name: n.description, kind: DeviceKind::Output })
+        .map(|n| DeviceInfo {
+            id: n.name,
+            name: n.description,
+            kind: DeviceKind::Output,
+        })
         .collect())
 }

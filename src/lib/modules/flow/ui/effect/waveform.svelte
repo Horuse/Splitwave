@@ -16,30 +16,30 @@
 
 	const flow = useSvelteFlow();
 
-	const FRAMES     = 1024;
-	const MIN_SEGS   = 1;
-	const MAX_SEGS   = 16;
+	const FRAMES = 1024;
+	const MIN_SEGS = 1;
+	const MAX_SEGS = 16;
 	const MAX_BLOCKS = 300;
-	const SCALE_W    = 30;
-	const VERT_PAD   = 10;
+	const SCALE_W = 30;
+	const VERT_PAD = 10;
 
 	const SCALE_LEVELS: [number, string][] = [
-		[ 1.0, '1.0'],
-		[ 0.5, '0.5'],
-		[ 0.0, '0.0'],
+		[1.0, '1.0'],
+		[0.5, '0.5'],
+		[0.0, '0.0'],
 		[-0.5, '-0.5'],
-		[-1.0, '-1.0'],
+		[-1.0, '-1.0']
 	];
 
 	let segs = $state(data.segs ?? 4);
-	let W    = $state(240);
-	let Hpx  = $state(105);
+	let W = $state(240);
+	let Hpx = $state(105);
 
 	let channels = $state(1);
-	let WW    = $derived(Math.max(1, W - SCALE_W));
+	let WW = $derived(Math.max(1, W - SCALE_W));
 	// viewBox height tracks the measured container exactly so the drawing fills
 	// the node with no leftover strip; lanes divide it evenly.
-	let H     = $derived(Hpx);
+	let H = $derived(Hpx);
 	let laneH = $derived(Hpx / channels);
 	let halfH = $derived(Math.max(4, laneH / 2 - Math.min(VERT_PAD, laneH * 0.25)));
 
@@ -53,7 +53,10 @@
 			const h = Math.round(rect.height);
 			requestAnimationFrame(() => {
 				if (w > 0 && w !== W) W = w;
-				if (h > 0 && h !== Hpx) { Hpx = h; dirty = true; }
+				if (h > 0 && h !== Hpx) {
+					Hpx = h;
+					dirty = true;
+				}
 			});
 		});
 		ro.observe(waveWrap);
@@ -70,7 +73,11 @@
 	let blockCount = 0;
 	let dirty = false;
 
-	interface ScopeTick { nodeId: string; channels: number; data: number[][]; }
+	interface ScopeTick {
+		nodeId: string;
+		channels: number;
+		data: number[][];
+	}
 
 	function ensureArrays() {
 		if (peaks.length === channels && peaks[0]?.length === WW) return;
@@ -81,7 +88,8 @@
 	function segEnvelope(buf: number[], seg: number, segSize: number): [number, number] {
 		const i0 = seg * segSize;
 		const i1 = Math.min(i0 + segSize, FRAMES);
-		let p = 0, t = 0;
+		let p = 0,
+			t = 0;
 		for (let i = i0; i < i1; i++) {
 			if (buf[i] > p) p = buf[i];
 			if (buf[i] < t) t = buf[i];
@@ -205,12 +213,7 @@
 	});
 </script>
 
-<div
-	class={[
-		'flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm',
-		isPreview ? 'w-80 h-40' : 'w-full h-full'
-	]}
->
+<div class={['flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
 	{#if !isPreview}
 		<NodeResizer minWidth={160} maxWidth={1200} minHeight={80} maxHeight={1200} />
 	{/if}
@@ -221,22 +224,12 @@
 			Waveform
 		</span>
 		<div class="flex items-center gap-1.5">
-			<button
-				type="button"
-				class="nodrag nopan button-main primary size-4 p-0!"
-				onclick={() => changeSegs(-1)}
-				title="Zoom in"
-			>
-				<Minus class="size-2"/>
+			<button type="button" class="nodrag nopan button-main primary size-4 p-0!" onclick={() => changeSegs(-1)} title="Zoom in">
+				<Minus class="size-2" />
 			</button>
-			<span class="font-mono tabular-nums text-sm text-neutral-800 w-4 text-center">{segs}</span>
-			<button
-				type="button"
-				class="nodrag nopan button-main primary size-4 p-0!"
-				onclick={() => changeSegs(+1)}
-				title="Zoom out"
-			>
-				<Add class="size-2"/>
+			<span class="w-4 text-center font-mono text-sm text-neutral-800 tabular-nums">{segs}</span>
+			<button type="button" class="nodrag nopan button-main primary size-4 p-0!" onclick={() => changeSegs(+1)} title="Zoom out">
+				<Add class="size-2" />
 			</button>
 		</div>
 	</div>
@@ -246,54 +239,53 @@
 			<ChannelHandles nodeId={id} side="target" />
 		{/if}
 		<div bind:this={waveWrap} class="nowheel min-w-0 flex-1 self-stretch overflow-hidden">
-		<!--
+			<!--
 			viewBox ties the coordinate system to W×H (ResizeObserver-tracked).
 			SVG itself renders at native device pixel density — no DPR math needed.
 		-->
-		<svg
-			viewBox={`0 0 ${W} ${H}`}
-			style="display:block; width:100%; height:100%;"
-			aria-hidden="true"
-		>
-			<rect width={W} height={H} fill="#111" rx="10" />
+			<svg viewBox={`0 0 ${W} ${H}`} style="display:block; width:100%; height:100%;" aria-hidden="true">
+				<rect width={W} height={H} fill="#111" rx="10" />
 
-			{#each paths as d, c (c)}
-				{@const top = c * laneH}
-				{@const color = channelColor(c)}
-				<g transform={`translate(${SCALE_W},${top + laneH / 2})`}>
-					<line x1="0" y1="0" x2={WW} y2="0"
-					      stroke="rgba(255,255,255,0.12)" stroke-width="1"
-					      shape-rendering="crispEdges" />
-					{#if d}
-						<path {d} fill={color} fill-opacity="0.7" stroke={color} stroke-width="0.75" stroke-linejoin="round" />
+				{#each paths as d, c (c)}
+					{@const top = c * laneH}
+					{@const color = channelColor(c)}
+					<g transform={`translate(${SCALE_W},${top + laneH / 2})`}>
+						<line x1="0" y1="0" x2={WW} y2="0" stroke="rgba(255,255,255,0.12)" stroke-width="1" shape-rendering="crispEdges" />
+						{#if d}
+							<path {d} fill={color} fill-opacity="0.7" stroke={color} stroke-width="0.75" stroke-linejoin="round" />
+						{/if}
+					</g>
+
+					{#each SCALE_LEVELS as [amp, label]}
+						{@const sy = top + laneH / 2 - amp * halfH}
+						<rect x={SCALE_W - 3} y={sy - 0.5} width="3" height="1" fill="rgba(255,255,255,0.2)" />
+						<text
+							x={SCALE_W - 5}
+							y={sy}
+							fill={amp === 0 ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.45)'}
+							font-size="7.5"
+							font-family="monospace"
+							text-anchor="end"
+							dominant-baseline="middle">{label}</text>
+					{/each}
+					<line
+						x1={SCALE_W - 1}
+						y1={top}
+						x2={SCALE_W - 1}
+						y2={top + laneH}
+						stroke="rgba(255,255,255,0.12)"
+						stroke-width="1"
+						shape-rendering="crispEdges" />
+
+					<!-- Channel tag, top of the lane just right of the scale rail. -->
+					<text x={SCALE_W + 4} y={top + 9} fill={color} font-size="8" font-weight="bold" font-family="monospace" dominant-baseline="middle"
+						>{channelLabel(c, channels)}</text>
+
+					{#if c < channels - 1}
+						<rect x="0" y={top + laneH} width={W} height="1" fill="rgba(255,255,255,0.08)" />
 					{/if}
-				</g>
-
-				{#each SCALE_LEVELS as [amp, label]}
-					{@const sy = top + laneH / 2 - amp * halfH}
-					<rect x={SCALE_W - 3} y={sy - 0.5} width="3" height="1" fill="rgba(255,255,255,0.2)" />
-					<text
-						x={SCALE_W - 5} y={sy}
-						fill={amp === 0 ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.45)'}
-						font-size="7.5" font-family="monospace"
-						text-anchor="end" dominant-baseline="middle"
-					>{label}</text>
 				{/each}
-				<line x1={SCALE_W - 1} y1={top} x2={SCALE_W - 1} y2={top + laneH}
-				      stroke="rgba(255,255,255,0.12)" stroke-width="1" shape-rendering="crispEdges" />
-
-				<!-- Channel tag, top of the lane just right of the scale rail. -->
-				<text
-					x={SCALE_W + 4} y={top + 9}
-					fill={color} font-size="8" font-weight="bold" font-family="monospace"
-					dominant-baseline="middle"
-				>{channelLabel(c, channels)}</text>
-
-				{#if c < channels - 1}
-					<rect x="0" y={top + laneH} width={W} height="1" fill="rgba(255,255,255,0.08)" />
-				{/if}
-			{/each}
-		</svg>
+			</svg>
 		</div>
 		{#if !isPreview}
 			<ChannelHandles nodeId={id} side="source" />

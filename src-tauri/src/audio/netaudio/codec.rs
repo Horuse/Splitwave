@@ -44,7 +44,12 @@ impl ChannelEncoder {
         } else {
             None
         };
-        Self { format, opus, acc: Vec::new(), scratch: vec![0u8; 4096] }
+        Self {
+            format,
+            opus,
+            acc: Vec::new(),
+            scratch: vec![0u8; 4096],
+        }
     }
 
     /// Accumulates 48 kHz interleaved input and calls `emit` with each ready
@@ -93,7 +98,11 @@ impl ChannelDecoder {
         let opus = opus::Decoder::new(SR, opus::Channels::Mono)
             .map_err(|e| warn!(error = %e, "opus decoder init failed"))
             .ok();
-        Self { opus, pcm: vec![0.0; OPUS_FRAME_SAMPLES], last_chunk: 0 }
+        Self {
+            opus,
+            pcm: vec![0.0; OPUS_FRAME_SAMPLES],
+            last_chunk: 0,
+        }
     }
 
     /// Append concealment for `packets` lost packets: exactly what they would

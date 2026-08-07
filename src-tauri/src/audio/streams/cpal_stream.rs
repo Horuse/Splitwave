@@ -31,14 +31,30 @@ pub fn build_input_stream(
     err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> AppResult<cpal::Stream> {
     match sample_format {
-        SampleFormat::F32 => build_input_typed::<f32>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::I16 => build_input_typed::<i16>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::I32 => build_input_typed::<i32>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::I8 => build_input_typed::<i8>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::U8 => build_input_typed::<u8>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::U16 => build_input_typed::<u16>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::U32 => build_input_typed::<u32>(device, config, src_channels, bridge, meter, err_cb),
-        SampleFormat::F64 => build_input_typed::<f64>(device, config, src_channels, bridge, meter, err_cb),
+        SampleFormat::F32 => {
+            build_input_typed::<f32>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::I16 => {
+            build_input_typed::<i16>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::I32 => {
+            build_input_typed::<i32>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::I8 => {
+            build_input_typed::<i8>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::U8 => {
+            build_input_typed::<u8>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::U16 => {
+            build_input_typed::<u16>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::U32 => {
+            build_input_typed::<u32>(device, config, src_channels, bridge, meter, err_cb)
+        }
+        SampleFormat::F64 => {
+            build_input_typed::<f64>(device, config, src_channels, bridge, meter, err_cb)
+        }
         fmt => Err(AppError::Validation(format!(
             "unsupported input sample format: {fmt:?}"
         ))),
@@ -101,14 +117,26 @@ where
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
     match sample_format {
-        SampleFormat::F32 => build_output_typed::<f32, _>(device, config, out_channels, fill, err_cb),
-        SampleFormat::I16 => build_output_typed::<i16, _>(device, config, out_channels, fill, err_cb),
-        SampleFormat::I32 => build_output_typed::<i32, _>(device, config, out_channels, fill, err_cb),
+        SampleFormat::F32 => {
+            build_output_typed::<f32, _>(device, config, out_channels, fill, err_cb)
+        }
+        SampleFormat::I16 => {
+            build_output_typed::<i16, _>(device, config, out_channels, fill, err_cb)
+        }
+        SampleFormat::I32 => {
+            build_output_typed::<i32, _>(device, config, out_channels, fill, err_cb)
+        }
         SampleFormat::I8 => build_output_typed::<i8, _>(device, config, out_channels, fill, err_cb),
         SampleFormat::U8 => build_output_typed::<u8, _>(device, config, out_channels, fill, err_cb),
-        SampleFormat::U16 => build_output_typed::<u16, _>(device, config, out_channels, fill, err_cb),
-        SampleFormat::U32 => build_output_typed::<u32, _>(device, config, out_channels, fill, err_cb),
-        SampleFormat::F64 => build_output_typed::<f64, _>(device, config, out_channels, fill, err_cb),
+        SampleFormat::U16 => {
+            build_output_typed::<u16, _>(device, config, out_channels, fill, err_cb)
+        }
+        SampleFormat::U32 => {
+            build_output_typed::<u32, _>(device, config, out_channels, fill, err_cb)
+        }
+        SampleFormat::F64 => {
+            build_output_typed::<f64, _>(device, config, out_channels, fill, err_cb)
+        }
         fmt => Err(AppError::Validation(format!(
             "unsupported output sample format: {fmt:?}"
         ))),

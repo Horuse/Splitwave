@@ -40,8 +40,10 @@
 	}
 
 	// Ceiling transfer curve
-	const W = 130, H = 36;
-	const DB_MIN = -24, DB_MAX = 6;
+	const W = 130,
+		H = 36;
+	const DB_MIN = -24,
+		DB_MAX = 6;
 
 	function toSvg(db: number): number {
 		return ((db - DB_MIN) / (DB_MAX - DB_MIN)) * W;
@@ -53,40 +55,26 @@
 	let ceilingSvgX = $derived(toSvg(data.ceilingDb));
 </script>
 
-<Wrapper
-	label="Limiter"
-	icon={Limiter}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Limiter" icon={Limiter} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="limiter" {data} onApply={applyPreset} />
 
-		<div class="flex flex-col gap-1 w-50 nowheel nodrag">
-			<svg
-				width="100%"
-				viewBox="0 0 {W} {H}"
-				class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none"
-			>
+		<div class="nowheel nodrag flex w-50 flex-col gap-1">
+			<svg width="100%" viewBox="0 0 {W} {H}" class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none">
 				{#each [-18, -12, -6, 0] as db}
-					<line x1={toSvg(db)} y1={0} x2={toSvg(db)} y2={H}
-						stroke="currentColor" stroke-width="0.5"
-						class={db === 0 ? 'text-neutral-400' : 'text-neutral-300'}
-					/>
+					<line
+						x1={toSvg(db)}
+						y1={0}
+						x2={toSvg(db)}
+						y2={H}
+						stroke="currentColor"
+						stroke-width="0.5"
+						class={db === 0 ? 'text-neutral-400' : 'text-neutral-300'} />
 					<text x={toSvg(db)} y={H - 2} font-size="6" fill="currentColor" class="text-neutral-400" text-anchor="middle">{db}</text>
 				{/each}
 				<rect x={0} y={0} width={ceilingSvgX} height={H} fill="#22c55e" opacity="0.08" />
 				<rect x={ceilingSvgX} y={0} width={W - ceilingSvgX} height={H} fill="#ef4444" opacity="0.08" />
-				<line
-					x1={ceilingSvgX} y1={0}
-					x2={ceilingSvgX} y2={H}
-					stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2"
-				/>
+				<line x1={ceilingSvgX} y1={0} x2={ceilingSvgX} y2={H} stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2" />
 				<text x={ceilingSvgX + 2} y={8} font-size="7" fill="#ef4444">{data.ceilingDb.toFixed(1)} dB</text>
 			</svg>
 			<GrBar nodeId={id} horizontal />
@@ -102,8 +90,7 @@
 				unit=" dB"
 				defaultValue={-0.3}
 				ticks={[-6, -3, -1, 0]}
-				onChange={setCeiling}
-			/>
+				onChange={setCeiling} />
 			<Slider
 				label="Lookahead"
 				value={data.lookaheadMs}
@@ -113,8 +100,7 @@
 				unit=" ms"
 				defaultValue={5}
 				ticks={[2, 5, 10]}
-				onChange={setLookahead}
-			/>
+				onChange={setLookahead} />
 			<Slider
 				label="Release"
 				value={data.releaseMs}
@@ -124,8 +110,7 @@
 				unit=" ms"
 				defaultValue={50}
 				ticks={[50, 100, 250]}
-				onChange={setRelease}
-			/>
+				onChange={setRelease} />
 			<p class="text-[9px] text-neutral-500">Lookahead change rebuilds the pipeline.</p>
 		</div>
 	</div>

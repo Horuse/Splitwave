@@ -28,10 +28,7 @@
 	});
 
 	async function loadAll() {
-		const [s, saved] = await Promise.all([
-			methods.virtualDriverStatus(),
-			store.get<VirtualDeviceConfig[]>(STORE_KEY)
-		]);
+		const [s, saved] = await Promise.all([methods.virtualDriverStatus(), store.get<VirtualDeviceConfig[]>(STORE_KEY)]);
 		status = s;
 		devices = saved ?? [];
 		dirty = false;
@@ -107,21 +104,20 @@
 				<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
 			{/if}
 
-				<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
-				<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
+			<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
+			<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
 		</div>
 	{/snippet}
 </Header>
 
-<div class="flex flex-col gap-8 p-8 h-[calc(100vh-40px)] overflow-y-auto">
-	<div class="flex mt-2 gap-1 flex-col">
+<div class="flex h-[calc(100vh-40px)] flex-col gap-8 overflow-y-auto p-8">
+	<div class="mt-2 flex flex-col gap-1">
 		<h1 class="text-2xl font-semibold">Virtual Devices</h1>
 
 		<p class="max-w-2xl text-sm text-neutral-700">
-			A virtual device is a system audio device that exists only in software — no hardware required.
-			Apps can send audio to it or record from it just like a real microphone or speaker. Each device
-			appears as both an input and an output, so a pipeline can receive audio from one app and route
-			it to another.
+			A virtual device is a system audio device that exists only in software — no hardware required. Apps can send audio to it or record from it just like
+			a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and route it to
+			another.
 		</p>
 	</div>
 
@@ -137,18 +133,13 @@
 			<div class="flex-1">
 				<div class="font-medium">Audio Server Plugin</div>
 				<div class="text-xs text-neutral-900">
-					{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to
-					appear in system audio
+					{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to appear in system audio
 				</div>
 			</div>
 			{#if status?.installed}
 				<button class="btn-alert h-full py-1.5" onclick={uninstall}>Uninstall</button>
 			{:else}
-				<button
-					class="btn-alert h-full py-1.5"
-					onclick={install}
-					disabled={installing}
-				>
+				<button class="btn-alert h-full py-1.5" onclick={install} disabled={installing}>
 					{installing ? 'Installing...' : 'Install'}
 				</button>
 			{/if}
@@ -158,8 +149,7 @@
 			onUpdated={(s) => {
 				status = s;
 				if (devices.length > 0) dirty = true;
-			}}
-		/>
+			}} />
 	{/if}
 
 	{#if isLinux || status?.installed}
@@ -188,17 +178,11 @@
 								<input
 									class="input-base h-8 flex-1 font-medium"
 									value={d.name}
-									oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)}
-								/>
-								<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs tabular-nums text-neutral-900">
+									oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
+								<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">
 									{d.id.slice(0, 8)}
 								</span>
-								<button
-									class="btn-alert px-2.5 py-2"
-									onclick={() => removeDevice(d.id)}
-									aria-label="Remove device"
-									title="Remove device"
-								>
+								<button class="btn-alert px-2.5 py-2" onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
 									<Delete class="size-4" />
 								</button>
 							</div>
@@ -210,24 +194,21 @@
 											class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
 											disabled={(d.channels ?? 2) <= 1}
 											onclick={() => setChannels(d.id, (d.channels ?? 2) - 1)}
-											aria-label="Fewer channels"
-										>
+											aria-label="Fewer channels">
 											&minus;
 										</button>
 										<input
-											class="h-7 w-14 border-x border-neutral-400 bg-transparent text-center font-mono text-sm tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+											class="h-7 w-14 [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-sm tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 											type="number"
 											min="1"
 											max="256"
 											value={d.channels ?? 2}
-											onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)}
-										/>
+											onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)} />
 										<button
 											class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
 											disabled={(d.channels ?? 2) >= 256}
 											onclick={() => setChannels(d.id, (d.channels ?? 2) + 1)}
-											aria-label="More channels"
-										>
+											aria-label="More channels">
 											+
 										</button>
 									</div>
@@ -241,15 +222,12 @@
 													? 'border-neutral-800 bg-neutral-600 text-theme'
 													: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
 											]}
-											onclick={() => setChannels(d.id, preset)}
-										>
+											onclick={() => setChannels(d.id, preset)}>
 											{preset}
 										</button>
 									{/each}
 								</div>
-								<span class="ml-auto text-[11px] text-neutral-800">
-									Appears as input + output &middot; up to 256 channels
-								</span>
+								<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to 256 channels </span>
 							</div>
 						</li>
 					{/each}

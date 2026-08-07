@@ -11,8 +11,7 @@
 		size={entry.params.size as 'sm' | 'md' | 'lg' | 'xl' | undefined}
 		canClose={entry.params.canClose !== false}
 		onClose={() => modalManager.close(entry.id)}
-		zIndex={entry.zIndex}
-	>
+		zIndex={entry.zIndex}>
 		<SvelteComponent modalId={entry.id} {...entry.params} />
 	</Shell>
 {/each}

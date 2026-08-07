@@ -43,7 +43,10 @@ fn push_aligned(prod: &mut Producer<f32>, samples: &[f32], width: usize) -> usiz
     }
     let avail = prod.slots();
     let to_write = want.min(avail) - want.min(avail) % width;
-    health::bump(&health::OFFLOAD_RING_OVERRUN_SAMPLES, (want - to_write) as u64);
+    health::bump(
+        &health::OFFLOAD_RING_OVERRUN_SAMPLES,
+        (want - to_write) as u64,
+    );
     if to_write == 0 {
         return 0;
     }
@@ -94,43 +97,59 @@ impl Offload {
         // recover a moved value, so the cell is how the caller gets it back.
         let handoff = Arc::new(std::sync::Mutex::new(Some(processor)));
         let handoff_thread = handoff.clone();
-        let join = match thread::Builder::new().name(format!("offload:{name}")).spawn(move || {
-            let mut processor = handoff_thread.lock().unwrap().take().expect("processor handed off");
-            let mut scratch = vec![0.0f32; DSP_BLOCK_FRAMES * width];
-            let mut out = Vec::with_capacity(DSP_BLOCK_FRAMES * width);
-            while !stop_thread.load(Ordering::Relaxed) {
-                let avail = worker_in.slots();
-                let avail = avail - avail % width; // whole frames only
-                if avail == 0 {
-                    thread::sleep(POLL_INTERVAL);
-                    continue;
-                }
-                let n = avail.min(scratch.len());
-                if let Ok(chunk) = worker_in.read_chunk(n) {
-                    let (first, second) = chunk.as_slices();
-                    let n1 = first.len();
-                    scratch[..n1].copy_from_slice(first);
-                    let n2 = second.len();
-                    if n2 > 0 {
-                        scratch[n1..n1 + n2].copy_from_slice(second);
+        let join = match thread::Builder::new()
+            .name(format!("offload:{name}"))
+            .spawn(move || {
+                let mut processor = handoff_thread
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("processor handed off");
+                let mut scratch = vec![0.0f32; DSP_BLOCK_FRAMES * width];
+                let mut out = Vec::with_capacity(DSP_BLOCK_FRAMES * width);
+                while !stop_thread.load(Ordering::Relaxed) {
+                    let avail = worker_in.slots();
+                    let avail = avail - avail % width; // whole frames only
+                    if avail == 0 {
+                        thread::sleep(POLL_INTERVAL);
+                        continue;
                     }
-                    chunk.commit_all();
+                    let n = avail.min(scratch.len());
+                    if let Ok(chunk) = worker_in.read_chunk(n) {
+                        let (first, second) = chunk.as_slices();
+                        let n1 = first.len();
+                        scratch[..n1].copy_from_slice(first);
+                        let n2 = second.len();
+                        if n2 > 0 {
+                            scratch[n1..n1 + n2].copy_from_slice(second);
+                        }
+                        chunk.commit_all();
+                    }
+                    out.clear();
+                    processor.process(&scratch[..n], &mut out);
+                    push_aligned(&mut worker_out, &out, width);
                 }
-                out.clear();
-                processor.process(&scratch[..n], &mut out);
-                push_aligned(&mut worker_out, &out, width);
-            }
-        }) {
+            }) {
             Ok(j) => j,
             Err(e) => {
                 warn!(name, error = %e, "offload: failed to spawn worker thread");
                 // The closure never ran, so it never took the cell's contents.
-                let processor = handoff.lock().unwrap().take().expect("processor handed off");
+                let processor = handoff
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("processor handed off");
                 return Err(processor);
             }
         };
 
-        Ok(Self { to_worker, from_worker, stop, join: Some(join), width })
+        Ok(Self {
+            to_worker,
+            from_worker,
+            stop,
+            join: Some(join),
+            width,
+        })
     }
 
     /// RT thread only: no allocations, locks, or syscalls.
@@ -206,7 +225,9 @@ mod tests {
 
     #[test]
     fn offload_roundtrip_delays_by_pad() {
-        let Ok(mut offload) = Offload::spawn("test", Passthrough, 2) else { panic!("spawn offload") };
+        let Ok(mut offload) = Offload::spawn("test", Passthrough, 2) else {
+            panic!("spawn offload")
+        };
 
         let mut fed = Vec::new();
         let mut got = Vec::new();

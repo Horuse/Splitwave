@@ -33,7 +33,8 @@
 	}
 
 	// Echo taps as an impulse response — one stem per tap, height = amplitude.
-	const W = 208, H = 64;
+	const W = 208,
+		H = 64;
 	const PAD = 10;
 	const TOP = 8;
 	const BASE = H - 16; // baseline sits above a band reserved for time labels
@@ -56,26 +57,12 @@
 	});
 </script>
 
-<Wrapper
-	label="Delay"
-	icon={Delay}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Delay" icon={Delay} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="delay" {data} onApply={applyPreset} />
 
 		<div class="nowheel nodrag">
-			<svg
-				width={W}
-				height={H}
-				class="rounded border border-neutral-300 bg-neutral-100 select-none"
-			>
+			<svg width={W} height={H} class="rounded border border-neutral-300 bg-neutral-100 select-none">
 				<line x1={PAD - 10} y1={BASE} x2={W - PAD + 8} y2={BASE} stroke="currentColor" stroke-width="0.75" class="text-neutral-300" />
 				{#each [500, 1000, 1500] as ms}
 					{@const tx = (ms / MAX_WINDOW_MS) * (W - PAD * 2) + PAD}
@@ -84,18 +71,21 @@
 				{/each}
 				{#each taps() as tap, i (i)}
 					<line
-						x1={tap.x} y1={BASE} x2={tap.x} y2={BASE - tap.h}
+						x1={tap.x}
+						y1={BASE}
+						x2={tap.x}
+						y2={BASE - tap.h}
 						stroke={tap.dry ? 'currentColor' : '#f59e0b'}
 						class={tap.dry ? 'text-neutral-500' : ''}
 						stroke-width={tap.dry ? 2 : 1.5}
-						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)}
-					/>
+						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)} />
 					<circle
-						cx={tap.x} cy={BASE - tap.h} r={tap.dry ? 2.5 : 1.8}
+						cx={tap.x}
+						cy={BASE - tap.h}
+						r={tap.dry ? 2.5 : 1.8}
 						fill={tap.dry ? 'currentColor' : '#f59e0b'}
 						class={tap.dry ? 'text-neutral-500' : ''}
-						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)}
-					/>
+						opacity={tap.dry ? 1 : Math.max(0.5, tap.opacity)} />
 				{/each}
 			</svg>
 		</div>
@@ -110,8 +100,7 @@
 				unit=" ms"
 				defaultValue={250}
 				ticks={[100, 500, 1000]}
-				onChange={(v) => patch('timeMs', v)}
-			/>
+				onChange={(v) => patch('timeMs', v)} />
 			<Slider
 				label="Feedback"
 				value={data.feedback}
@@ -121,8 +110,7 @@
 				format={pctFmt}
 				defaultValue={0.4}
 				ticks={[0.25, 0.5, 0.75]}
-				onChange={(v) => patch('feedback', v)}
-			/>
+				onChange={(v) => patch('feedback', v)} />
 			<Slider
 				label="Mix"
 				value={data.mix}
@@ -132,8 +120,7 @@
 				format={pctFmt}
 				defaultValue={0.35}
 				ticks={[0.25, 0.5, 0.75]}
-				onChange={(v) => patch('mix', v)}
-			/>
+				onChange={(v) => patch('mix', v)} />
 		</div>
 	</div>
 </Wrapper>

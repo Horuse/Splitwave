@@ -101,20 +101,18 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Ok(()));
                 }
             }
-            Command::Reconcile { graph, app, reply } => {
-                match active.as_mut() {
-                    None => {
-                        let _ = reply.send(Err(AppError::NotRunning));
-                    }
-                    Some(p) => {
-                        let r = p.reconcile(&graph, app);
-                        if let Err(e) = &r {
-                            error!(error = %e, "reconcile failed");
-                        }
-                        let _ = reply.send(r);
-                    }
+            Command::Reconcile { graph, app, reply } => match active.as_mut() {
+                None => {
+                    let _ = reply.send(Err(AppError::NotRunning));
                 }
-            }
+                Some(p) => {
+                    let r = p.reconcile(&graph, app);
+                    if let Err(e) = &r {
+                        error!(error = %e, "reconcile failed");
+                    }
+                    let _ = reply.send(r);
+                }
+            },
             Command::UpdateEffect {
                 node_id,
                 data,

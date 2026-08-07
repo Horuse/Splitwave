@@ -1,13 +1,7 @@
 <script lang="ts">
 	import type { NodeCategory, NodeKind } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import {
-		DND_MIME,
-		categoryLabel,
-		categoryOrder,
-		kindsByCategory,
-		registry
-	} from '../utils/nodes';
+	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
 	import { Add, DataBar, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
 	import { CATEGORY_TEXT } from '../utils/accents';
 
@@ -37,9 +31,7 @@
 </script>
 
 <aside class="flex w-72 flex-col border-l border-neutral-100 bg-background">
-	<nav
-		class="flex shrink-0 items-center gap-1 border-b border-neutral-100 bg-background px-4 py-2.5"
-	>
+	<nav class="flex shrink-0 items-center gap-1 border-b border-neutral-100 bg-background px-4 py-2.5">
 		{#each categoryOrder as category (category)}
 			{@const Icon = CATEGORY_ICON[category]}
 			<button
@@ -50,8 +42,7 @@
 				class={[
 					'flex flex-1 items-center justify-center rounded-lg bg-neutral-100 py-1.5 transition-colors hover:bg-neutral-300',
 					CATEGORY_TEXT[category]
-				]}
-			>
+				]}>
 				<Icon class="size-4" />
 			</button>
 		{/each}
@@ -69,8 +60,7 @@
 						<li
 							draggable="true"
 							ondragstart={(e) => onDragStart(e, kind)}
-							class="group flex items-start justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 hover:bg-neutral-200"
-						>
+							class="group flex items-start justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 hover:bg-neutral-200">
 							<div class="flex min-w-0 items-start gap-2">
 								<node.icon class={['mt-0.5 size-4 shrink-0', CATEGORY_TEXT[node.category]]} />
 								<div class="flex min-w-0 flex-col">
@@ -83,8 +73,7 @@
 							<button
 								class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300"
 								onclick={() => onClickAdd(kind)}
-								aria-label={`Add ${node.label}`}
-							>
+								aria-label={`Add ${node.label}`}>
 								<Add class="h-4 w-4" />
 							</button>
 						</li>

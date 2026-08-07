@@ -30,17 +30,7 @@
 	}
 </script>
 
-<Wrapper
-	label="Declick"
-	icon={Backspace}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Declick" icon={Backspace} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<Slider
 			label="Sensitivity"
@@ -51,8 +41,7 @@
 			defaultValue={0.5}
 			format={(v) => `${Math.round(v * 100)}%`}
 			ticks={[0, 0.25, 0.5, 0.75, 1]}
-			onChange={setSensitivity}
-		/>
+			onChange={setSensitivity} />
 		<Slider
 			label="Max width"
 			value={data.maxWidthMs ?? 2}
@@ -62,11 +51,9 @@
 			unit=" ms"
 			defaultValue={2}
 			ticks={[1, 2, 3, 5]}
-			onChange={setMaxWidth}
-		/>
+			onChange={setMaxWidth} />
 		<span class="text-[9px] leading-tight text-neutral-500">
-			Sensitivity: higher catches smaller spikes. Max width caps how long a
-			repaired click can be.
+			Sensitivity: higher catches smaller spikes. Max width caps how long a repaired click can be.
 		</span>
 	</div>
 </Wrapper>

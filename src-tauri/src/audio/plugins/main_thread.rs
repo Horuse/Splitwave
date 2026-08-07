@@ -4,8 +4,8 @@
 //! VST3 put nearly everything there, AU only its AppKit half -- but they agree
 //! on the mechanism, so it lives here rather than three times over.
 
-use std::sync::Once;
 use std::sync::mpsc;
+use std::sync::Once;
 use std::time::Duration;
 
 /// How long a main-thread call may take before the caller gives up. A plugin
@@ -34,16 +34,14 @@ pub fn ensure_ticker() {
     TICKER.call_once(|| {
         std::thread::Builder::new()
             .name("plugin-timer".into())
-            .spawn(|| {
-                loop {
-                    std::thread::sleep(Duration::from_millis(16));
-                    if let Some(app) = crate::app_handle() {
-                        let _ = app.run_on_main_thread(|| {
-                            for host in super::registry::hosts() {
-                                host.tick_and_reclaim();
-                            }
-                        });
-                    }
+            .spawn(|| loop {
+                std::thread::sleep(Duration::from_millis(16));
+                if let Some(app) = crate::app_handle() {
+                    let _ = app.run_on_main_thread(|| {
+                        for host in super::registry::hosts() {
+                            host.tick_and_reclaim();
+                        }
+                    });
                 }
             })
             .ok();

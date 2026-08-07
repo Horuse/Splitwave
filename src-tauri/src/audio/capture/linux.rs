@@ -39,9 +39,8 @@ impl Capture {
         binary: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        let serial = resolve_serial(binary)?.ok_or_else(|| {
-            AppError::Stream(format!("no audio stream found for {binary:?}"))
-        })?;
+        let serial = resolve_serial(binary)?
+            .ok_or_else(|| AppError::Stream(format!("no audio stream found for {binary:?}")))?;
         spawn(Some(serial.to_string()), false, Box::new(callback))
     }
 
@@ -73,7 +72,10 @@ fn spawn(
             tracing::error!("pipewire capture: {e:?}");
         }
     });
-    Ok(Capture { sender, thread: Some(thread) })
+    Ok(Capture {
+        sender,
+        thread: Some(thread),
+    })
 }
 
 fn run(
@@ -109,7 +111,9 @@ fn run(
     let _listener = stream
         .add_local_listener_with_user_data(user_data)
         .process(|stream, user_data| {
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;

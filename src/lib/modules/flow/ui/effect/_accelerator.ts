@@ -1,14 +1,4 @@
-const MODIFIER_CODES = new Set([
-	'ControlLeft',
-	'ControlRight',
-	'ShiftLeft',
-	'ShiftRight',
-	'AltLeft',
-	'AltRight',
-	'MetaLeft',
-	'MetaRight',
-	'CapsLock'
-]);
+const MODIFIER_CODES = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'CapsLock']);
 
 /**
  * Tauri parses accelerators as `keyboard_types::Code` names, which is exactly

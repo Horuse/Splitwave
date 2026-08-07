@@ -19,8 +19,7 @@
 		stroke-width="2"
 		stroke-linecap="round"
 		stroke-linejoin="round"
-		class={animated ? 'edge-icon-dash' : undefined}
-	/>
+		class={animated ? 'edge-icon-dash' : undefined} />
 	<rect x="4" y="4" width="3" height="6" rx="1" fill="currentColor" />
 	<rect x="41" y="18" width="3" height="6" rx="1" fill="currentColor" />
 </svg>

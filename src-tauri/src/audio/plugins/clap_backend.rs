@@ -125,7 +125,10 @@ mod tests {
             assert_eq!(plugin.format, PluginFormat::Clap);
             assert!(!plugin.plugin_id.is_empty(), "{plugin:?} has no id");
             assert!(!plugin.name.is_empty(), "{plugin:?} has no name");
-            assert!(plugin.uid.starts_with("clap:"), "{plugin:?} has a foreign uid");
+            assert!(
+                plugin.uid.starts_with("clap:"),
+                "{plugin:?} has a foreign uid"
+            );
             assert!(plugin.path.ends_with(".clap"), "{plugin:?} is not a bundle");
         }
         println!("found {} clap plugins", found.len());

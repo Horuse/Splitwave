@@ -74,7 +74,12 @@ pub struct WaveformEffect {
 impl WaveformEffect {
     pub fn new(_d: WaveformData, node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
         let handle = WaveformHandle::new(node_id, sample_rate, WAVEFORM_FRAMES);
-        (Self { handle: handle.clone() }, handle)
+        (
+            Self {
+                handle: handle.clone(),
+            },
+            handle,
+        )
     }
 
     pub fn from_handle(handle: WaveformHandle) -> Self {
@@ -85,7 +90,12 @@ impl WaveformEffect {
     /// contiguous window; the FFT runs in the UI.
     pub fn new_for(node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
         let handle = WaveformHandle::new(node_id, sample_rate, SPECTRUM_FRAMES);
-        (Self { handle: handle.clone() }, handle)
+        (
+            Self {
+                handle: handle.clone(),
+            },
+            handle,
+        )
     }
 }
 

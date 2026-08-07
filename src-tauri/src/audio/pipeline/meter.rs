@@ -62,35 +62,62 @@ pub(super) fn spawn_xrun_thread(
     let join = thread::Builder::new()
         .name("xrun-tick".into())
         .spawn(move || {
-            let mut last_xrun: Vec<u64> =
-                sources.iter().map(|s| s.stats.xrun.load(Ordering::Relaxed)).collect();
-            let mut last_stalled: Vec<u64> =
-                sources.iter().map(|s| s.stats.stalled.load(Ordering::Relaxed)).collect();
-            let mut last_trimmed: Vec<u64> =
-                sources.iter().map(|s| s.stats.trimmed.load(Ordering::Relaxed)).collect();
-            let mut last_consumed: Vec<u64> =
-                sources.iter().map(|s| s.stats.consumed.load(Ordering::Relaxed)).collect();
+            let mut last_xrun: Vec<u64> = sources
+                .iter()
+                .map(|s| s.stats.xrun.load(Ordering::Relaxed))
+                .collect();
+            let mut last_stalled: Vec<u64> = sources
+                .iter()
+                .map(|s| s.stats.stalled.load(Ordering::Relaxed))
+                .collect();
+            let mut last_trimmed: Vec<u64> = sources
+                .iter()
+                .map(|s| s.stats.trimmed.load(Ordering::Relaxed))
+                .collect();
+            let mut last_consumed: Vec<u64> = sources
+                .iter()
+                .map(|s| s.stats.consumed.load(Ordering::Relaxed))
+                .collect();
             let mut last_fed: Vec<u64> = sources
                 .iter()
-                .map(|s| s.capture.as_ref().map_or(0, |c| c.fed.load(Ordering::Relaxed)))
+                .map(|s| {
+                    s.capture
+                        .as_ref()
+                        .map_or(0, |c| c.fed.load(Ordering::Relaxed))
+                })
                 .collect();
             let mut last_dropped: Vec<u64> = sources
                 .iter()
-                .map(|s| s.capture.as_ref().map_or(0, |c| c.dropped.load(Ordering::Relaxed)))
+                .map(|s| {
+                    s.capture
+                        .as_ref()
+                        .map_or(0, |c| c.dropped.load(Ordering::Relaxed))
+                })
                 .collect();
-            let mut last_blocks: Vec<u64> =
-                outputs.iter().map(|o| o.blocks.load(Ordering::Relaxed)).collect();
+            let mut last_blocks: Vec<u64> = outputs
+                .iter()
+                .map(|o| o.blocks.load(Ordering::Relaxed))
+                .collect();
             let mut last_requested: Vec<u64> = outputs
                 .iter()
-                .map(|o| o.io.as_ref().map_or(0, |io| io.requested.load(Ordering::Relaxed)))
+                .map(|o| {
+                    o.io.as_ref()
+                        .map_or(0, |io| io.requested.load(Ordering::Relaxed))
+                })
                 .collect();
             let mut last_read: Vec<u64> = outputs
                 .iter()
-                .map(|o| o.io.as_ref().map_or(0, |io| io.read.load(Ordering::Relaxed)))
+                .map(|o| {
+                    o.io.as_ref()
+                        .map_or(0, |io| io.read.load(Ordering::Relaxed))
+                })
                 .collect();
             let mut last_callbacks: Vec<u64> = outputs
                 .iter()
-                .map(|o| o.io.as_ref().map_or(0, |io| io.callbacks.load(Ordering::Relaxed)))
+                .map(|o| {
+                    o.io.as_ref()
+                        .map_or(0, |io| io.callbacks.load(Ordering::Relaxed))
+                })
                 .collect();
             let mut last_global: Vec<u64> = health::snapshot().iter().map(|(_, v)| *v).collect();
             let mut last_tick = Instant::now();
@@ -140,9 +167,7 @@ pub(super) fn spawn_xrun_thread(
                     // nothing, and the question here is whether the pipeline
                     // keeps up with its inputs, not whether an input is busy.
                     let expected_frames = match capture_delta {
-                        Some((fed_delta, _)) => {
-                            (fed_delta / s.channels.max(1) as u64) as f64
-                        }
+                        Some((fed_delta, _)) => (fed_delta / s.channels.max(1) as u64) as f64,
                         None => wallclock_frames,
                     };
                     let off_rate = off_rate(
@@ -354,7 +379,8 @@ pub(super) fn spawn_meter_thread(
                     );
                 }
                 for g in &gr_handles {
-                    let gr_lin = f32::from_bits(g.gr_lin.load(std::sync::atomic::Ordering::Relaxed));
+                    let gr_lin =
+                        f32::from_bits(g.gr_lin.load(std::sync::atomic::Ordering::Relaxed));
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {

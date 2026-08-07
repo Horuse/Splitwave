@@ -16,8 +16,7 @@ export type Block =
 	| { kind: 'code'; text: string };
 
 // One alternation per inline form; the surrounding text falls through as-is.
-const INLINE =
-	/(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]]+\]\(https?:\/\/[^\s)]+\))|(https?:\/\/[^\s<)]+)/g;
+const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]]+\]\(https?:\/\/[^\s)]+\))|(https?:\/\/[^\s<)]+)/g;
 
 function parseInline(source: string): Inline[] {
 	const out: Inline[] = [];

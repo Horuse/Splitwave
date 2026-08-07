@@ -38,9 +38,7 @@
 			icon: a.icon ?? null
 		}))
 	);
-	let missing = $derived(
-		!!data.bundleId && !audioStore.audioApplications.some((a) => a.bundleId === data.bundleId)
-	);
+	let missing = $derived(!!data.bundleId && !audioStore.audioApplications.some((a) => a.bundleId === data.bundleId));
 
 	function setVolume(pct: number) {
 		const scalar = Math.max(0, Math.min(1, pct / 100));
@@ -67,8 +65,7 @@
 			placeholder="— Select application —"
 			emptyHint="No audible apps"
 			onChange={setApp}
-			onOpen={() => refresh()}
-		>
+			onOpen={() => refresh()}>
 			{#snippet footer()}
 				<RescanButton onRescan={refresh} />
 			{/snippet}
@@ -76,22 +73,9 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{/if}
-		<Slider
-			label="Volume"
-			value={volumePct}
-			min={0}
-			max={100}
-			step={1}
-			format={formatPct}
-			defaultValue={100}
-			ticks={[25, 50, 75]}
-			onChange={setVolume}
-		/>
+		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}
-			<InputMeter
-				nodeId={id}
-				channelCount={channelCount}
-			/>
+			<InputMeter nodeId={id} {channelCount} />
 		{/if}
 	</div>
 </Wrapper>

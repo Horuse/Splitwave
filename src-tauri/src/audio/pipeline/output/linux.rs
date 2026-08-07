@@ -57,7 +57,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle { _playback: playback, _worker: worker_handle, _alive: StreamGuard::new() },
+        SpeakerHandle {
+            _playback: playback,
+            _worker: worker_handle,
+            _alive: StreamGuard::new(),
+        },
         ctrl,
         dead,
         io,

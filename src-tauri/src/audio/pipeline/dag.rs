@@ -8,14 +8,14 @@ use tracing::{info, warn};
 
 use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
-    MeterHandle, WaveformHandle, RuntimeEffect,
+    MeterHandle, RuntimeEffect, WaveformHandle,
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
 use crate::audio::health;
+use crate::audio::input_bridge::CaptureStats;
 use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
-use crate::audio::input_bridge::CaptureStats;
 use crate::audio::streams::bulk_push_counted;
 use crate::error::{AppError, AppResult};
 
@@ -91,7 +91,11 @@ impl StagingRing {
         let cap = self.buf.len();
         for slot in dst.iter_mut().take(n) {
             *slot = self.buf[self.head];
-            self.head = if self.head + 1 == cap { 0 } else { self.head + 1 };
+            self.head = if self.head + 1 == cap {
+                0
+            } else {
+                self.head + 1
+            };
         }
         self.len -= n;
         n
@@ -110,7 +114,11 @@ impl StagingRing {
         let take = src.len().min(free);
         for &v in &src[..take] {
             self.buf[self.tail] = v;
-            self.tail = if self.tail + 1 == cap { 0 } else { self.tail + 1 };
+            self.tail = if self.tail + 1 == cap {
+                0
+            } else {
+                self.tail + 1
+            };
         }
         self.len += take;
         let overrun = (src.len() - take) as u64;
@@ -444,7 +452,9 @@ impl SourceState {
                     self.input_staging.extend_from_slice(first);
                     self.input_staging.extend_from_slice(second);
                     chunk.commit_all();
-                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
+                    self.stats
+                        .consumed
+                        .fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -452,9 +462,7 @@ impl SourceState {
                 return;
             }
             self.chunk_tmp.clear();
-            if let Err(e) =
-                rs.process_chunk(&self.input_staging[..needed], &mut self.chunk_tmp)
-            {
+            if let Err(e) = rs.process_chunk(&self.input_staging[..needed], &mut self.chunk_tmp) {
                 warn!(source = %self.label, error = %e, "resampler chunk failed");
                 self.input_staging.drain(..needed);
                 return;
@@ -477,7 +485,9 @@ impl SourceState {
                     self.chunk_tmp.extend_from_slice(first);
                     self.chunk_tmp.extend_from_slice(second);
                     chunk.commit_all();
-                    self.stats.consumed.fetch_add(avail as u64, Ordering::Relaxed);
+                    self.stats
+                        .consumed
+                        .fetch_add(avail as u64, Ordering::Relaxed);
                     self.last_pop_at = Instant::now();
                 }
             }
@@ -622,7 +632,9 @@ struct TerminalEdge {
 /// Parse a `chK` handle into its 1-based channel number.
 #[inline]
 fn parse_ch(handle: &str) -> Option<usize> {
-    handle.strip_prefix("ch").and_then(|s| s.parse::<usize>().ok())
+    handle
+        .strip_prefix("ch")
+        .and_then(|s| s.parse::<usize>().ok())
 }
 
 /// What a network producer's source handle reads from the tap map. `chN` is the
@@ -643,7 +655,9 @@ fn tap_key(handle: &str) -> Option<TapKey> {
 /// carries channels A and A+1.
 #[inline]
 fn parse_stereo(handle: &str) -> Option<usize> {
-    handle.strip_prefix("st").and_then(|s| s.parse::<usize>().ok())
+    handle
+        .strip_prefix("st")
+        .and_then(|s| s.parse::<usize>().ok())
 }
 
 /// Channel width an edge actually carries. A `chK`/`stA` source handle taps a
@@ -1143,7 +1157,11 @@ pub(super) fn build_output_graph(
                         receiver.register_consumer(output_sr, realtime),
                     ))
                 }
-                InputSpec::WebRtcRecv { node_id, opus_bitrate, opus_application } => {
+                InputSpec::WebRtcRecv {
+                    node_id,
+                    opus_bitrate,
+                    opus_application,
+                } => {
                     let session = crate::audio::webrtc::get_or_create(
                         node_id,
                         *opus_bitrate,
@@ -1184,8 +1202,7 @@ pub(super) fn build_output_graph(
                 continue;
             }
             // File sources are paced by backpressure; dropping backlog plays fast.
-            let source_realtime =
-                realtime && !matches!(input.spec, InputSpec::AudioFile { .. });
+            let source_realtime = realtime && !matches!(input.spec, InputSpec::AudioFile { .. });
             let input_sr = *input_native_sr
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
@@ -1214,15 +1231,22 @@ pub(super) fn build_output_graph(
             let resampler = if input_sr == output_sr {
                 None
             } else {
-                Some(MultiResampler::new(input_sr, output_sr, RESAMPLE_CHUNK, source_channels)?)
+                Some(MultiResampler::new(
+                    input_sr,
+                    output_sr,
+                    RESAMPLE_CHUNK,
+                    source_channels,
+                )?)
             };
-            let out_max = resampler.as_ref().map(|r| r.out_max()).unwrap_or(RESAMPLE_CHUNK);
+            let out_max = resampler
+                .as_ref()
+                .map(|r| r.out_max())
+                .unwrap_or(RESAMPLE_CHUNK);
             // x4 headroom: one chunk draining + one in-flight + alignment slack.
             let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * source_channels;
-            let input_frames_per_block = (DSP_BLOCK_FRAMES as u64 * input_sr as u64
-                + output_sr as u64
-                - 1)
-                / output_sr as u64;
+            let input_frames_per_block =
+                (DSP_BLOCK_FRAMES as u64 * input_sr as u64 + output_sr as u64 - 1)
+                    / output_sr as u64;
             let input_samples_per_block = (input_frames_per_block as usize) * source_channels;
 
             let kind = match &input.spec {
@@ -1234,7 +1258,10 @@ pub(super) fn build_output_graph(
                     unreachable!("network inputs are built as producers")
                 }
             };
-            let label = format!("{kind}@{input_sr}->{output_sr} out={}", output_id.unwrap_or("monitor"));
+            let label = format!(
+                "{kind}@{input_sr}->{output_sr} out={}",
+                output_id.unwrap_or("monitor")
+            );
             let stats = SourceStats::new();
             sources.push(SourceMeta {
                 label: label.clone(),
@@ -1328,7 +1355,13 @@ pub(super) fn build_output_graph(
             // width and may take it whole, the way a DAW instantiates one
             // multichannel plugin instead of several stereo ones.
             let build = instantiate_effect(
-                &effect.spec, id, output_sr, realtime, true, eff_channels, registry,
+                &effect.spec,
+                id,
+                output_sr,
+                realtime,
+                true,
+                eff_channels,
+                registry,
             );
             if let Some(c) = build.control {
                 controls.push((id.clone(), c));
@@ -1349,22 +1382,22 @@ pub(super) fn build_output_graph(
                 scopes.push(s);
             }
             let bypass = build.bypass;
-            let make_edge = |src_idx: usize,
-                             source_handle: Option<String>,
-                             target_handle: Option<String>| {
-                let pad = max_upstream - node_latencies[src_idx];
-                let width = edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
-                IncomingEdge {
-                    src_idx,
-                    source_handle,
-                    target_handle,
-                    delay: if pad > 0 {
-                        Some(DelayLine::new(pad, width))
-                    } else {
-                        None
-                    },
-                }
-            };
+            let make_edge =
+                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
+                    let pad = max_upstream - node_latencies[src_idx];
+                    let width =
+                        edge_channels(&nodes, &node_channels, src_idx, source_handle.as_deref());
+                    IncomingEdge {
+                        src_idx,
+                        source_handle,
+                        target_handle,
+                        delay: if pad > 0 {
+                            Some(DelayLine::new(pad, width))
+                        } else {
+                            None
+                        },
+                    }
+                };
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
                 .map(|(i, s, t)| make_edge(i, s, t))
@@ -1442,7 +1475,9 @@ pub(super) fn build_output_graph(
     }
 
     // Matches the source label style (`out=<id>` / "monitor").
-    let out_label = output_id.map(|id| format!("out={id}")).unwrap_or_else(|| "monitor".to_string());
+    let out_label = output_id
+        .map(|id| format!("out={id}"))
+        .unwrap_or_else(|| "monitor".to_string());
     let blocks = Arc::new(AtomicU64::new(0));
 
     // A wire sender (direct-IP or WebRTC) is a terminal Consumer node inside the
@@ -1463,7 +1498,11 @@ pub(super) fn build_output_graph(
                 up.push((idx, e.source_handle.clone(), e.target_handle.clone()));
             }
         }
-        let max_up = up.iter().map(|(i, _, _)| node_latencies[*i]).max().unwrap_or(0);
+        let max_up = up
+            .iter()
+            .map(|(i, _, _)| node_latencies[*i])
+            .max()
+            .unwrap_or(0);
         let incoming: Vec<IncomingEdge> = up
             .into_iter()
             .map(|(idx, source_handle, target_handle)| {
@@ -1521,12 +1560,14 @@ pub(super) fn build_output_graph(
                 );
                 sender.set_send_consumers(send_consumers);
             }
-            OutputSpec::WebRtcSend { node_id, opus_bitrate, opus_application, .. } => {
-                let session = crate::audio::webrtc::get_or_create(
-                    node_id,
-                    *opus_bitrate,
-                    *opus_application,
-                );
+            OutputSpec::WebRtcSend {
+                node_id,
+                opus_bitrate,
+                opus_application,
+                ..
+            } => {
+                let session =
+                    crate::audio::webrtc::get_or_create(node_id, *opus_bitrate, *opus_application);
                 // This graph already runs at the wire rate, so the encode task's
                 // own resampler stays out of the path.
                 session.set_send_consumers(send_consumers, output_sr);
@@ -1555,7 +1596,13 @@ pub(super) fn build_output_graph(
             gr_handles,
             scopes,
             sources,
-            output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
+            output: OutputMeta {
+                label: out_label,
+                blocks,
+                sample_rate: output_sr,
+                channels: 2,
+                io: None,
+            },
             node_meta,
         });
     }
@@ -1615,7 +1662,13 @@ pub(super) fn build_output_graph(
         gr_handles,
         scopes,
         sources,
-        output: OutputMeta { label: out_label, blocks, sample_rate: output_sr, channels: 2, io: None },
+        output: OutputMeta {
+            label: out_label,
+            blocks,
+            sample_rate: output_sr,
+            channels: 2,
+            io: None,
+        },
         node_meta,
     })
 }
@@ -1637,7 +1690,12 @@ fn ring_source(
     let resampler = if owner_sr == output_sr {
         None
     } else {
-        Some(MultiResampler::new(owner_sr, output_sr, RESAMPLE_CHUNK, channels)?)
+        Some(MultiResampler::new(
+            owner_sr,
+            output_sr,
+            RESAMPLE_CHUNK,
+            channels,
+        )?)
     };
     let input_frames_per_block =
         (DSP_BLOCK_FRAMES as u64 * owner_sr as u64 + output_sr as u64 - 1) / output_sr as u64;
@@ -1667,7 +1725,9 @@ fn ring_source(
         resampler,
         input_staging: Vec::with_capacity((RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * channels + 8),
         splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * channels),
-        out_pending: StagingRing::with_capacity(RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels),
+        out_pending: StagingRing::with_capacity(
+            RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels,
+        ),
         chunk_tmp: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
         out_buf: vec![0.0; DSP_BLOCK_FRAMES * channels],
         input_samples_per_block,

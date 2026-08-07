@@ -63,8 +63,14 @@ impl CaptureStats {
 type Slot = (Producer<f32>, CaptureStats);
 
 enum BroadcastCmd {
-    Add { slot: usize, producer: Producer<f32>, stats: CaptureStats },
-    Remove { slot: usize },
+    Add {
+        slot: usize,
+        producer: Producer<f32>,
+        stats: CaptureStats,
+    },
+    Remove {
+        slot: usize,
+    },
 }
 
 /// Main-thread side. Tracks slot allocations and pushes Add/Remove
@@ -125,7 +131,11 @@ impl BroadcastTx {
             .ok_or_else(|| AppError::Validation("input broadcast slots exhausted".into()))?;
         let stats = CaptureStats::new();
         self.cmds
-            .push(BroadcastCmd::Add { slot, producer, stats: stats.clone() })
+            .push(BroadcastCmd::Add {
+                slot,
+                producer,
+                stats: stats.clone(),
+            })
             .map_err(|_| AppError::Stream("input broadcast cmd queue full".into()))?;
         self.used[slot] = true;
         Ok((slot, stats))
@@ -165,7 +175,11 @@ impl BroadcastRx {
     pub fn apply_commands(&mut self) {
         while let Ok(cmd) = self.cmds.pop() {
             match cmd {
-                BroadcastCmd::Add { slot, producer, stats } => {
+                BroadcastCmd::Add {
+                    slot,
+                    producer,
+                    stats,
+                } => {
                     // If slot already had a Producer, return it to main
                     // before overwriting (defensive -- `BroadcastTx::add`
                     // only picks free slots, so this branch is rare).
@@ -189,8 +203,7 @@ impl BroadcastRx {
     pub fn broadcast(&mut self, samples: &[f32]) {
         for slot in self.slots.iter_mut() {
             if let Some((p, stats)) = slot {
-                let written =
-                    bulk_push_counted(p, samples, &health::CAPTURE_RING_OVERRUN_SAMPLES);
+                let written = bulk_push_counted(p, samples, &health::CAPTURE_RING_OVERRUN_SAMPLES);
                 stats.fed.fetch_add(written as u64, Ordering::Relaxed);
                 let dropped = (samples.len() - written) as u64;
                 if dropped > 0 {
@@ -231,7 +244,9 @@ impl BroadcastRx {
                 if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
                     return;
                 }
-                let Some((p, _)) = self.slots[i].as_mut() else { break };
+                let Some((p, _)) = self.slots[i].as_mut() else {
+                    break;
+                };
                 // A consumer that went away leaves its ring full forever.
                 if p.is_abandoned() {
                     break;

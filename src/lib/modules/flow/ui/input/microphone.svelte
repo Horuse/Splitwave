@@ -44,9 +44,7 @@
 	onDestroy(() => unlistenRefresh?.());
 
 	let options = $derived(audioStore.inputDevices.map((d) => ({ value: d.id, label: d.name })));
-	let missing = $derived(
-		!!data.deviceId && !audioStore.inputDevices.some((d) => d.id === data.deviceId)
-	);
+	let missing = $derived(!!data.deviceId && !audioStore.inputDevices.some((d) => d.id === data.deviceId));
 
 	$effect(() => {
 		const deviceId = data.deviceId;
@@ -114,14 +112,7 @@
 
 <Wrapper label="Microphone" accent="input" icon={Mic}>
 	<div class="flex w-50 flex-col gap-3">
-		<Combobox
-			class="w-full"
-			{options}
-			value={data.deviceId ?? null}
-			placeholder="— Select microphone —"
-			onChange={setDevice}
-			onOpen={() => refresh()}
-		>
+		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				{#if supportsVirtualDevices}
@@ -131,8 +122,7 @@
 						onclick={() => {
 							close();
 							goto('/virtual-devices');
-						}}
-					/>
+						}} />
 				{/if}
 			{/snippet}
 		</Combobox>
@@ -146,25 +136,11 @@
 
 		{#if data.deviceId && !missing}
 			{#if unsupported}
-				<span class="text-[10px] text-neutral-900">
-					Input gain not adjustable for this device
-				</span>
+				<span class="text-[10px] text-neutral-900"> Input gain not adjustable for this device </span>
 			{:else if gain !== null}
-				<Slider
-					label="Gain"
-					value={gainPct}
-					min={0}
-					max={100}
-					step={1}
-					format={formatPct}
-					ticks={[25, 50, 75]}
-					onChange={setGainPct}
-				/>
+				<Slider label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
 			{/if}
-			<InputMeter
-				nodeId={id}
-				channelCount={channelCount}
-			/>
+			<InputMeter nodeId={id} {channelCount} />
 		{/if}
 	</div>
 </Wrapper>

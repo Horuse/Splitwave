@@ -82,7 +82,10 @@ impl EqEffect {
         };
         (
             Self {
-                channels: [ChannelChain::new(sample_rate), ChannelChain::new(sample_rate)],
+                channels: [
+                    ChannelChain::new(sample_rate),
+                    ChannelChain::new(sample_rate),
+                ],
                 gains,
             },
             control,
@@ -91,7 +94,10 @@ impl EqEffect {
 
     pub fn from_state(gains: [Arc<AtomicU32>; 10], sample_rate: u32) -> Self {
         Self {
-            channels: [ChannelChain::new(sample_rate), ChannelChain::new(sample_rate)],
+            channels: [
+                ChannelChain::new(sample_rate),
+                ChannelChain::new(sample_rate),
+            ],
             gains,
         }
     }

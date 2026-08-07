@@ -39,10 +39,7 @@
 		appSettings.reset();
 	}
 
-	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize'>(
-		key: K,
-		value: (typeof appSettings)[K]
-	) {
+	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize'>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
 	}
@@ -51,26 +48,12 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-2">
-			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm"
-				>Pipelines</a
-			>
+			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
 			{#if !isWindows}
-				<a
-					class:active={page.route.id === '/virtual-devices'}
-					href="/virtual-devices"
-					class="button-header px-4 text-sm">Virtual devices</a
-				>
+				<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
 			{/if}
-			<a
-				class:active={page.route.id === '/wiki'}
-				href="/wiki"
-				class="button-header px-4 text-sm">Wiki</a
-			>
-			<a
-				class:active={page.route.id === '/settings'}
-				href="/settings"
-				class="button-header px-4 text-sm">Settings</a
-			>
+			<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
+			<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
 		</div>
 	{/snippet}
 </Header>
@@ -80,9 +63,7 @@
 		<section class="flex flex-col gap-3">
 			<div>
 				<h2 class="text-sm font-semibold text-theme">Appearance</h2>
-				<p class="text-xs text-neutral-900">
-					System follows your OS setting and changes with it.
-				</p>
+				<p class="text-xs text-neutral-900">System follows your OS setting and changes with it.</p>
 			</div>
 
 			<div class="grid grid-cols-3 gap-2">
@@ -95,8 +76,7 @@
 							$themeStore === t.value
 								? 'border-neutral-900 bg-neutral-200 text-theme'
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}
-					>
+						]}>
 						{t.label}
 					</button>
 				{/each}
@@ -120,8 +100,7 @@
 							edgeSettings.shape === s.value
 								? 'border-neutral-900 bg-neutral-200 text-theme'
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}
-					>
+						]}>
 						<EdgeShapeIcon shape={s.value} animated={edgeSettings.animated} />
 						<span class="text-[11px] font-medium">{s.label}</span>
 					</button>
@@ -132,18 +111,11 @@
 		<section class="flex flex-col gap-2">
 			<div>
 				<h2 class="text-sm font-semibold text-theme">Rendering</h2>
-				<p class="text-xs text-neutral-900">
-					Turn these off first if the canvas drops frames on a large graph.
-				</p>
+				<p class="text-xs text-neutral-900">Turn these off first if the canvas drops frames on a large graph.</p>
 			</div>
 
 			{#each [{ key: 'animated' as const, label: 'Animate cables', hint: 'Marching dashes along every connection. Runs a CSS animation per edge.' }, { key: 'pins' as const, label: 'Connector pins', hint: 'Draws a plug at each end of a cable.' }] as row (row.key)}
-				<Toggle
-					checked={edgeSettings[row.key]}
-					label={row.label}
-					hint={row.hint}
-					onChange={() => toggle(row.key)}
-				/>
+				<Toggle checked={edgeSettings[row.key]} label={row.label} hint={row.hint} onChange={() => toggle(row.key)} />
 			{/each}
 		</section>
 
@@ -157,8 +129,7 @@
 				checked={appSettings.snapToGrid}
 				label="Snap to grid"
 				hint="Nodes align to a fixed grid instead of moving freely."
-				onChange={() => setApp('snapToGrid', !appSettings.snapToGrid)}
-			/>
+				onChange={() => setApp('snapToGrid', !appSettings.snapToGrid)} />
 
 			{#if appSettings.snapToGrid}
 				<div class="flex items-center gap-2 pl-1">
@@ -172,8 +143,7 @@
 								appSettings.gridSize === size
 									? 'border-neutral-900 bg-neutral-200 text-theme'
 									: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-							]}
-						>
+							]}>
 							{size}
 						</button>
 					{/each}
@@ -184,9 +154,7 @@
 		<section class="flex flex-col gap-2">
 			<div>
 				<h2 class="text-sm font-semibold text-theme">History</h2>
-				<p class="text-xs text-neutral-900">
-					Snapshots kept per pipeline. Older ones are dropped as new ones arrive.
-				</p>
+				<p class="text-xs text-neutral-900">Snapshots kept per pipeline. Older ones are dropped as new ones arrive.</p>
 			</div>
 
 			<div class="flex items-center gap-2">
@@ -199,8 +167,7 @@
 							appSettings.maxSnapshots === limit
 								? 'border-neutral-900 bg-neutral-200 text-theme'
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}
-					>
+						]}>
 						{limit}
 					</button>
 				{/each}
@@ -210,27 +177,18 @@
 		<section class="flex flex-col gap-2">
 			<div>
 				<h2 class="text-sm font-semibold text-theme">Updates</h2>
-				<p class="text-xs text-neutral-900">
-					Checking from the menu always works, whatever this is set to.
-				</p>
+				<p class="text-xs text-neutral-900">Checking from the menu always works, whatever this is set to.</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.checkUpdatesOnLaunch}
 				label="Check on launch"
 				hint="Looks for a new version each time the app starts."
-				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)}
-			/>
+				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)} />
 		</section>
 
 		<PresetsSection />
 
-		<button
-			type="button"
-			class="button-main primary self-start text-xs"
-			onclick={() => resetAll()}
-		>
-			Reset to defaults
-		</button>
+		<button type="button" class="button-main primary self-start text-xs" onclick={() => resetAll()}> Reset to defaults </button>
 	</div>
 </div>

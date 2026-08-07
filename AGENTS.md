@@ -6,6 +6,7 @@ Contributing rules (diff hygiene, per-OS testing, PR checklist):
 `CONTRIBUTING.md`. Build and run: `DEVELOPMENT.md`.
 
 ## Style
+
 - Smallest viable change. Long specs are upper bounds — slice them.
 - Touch only the lines the change requires.
 - Formatting is enforced: `bun run format` (Prettier + rustfmt) before every
@@ -19,7 +20,9 @@ Contributing rules (diff hygiene, per-OS testing, PR checklist):
   No "now / instead of / previously / was", no narrating a change to the reviewer.
 
 ## RT audio path — forbidden
+
 Inside cpal / SCK callbacks and `DspWorker::run`:
+
 - Allocations (growing `Vec::push`, `String::from`, `Box::new`)
 - Locks (`Mutex::lock`; `try_lock` only if a miss is acceptable)
 - Syscalls (I/O, logging, IPC)
@@ -39,6 +42,7 @@ Resampling: `rubato` `SincFixedIn`. Dev builds require:
 Without these, one chunk takes ~16 ms and the worker stalls.
 
 ## Effects
+
 - `RuntimeEffect` enum dispatch, no `Box<dyn>` — LLVM inlines per variant.
 - Params: `Arc<AtomicU32>` cells shared with `EffectControl`. UI writes;
   RT reads next block.
@@ -47,6 +51,7 @@ Without these, one chunk takes ~16 ms and the worker stalls.
 - Only `LevelMeter` publishes telemetry back (peak/RMS atomics, tick thread).
 
 ## DspWorker pacing
+
 - `Clock` — speaker outputs. Sleeps to a per-block deadline; misses produce
   audible silence.
 - `OnAvailability` — file output. Waits until all sources have one block
@@ -55,6 +60,7 @@ Without these, one chunk takes ~16 ms and the worker stalls.
 - Stall: per-source `last_pop_at`; >150 ms silence → zero-fill and proceed.
 
 ## Layout
+
     src/lib/modules/
       audio/     methods.ts, stores.svelte.ts, types.ts, ui/
       flow/      ui/ (xyflow nodes; node.svelte wrapper, editor, sidebar)
@@ -66,6 +72,7 @@ Each module's `index.ts` is a barrel. Module-internal files are
 underscore-prefixed (`_slider.svelte`).
 
 ## Frontend
+
 - Svelte 5 runes only. No `export let`, no stores in component scope.
 - xyflow nodes wrap with `Wrapper` from `flow/ui/node.svelte`
   (`accent`, `hasInput`, `hasOutput`).
@@ -77,6 +84,7 @@ underscore-prefixed (`_slider.svelte`).
   amplitude.
 
 ## Rust quirks
+
 - `audio/macos_hal.rs` — custom CoreAudio FFI. `cpal`'s
   `supported_*_configs` hides non-default routes; `default_*_config`
   errors on inactive routes.
@@ -88,10 +96,12 @@ underscore-prefixed (`_slider.svelte`).
 - `audio/recorder.rs` — `hound`, f32 stereo PCM, periodic flush.
 
 ## Commits
+
 - `type(scope): subject` — lowercase, no trailing period.
 - Body usually omitted.
 
 ## Platforms
+
 Three real backends: CoreAudio + ScreenCaptureKit (macOS), PipeWire (Linux),
 WASAPI (Windows). `device/`, `capture/`, `volume/`, `virtual_device/`,
 `pipeline/input/`, `pipeline/output/` each carry one file per OS — a change
@@ -103,6 +113,7 @@ implied. A backend that cannot support the feature returns an error; it does
 not substitute a different rate, device, or format.
 
 ## When in doubt
+
 - Read `MEMORY.md`.
 - Read the current code, not earlier explanations.
 - RT path change → `cargo check`.

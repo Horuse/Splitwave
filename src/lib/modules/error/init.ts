@@ -57,12 +57,7 @@ export async function installErrorHandlers(): Promise<void> {
 
 	window.addEventListener('unhandledrejection', (e) => {
 		const reason = e.reason;
-		const message =
-			reason instanceof Error
-				? reason.message
-				: typeof reason === 'string'
-					? reason
-					: JSON.stringify(reason);
+		const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : JSON.stringify(reason);
 		errorStore.report({
 			source: 'unhandledRejection',
 			message,

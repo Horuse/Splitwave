@@ -76,8 +76,14 @@ async fn new_host_peer(
         display_id: display_id.clone(),
     });
 
-    wire_data_channel(dc, session, connection_id.clone(), node_id.to_string(), display_id.clone())
-        .await;
+    wire_data_channel(
+        dc,
+        session,
+        connection_id.clone(),
+        node_id.to_string(),
+        display_id.clone(),
+    )
+    .await;
     wire_ctrl_channel(
         ctrl_dc,
         node_id.to_string(),
@@ -89,8 +95,18 @@ async fn new_host_peer(
         session.local_channels.clone(),
     )
     .await;
-    session.peers.lock().await.insert(connection_id.clone(), peer);
-    wire_peer_events(pc.clone(), connection_id.clone(), node_id.to_string(), session.clone(), display_id);
+    session
+        .peers
+        .lock()
+        .await
+        .insert(connection_id.clone(), peer);
+    wire_peer_events(
+        pc.clone(),
+        connection_id.clone(),
+        node_id.to_string(),
+        session.clone(),
+        display_id,
+    );
 
     Ok((connection_id, pc))
 }
@@ -128,7 +144,11 @@ async fn new_guest_peer(
                     "ctrl" => {
                         let arcs = session.peers.lock().await.get(&connection_id).map(|p| {
                             *p.ctrl_dc.lock().unwrap() = Some(dc.clone());
-                            (p.ping_ms.clone(), p.remote_name.clone(), p.remote_channels.clone())
+                            (
+                                p.ping_ms.clone(),
+                                p.remote_name.clone(),
+                                p.remote_channels.clone(),
+                            )
                         });
                         if let Some((ping_ms, remote_name, remote_channels)) = arcs {
                             wire_ctrl_channel(
@@ -164,8 +184,18 @@ async fn new_guest_peer(
         remote_channels: Arc::new(AtomicU32::new(0)),
         display_id: display_id.clone(),
     });
-    session.peers.lock().await.insert(connection_id.to_string(), peer);
-    wire_peer_events(pc.clone(), connection_id.to_string(), node_id.to_string(), session.clone(), display_id);
+    session
+        .peers
+        .lock()
+        .await
+        .insert(connection_id.to_string(), peer);
+    wire_peer_events(
+        pc.clone(),
+        connection_id.to_string(),
+        node_id.to_string(),
+        session.clone(),
+        display_id,
+    );
 
     let offer = RTCSessionDescription::offer(remote_sdp)
         .map_err(|e| AppError::Stream(format!("parse offer SDP: {e}")))?;
@@ -229,7 +259,11 @@ pub async fn create_offer_trickle(
 
     let sdp = local_sdp(&pc).await?;
     info!(node = %node_id, peer = %connection_id, "trickle offer ready");
-    Ok(TrickleOffer { connection_id, sdp, candidates })
+    Ok(TrickleOffer {
+        connection_id,
+        sdp,
+        candidates,
+    })
 }
 
 pub async fn accept_offer(
@@ -304,7 +338,12 @@ pub async fn accept_offer_trickle(
 
     let sdp = local_sdp(&pc).await?;
     info!(node = %node_id, peer = %connection_id, "trickle answer ready");
-    Ok(TrickleAnswer { guest_peer_id, sdp, candidates, pc })
+    Ok(TrickleAnswer {
+        guest_peer_id,
+        sdp,
+        candidates,
+        pc,
+    })
 }
 
 pub async fn complete_handshake(node_id: String, answer_code: String) -> AppResult<()> {
@@ -369,9 +408,12 @@ pub async fn add_remote_candidate(
         .get(connection_id)
         .map(|p| p.pc.clone())
         .ok_or_else(|| AppError::Validation(format!("no peer {connection_id} in session")))?;
-    pc.add_ice_candidate(RTCIceCandidateInit { candidate, ..Default::default() })
-        .await
-        .map_err(|e| AppError::Stream(format!("add ice candidate: {e}")))
+    pc.add_ice_candidate(RTCIceCandidateInit {
+        candidate,
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| AppError::Stream(format!("add ice candidate: {e}")))
 }
 
 fn gather_done(pc: &RTCPeerConnection) -> tokio::sync::oneshot::Receiver<()> {

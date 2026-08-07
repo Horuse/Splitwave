@@ -49,7 +49,12 @@ impl Class for MemoryStream {
 }
 
 impl IBStreamTrait for MemoryStream {
-    unsafe fn read(&self, buffer: *mut c_void, numBytes: int32, numBytesRead: *mut int32) -> tresult {
+    unsafe fn read(
+        &self,
+        buffer: *mut c_void,
+        numBytes: int32,
+        numBytesRead: *mut int32,
+    ) -> tresult {
         if buffer.is_null() || numBytes < 0 {
             return kInvalidArgument;
         }
@@ -191,7 +196,9 @@ impl IAttributeListTrait for AttributeList {
         let Some(id) = key(id) else {
             return kInvalidArgument;
         };
-        self.entries.borrow_mut().insert(id, Attribute::Float(value));
+        self.entries
+            .borrow_mut()
+            .insert(id, Attribute::Float(value));
         kResultOk
     }
 
@@ -218,7 +225,9 @@ impl IAttributeListTrait for AttributeList {
             text.push(*p as u16);
             p = p.add(1);
         }
-        self.entries.borrow_mut().insert(id, Attribute::String(text));
+        self.entries
+            .borrow_mut()
+            .insert(id, Attribute::String(text));
         kResultOk
     }
 
@@ -246,7 +255,9 @@ impl IAttributeListTrait for AttributeList {
             return kInvalidArgument;
         };
         let bytes = std::slice::from_raw_parts(data.cast::<u8>(), sizeInBytes as usize).to_vec();
-        self.entries.borrow_mut().insert(id, Attribute::Binary(bytes));
+        self.entries
+            .borrow_mut()
+            .insert(id, Attribute::Binary(bytes));
         kResultOk
     }
 
@@ -471,7 +482,10 @@ mod tests {
             assert_eq!(pos, 5);
 
             let mut landed = 0;
-            assert_eq!(s.seek(0, SeekMode::kIBSeekSet as i32, &mut landed), kResultOk);
+            assert_eq!(
+                s.seek(0, SeekMode::kIBSeekSet as i32, &mut landed),
+                kResultOk
+            );
             assert_eq!(landed, 0);
 
             let mut back = [0u8; 8];
@@ -534,10 +548,7 @@ mod tests {
             let text: Vec<TChar> = "hi".encode_utf16().map(|u| u as TChar).chain([0]).collect();
             a.setString(sid.as_ptr(), text.as_ptr());
             let mut out = [0 as TChar; 8];
-            assert_eq!(
-                a.getString(sid.as_ptr(), out.as_mut_ptr(), 16),
-                kResultOk
-            );
+            assert_eq!(a.getString(sid.as_ptr(), out.as_mut_ptr(), 16), kResultOk);
             assert_eq!(out[0] as u16, b'h' as u16);
             assert_eq!(out[1] as u16, b'i' as u16);
             assert_eq!(out[2], 0);
@@ -562,7 +573,11 @@ mod tests {
         let a = list.to_com_ptr::<IAttributeList>().unwrap();
         let id = CString::new("s").unwrap();
         unsafe {
-            let text: Vec<TChar> = "abcdef".encode_utf16().map(|u| u as TChar).chain([0]).collect();
+            let text: Vec<TChar> = "abcdef"
+                .encode_utf16()
+                .map(|u| u as TChar)
+                .chain([0])
+                .collect();
             a.setString(id.as_ptr(), text.as_ptr());
             let mut out = [0x7f as TChar; 4];
             // 6 bytes is 3 TChars, so two characters plus a terminator.
@@ -587,10 +602,7 @@ mod tests {
 
             for mut iid in [IMessage::IID, IAttributeList::IID].map(as_tuid) {
                 let mut obj = std::ptr::null_mut();
-                assert_eq!(
-                    host.createInstance(&mut iid, &mut iid, &mut obj),
-                    kResultOk
-                );
+                assert_eq!(host.createInstance(&mut iid, &mut iid, &mut obj), kResultOk);
                 assert!(!obj.is_null());
                 drop(ComPtr::<IMessage>::from_raw(obj.cast()));
             }

@@ -78,7 +78,9 @@ impl ChannelEnc {
                 let need = r.chunk_in() * 2;
                 let mut off = 0;
                 while self.in_acc.len() - off >= need {
-                    if r.process_chunk(&self.in_acc[off..off + need], &mut self.out_acc).is_err() {
+                    if r.process_chunk(&self.in_acc[off..off + need], &mut self.out_acc)
+                        .is_err()
+                    {
                         break;
                     }
                     off += need;
@@ -110,8 +112,8 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
         loop {
             interval.tick().await;
             let sr = session.output_sr.load(Ordering::Relaxed);
-            let format = Format::from_byte(session.codec.load(Ordering::Relaxed))
-                .unwrap_or(Format::Opus);
+            let format =
+                Format::from_byte(session.codec.load(Ordering::Relaxed)).unwrap_or(Format::Opus);
 
             // Drain each channel's send ring under the lock, then release it
             // before the async resample/encode/send work.
@@ -193,7 +195,9 @@ async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
 /// created on its first packet, so peers need not agree on how many channels
 /// each sends, nor on the codec.
 pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id: &str) {
-    let Some(pkt) = packet::parse(&data) else { return };
+    let Some(pkt) = packet::parse(&data) else {
+        return;
+    };
     let format = pkt.format;
     let channel = pkt.channel;
     let seq = pkt.seq;
@@ -250,7 +254,9 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     let mut pcm: Vec<f32> = Vec::new();
     let mut packets = 1u16;
     {
-        let Ok(mut dec) = ch.decoder.lock() else { return };
+        let Ok(mut dec) = ch.decoder.lock() else {
+            return;
+        };
         if let SeqStep::Advance { gap } = step {
             if gap > 0 {
                 peer.lost.fetch_add(gap as u64, Ordering::Relaxed);

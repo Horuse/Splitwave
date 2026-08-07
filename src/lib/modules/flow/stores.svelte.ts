@@ -13,9 +13,7 @@ class ChannelSelection {
 			this.channels = [ch];
 			return;
 		}
-		this.channels = this.channels.includes(ch)
-			? this.channels.filter((c) => c !== ch)
-			: [...this.channels, ch].sort((a, b) => a - b);
+		this.channels = this.channels.includes(ch) ? this.channels.filter((c) => c !== ch) : [...this.channels, ch].sort((a, b) => a - b);
 		if (this.channels.length === 0) this.nodeId = null;
 	}
 

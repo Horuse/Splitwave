@@ -45,7 +45,12 @@ fn resolve_icon(binary: &str) -> Option<Vec<u8>> {
         .with_scale(1)
         .with_theme(&theme)
         .find()
-        .or_else(|| lookup(icon).with_size(ICON_SIZE as u16).with_scale(1).find())?;
+        .or_else(|| {
+            lookup(icon)
+                .with_size(ICON_SIZE as u16)
+                .with_scale(1)
+                .find()
+        })?;
     read_icon_file(&path)
 }
 

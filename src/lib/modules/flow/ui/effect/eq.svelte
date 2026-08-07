@@ -14,9 +14,7 @@
 
 	// Mirrors EQ_FREQUENCIES_HZ / EQ_CROSSOVER_FREQS in audio/effects.rs.
 	const FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] as const;
-	const CROSSOVERS = [
-		45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085
-	] as const;
+	const CROSSOVERS = [45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085] as const;
 	const GAIN_MIN = -18;
 	const GAIN_MAX = 18;
 
@@ -173,17 +171,7 @@
 	}
 </script>
 
-<Wrapper
-	label="EQ"
-	icon={Sliders}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="EQ" icon={Sliders} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-72 flex-col gap-1.5">
 		<PresetBar kind="eq" {data} onApply={applyPreset} />
 
@@ -191,24 +179,21 @@
 			viewBox="0 0 {CURVE_W} {CURVE_H}"
 			class="h-16 w-full rounded border border-neutral-300 bg-neutral-100"
 			role="img"
-			aria-label="EQ frequency response"
-		>
+			aria-label="EQ frequency response">
 			{#each dbGrid as db (db)}
 				<line
-					x1="0" y1={dbToY(db)} x2={CURVE_W} y2={dbToY(db)}
-					stroke="rgb(156 163 175)" stroke-width="0.3"
+					x1="0"
+					y1={dbToY(db)}
+					x2={CURVE_W}
+					y2={dbToY(db)}
+					stroke="rgb(156 163 175)"
+					stroke-width="0.3"
 					stroke-dasharray={db === 0 ? '' : '2 2'}
-					opacity={db === 0 ? 0.6 : 0.3}
-				/>
+					opacity={db === 0 ? 0.6 : 0.3} />
 			{/each}
 			<path d={curvePath} stroke="rgb(245 158 11)" stroke-width="1.5" fill="none" />
 			{#each FREQUENCIES as freq (freq)}
-				<circle
-					cx={freqToX(freq)}
-					cy={dbToY(combinedDbAt(freq))}
-					r="2"
-					fill="rgb(245 158 11)"
-				/>
+				<circle cx={freqToX(freq)} cy={dbToY(combinedDbAt(freq))} r="2" fill="rgb(245 158 11)" />
 			{/each}
 		</svg>
 
@@ -220,13 +205,12 @@
 					<input
 						type="text"
 						inputmode="decimal"
-						class="nodrag nopan w-full rounded-sm bg-transparent text-center font-mono text-[8px] text-neutral-1000 tabular-nums focus:bg-neutral-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+						class="nodrag nopan w-full rounded-sm bg-transparent text-center font-mono text-[8px] text-neutral-1000 tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none"
 						value={editingBand === i ? draft : formatGain(gain)}
 						oninput={(e) => (draft = e.currentTarget.value)}
 						onfocus={(e) => startEdit(i, e)}
 						onblur={() => commitEdit(i)}
-						onkeydown={onEditKeyDown}
-					/>
+						onkeydown={onEditKeyDown} />
 					<div
 						bind:this={faderEls[i]}
 						class="nodrag nopan nowheel relative h-36 w-4 cursor-ns-resize rounded-sm border border-neutral-300 bg-neutral-100"
@@ -242,32 +226,30 @@
 						aria-label="{freq} Hz"
 						aria-valuemin={GAIN_MIN}
 						aria-valuemax={GAIN_MAX}
-						aria-valuenow={gain}
-					>
+						aria-valuenow={gain}>
 						<!-- Recessed travel slot the cap rides in. -->
 						<div class="pointer-events-none absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-[1px] bg-neutral-400/60"></div>
 						{#each [12, 6, -6, -12] as tick (tick)}
 							<div
-								class="pointer-events-none absolute left-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
-								style="top: {gainToFaderPct(tick)}%;"
-							></div>
+								class="pointer-events-none absolute left-1 h-px w-1.5 -translate-y-1/2 bg-neutral-500/40"
+								style="top: {gainToFaderPct(tick)}%;">
+							</div>
 							<div
-								class="pointer-events-none absolute right-1 -translate-y-1/2 h-px w-1.5 bg-neutral-500/40"
-								style="top: {gainToFaderPct(tick)}%;"
-							></div>
+								class="pointer-events-none absolute right-1 h-px w-1.5 -translate-y-1/2 bg-neutral-500/40"
+								style="top: {gainToFaderPct(tick)}%;">
+							</div>
 						{/each}
 						<!-- 0 dB detent. -->
 						<div class="pointer-events-none absolute top-1/2 right-1 left-1 h-px -translate-y-1/2 bg-neutral-600/70"></div>
 						<!-- Boost/cut fill from the 0 dB detent to the cap. -->
 						<div
-							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2  {gain >= 0 ? 'bg-amber-500' : 'bg-sky-500'}"
-							style={gain >= 0 ? `top: ${capTop}%; bottom: 50%;` : `top: 50%; bottom: ${100 - capTop}%;`}
-						></div>
+							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2 {gain >= 0 ? 'bg-amber-500' : 'bg-sky-500'}"
+							style={gain >= 0 ? `top: ${capTop}%; bottom: 50%;` : `top: 50%; bottom: ${100 - capTop}%;`}>
+						</div>
 						<!-- Physical fader cap: slightly wider than the track, with a grip line. -->
 						<div
 							class="pointer-events-none absolute left-1/2 h-2.5 w-[166%] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-neutral-500/60 bg-neutral-300"
-							style="top: {capTop}%;"
-						>
+							style="top: {capTop}%;">
 						</div>
 					</div>
 					<span class="font-mono text-[8px] text-neutral-900">{formatFreq(freq)}</span>

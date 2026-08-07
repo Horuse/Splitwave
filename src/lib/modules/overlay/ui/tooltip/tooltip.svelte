@@ -15,14 +15,7 @@
 		children: Snippet;
 	}
 
-	let {
-		text,
-		content,
-		placement = 'top',
-		offsetPx = 6,
-		delay = 200,
-		children
-	}: Props = $props();
+	let { text, content, placement = 'top', offsetPx = 6, delay = 200, children }: Props = $props();
 
 	let open = $state(false);
 	let openTimer: ReturnType<typeof setTimeout> | undefined;
@@ -45,14 +38,7 @@
 	}
 </script>
 
-<div
-	use:floatingRef
-	onmouseenter={show}
-	onmouseleave={hide}
-	onfocusin={show}
-	onfocusout={hide}
-	class="inline-flex"
->
+<div use:floatingRef onmouseenter={show} onmouseleave={hide} onfocusin={show} onfocusout={hide} class="inline-flex">
 	{@render children()}
 </div>
 
@@ -61,9 +47,8 @@
 		use:portal={'#overlays'}
 		use:floatingContent
 		transition:fade={{ duration: 100 }}
-		class="z-[200] pointer-events-none rounded-md border border-neutral-700 bg-neutral-500 px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
-		role="tooltip"
-	>
+		class="pointer-events-none z-[200] rounded-md border border-neutral-700 bg-neutral-500 px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
+		role="tooltip">
 		{#if content}
 			{@render content()}
 		{:else}

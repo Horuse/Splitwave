@@ -22,8 +22,7 @@
 			copied = true;
 			clearTimeout(timer);
 			timer = setTimeout(() => (copied = false), 3000);
-		} catch {
-		}
+		} catch {}
 	}
 </script>
 

@@ -18,19 +18,7 @@
 		onChange: (v: number) => void;
 	}
 
-	let {
-		label,
-		value,
-		min,
-		max,
-		step = 0.1,
-		unit = '',
-		format,
-		defaultValue,
-		ticks,
-		valueClass = 'text-neutral-900',
-		onChange
-	}: Props = $props();
+	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, valueClass = 'text-neutral-900', onChange }: Props = $props();
 
 	let ghost = $state<number | null>(null);
 
@@ -124,11 +112,7 @@
 
 	// Replace native <input range> arrow stepping so Shift = fine, Alt = coarse.
 	function onKeyDown(e: KeyboardEvent) {
-		const dir = e.key === 'ArrowLeft' || e.key === 'ArrowDown'
-			? -1
-			: e.key === 'ArrowRight' || e.key === 'ArrowUp'
-				? 1
-				: 0;
+		const dir = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : 0;
 		if (dir !== 0) {
 			e.preventDefault();
 			const mul = e.altKey ? 10 : e.shiftKey ? 0.1 : 1;
@@ -151,13 +135,12 @@
 		<input
 			type="text"
 			inputmode="decimal"
-			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:outline-none focus:ring-1 focus:ring-amber-500 {valueClass}"
+			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
 			value={editing ? draft : display(value)}
 			oninput={(e) => (draft = e.currentTarget.value)}
 			onfocus={startEdit}
 			onblur={commitEdit}
-			onkeydown={onEditKeyDown}
-		/>
+			onkeydown={onEditKeyDown} />
 	</span>
 	<div class="relative pt-1 pb-2">
 		<input
@@ -172,23 +155,18 @@
 			onpointercancel={clearGhost}
 			onblur={clearGhost}
 			ondblclick={onDoubleClick}
-			onkeydown={onKeyDown}
-		/>
+			onkeydown={onKeyDown} />
 		{#if ticks && ticks.length > 0}
 			<div class="pointer-events-none absolute inset-x-0 bottom-0 h-1.5">
 				{#each ticks as t (t)}
-					<span
-						class="absolute top-0 h-1.5 w-px bg-neutral-700/50"
-						style="left: {leftPct(t)}%;"
-					></span>
+					<span class="absolute top-0 h-1.5 w-px bg-neutral-700/50" style="left: {leftPct(t)}%;"></span>
 				{/each}
 			</div>
 		{/if}
 		{#if ghost !== null}
 			<span
 				class="pointer-events-none absolute -top-0.5 z-10 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[9px] leading-tight text-white shadow"
-				style="left: {leftPct(ghost)}%;"
-			>
+				style="left: {leftPct(ghost)}%;">
 				{display(ghost)}
 			</span>
 		{/if}

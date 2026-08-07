@@ -10,7 +10,7 @@ const prefs = new LazyStore(PREFS_FILE);
 
 export async function getSkippedVersion(): Promise<string | null> {
 	try {
-		return ((await prefs.get<string>(SKIPPED_KEY)) ?? null);
+		return (await prefs.get<string>(SKIPPED_KEY)) ?? null;
 	} catch {
 		return null;
 	}
@@ -20,8 +20,7 @@ export async function skipVersion(version: string): Promise<void> {
 	try {
 		await prefs.set(SKIPPED_KEY, version);
 		await prefs.save();
-	} catch {
-	}
+	} catch {}
 	updaterStore.state = { phase: 'idle' };
 }
 
@@ -91,7 +90,6 @@ async function diagnoseError(e: unknown): Promise<string> {
 		return base;
 	}
 }
-
 
 export async function installUpdate(): Promise<void> {
 	const s = updaterStore.state;

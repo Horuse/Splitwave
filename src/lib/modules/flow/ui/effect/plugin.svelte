@@ -20,9 +20,7 @@
 	let scanned = $state(false);
 
 	// uid is the stable scan key; node data stores path + pluginId.
-	const currentUid = $derived(
-		plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null
-	);
+	const currentUid = $derived(plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
 
 	const options = $derived(
 		plugins.map((p) => ({
@@ -101,9 +99,7 @@
 	let params = $state<PluginParam[]>([]);
 
 	async function loadParams() {
-		const fresh = (await audioMethods.getPluginParams(id).catch(() => [])).filter(
-			(p) => !p.readOnly
-		);
+		const fresh = (await audioMethods.getPluginParams(id).catch(() => [])).filter((p) => !p.readOnly);
 		// Same parameter set: update values in place so sliders aren't recreated
 		// (and a mid-drag one isn't yanked). Otherwise swap the whole list.
 		if (params.length === fresh.length && params.every((p, i) => p.id === fresh[i].id)) {
@@ -150,9 +146,7 @@
 		const next = !editorOpen;
 		editorOpen = next;
 		if (!next) captureState();
-		const call = next
-			? audioMethods.openPluginEditor(id, data.name || 'Plugin')
-			: audioMethods.closePluginEditor(id);
+		const call = next ? audioMethods.openPluginEditor(id, data.name || 'Plugin') : audioMethods.closePluginEditor(id);
 		call.catch((e: unknown) => {
 			editorOpen = !next;
 			editorError = String(e);
@@ -201,16 +195,14 @@
 	selfGrowing
 	nodeId={id}
 	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+	onBypass={toggleBypass}>
 	<div class="flex w-56 flex-col gap-2">
 		<Combobox
-			options={options}
+			{options}
 			value={currentUid}
 			placeholder={scanning ? 'Scanning…' : 'Select a plugin'}
 			emptyHint={scanned ? 'No plugins found' : 'Scanning…'}
-			onChange={select}
-		>
+			onChange={select}>
 			{#snippet footer()}
 				<RescanButton onRescan={scan} />
 			{/snippet}
@@ -234,20 +226,14 @@
 					class="nodrag nopan rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
 					disabled={!canOpenEditor}
 					title={canOpenEditor ? undefined : 'Start the pipeline to open the editor'}
-					onclick={toggleEditor}
-				>
+					onclick={toggleEditor}>
 					{editorOpen ? 'Close editor' : 'Open editor'}
 				</button>
 			{/if}
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>
-			<Toggle
-				size="sm"
-				label="Show parameters"
-				checked={!!data.showParams}
-				onChange={(v) => flow.updateNodeData(id, { showParams: v })}
-			/>
+			<Toggle size="sm" label="Show parameters" checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
 			{#if data.showParams && params.length}
 				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
 					{#each params as p (p.id)}
@@ -258,8 +244,7 @@
 							max={p.max}
 							step={p.stepped ? 1 : p.max > p.min ? (p.max - p.min) / 100 : 0.01}
 							defaultValue={p.default}
-							onChange={(v) => setParam(p, v)}
-						/>
+							onChange={(v) => setParam(p, v)} />
 					{/each}
 				</div>
 			{/if}

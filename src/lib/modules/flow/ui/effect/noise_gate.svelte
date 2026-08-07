@@ -31,9 +31,7 @@
 	}
 
 	let stateGain = $state(1);
-	let gateState = $derived(
-		stateGain > 0.85 ? 'open' : stateGain > 0.15 ? 'hold' : 'closed'
-	);
+	let gateState = $derived(stateGain > 0.85 ? 'open' : stateGain > 0.15 ? 'hold' : 'closed');
 
 	let unlisten: UnlistenFn | undefined;
 	onMount(async () => {
@@ -44,9 +42,12 @@
 	});
 	onDestroy(() => unlisten?.());
 
-	const W = 150, H = 70;
-	const X_MIN = -80, X_MAX = 0;
-	const Y_MIN = -80, Y_MAX = 6;
+	const W = 150,
+		H = 70;
+	const X_MIN = -80,
+		X_MAX = 0;
+	const Y_MIN = -80,
+		Y_MAX = 6;
 
 	function xToSvg(db: number): number {
 		return ((db - X_MIN) / (X_MAX - X_MIN)) * W;
@@ -87,54 +88,55 @@
 	nodeId={id}
 	inputs={[{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }]}
 	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+	onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="noiseGate" {data} onApply={applyPreset} />
 
-		<div class="flex gap-3 items-end nowheel nodrag">
-			<svg
-				width={W}
-				height={H}
-				class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none"
-			>
+		<div class="nowheel nodrag flex items-end gap-3">
+			<svg width={W} height={H} class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none">
 				{#each [-60, -40, -20] as x}
-					<line x1={xToSvg(x)} y1={0} x2={xToSvg(x)} y2={H}
-						stroke="currentColor" stroke-width="0.5" class="text-neutral-300" />
+					<line x1={xToSvg(x)} y1={0} x2={xToSvg(x)} y2={H} stroke="currentColor" stroke-width="0.5" class="text-neutral-300" />
 				{/each}
 				{#each [-60, -40, -20, 0] as y}
-					<line x1={0} y1={yToSvg(y)} x2={W} y2={yToSvg(y)}
-						stroke="currentColor" stroke-width="0.5"
+					<line
+						x1={0}
+						y1={yToSvg(y)}
+						x2={W}
+						y2={yToSvg(y)}
+						stroke="currentColor"
+						stroke-width="0.5"
 						class={y === 0 ? 'text-neutral-400' : 'text-neutral-300'} />
 				{/each}
 				<line
-					x1={xToSvg(data.thresholdDb)} y1={0}
-					x2={xToSvg(data.thresholdDb)} y2={H}
-					stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="2,2" opacity="0.7"
-				/>
+					x1={xToSvg(data.thresholdDb)}
+					y1={0}
+					x2={xToSvg(data.thresholdDb)}
+					y2={H}
+					stroke="#f59e0b"
+					stroke-width="0.8"
+					stroke-dasharray="2,2"
+					opacity="0.7" />
 				<line
-					x1={xToSvg(X_MIN)} y1={yToSvg(X_MIN)}
-					x2={xToSvg(X_MAX)} y2={yToSvg(X_MAX)}
-					stroke="currentColor" stroke-width="0.7"
-					class="text-neutral-400" stroke-dasharray="3,2"
-				/>
-				<polyline
-					points={gatePath()}
-					fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"
-				/>
+					x1={xToSvg(X_MIN)}
+					y1={yToSvg(X_MIN)}
+					x2={xToSvg(X_MAX)}
+					y2={yToSvg(X_MAX)}
+					stroke="currentColor"
+					stroke-width="0.7"
+					class="text-neutral-400"
+					stroke-dasharray="3,2" />
+				<polyline points={gatePath()} fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" />
 			</svg>
 
-			<div class="flex flex-col gap-1.5 items-center my-auto select-none">
-				{#each [
-					{ label: 'Open', state: 'open', color: 'bg-green-500' },
-					{ label: 'Hold', state: 'hold', color: 'bg-amber-400' },
-					{ label: 'Closed', state: 'closed', color: 'bg-neutral-400' }
-				] as item}
+			<div class="my-auto flex flex-col items-center gap-1.5 select-none">
+				{#each [{ label: 'Open', state: 'open', color: 'bg-green-500' }, { label: 'Hold', state: 'hold', color: 'bg-amber-400' }, { label: 'Closed', state: 'closed', color: 'bg-neutral-400' }] as item}
 					<div class="flex items-center gap-1.5">
-						<div class="size-2 rounded-full border border-neutral-300 {gateState === item.state ? item.color : 'bg-neutral-200'}
+						<div
+							class="size-2 rounded-full border border-neutral-300 {gateState === item.state ? item.color : 'bg-neutral-200'}
 							{gateState === item.state && item.state === 'open' ? 'shadow-[0_0_4px_#22c55e]' : ''}
 							{gateState === item.state && item.state === 'hold' ? 'shadow-[0_0_4px_#fbbf24]' : ''}
-						"></div>
+						">
+						</div>
 						<span class="text-[8px] text-neutral-500">{item.label}</span>
 					</div>
 				{/each}
@@ -151,8 +153,7 @@
 				unit=" dB"
 				defaultValue={-40}
 				ticks={[-60, -40, -20]}
-				onChange={(v) => patch('thresholdDb', v)}
-			/>
+				onChange={(v) => patch('thresholdDb', v)} />
 			<Slider
 				label="Range"
 				value={data.rangeDb}
@@ -162,8 +163,7 @@
 				unit=" dB"
 				defaultValue={-40}
 				ticks={[-60, -40, -20]}
-				onChange={(v) => patch('rangeDb', v)}
-			/>
+				onChange={(v) => patch('rangeDb', v)} />
 			<Slider
 				label="Attack"
 				value={data.attackMs}
@@ -173,8 +173,7 @@
 				unit=" ms"
 				defaultValue={1}
 				ticks={[1, 5, 20]}
-				onChange={(v) => patch('attackMs', v)}
-			/>
+				onChange={(v) => patch('attackMs', v)} />
 			<Slider
 				label="Hold"
 				value={data.holdMs}
@@ -184,8 +183,7 @@
 				unit=" ms"
 				defaultValue={50}
 				ticks={[20, 100, 250]}
-				onChange={(v) => patch('holdMs', v)}
-			/>
+				onChange={(v) => patch('holdMs', v)} />
 			<Slider
 				label="Release"
 				value={data.releaseMs}
@@ -195,8 +193,7 @@
 				unit=" ms"
 				defaultValue={200}
 				ticks={[100, 300, 500]}
-				onChange={(v) => patch('releaseMs', v)}
-			/>
+				onChange={(v) => patch('releaseMs', v)} />
 		</div>
 	</div>
 </Wrapper>

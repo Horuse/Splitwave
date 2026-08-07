@@ -38,11 +38,7 @@ class ModalManager {
 		return this._modals.length > 0;
 	}
 
-	open<Result = unknown, P extends ModalParams = ModalParams>(
-		title: string,
-		component: ModalComponent<P>,
-		params: P = {} as P
-	): Promise<Result | undefined> {
+	open<Result = unknown, P extends ModalParams = ModalParams>(title: string, component: ModalComponent<P>, params: P = {} as P): Promise<Result | undefined> {
 		this.ensureEsc();
 		return new Promise((resolve) => {
 			const id = createId();

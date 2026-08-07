@@ -47,8 +47,7 @@ export function handleStyle(color: string): string {
 }
 
 // Matches the connector pin on the cable end, so the two read as one seated joint.
-const PIN_SHAPE =
-	'width:5px !important;height:10px !important;border-radius:2px !important;';
+const PIN_SHAPE = 'width:5px !important;height:10px !important;border-radius:2px !important;';
 
 // Nudge a handle from the padded content edge onto the node's outer border
 // (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
@@ -83,12 +82,7 @@ export function parseHandle(handle: string): number | null {
 }
 
 // A removed cable frees its slot in place; renumbering would reroute live audio.
-export function deriveSlots(
-	occupiedHandles: string[],
-	trailing: boolean,
-	max = Infinity,
-	min = 0
-): Slot[] {
+export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = Infinity, min = 0): Slot[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
 		const ch = parseHandle(h);

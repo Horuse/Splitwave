@@ -7,14 +7,12 @@
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 	import MeterBar from '$lib/components/meter_bar.svelte';
 
-	const METER_GRADIENT =
-		'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
+	const METER_GRADIENT = 'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
 
 	let {
 		nodeId,
 		channelCount = 0,
-		side = 'source',
-
+		side = 'source'
 	}: {
 		nodeId: string;
 		channelCount?: number;
@@ -47,9 +45,7 @@
 	let holds = $state<number[]>([]);
 	let holdTimes: number[] = [];
 
-	let rows = $derived(
-		Array.from({ length: Math.max(channelCount, displays.length, 1) }, (_, i) => i)
-	);
+	let rows = $derived(Array.from({ length: Math.max(channelCount, displays.length, 1) }, (_, i) => i));
 
 	function ampToDb(amp: number): number {
 		return amp <= 1e-6 ? -Infinity : 20 * Math.log10(amp);
@@ -116,16 +112,15 @@
 				</span>
 			{/if}
 			<div class="relative flex items-center" onmousedowncapture={(e) => onArm(e, i + 1)}>
-				<MeterBar
-					class="h-2 flex-1 rounded-sm"
-					ghost
-					pct={dbToPct(db)}
-					gradient={METER_GRADIENT}
-					hold={isFinite(hold) ? dbToPct(hold) : null}
-				/>
+				<MeterBar class="h-2 flex-1 rounded-sm" ghost pct={dbToPct(db)} gradient={METER_GRADIENT} hold={isFinite(hold) ? dbToPct(hold) : null} />
 				{#if isSource}
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
-					<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class={['handle', channelSelection.has(nodeId, i + 1) && 'handle-armed']} style={handleEdgeStyle(channelColor(i), 'source')} />
+					<Handle
+						type="source"
+						id={`ch${i + 1}`}
+						position={Position.Right}
+						class={['handle', channelSelection.has(nodeId, i + 1) && 'handle-armed']}
+						style={handleEdgeStyle(channelColor(i), 'source')} />
 				{:else}
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
 					<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />

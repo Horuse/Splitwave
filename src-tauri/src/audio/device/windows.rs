@@ -22,13 +22,17 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
 
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     let host = cpal::default_host();
-    let devices = host.input_devices().map_err(|e| AppError::Host(e.to_string()))?;
+    let devices = host
+        .input_devices()
+        .map_err(|e| AppError::Host(e.to_string()))?;
     Ok(unique_named(devices, DeviceKind::Input))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     let host = cpal::default_host();
-    let devices = host.output_devices().map_err(|e| AppError::Host(e.to_string()))?;
+    let devices = host
+        .output_devices()
+        .map_err(|e| AppError::Host(e.to_string()))?;
     Ok(unique_named(devices, DeviceKind::Output))
 }
 

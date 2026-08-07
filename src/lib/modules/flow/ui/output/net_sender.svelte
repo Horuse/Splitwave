@@ -100,8 +100,7 @@
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
 				placeholder="192.168.1.20"
 				value={data.targetIp ?? ''}
-				onchange={(e) => setTargetIp(e.currentTarget.value)}
-			/>
+				onchange={(e) => setTargetIp(e.currentTarget.value)} />
 		</div>
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
@@ -111,14 +110,13 @@
 				min="1"
 				max="65535"
 				value={data.port}
-				onchange={(e) => setPort(e.currentTarget.value)}
-			/>
+				onchange={(e) => setPort(e.currentTarget.value)} />
 		</div>
 
 		<!-- throughput -->
 		<div class="flex items-center justify-between">
 			<span class="font-mono text-[9px] text-neutral-500">Sending</span>
-			<span class="font-mono text-[9px] tabular-nums text-neutral-500">{formatRate(rate)}</span>
+			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">{formatRate(rate)}</span>
 		</div>
 
 		<hr class="border-neutral-300" />
@@ -126,22 +124,14 @@
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<SegmentedButtons
-				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
-				value={data.codec}
-				onSelect={setCodec}
-			/>
+			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if data.codec === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<SegmentedButtons
-					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
-					value={data.opusBitrate}
-					onSelect={setBitrate}
-				/>
+				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
@@ -150,8 +140,7 @@
 				<SegmentedButtons
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
-					onSelect={setApp}
-				/>
+					onSelect={setApp} />
 			</div>
 		{/if}
 	</div>

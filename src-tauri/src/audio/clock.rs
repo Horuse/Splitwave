@@ -35,9 +35,8 @@ pub struct SystemClockTicker {
 
 impl SystemClockTicker {
     pub fn new(sample_rate: u32, block_frames: usize) -> Self {
-        let period = Duration::from_nanos(
-            (block_frames as u64 * 1_000_000_000) / sample_rate.max(1) as u64,
-        );
+        let period =
+            Duration::from_nanos((block_frames as u64 * 1_000_000_000) / sample_rate.max(1) as u64);
         Self {
             sample_rate,
             period,

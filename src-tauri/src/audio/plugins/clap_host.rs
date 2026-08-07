@@ -20,10 +20,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
-use clack_extensions::latency::PluginLatency;
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
+use clack_extensions::latency::PluginLatency;
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginState};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
@@ -123,7 +123,10 @@ impl HostTimerImpl for SplitwaveMainThread {
     }
 
     fn unregister_timer(&mut self, timer_id: TimerId) -> Result<(), HostError> {
-        self.timers.borrow_mut().timers.retain(|t| t.id != timer_id.0);
+        self.timers
+            .borrow_mut()
+            .timers
+            .retain(|t| t.id != timer_id.0);
         Ok(())
     }
 }
@@ -203,7 +206,12 @@ pub struct ClapInstance {
 }
 
 impl ClapInstance {
-    pub fn new(bundles: &mut Bundles, node_id: &str, path: &str, plugin_id: &str) -> Result<Self, String> {
+    pub fn new(
+        bundles: &mut Bundles,
+        node_id: &str,
+        path: &str,
+        plugin_id: &str,
+    ) -> Result<Self, String> {
         let id = CString::new(plugin_id).map_err(|e| e.to_string())?;
         let timers: Timers = Rc::new(RefCell::new(TimerState::default()));
         let timers_for_handler = timers.clone();
@@ -251,7 +259,10 @@ impl ClapInstance {
         params: Arc<ParamRing>,
         alive: AliveFlag,
     ) -> Result<PluginNode, String> {
-        let ports = self.instance.plugin_handle().get_extension::<PluginAudioPorts>();
+        let ports = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginAudioPorts>();
         let inputs = port_channels(ports.as_ref(), &mut self.instance, true);
         let outputs = port_channels(ports.as_ref(), &mut self.instance, false);
         // A CLAP plugin's ports are fixed at instantiation, so there is nothing
@@ -286,14 +297,7 @@ impl ClapInstance {
             .unwrap_or(0);
 
         Ok(PluginNode::new(
-            processor,
-            &inputs,
-            &outputs,
-            max_frames,
-            params,
-            alive,
-            accepted,
-            latency,
+            processor, &inputs, &outputs, max_frames, params, alive, accepted, latency,
         ))
     }
 
@@ -324,16 +328,24 @@ impl ClapInstance {
 
     /// `None` when the plugin does not implement the state extension.
     pub fn save_state(&mut self) -> Option<String> {
-        let ext = self.instance.plugin_handle().get_extension::<PluginState>()?;
+        let ext = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginState>()?;
         let mut buf = Vec::new();
-        ext.save(&mut self.instance.plugin_handle(), &mut buf).ok()?;
+        ext.save(&mut self.instance.plugin_handle(), &mut buf)
+            .ok()?;
         Some(super::host_api::encode_state(&self.plugin_id, &buf))
     }
 
     /// Automatable parameters for the node UI. Empty when the plugin exposes no
     /// params extension.
     pub fn params(&mut self) -> Vec<PluginParamInfo> {
-        let Some(ext) = self.instance.plugin_handle().get_extension::<PluginParams>() else {
+        let Some(ext) = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginParams>()
+        else {
             return Vec::new();
         };
         let count = ext.count(&mut self.instance.plugin_handle());
@@ -450,8 +462,12 @@ impl ClapInstance {
         let handle = window
             .window_handle()
             .map_err(|e| at("window handle", e.to_string()))?;
-        let clap_window = ClackWindow::from_window_handle(handle.as_raw())
-            .ok_or_else(|| at("window handle", "unsupported handle for this platform".into()))?;
+        let clap_window = ClackWindow::from_window_handle(handle.as_raw()).ok_or_else(|| {
+            at(
+                "window handle",
+                "unsupported handle for this platform".into(),
+            )
+        })?;
         // SAFETY: `window` outlives the embed; the editor layer parks it.
         unsafe {
             gui.set_parent(&mut self.instance.plugin_handle(), clap_window)
@@ -494,7 +510,10 @@ impl ClapInstance {
 
     fn set_gui_size(&mut self, (width, height): EditorSize) {
         if let Some(gui) = self.instance.plugin_handle().get_extension::<PluginGui>() {
-            let _ = gui.set_size(&mut self.instance.plugin_handle(), GuiSize { width, height });
+            let _ = gui.set_size(
+                &mut self.instance.plugin_handle(),
+                GuiSize { width, height },
+            );
         }
     }
 
@@ -592,7 +611,13 @@ mod tests {
         for plugin in &found {
             let mut instance = open(&mut bundles, plugin);
             let mut node = instance
-                .activate(SAMPLE_RATE, FRAMES, CHANNELS, Arc::new(ParamRing::new()), alive_flag())
+                .activate(
+                    SAMPLE_RATE,
+                    FRAMES,
+                    CHANNELS,
+                    Arc::new(ParamRing::new()),
+                    alive_flag(),
+                )
                 .unwrap_or_else(|e| panic!("{}: {e}", plugin.name));
 
             let mut peak = 0.0f32;
@@ -624,7 +649,13 @@ mod tests {
         for plugin in &found {
             let mut instance = open(&mut bundles, plugin);
             let mut node = instance
-                .activate(SAMPLE_RATE, FRAMES, CHANNELS, Arc::new(ParamRing::new()), alive_flag())
+                .activate(
+                    SAMPLE_RATE,
+                    FRAMES,
+                    CHANNELS,
+                    Arc::new(ParamRing::new()),
+                    alive_flag(),
+                )
                 .unwrap_or_else(|e| panic!("{}: {e}", plugin.name));
             let reported = node.latency_frames();
 
@@ -674,7 +705,12 @@ mod tests {
         for plugin in &found {
             let mut instance = open(&mut bundles, plugin);
             for p in instance.params() {
-                assert!(!p.name.is_empty(), "{}: parameter {} has no name", plugin.name, p.id);
+                assert!(
+                    !p.name.is_empty(),
+                    "{}: parameter {} has no name",
+                    plugin.name,
+                    p.id
+                );
                 assert!(
                     p.max > p.min,
                     "{}: parameter {} has an empty range",

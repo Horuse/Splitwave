@@ -29,9 +29,7 @@
 			? outgoing.current.map((c) => c.sourceHandle).filter((h): h is string => !!h)
 			: incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
 	);
-	let slots = $derived(
-		deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied)
-	);
+	let slots = $derived(deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied));
 
 	$effect(() => {
 		if (isSource) return;
@@ -58,18 +56,13 @@
 	{#each slots as slot (slot.id)}
 		{@const color = channelColor(slot.ch - 1)}
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
-		<div
-			class="relative flex min-h-4 items-center"
-			class:justify-end={isSource}
-			onmousedowncapture={(e) => onArm(e, slot.ch)}
-		>
+		<div class="relative flex min-h-4 items-center" class:justify-end={isSource} onmousedowncapture={(e) => onArm(e, slot.ch)}>
 			<Handle
 				type={side}
 				id={slot.id}
 				position={isSource ? Position.Right : Position.Left}
 				class={['handle', armed && 'handle-armed']}
-				style={handleEdgeStyle(color, side)}
-			/>
+				style={handleEdgeStyle(color, side)} />
 		</div>
 	{/each}
 </div>

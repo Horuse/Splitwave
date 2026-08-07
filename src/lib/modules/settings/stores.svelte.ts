@@ -38,10 +38,7 @@ class AppSettings {
 	persist(): void {
 		if (!browser) return;
 		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize } = this;
-		window.localStorage.setItem(
-			KEY,
-			JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize })
-		);
+		window.localStorage.setItem(KEY, JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize }));
 	}
 
 	reset(): void {

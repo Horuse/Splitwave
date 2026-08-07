@@ -10,9 +10,7 @@
 	const SAMPLES = 16;
 
 	function pathOf(edgeId: string): SVGPathElement | null {
-		return document.querySelector(
-			`.svelte-flow__edge[data-id="${CSS.escape(edgeId)}"] .svelte-flow__edge-path`
-		);
+		return document.querySelector(`.svelte-flow__edge[data-id="${CSS.escape(edgeId)}"] .svelte-flow__edge-path`);
 	}
 
 	let lastKey = '';
@@ -43,12 +41,7 @@
 					const p = el.getPointAtLength((len * i) / SAMPLES);
 					const x = p.x * vp.zoom + vp.x;
 					const y = p.y * vp.zoom + vp.y;
-					if (
-						x >= rect.x &&
-						x <= rect.x + rect.width &&
-						y >= rect.y &&
-						y <= rect.y + rect.height
-					) {
+					if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
 						hit.add(edge.id);
 						break;
 					}
@@ -58,9 +51,7 @@
 			const key = [...hit].sort().join(',');
 			if (key === lastKey) return;
 			lastKey = key;
-			store.edges = store.edges.map((e) =>
-				!!e.selected === hit.has(e.id) ? e : { ...e, selected: hit.has(e.id) }
-			);
+			store.edges = store.edges.map((e) => (!!e.selected === hit.has(e.id) ? e : { ...e, selected: hit.has(e.id) }));
 		});
 	});
 </script>

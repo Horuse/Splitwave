@@ -55,39 +55,33 @@
 
 {#if horizontal}
 	<div class="flex w-full items-center gap-1 select-none">
-		<span class="text-[8px] text-neutral-400 w-5 leading-none shrink-0">GR</span>
+		<span class="w-5 shrink-0 text-[8px] leading-none text-neutral-400">GR</span>
 		<div class="relative h-2.5 flex-1 overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100">
 			<div
 				class="absolute top-0 bottom-0 left-0"
-				style="width: {grToPct(displayGrDb)}%; background: {grColor(displayGrDb)}; transition: background 0.1s;"
-			></div>
+				style="width: {grToPct(displayGrDb)}%; background: {grColor(displayGrDb)}; transition: background 0.1s;">
+			</div>
 			{#each ticks as t}
-				<div
-					class="absolute top-0 bottom-0 w-px bg-neutral-300/60"
-					style="left: {grToPct(t)}%;"
-				></div>
+				<div class="absolute top-0 bottom-0 w-px bg-neutral-300/60" style="left: {grToPct(t)}%;"></div>
 			{/each}
 		</div>
-		<span class="font-mono tabular-nums text-[8px] text-neutral-500 leading-none w-7 text-right shrink-0">
+		<span class="w-7 shrink-0 text-right font-mono text-[8px] leading-none text-neutral-500 tabular-nums">
 			{displayGrDb > 0.2 ? `-${displayGrDb.toFixed(1)}` : '0'}
 		</span>
 	</div>
 {:else}
 	<div class="flex flex-col items-center gap-0.5 select-none">
-		<span class="text-[8px] text-neutral-400 leading-none">GR</span>
+		<span class="text-[8px] leading-none text-neutral-400">GR</span>
 		<div class="relative h-24 w-3 overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100">
 			<div
-				class="absolute top-0 left-0 right-0"
-				style="height: {grToPct(displayGrDb)}%; background: {grColor(displayGrDb)}; transition: background 0.1s;"
-			></div>
+				class="absolute top-0 right-0 left-0"
+				style="height: {grToPct(displayGrDb)}%; background: {grColor(displayGrDb)}; transition: background 0.1s;">
+			</div>
 			{#each ticks as t}
-				<div
-					class="absolute left-0 right-0 h-px bg-neutral-300/60"
-					style="top: {grToPct(t)}%;"
-				></div>
+				<div class="absolute right-0 left-0 h-px bg-neutral-300/60" style="top: {grToPct(t)}%;"></div>
 			{/each}
 		</div>
-		<span class="font-mono tabular-nums text-[8px] text-neutral-500 leading-none w-7 text-center">
+		<span class="w-7 text-center font-mono text-[8px] leading-none text-neutral-500 tabular-nums">
 			{displayGrDb > 0.2 ? `-${displayGrDb.toFixed(1)}` : '0'}
 		</span>
 	</div>

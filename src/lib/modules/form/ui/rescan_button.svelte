@@ -22,9 +22,4 @@
 	}
 </script>
 
-<ComboboxAction
-	{label}
-	icon={Refresh}
-	iconClass={spinning ? 'animate-spin' : ''}
-	onclick={run}
-/>
+<ComboboxAction {label} icon={Refresh} iconClass={spinning ? 'animate-spin' : ''} onclick={run} />

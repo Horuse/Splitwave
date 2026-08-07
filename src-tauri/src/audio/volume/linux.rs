@@ -29,7 +29,10 @@ fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
 
 pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
     let id = target(kind, name)?;
-    let out = Command::new("wpctl").args(["get-volume", &id]).output().ok()?;
+    let out = Command::new("wpctl")
+        .args(["get-volume", &id])
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

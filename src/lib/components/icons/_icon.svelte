@@ -8,8 +8,7 @@
 	let { svg, class: cls = 'h-4 w-4', title }: Props = $props();
 </script>
 
-<span class={cls} aria-hidden={title ? undefined : true} aria-label={title} role={title ? 'img' : undefined}
->{@html svg}</span>
+<span class={cls} aria-hidden={title ? undefined : true} aria-label={title} role={title ? 'img' : undefined}>{@html svg}</span>
 
 <style>
 	span :global(svg) {

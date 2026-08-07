@@ -1,12 +1,5 @@
 <script lang="ts">
-	import {
-		Background,
-		Controls,
-		SvelteFlow,
-		useSvelteFlow,
-		type Edge as XyEdge,
-		type Node as XyNode
-	} from '@xyflow/svelte';
+	import { Background, Controls, SvelteFlow, useSvelteFlow, type Edge as XyEdge, type Node as XyNode } from '@xyflow/svelte';
 	import { createId } from '@paralleldrive/cuid2';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount, untrack } from 'svelte';
@@ -16,35 +9,14 @@
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import {
-		DND_MIME,
-		defaultDataFor,
-		emitNodeAction,
-		fromXyEdges,
-		fromXyNodes,
-		nodeTypes,
-		parseHandle,
-		registry,
-		toXyEdges,
-		toXyNodes
-	} from '../utils';
+	import { DND_MIME, defaultDataFor, emitNodeAction, fromXyEdges, fromXyNodes, nodeTypes, parseHandle, registry, toXyEdges, toXyNodes } from '../utils';
 	import Sidebar from './sidebar.svelte';
 	import ChannelEdge from './_channel_edge.svelte';
 	import ConnectionLine from './_connection_line.svelte';
 	import EdgeRectSelect from './_edge_rect_select.svelte';
 	import OrphanEdges from './_orphan_edges.svelte';
 	const edgeTypes = { channel: ChannelEdge };
-	import {
-		Backspace,
-		Copy,
-		ClipboardPaste,
-		Delete,
-		Folder,
-		KeyCommand,
-		Loop,
-		Refresh,
-		Rewind
-	} from '$lib/components/icons';
+	import { Backspace, Copy, ClipboardPaste, Delete, Folder, KeyCommand, Loop, Refresh, Rewind } from '$lib/components/icons';
 	import { channelCaps, channelSelection } from '../stores.svelte';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
@@ -60,10 +32,12 @@
 	}
 
 	let nodes = $state.raw<XyNode[]>(untrack(() => toXyNodes(pipeline.nodes)));
-	let edges = $state.raw<XyEdge[]>(untrack(() => {
-		const n = toXyNodes(pipeline.nodes);
-		return sanitizeEdges(n, toXyEdges(pipeline.edges));
-	}));
+	let edges = $state.raw<XyEdge[]>(
+		untrack(() => {
+			const n = toXyNodes(pipeline.nodes);
+			return sanitizeEdges(n, toXyEdges(pipeline.edges));
+		})
+	);
 
 	// Fresh edges only: an already-wired armed channel would re-fire the fan-out.
 	// Not `onbeforeconnect` -- xyflow 1.5.2 throws on pointer-up when it is set.
@@ -90,17 +64,13 @@
 			const cap = channelCaps.get(seed.target) ?? Infinity;
 			// Sequential from the drop point, occupied or not: the user chose that
 			// channel as the anchor, existing wiring there yields.
-			const run = Array.from({ length: armed.length }, (_, i) => dropped + i).filter(
-				(ch) => ch <= cap
-			);
+			const run = Array.from({ length: armed.length }, (_, i) => dropped + i).filter((ch) => ch <= cap);
 			if (run.length === 0) return;
 
 			const added: XyEdge[] = [];
 			// Which physical channel was dragged from doesn't matter: mapping is
 			// always ascending armed[i] -> run[i], anchored at the drop point.
-			const retargeted = current.map((e) =>
-				e.id === seed.id ? { ...e, targetHandle: `ch${run[armed.indexOf(seedCh)]}` } : e
-			);
+			const retargeted = current.map((e) => (e.id === seed.id ? { ...e, targetHandle: `ch${run[armed.indexOf(seedCh)]}` } : e));
 			armed.forEach((ch, i) => {
 				if (ch === seedCh || run[i] === undefined) return;
 				added.push({
@@ -152,11 +122,7 @@
 		addNodeWithData(kind, defaultDataFor(kind), position);
 	}
 
-	function addNodeWithData(
-		kind: NodeKind,
-		data: Record<string, unknown>,
-		position?: { x: number; y: number }
-	) {
+	function addNodeWithData(kind: NodeKind, data: Record<string, unknown>, position?: { x: number; y: number }) {
 		const fallback = { x: 100 + nodes.length * 40, y: 100 + nodes.length * 40 };
 		nodes = [
 			...nodes,
@@ -574,8 +540,7 @@
 	function onWindowKeyDown(e: KeyboardEvent) {
 		const t = e.target as HTMLElement | null;
 		const tag = t?.tagName?.toLowerCase();
-		const inField =
-			tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable;
+		const inField = tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable;
 
 		if (e.key === 'Escape' && channelSelection.nodeId) {
 			channelSelection.clear();
@@ -664,13 +629,7 @@
 <svelte:window onmousedown={closeContextMenu} />
 
 <div class="flex h-full w-full">
-	<div
-		class="relative flex-1"
-		role="region"
-		aria-label="Flow editor"
-		ondragover={onDragOver}
-		ondrop={onDrop}
-	>
+	<div class="relative flex-1" role="region" aria-label="Flow editor" ondragover={onDragOver} ondrop={onDrop}>
 		<SvelteFlow
 			proOptions={{ hideAttribution: true }}
 			class="!bg-background"
@@ -689,9 +648,8 @@
 			onselectionstart={closeContextMenu}
 			onmovestart={closeContextMenu}
 			snapGrid={appSettings.snapToGrid ? [appSettings.gridSize, appSettings.gridSize] : undefined}
-			fitView
-		>
-			<Background patternClass="fill-neutral-200"/>
+			fitView>
+			<Background patternClass="fill-neutral-200" />
 			<Controls />
 			<EdgeRectSelect />
 			<OrphanEdges onDelete={deleteEdge} />
@@ -699,8 +657,7 @@
 
 		{#if channelSelection.channels.length > 0}
 			<div
-				class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm"
-			>
+				class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm">
 				<span class="font-mono tabular-nums">{channelSelection.channels.length}</span>
 				channels armed &mdash; drag any one to connect them all, Esc to clear
 			</div>
@@ -714,17 +671,10 @@
 		class="fixed z-50"
 		style="top: {contextMenu.y}px; left: {contextMenu.x}px"
 		oncontextmenu={(e) => e.preventDefault()}
-		onmousedown={(e) => e.stopPropagation()}
-	>
+		onmousedown={(e) => e.stopPropagation()}>
 		<Menu>
 			{#each contextMenu.items as item (item.label)}
-				<OverlayMenuItem
-					label={item.label}
-					icon={item.icon}
-					danger={item.danger}
-					disabled={item.disabled}
-					onclick={() => runMenuItem(item)}
-				>
+				<OverlayMenuItem label={item.label} icon={item.icon} danger={item.danger} disabled={item.disabled} onclick={() => runMenuItem(item)}>
 					{#snippet shortcut()}
 						{#if item.shortcut}
 							{#each [...item.shortcut] as ch, i (i)}

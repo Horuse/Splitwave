@@ -1,177 +1,161 @@
 <script lang="ts">
-    import { goto } from '$app/navigation';
-    import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
-    import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-    import { modalManager } from '$lib/modules/overlay/modal';
-    import { ConfirmModal } from '$lib/modules/overlay/ui';
-    import { relativeTime } from '$lib/utils/time';
-    import { isFromFuture } from '$lib/modules/pipeline/migrations';
-    import { TEMPLATES, instantiate } from '$lib/modules/template';
-    import { TemplateModal } from '$lib/modules/template/ui';
+	import { goto } from '$app/navigation';
+	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
+	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { modalManager } from '$lib/modules/overlay/modal';
+	import { ConfirmModal } from '$lib/modules/overlay/ui';
+	import { relativeTime } from '$lib/utils/time';
+	import { isFromFuture } from '$lib/modules/pipeline/migrations';
+	import { TEMPLATES, instantiate } from '$lib/modules/template';
+	import { TemplateModal } from '$lib/modules/template/ui';
 
-    async function createPipeline() {
-        const templateId = await modalManager.open<string>('New pipeline', TemplateModal, {
-            size: 'xl',
-            description: 'Start from a wired-up layout, or an empty canvas.'
-        });
-        if (!templateId) return;
+	async function createPipeline() {
+		const templateId = await modalManager.open<string>('New pipeline', TemplateModal, {
+			size: 'xl',
+			description: 'Start from a wired-up layout, or an empty canvas.'
+		});
+		if (!templateId) return;
 
-        const template = TEMPLATES.find((t) => t.id === templateId);
-        if (!template) return;
+		const template = TEMPLATES.find((t) => t.id === templateId);
+		if (!template) return;
 
-        const name = `Pipeline ${pipelineStore.pipelines.length + 1}`;
-        const p = instantiate(template, name);
-        await pipelineStore.save(p);
-        await goto(`/pipelines/${p.id}`);
-    }
+		const name = `Pipeline ${pipelineStore.pipelines.length + 1}`;
+		const p = instantiate(template, name);
+		await pipelineStore.save(p);
+		await goto(`/pipelines/${p.id}`);
+	}
 
-    async function remove(id: string, name: string, event: Event) {
-        event.stopPropagation();
-        event.preventDefault();
-        const ok = await modalManager.open<boolean>(`Delete "${name}"?`, ConfirmModal, {
-            message: 'This pipeline and its snapshot history will be permanently removed.',
-            confirmLabel: 'Delete',
-            danger: true
-        });
-        if (ok) await pipelineStore.remove(id);
-    }
+	async function remove(id: string, name: string, event: Event) {
+		event.stopPropagation();
+		event.preventDefault();
+		const ok = await modalManager.open<boolean>(`Delete "${name}"?`, ConfirmModal, {
+			message: 'This pipeline and its snapshot history will be permanently removed.',
+			confirmLabel: 'Delete',
+			danger: true
+		});
+		if (ok) await pipelineStore.remove(id);
+	}
 
-    import Header from '$lib/components/layout/header.svelte';
-    import { page } from '$app/state';
-    import { audioStore } from '$lib/modules/audio/stores.svelte';
-    import { methods as audioMethods } from '$lib/modules/audio/methods';
-    import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
-    import { Add, Delete, Play, SoundWave, Stop } from '$lib/components/icons';
-    import { platform } from '@tauri-apps/plugin-os';
+	import Header from '$lib/components/layout/header.svelte';
+	import { page } from '$app/state';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
+	import { Add, Delete, Play, SoundWave, Stop } from '$lib/components/icons';
+	import { platform } from '@tauri-apps/plugin-os';
 
-    const isWindows = platform() === 'windows';
+	const isWindows = platform() === 'windows';
 
-    let busy = $state<string | null>(null);
+	let busy = $state<string | null>(null);
 
-    async function toggle(id: string, event: Event) {
-        event.stopPropagation();
-        event.preventDefault();
-        if (busy) return;
-        busy = id;
-        try {
-            if (audioStore.isRunning) {
-                await audioMethods.stopPipeline();
-            } else {
-                const p = await pipelineMethods.get(id);
-                if (!p || isFromFuture(p)) return;
-                await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
-            }
-        } catch (e) {
-            audioStore.reportError(e);
-        } finally {
-            busy = null;
-        }
-    }
+	async function toggle(id: string, event: Event) {
+		event.stopPropagation();
+		event.preventDefault();
+		if (busy) return;
+		busy = id;
+		try {
+			if (audioStore.isRunning) {
+				await audioMethods.stopPipeline();
+			} else {
+				const p = await pipelineMethods.get(id);
+				if (!p || isFromFuture(p)) return;
+				await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
+			}
+		} catch (e) {
+			audioStore.reportError(e);
+		} finally {
+			busy = null;
+		}
+	}
 </script>
 
 <Header>
-    {#snippet left()}
-        <div class="flex items-center gap-2">
-            <a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
-            {#if !isWindows}
-                <a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
-            {/if}
+	{#snippet left()}
+		<div class="flex items-center gap-2">
+			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
+			{#if !isWindows}
+				<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
+			{/if}
 
-                <a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
-                <a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
-        </div>
-    {/snippet}
+			<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
+			<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
+		</div>
+	{/snippet}
 </Header>
 
-<div class="flex flex-col gap-8 p-8 h-[calc(100vh-40px)] overflow-y-auto">
-    {#if !isWindows}
-        <DriverUpdateBanner />
-    {/if}
+<div class="flex h-[calc(100vh-40px)] flex-col gap-8 overflow-y-auto p-8">
+	{#if !isWindows}
+		<DriverUpdateBanner />
+	{/if}
 
-    <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-semibold">Pipelines</h1>
+	<div class="flex items-center justify-between">
+		<h1 class="text-2xl font-semibold">Pipelines</h1>
 
-        <button
-                class="button-main primary gap-1.5 p-6 py-2"
-                onclick={createPipeline}
-        >
-            <Add class="size-4" />
-            New pipeline
-        </button>
-    </div>
+		<button class="button-main primary gap-1.5 p-6 py-2" onclick={createPipeline}>
+			<Add class="size-4" />
+			New pipeline
+		</button>
+	</div>
 
-    {#if pipelineStore.pipelines.length === 0}
-        <div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-16">
-            <SoundWave class="size-10 text-neutral-600" />
-            <p class="text-sm text-neutral-900">No pipelines yet. Create one to get started.</p>
-            <button class="button-main primary gap-1.5 py-1.5" onclick={createPipeline}>
-                <Add class="size-4" />
-                New pipeline
-            </button>
-        </div>
-    {:else}
-        <ul class="flex flex-col gap-4">
-            {#each pipelineStore.pipelines as p (p.id)}
-                {@const stale = isFromFuture(p)}
-                <li class={['flex items-center rounded-2xl transition-colors', stale ? 'bg-neutral-100' : 'bg-neutral-200 hover:bg-neutral-300']}>
-                    <svelte:element
-                        this={stale ? 'div' : 'a'}
-                        href={stale ? undefined : `/pipelines/${p.id}`}
-                        class={['flex-1 p-4', stale && 'opacity-60']}
-                    >
-                        <div class="flex items-center gap-2">
-                            {#if audioStore.runningPipelineId === p.id}
-                                <span class="size-2 rounded-full bg-green-500"></span>
-                            {/if}
-                            <span class="font-medium">{p.name}</span>
-                            {#if stale}
-                                <span class="rounded border border-amber-600/50 bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] text-amber-600">
-                                    newer version
-                                </span>
-                            {/if}
-                            {#if audioStore.runningPipelineId === p.id}
-                                <RunningTimer />
-                            {/if}
-                        </div>
-                        <div class="text-xs text-neutral-900">
-                            {#if stale}
-                                Saved by a newer version - update Splitwave to open it.
-                            {:else}
-                                {p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
-                            {/if}
-                        </div>
-                    </svelte:element>
-                    <div class="flex items-center py-3.5 h-full gap-2 mx-4">
-                        <button
-                            class={[
-                                'btn-green py-2',
-                                !audioStore.isRunning && 'green',
-                                audioStore.isRunning && audioStore.runningPipelineId === p.id && 'red'
-                            ]}
-                            disabled={stale || !!busy || (audioStore.isRunning && audioStore.runningPipelineId !== p.id)}
-                            onclick={(e) => toggle(p.id, e)}
-                        >
-                            {#if busy === p.id}
-                                …
-                            {:else if audioStore.isRunning && audioStore.runningPipelineId === p.id}
-                                <Stop class="size-3.5" />
-                                Stop
-                            {:else}
-                                <Play class="size-3.5" />
-                                Activate
-                            {/if}
-                        </button>
-                        <button
-                                class="btn-alert py-2"
-                                onclick={(e) => remove(p.id, p.name, e)}
-                                aria-label="Delete pipeline"
-                        >
-                            <Delete class="size-3.5" />
-                            Delete
-                        </button>
-                    </div>
-                </li>
-            {/each}
-        </ul>
-    {/if}
+	{#if pipelineStore.pipelines.length === 0}
+		<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-16">
+			<SoundWave class="size-10 text-neutral-600" />
+			<p class="text-sm text-neutral-900">No pipelines yet. Create one to get started.</p>
+			<button class="button-main primary gap-1.5 py-1.5" onclick={createPipeline}>
+				<Add class="size-4" />
+				New pipeline
+			</button>
+		</div>
+	{:else}
+		<ul class="flex flex-col gap-4">
+			{#each pipelineStore.pipelines as p (p.id)}
+				{@const stale = isFromFuture(p)}
+				<li class={['flex items-center rounded-2xl transition-colors', stale ? 'bg-neutral-100' : 'bg-neutral-200 hover:bg-neutral-300']}>
+					<svelte:element this={stale ? 'div' : 'a'} href={stale ? undefined : `/pipelines/${p.id}`} class={['flex-1 p-4', stale && 'opacity-60']}>
+						<div class="flex items-center gap-2">
+							{#if audioStore.runningPipelineId === p.id}
+								<span class="size-2 rounded-full bg-green-500"></span>
+							{/if}
+							<span class="font-medium">{p.name}</span>
+							{#if stale}
+								<span class="rounded border border-amber-600/50 bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] text-amber-600">
+									newer version
+								</span>
+							{/if}
+							{#if audioStore.runningPipelineId === p.id}
+								<RunningTimer />
+							{/if}
+						</div>
+						<div class="text-xs text-neutral-900">
+							{#if stale}
+								Saved by a newer version - update Splitwave to open it.
+							{:else}
+								{p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
+							{/if}
+						</div>
+					</svelte:element>
+					<div class="mx-4 flex h-full items-center gap-2 py-3.5">
+						<button
+							class={['btn-green py-2', !audioStore.isRunning && 'green', audioStore.isRunning && audioStore.runningPipelineId === p.id && 'red']}
+							disabled={stale || !!busy || (audioStore.isRunning && audioStore.runningPipelineId !== p.id)}
+							onclick={(e) => toggle(p.id, e)}>
+							{#if busy === p.id}
+								…
+							{:else if audioStore.isRunning && audioStore.runningPipelineId === p.id}
+								<Stop class="size-3.5" />
+								Stop
+							{:else}
+								<Play class="size-3.5" />
+								Activate
+							{/if}
+						</button>
+						<button class="btn-alert py-2" onclick={(e) => remove(p.id, p.name, e)} aria-label="Delete pipeline">
+							<Delete class="size-3.5" />
+							Delete
+						</button>
+					</div>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 </div>

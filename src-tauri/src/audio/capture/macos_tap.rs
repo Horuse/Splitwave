@@ -78,11 +78,7 @@ extern "C" {
         callback: SampleCallback,
         user_data: *mut c_void,
     ) -> i32;
-    fn ba_tap_format(
-        handle: *mut c_void,
-        sample_rate: *mut f64,
-        channels: *mut i32,
-    ) -> i32;
+    fn ba_tap_format(handle: *mut c_void, sample_rate: *mut f64, channels: *mut i32) -> i32;
     fn ba_tap_stop(handle: *mut c_void);
 }
 

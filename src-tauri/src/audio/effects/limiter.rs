@@ -27,8 +27,8 @@ pub struct LimiterEffect {
 
 impl LimiterEffect {
     pub fn new(d: LimiterData, sample_rate: u32) -> (Self, EffectControl, Arc<AtomicU32>) {
-        let lookahead_frames = ((d.lookahead_ms.max(0.1) * sample_rate as f32 / 1000.0) as usize)
-            .max(1);
+        let lookahead_frames =
+            ((d.lookahead_ms.max(0.1) * sample_rate as f32 / 1000.0) as usize).max(1);
         let ceiling_lin = db_to_linear(d.ceiling_db).max(1e-6);
         let ceiling = Arc::new(AtomicU32::new(ceiling_lin.to_bits()));
         let release_ms = Arc::new(AtomicU32::new(d.release_ms.max(0.1).to_bits()));
@@ -79,8 +79,7 @@ impl Effect for LimiterEffect {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         let ceiling = load_f32(&self.ceiling).max(1e-6);
         let release_ms = load_f32(&self.release_ms).max(0.1);
-        let release_coeff =
-            1.0 - (-1.0 / (release_ms * 0.001 * self.sample_rate as f32)).exp();
+        let release_coeff = 1.0 - (-1.0 / (release_ms * 0.001 * self.sample_rate as f32)).exp();
 
         let lookahead = self.lookahead_frames;
         let stereo = &mut samples[..frames * 2];
@@ -95,7 +94,11 @@ impl Effect for LimiterEffect {
             self.delay_buf[self.delay_pos * 2] = l_in;
             self.delay_buf[self.delay_pos * 2 + 1] = r_in;
             self.peak_buf[self.delay_pos] = l_in.abs().max(r_in.abs());
-            self.delay_pos = if self.delay_pos + 1 == lookahead { 0 } else { self.delay_pos + 1 };
+            self.delay_pos = if self.delay_pos + 1 == lookahead {
+                0
+            } else {
+                self.delay_pos + 1
+            };
 
             let mut peak = 0.0_f32;
             for &p in self.peak_buf.iter() {

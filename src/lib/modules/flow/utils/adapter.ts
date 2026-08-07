@@ -1,9 +1,5 @@
 import type { Node as XyNode, Edge as XyEdge } from '@xyflow/svelte';
-import type {
-	NodeKind,
-	PipelineEdge,
-	PipelineNode
-} from '$lib/modules/pipeline/types';
+import type { NodeKind, PipelineEdge, PipelineNode } from '$lib/modules/pipeline/types';
 import { registry } from './nodes';
 
 export function toXyNodes(nodes: PipelineNode[]): XyNode[] {

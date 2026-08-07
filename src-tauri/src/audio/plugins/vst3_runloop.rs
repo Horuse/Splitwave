@@ -10,12 +10,12 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
+use vst3::ComRef;
 use vst3::Steinberg::Linux::{
     FileDescriptor, IEventHandler, IEventHandlerTrait, ITimerHandler, ITimerHandlerTrait,
     TimerInterval,
 };
 use vst3::Steinberg::{kInvalidArgument, kResultOk, tresult};
-use vst3::ComRef;
 
 /// Plugin-owned handlers, addressed by pointer because that is the identity the
 /// plugin unregisters them by.
@@ -44,7 +44,11 @@ pub fn register_event_handler(handler: *mut IEventHandler, fd: FileDescriptor) -
 }
 
 pub fn unregister_event_handler(handler: *mut IEventHandler) -> tresult {
-    REGISTERED.with(|r| r.borrow_mut().events.retain(|(h, _)| *h != handler as usize));
+    REGISTERED.with(|r| {
+        r.borrow_mut()
+            .events
+            .retain(|(h, _)| *h != handler as usize)
+    });
     kResultOk
 }
 
@@ -64,7 +68,11 @@ pub fn register_timer(handler: *mut ITimerHandler, milliseconds: TimerInterval) 
 }
 
 pub fn unregister_timer(handler: *mut ITimerHandler) -> tresult {
-    REGISTERED.with(|r| r.borrow_mut().timers.retain(|t| t.handler != handler as usize));
+    REGISTERED.with(|r| {
+        r.borrow_mut()
+            .timers
+            .retain(|t| t.handler != handler as usize)
+    });
     kResultOk
 }
 
@@ -110,8 +118,7 @@ pub fn tick() {
 /// Descriptors with input pending, polled without blocking: this runs on the UI
 /// thread, so waiting here would freeze the app between plugin events.
 fn ready_descriptors() -> Vec<(usize, FileDescriptor)> {
-    let registered: Vec<(usize, FileDescriptor)> =
-        REGISTERED.with(|r| r.borrow().events.clone());
+    let registered: Vec<(usize, FileDescriptor)> = REGISTERED.with(|r| r.borrow().events.clone());
     if registered.is_empty() {
         return Vec::new();
     }

@@ -18,19 +18,11 @@
 		"active": true,
 		"targets": "all",
 		"createUpdaterArtifacts": true,
-		"icon": [
-			"icons/32x32.png",
-			"icons/128x128.png",
-			"icons/128x128@2x.png",
-			"icons/icon.icns",
-			"icons/icon.ico"
-		]
+		"icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
 	},
 	"plugins": {
 		"updater": {
-			"endpoints": [
-				"https://github.com/Horuse/Splitwave/releases/latest/download/latest.json"
-			],
+			"endpoints": ["https://github.com/Horuse/Splitwave/releases/latest/download/latest.json"],
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI0MkQxRTI2QkEzMUVBQUQKUldTdDZqRzZKaDR0Sk9Vd09vZEk4ZzE4R3gybk92NG51aURsK3BiSFBvL25hZmh2bE1NWG05d0cK"
 		}
 	}

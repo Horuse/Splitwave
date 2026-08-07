@@ -152,14 +152,13 @@ impl Effect for PluginNode {
                 is_constant: false,
             })),
         }));
-        let mut outputs = out_ports.with_output_buffers(out_bufs.iter_mut().map(|port| {
-            AudioPortBuffer {
+        let mut outputs =
+            out_ports.with_output_buffers(out_bufs.iter_mut().map(|port| AudioPortBuffer {
                 latency: 0,
                 channels: AudioPortBufferType::f32_output_only(
                     port.iter_mut().map(|ch| &mut ch[..frames]),
                 ),
-            }
-        }));
+            }));
 
         let processed = processor
             .process(

@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use serde_json::json;
-use tracing::info;
 use state::AppState;
 #[cfg(target_os = "macos")]
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
+use tracing::info;
 
 const PANIC_EVENT: &str = "error://panic";
 #[cfg(target_os = "macos")]
@@ -49,7 +49,8 @@ pub fn take_crash_reports() -> Vec<serde_json::Value> {
 #[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let about_action = MenuItemBuilder::with_id("about", "About Splitwave").build(app)?;
-    let check_updates = MenuItemBuilder::with_id("check_updates", "Check for Updates...").build(app)?;
+    let check_updates =
+        MenuItemBuilder::with_id("check_updates", "Check for Updates...").build(app)?;
     let undo_action = MenuItemBuilder::with_id("undo", "Undo")
         .accelerator("CmdOrCtrl+Z")
         .build(app)?;
@@ -130,7 +131,11 @@ fn install_panic_hook() {
             // Persist first: a main-thread panic tears the app down before the
             // live event can be delivered, so the file is the only reliable path.
             if let Some(path) = CRASH_FILE.get() {
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
                     use std::io::Write;
                     let _ = writeln!(f, "{payload}");
                 }

@@ -81,17 +81,15 @@
 		audioStore.chooseFileNodeId = null;
 		const retryId = audioStore.pendingRetryPipelineId;
 		audioStore.pendingRetryPipelineId = null;
-		chooseFile().then((picked) => {
-			if (!picked || retryId === null) return;
-			const snapshot = pipelineStore.editorActions?.getSnapshot();
-			if (!snapshot) return;
-			const nodes = snapshot.nodes.map((n) =>
-				n.id === id ? { ...n, data: { ...n.data, allowOverwrite: true } } : n
-			);
-			audioStore
-				.activatePipeline(retryId, { nodes, edges: snapshot.edges })
-				.catch((e) => audioStore.reportError(e));
-		}).catch(() => {});
+		chooseFile()
+			.then((picked) => {
+				if (!picked || retryId === null) return;
+				const snapshot = pipelineStore.editorActions?.getSnapshot();
+				if (!snapshot) return;
+				const nodes = snapshot.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, allowOverwrite: true } } : n));
+				audioStore.activatePipeline(retryId, { nodes, edges: snapshot.edges }).catch((e) => audioStore.reportError(e));
+			})
+			.catch(() => {});
 	});
 
 	onDestroy(() => {
@@ -125,13 +123,9 @@
 	]);
 
 	type ChannelMode = 'mono' | 'stereo' | 'multi';
-	let channelMode = $derived<ChannelMode>(
-		data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : 'multi'
-	);
+	let channelMode = $derived<ChannelMode>(data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : 'multi');
 
-	let channelLabel = $derived(
-		data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : `${data.channels} ch`
-	);
+	let channelLabel = $derived(data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : `${data.channels} ch`);
 
 	function setChannelMode(mode: ChannelMode) {
 		const target = mode === 'mono' ? 1 : mode === 'stereo' ? 2 : Math.max(3, data.channels);
@@ -159,9 +153,7 @@
 	);
 
 	// Mono and stereo pin the encoder width; multi lets the cables drive it.
-	let slotCap = $derived(
-		channelMode === 'mono' ? 1 : channelMode === 'stereo' ? 2 : maxChannels
-	);
+	let slotCap = $derived(channelMode === 'mono' ? 1 : channelMode === 'stereo' ? 2 : maxChannels);
 
 	$effect(() => {
 		if (channelMode !== 'multi') return;
@@ -364,7 +356,7 @@
 			return Math.round((data.format.bitrate / 8) * seconds * 1.05 + 4096);
 		}
 		if (data.format.kind === 'mp3') {
-			return Math.round((data.format.bitrateKbps * 1000 / 8) * seconds + 512);
+			return Math.round(((data.format.bitrateKbps * 1000) / 8) * seconds + 512);
 		}
 		if (data.format.kind === 'aac') {
 			// AAC in M4A: ~3% MP4 container overhead.
@@ -395,101 +387,65 @@
 
 	let estSize = $derived(estimatedSize());
 	let durationSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
-	let dirty = $derived(
-		recording &&
-		committedFormat !== null &&
-		JSON.stringify(committedFormat) !== JSON.stringify(data.format)
-	);
+	let dirty = $derived(recording && committedFormat !== null && JSON.stringify(committedFormat) !== JSON.stringify(data.format));
 </script>
 
 <Wrapper label="File Recording" icon={FileRecord} accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
-		<div
-			class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000"
-			title={data.filePath ?? undefined}
-		>
+		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
 		</div>
 		<div class="flex gap-1">
 			<button
 				type="button"
 				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
-				onclick={chooseFile}
-			>
+				onclick={chooseFile}>
 				<Folder class="size-3.5" />
 				Choose file
 			</button>
 			<Tooltip text="Reveal the recording in Finder">
-				<button
-					type="button"
-					class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0"
-					disabled={!data.filePath}
-					onclick={revealFolder}
-				>
+				<button type="button" class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
 				</button>
 			</Tooltip>
 		</div>
-		<Toggle
-			size="sm"
-			label="Allow overwrite"
-			checked={data.allowOverwrite}
-			onChange={(v) => flow.updateNodeData(id, { allowOverwrite: v })}
-		/>
+		<Toggle size="sm" label="Allow overwrite" checked={data.allowOverwrite} onChange={(v) => flow.updateNodeData(id, { allowOverwrite: v })} />
 
-		<SegmentedButtons
-			options={FORMATS}
-			value={data.format.kind}
-			onSelect={setFormatKind}
-			columns={3}
-		/>
+		<SegmentedButtons options={FORMATS} value={data.format.kind} onSelect={setFormatKind} columns={3} />
 
 		<SegmentedButtons
 			label="Channels"
 			note={maxChannels >= 512 ? 'no limit' : `max ${maxChannels}`}
 			options={CHANNEL_MODES}
 			value={channelMode}
-			onSelect={setChannelMode}
-		/>
+			onSelect={setChannelMode} />
 
 		{#if data.format.kind === 'wav'}
 			<SegmentedButtons
 				options={WAV_BIT_DEPTHS.map((b) => ({ value: b.value, label: b.label, subtitle: b.sub }))}
 				value={data.format.bitDepth}
-				onSelect={setWavBitDepth}
-			/>
+				onSelect={setWavBitDepth} />
 		{:else if data.format.kind === 'flac'}
-			<SegmentedButtons
-				options={FLAC_BIT_DEPTHS}
-				value={data.format.bitDepth}
-				onSelect={setFlacBitDepth}
-			/>
-			<SegmentedButtons
-				options={FLAC_COMPRESSIONS}
-				value={data.format.compression}
-				onSelect={setFlacCompression}
-			/>
+			<SegmentedButtons options={FLAC_BIT_DEPTHS} value={data.format.bitDepth} onSelect={setFlacBitDepth} />
+			<SegmentedButtons options={FLAC_COMPRESSIONS} value={data.format.compression} onSelect={setFlacCompression} />
 		{:else if data.format.kind === 'opus'}
 			<SegmentedButtons
 				label="Bitrate"
 				note="kbps"
 				options={OPUS_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
 				value={data.format.bitrate}
-				onSelect={setOpusBitrate}
-			/>
+				onSelect={setOpusBitrate} />
 			<SegmentedButtons
 				options={OPUS_APPLICATIONS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 				value={data.format.application}
-				onSelect={setOpusApplication}
-			/>
+				onSelect={setOpusApplication} />
 		{:else if data.format.kind === 'mp3'}
 			<SegmentedButtons
 				label="Bitrate"
 				note="kbps"
 				options={MP3_BITRATE_PRESETS.map((p) => ({ value: p.kbps, label: p.label }))}
 				value={data.format.bitrateKbps}
-				onSelect={setMp3Bitrate}
-			/>
+				onSelect={setMp3Bitrate} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">CBR</div>
 		{:else if data.format.kind === 'aac'}
 			<SegmentedButtons
@@ -497,15 +453,10 @@
 				note="kbps"
 				options={AAC_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
 				value={data.format.bitrate}
-				onSelect={setAacBitrate}
-			/>
+				onSelect={setAacBitrate} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">M4A</div>
 		{:else}
-			<SegmentedButtons
-				options={AIFF_BIT_DEPTHS}
-				value={data.format.bitDepth}
-				onSelect={setAiffBitDepth}
-			/>
+			<SegmentedButtons options={AIFF_BIT_DEPTHS} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">PCM big-endian</div>
 		{/if}
 

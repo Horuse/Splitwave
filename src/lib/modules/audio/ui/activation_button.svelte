@@ -29,15 +29,7 @@
 	}
 </script>
 
-<button
-	class={[
-		'button-main primary px-4 py-0 rounded-lg',
-		!audioStore.isRunning && 'green',
-		audioStore.isRunning && 'red'
-	]}
-	disabled={busy}
-	onclick={toggle}
->
+<button class={['button-main primary rounded-lg px-4 py-0', !audioStore.isRunning && 'green', audioStore.isRunning && 'red']} disabled={busy} onclick={toggle}>
 	{#if busy}
 		…
 	{:else if audioStore.isRunning}

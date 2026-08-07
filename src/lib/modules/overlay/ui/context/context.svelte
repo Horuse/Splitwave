@@ -24,8 +24,17 @@
 		return {
 			getBoundingClientRect: () =>
 				({
-					x, y, left: x, top: y, right: x, bottom: y, width: 0, height: 0,
-					toJSON() { return {}; }
+					x,
+					y,
+					left: x,
+					top: y,
+					right: x,
+					bottom: y,
+					width: 0,
+					height: 0,
+					toJSON() {
+						return {};
+					}
 				}) as DOMRect
 		};
 	}
@@ -82,13 +91,7 @@
 </div>
 
 {#if open}
-	<div
-		use:portal={'#overlays'}
-		use:floatingContent
-		data-overlay-context
-		transition:fly={{ duration: 150, y: 4 }}
-		class="z-[200]"
-	>
+	<div use:portal={'#overlays'} use:floatingContent data-overlay-context transition:fly={{ duration: 150, y: 4 }} class="z-[200]">
 		{@render menu({ close })}
 	</div>
 {/if}

@@ -57,28 +57,19 @@
 <section class="flex flex-col gap-3">
 	<div>
 		<h2 class="text-sm font-semibold text-theme">Effect presets</h2>
-		<p class="text-xs text-neutral-900">
-			Presets you saved from a node. Built-in ones are not listed -- they cannot be changed.
-		</p>
+		<p class="text-xs text-neutral-900">Presets you saved from a node. Built-in ones are not listed -- they cannot be changed.</p>
 	</div>
 
 	{#if presets.length === 0}
 		<div class="rounded-xl border border-dashed border-neutral-400 px-4 py-8 text-center">
-			<p class="text-xs text-neutral-900">
-				No saved presets yet. Use the + button on an effect to store its settings.
-			</p>
+			<p class="text-xs text-neutral-900">No saved presets yet. Use the + button on an effect to store its settings.</p>
 		</div>
 	{:else}
 		<ul class="flex flex-col gap-1.5">
 			{#each presets as p (p.id)}
 				{@const entry = registry[p.kind]}
-				<li
-					class="flex items-center gap-3 rounded-xl border border-neutral-400 bg-neutral-100 px-3 py-2"
-				>
-					<span
-						class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-neutral-200 text-neutral-1000"
-						title={entry.label}
-					>
+				<li class="flex items-center gap-3 rounded-xl border border-neutral-400 bg-neutral-100 px-3 py-2">
+					<span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-neutral-200 text-neutral-1000" title={entry.label}>
 						<entry.icon class="size-3.5" />
 					</span>
 
@@ -90,15 +81,13 @@
 								autofocus
 								onblur={() => commitEdit(p)}
 								onkeydown={onKeyDown}
-								class="w-full rounded-md border border-neutral-500 bg-neutral-200 px-1.5 py-0.5 text-sm text-theme focus:outline-none"
-							/>
+								class="w-full rounded-md border border-neutral-500 bg-neutral-200 px-1.5 py-0.5 text-sm text-theme focus:outline-none" />
 						{:else}
 							<button
 								type="button"
 								class="truncate text-left text-sm font-medium text-theme hover:underline"
 								title="Rename"
-								onclick={() => startEdit(p)}
-							>
+								onclick={() => startEdit(p)}>
 								{p.name}
 							</button>
 						{/if}
@@ -109,8 +98,7 @@
 						type="button"
 						class="flex size-7 shrink-0 items-center justify-center rounded-lg text-neutral-1000 transition-colors hover:bg-neutral-300"
 						aria-label="Delete preset"
-						onclick={() => remove(p)}
-					>
+						onclick={() => remove(p)}>
 						<Delete class="size-3.5" />
 					</button>
 				</li>

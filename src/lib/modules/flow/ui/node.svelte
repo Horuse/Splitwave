@@ -74,12 +74,7 @@
 	}
 </script>
 
-<div
-	class={[
-		'node-shell min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
-		!wide && 'max-w-80'
-	]}
->
+<div class={['node-shell min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm', !wide && 'max-w-80']}>
 	<div class="mb-2 flex items-center justify-between gap-2">
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{#if NodeIcon}
@@ -99,8 +94,7 @@
 							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
 					]}
 					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
-					onclick={onBypass}
-				>
+					onclick={onBypass}>
 					{bypassed ? 'BYP' : 'ON'}
 				</button>
 			{/if}
@@ -139,7 +133,8 @@
 		{#if hasOutput}
 			<Handle type="source" class="handle" position={Position.Right}>
 				{#if outputLabel}
-					<span class="pointer-events-none absolute right-full mr-0.5 top-1/2 -translate-y-1/2 px-1 font-mono text-[9px] leading-none text-neutral-700 [writing-mode:vertical-rl]">
+					<span
+						class="pointer-events-none absolute top-1/2 right-full mr-0.5 -translate-y-1/2 px-1 font-mono text-[9px] leading-none text-neutral-700 [writing-mode:vertical-rl]">
 						{outputLabel}
 					</span>
 				{/if}

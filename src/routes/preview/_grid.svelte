@@ -3,13 +3,7 @@
 	import { SvelteFlowProvider } from '@xyflow/svelte';
 	import { createId } from '@paralleldrive/cuid2';
 	import type { NodeKind } from '$lib/modules/pipeline/types';
-	import {
-		PREVIEW_CTX,
-		categoryOrder,
-		categoryLabel,
-		kindsByCategory,
-		registry
-	} from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX, categoryOrder, categoryLabel, kindsByCategory, registry } from '$lib/modules/flow/utils';
 	import { startFakeSignal } from './_fake_signal';
 
 	setContext(PREVIEW_CTX, true);
@@ -42,7 +36,7 @@
 	<div class="flex flex-col gap-10 p-10">
 		{#each categoryOrder as cat (cat)}
 			<section class="flex flex-col gap-3">
-				<h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-900">
+				<h2 class="text-xs font-semibold tracking-wider text-neutral-900 uppercase">
 					{categoryLabel[cat]}
 				</h2>
 				<div class="flex flex-wrap items-start gap-6">

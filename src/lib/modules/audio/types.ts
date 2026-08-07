@@ -71,10 +71,7 @@ export interface VirtualDeviceConfig {
 	channels: number;
 }
 
-export type AudioStateEvent =
-	| { kind: 'started' }
-	| { kind: 'stopped' }
-	| { kind: 'error'; message: string };
+export type AudioStateEvent = { kind: 'started' } | { kind: 'stopped' } | { kind: 'error'; message: string };
 
 export interface StartPipelinePayload {
 	nodes: PipelineNode[];

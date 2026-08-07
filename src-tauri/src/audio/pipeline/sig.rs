@@ -65,9 +65,7 @@ pub(super) fn compute_output_sig(graph: &ValidGraph, output_id: &str) -> OutputS
     let mut edges: Vec<(String, String, EdgeKind)> = graph
         .edges
         .iter()
-        .filter(|e| {
-            reachable.contains(&e.from) && (reachable.contains(&e.to) || e.to == output_id)
-        })
+        .filter(|e| reachable.contains(&e.from) && (reachable.contains(&e.to) || e.to == output_id))
         .map(|e| (e.from.clone(), e.to.clone(), e.kind))
         .collect();
     edges.sort_by(|a, b| {
@@ -179,7 +177,9 @@ fn structural_effect(spec: &EffectSpec) -> EffectSpec {
         }
         // path / plugin_id are structural; bypass rides its own atomic, and
         // state is applied only at instantiation so it must not force a rebuild.
-        E::Plugin { bypassed, state, .. } => {
+        E::Plugin {
+            bypassed, state, ..
+        } => {
             *bypassed = false;
             *state = None;
         }

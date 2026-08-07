@@ -16,11 +16,11 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
-#[cfg(target_os = "linux")]
-use crate::audio::plugins::vst3_runloop;
-use crate::audio::plugins::host_api::EditorSize;
 #[cfg(target_os = "macos")]
 use crate::audio::plugins::editor;
+use crate::audio::plugins::host_api::EditorSize;
+#[cfg(target_os = "linux")]
+use crate::audio::plugins::vst3_runloop;
 
 /// The window system the plugin is asked to render into. One per OS: a plugin
 /// that does not support its platform's own type has no embeddable editor.
@@ -241,7 +241,12 @@ mod tests {
                 };
                 let platform = platform_type();
                 let supported = view.isPlatformTypeSupported(platform);
-                let mut rect = ViewRect { left: 0, top: 0, right: 0, bottom: 0 };
+                let mut rect = ViewRect {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
                 let sized = view.getSize(&mut rect);
                 let platform_name = std::ffi::CStr::from_ptr(platform).to_string_lossy();
                 println!(
@@ -279,7 +284,12 @@ mod tests {
 
         unsafe {
             let view = ComPtr::from_raw(instance.controller.createView(kEditor)).unwrap();
-            let mut rect = ViewRect { left: 0, top: 0, right: 640, bottom: 480 };
+            let mut rect = ViewRect {
+                left: 0,
+                top: 0,
+                right: 640,
+                bottom: 480,
+            };
             let f = frame.to_com_ptr::<IPlugFrame>().unwrap();
             assert_eq!(f.resizeView(view.as_ptr(), &mut rect), kResultOk);
         }

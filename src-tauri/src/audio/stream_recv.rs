@@ -193,8 +193,8 @@ impl PlaybackTap {
         drift: Arc<AtomicU32>,
     ) -> Self {
         let base_ratio = rate as f64 / SR as f64;
-        let resampler = MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1)
-            .expect("mono resampler init");
+        let resampler =
+            MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1).expect("mono resampler init");
         Self {
             group,
             consumer,
@@ -297,7 +297,11 @@ impl PlaybackTap {
             self.popped += need as u64;
         }
         self.scratch.clear();
-        if self.resampler.process(&self.in_buf, &mut self.scratch).is_err() {
+        if self
+            .resampler
+            .process(&self.in_buf, &mut self.scratch)
+            .is_err()
+        {
             return self.conceal();
         }
         // Keep the real (full-amplitude) block for future concealment.
@@ -438,7 +442,12 @@ impl FanoutRegistry {
             target: target.clone(),
             taps: Arc::downgrade(&map),
         });
-        ConsumerHandle { taps: map, drift, target, realtime }
+        ConsumerHandle {
+            taps: map,
+            drift,
+            target,
+            realtime,
+        }
     }
 
     /// New received channel, wired into every live consumer. `first_seq` is the
@@ -532,7 +541,10 @@ impl FanoutRegistry {
 
     /// Drops channels whose key starts with `prefix`.
     pub fn drop_prefix(&self, prefix: &str) {
-        self.broadcasts.lock().unwrap().retain(|k, _| !k.starts_with(prefix));
+        self.broadcasts
+            .lock()
+            .unwrap()
+            .retain(|k, _| !k.starts_with(prefix));
     }
 
     pub fn clear(&self) {
@@ -676,7 +688,10 @@ impl ChannelReceiver {
             // one shared ratio keeps channels phase-coherent. A priming source
             // never steers: its ring is filling by design, and reading that as
             // drift would chase the refill.
-            let live = plans.iter().filter(|p| !p.hold).min_by_key(|p| p.min_backlog);
+            let live = plans
+                .iter()
+                .filter(|p| !p.hold)
+                .min_by_key(|p| p.min_backlog);
             // A source refilling after a break emits nothing, exactly like one
             // that concealed, and the target has to answer for both. Only the
             // first prime of all is exempt: filling from empty is how playback
@@ -747,7 +762,8 @@ impl ChannelReceiver {
         if blocks > 0 {
             let grow = (blocks * OUT_BLOCK_FRAMES + TARGET_MARGIN).min(TARGET_EVENT_MAX);
             let target = self.target.load(Ordering::Relaxed) as usize;
-            self.target.store((target + grow).min(TARGET_MAX) as u32, Ordering::Relaxed);
+            self.target
+                .store((target + grow).min(TARGET_MAX) as u32, Ordering::Relaxed);
             return;
         }
 
@@ -764,7 +780,9 @@ impl ChannelReceiver {
         let spare = self.min_backlog.get().saturating_sub(need + KEEP_MARGIN);
         if spare > 0 {
             let target = self.target.load(Ordering::Relaxed) as usize;
-            let target = target.saturating_sub(spare.min(TARGET_DECAY)).max(TARGET_MIN);
+            let target = target
+                .saturating_sub(spare.min(TARGET_DECAY))
+                .max(TARGET_MIN);
             self.target.store(target as u32, Ordering::Relaxed);
         }
         self.min_backlog.set(usize::MAX);
@@ -787,7 +805,11 @@ impl ChannelReceiver {
         self.avg_backlog.set(avg);
 
         let e = avg - target as f64;
-        let e = if e.abs() < DRIFT_DEADBAND { 0.0 } else { e - DRIFT_DEADBAND.copysign(e) };
+        let e = if e.abs() < DRIFT_DEADBAND {
+            0.0
+        } else {
+            e - DRIFT_DEADBAND.copysign(e)
+        };
         let d = (1.0 - DRIFT_KP * e).clamp(DRIFT_MIN, DRIFT_MAX);
         self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
     }
@@ -805,7 +827,9 @@ impl ChannelReceiver {
     /// Copy one channel's already-resampled scratch into `out`.
     pub fn channel(&self, key: &str, out: &mut [f32]) {
         out.fill(0.0);
-        let Ok(taps) = self.taps.try_lock() else { return };
+        let Ok(taps) = self.taps.try_lock() else {
+            return;
+        };
         let Some(tap) = taps.get(key) else { return };
         let src = &tap.scratch[..tap.valid];
         // Taps are mono; a wider destination gets the channel centred across it.

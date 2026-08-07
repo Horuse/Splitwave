@@ -76,11 +76,7 @@ impl DeclickEffect {
         Self::build(sensitivity, max_width_ms, sample_rate)
     }
 
-    fn build(
-        sensitivity: Arc<AtomicU32>,
-        max_width_ms: Arc<AtomicU32>,
-        sample_rate: u32,
-    ) -> Self {
+    fn build(sensitivity: Arc<AtomicU32>, max_width_ms: Arc<AtomicU32>, sample_rate: u32) -> Self {
         let sr = sample_rate as f32;
         let max_w_cap = ((sr * MAX_MS * 0.001) as usize).max(2);
         let delay = max_w_cap + CLOSE_HOLD + 4;
@@ -118,7 +114,8 @@ impl Effect for DeclickEffect {
         // Higher sensitivity lowers how far above the floor a burst must sit.
         let k_on = 10.0 - 7.0 * sens;
         let k_off = k_on * 0.5;
-        let max_w = (((load_f32(&self.max_width_ms).clamp(0.3, MAX_MS) * self.sample_rate as f32
+        let max_w = (((load_f32(&self.max_width_ms).clamp(0.3, MAX_MS)
+            * self.sample_rate as f32
             * 0.001) as usize)
             .max(2))
         .min(self.max_w_cap);

@@ -158,15 +158,31 @@ impl HostedEffect {
         let latency = node.latency_frames();
         let width = node.channels();
         if !realtime {
-            return Self { backend: HostedBackend::Inline { node }, channels: width, latency };
+            return Self {
+                backend: HostedBackend::Inline { node },
+                channels: width,
+                latency,
+            };
         }
-        let processor = HostedProcessor { node, width, scratch: Vec::with_capacity(DSP_BLOCK_FRAMES * width) };
+        let processor = HostedProcessor {
+            node,
+            width,
+            scratch: Vec::with_capacity(DSP_BLOCK_FRAMES * width),
+        };
         match Offload::spawn("plugin", processor, width) {
             Ok(o) => {
                 let latency = latency + o.latency_frames();
-                Self { backend: HostedBackend::Offloaded(o), channels: width, latency }
+                Self {
+                    backend: HostedBackend::Offloaded(o),
+                    channels: width,
+                    latency,
+                }
             }
-            Err(p) => Self { backend: HostedBackend::Inline { node: p.node }, channels: width, latency },
+            Err(p) => Self {
+                backend: HostedBackend::Inline { node: p.node },
+                channels: width,
+                latency,
+            },
         }
     }
 }
@@ -344,7 +360,10 @@ mod tests {
     #[test]
     fn a_tagged_blob_comes_back_only_to_its_owner() {
         let tagged = tag_state("com.example.reverb", "cGF5bG9hZA==");
-        assert_eq!(untag_state("com.example.reverb", &tagged), Some("cGF5bG9hZA=="));
+        assert_eq!(
+            untag_state("com.example.reverb", &tagged),
+            Some("cGF5bG9hZA==")
+        );
         assert_eq!(untag_state("com.example.delay", &tagged), None);
     }
 

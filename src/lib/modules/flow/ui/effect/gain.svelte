@@ -30,18 +30,8 @@
 	}
 </script>
 
-<Wrapper
-	label="Gain"
-	icon={Trending}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
-	<div class="w-48 nowheel nodrag">
+<Wrapper label="Gain" icon={Trending} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+	<div class="nowheel nodrag w-48">
 		<Slider
 			label="Level"
 			value={data.gainDb}
@@ -52,7 +42,6 @@
 			defaultValue={0}
 			ticks={[-12, -6, 0, 6, 12]}
 			valueClass={valueClass(data.gainDb)}
-			onChange={set}
-		/>
+			onChange={set} />
 	</div>
 </Wrapper>

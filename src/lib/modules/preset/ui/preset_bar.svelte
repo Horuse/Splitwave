@@ -35,17 +35,11 @@
 	// touching any slider drops the label rather than lying about what is loaded.
 	function matches(p: Preset): boolean {
 		const current = data as Record<string, unknown>;
-		return Object.entries(p.data as Record<string, unknown>).every(
-			([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v)
-		);
+		return Object.entries(p.data as Record<string, unknown>).every(([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v));
 	}
 
-	let active = $derived(
-		presets.find((p) => p.id === selectedId && matches(p)) ?? presets.find(matches)
-	);
-	let options = $derived(
-		presets.map((p) => ({ value: p.id, label: p.builtin ? p.name : `${p.name} *` }))
-	);
+	let active = $derived(presets.find((p) => p.id === selectedId && matches(p)) ?? presets.find(matches));
+	let options = $derived(presets.map((p) => ({ value: p.id, label: p.builtin ? p.name : `${p.name} *` })));
 
 	function apply(id: string | null) {
 		const p = presets.find((x) => x.id === id);
@@ -74,13 +68,7 @@
 </script>
 
 <div class="nodrag nopan">
-	<Combobox
-		{options}
-		value={active?.id ?? null}
-		placeholder="— Preset —"
-		emptyHint="No presets"
-		onChange={apply}
-	>
+	<Combobox {options} value={active?.id ?? null} placeholder="— Preset —" emptyHint="No presets" onChange={apply}>
 		{#snippet footer(close)}
 			<ComboboxAction
 				label="Save current settings"
@@ -88,8 +76,7 @@
 				onclick={() => {
 					close();
 					save();
-				}}
-			/>
+				}} />
 			{#if active && !active.builtin}
 				<ComboboxAction
 					label="Delete this preset"
@@ -97,8 +84,7 @@
 					onclick={() => {
 						close();
 						remove();
-					}}
-				/>
+					}} />
 			{/if}
 		{/snippet}
 	</Combobox>

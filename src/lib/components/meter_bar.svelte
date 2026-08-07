@@ -28,13 +28,9 @@
 	} = $props();
 
 	// clip-path reveals the fill from left (horizontal) or bottom (vertical).
-	let clip = $derived(
-		orientation === 'vertical' ? `inset(${100 - pct}% 0 0 0)` : `inset(0 ${100 - pct}% 0 0)`
-	);
+	let clip = $derived(orientation === 'vertical' ? `inset(${100 - pct}% 0 0 0)` : `inset(0 ${100 - pct}% 0 0)`);
 	let holdStyle = $derived(
-		orientation === 'vertical'
-			? `left: 0; right: 0; height: 1px; bottom: ${hold}%;`
-			: `top: 0; bottom: 0; width: 1px; left: ${hold}%;`
+		orientation === 'vertical' ? `left: 0; right: 0; height: 1px; bottom: ${hold}%;` : `top: 0; bottom: 0; width: 1px; left: ${hold}%;`
 	);
 
 	let hoverPct = $state<number | null>(null);
@@ -58,9 +54,7 @@
 	}
 
 	let hoverLineStyle = $derived(
-		orientation === 'vertical'
-			? `left: 0; right: 0; height: 1px; top: ${hoverPos}px;`
-			: `top: 0; bottom: 0; width: 1px; left: ${hoverPos}px;`
+		orientation === 'vertical' ? `left: 0; right: 0; height: 1px; top: ${hoverPos}px;` : `top: 0; bottom: 0; width: 1px; left: ${hoverPos}px;`
 	);
 </script>
 
@@ -68,8 +62,7 @@
 	class={['relative overflow-hidden', trackClass, klass]}
 	onmousemove={hover ? onMove : undefined}
 	onmouseleave={hover ? () => (hoverPct = null) : undefined}
-	role="presentation"
->
+	role="presentation">
 	{#if ghost && gradient}
 		<div class="absolute inset-0 opacity-30 dark:brightness-[0.2]" style="background: {gradient};"></div>
 	{/if}
@@ -82,9 +75,8 @@
 		<div class="pointer-events-none absolute z-10 bg-cyan-400" style={hoverLineStyle}>
 			{#if hoverLabel}
 				<span
-					class="absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight text-white"
-					style={orientation === 'vertical' ? `top: ${hoverPos < 12 ? '2px' : '-10px'};` : 'top: -10px;'}
-				>{hoverLabel(hoverPct)}</span>
+					class="absolute left-1/2 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight whitespace-nowrap text-white"
+					style={orientation === 'vertical' ? `top: ${hoverPos < 12 ? '2px' : '-10px'};` : 'top: -10px;'}>{hoverLabel(hoverPct)}</span>
 			{/if}
 		</div>
 	{/if}

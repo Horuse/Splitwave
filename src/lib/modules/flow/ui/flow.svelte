@@ -10,4 +10,3 @@
 <SvelteFlowProvider>
 	<Editor {pipeline} />
 </SvelteFlowProvider>
-

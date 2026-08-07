@@ -69,17 +69,7 @@
 	}
 </script>
 
-<Wrapper
-	label="Saturator"
-	icon={Saturator}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Saturator" icon={Saturator} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="saturator" {data} onApply={applyPreset} />
 
@@ -88,20 +78,23 @@
 				viewBox="0 0 {CURVE_W} {CURVE_H}"
 				class="h-16 w-32 shrink-0 rounded border border-neutral-300 bg-neutral-100"
 				role="img"
-				aria-label="Transfer curve preview"
-			>
+				aria-label="Transfer curve preview">
 				<line x1={xPx(0)} y1="0" x2={xPx(0)} y2={CURVE_H} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
 				<line x1="0" y1={yPx(0)} x2={CURVE_W} y2={yPx(0)} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
-				<line
-					x1={xPx(X_MIN)} y1={yPx(X_MIN)}
-					x2={xPx(X_MAX)} y2={yPx(X_MAX)}
-					stroke="rgb(163 163 163)" stroke-width="0.4" stroke-dasharray="1 2"
-				/>
+				<line x1={xPx(X_MIN)} y1={yPx(X_MIN)} x2={xPx(X_MAX)} y2={yPx(X_MAX)} stroke="rgb(163 163 163)" stroke-width="0.4" stroke-dasharray="1 2" />
 				<line x1="0" y1={ceilingY()} x2={CURVE_W} y2={ceilingY()} stroke="rgb(239 68 68)" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.5" />
-				<line x1="0" y1={ceilingYNeg()} x2={CURVE_W} y2={ceilingYNeg()} stroke="rgb(239 68 68)" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.5" />
+				<line
+					x1="0"
+					y1={ceilingYNeg()}
+					x2={CURVE_W}
+					y2={ceilingYNeg()}
+					stroke="rgb(239 68 68)"
+					stroke-width="0.3"
+					stroke-dasharray="1 1"
+					opacity="0.5" />
 				<path d={curvePath(data.thresholdDb, data.driveDb)} stroke="rgb(245 158 11)" stroke-width="1.2" fill="none" />
 			</svg>
-			<div class="flex flex-col my-auto gap-0.5 text-[9px] text-neutral-900">
+			<div class="my-auto flex flex-col gap-0.5 text-[9px] text-neutral-900">
 				<span class="rounded bg-neutral-200 font-mono leading-tight">tanh</span>
 				<span class="opacity-60">in → out</span>
 				<span class="opacity-60">unity dashed</span>
@@ -117,18 +110,7 @@
 			unit=" dB"
 			defaultValue={0}
 			ticks={[-12, -6, -3, 0]}
-			onChange={setThreshold}
-		/>
-		<Slider
-			label="Drive"
-			value={data.driveDb}
-			min={0}
-			max={24}
-			step={0.1}
-			unit=" dB"
-			defaultValue={0}
-			ticks={[0, 6, 12, 24]}
-			onChange={setDrive}
-		/>
+			onChange={setThreshold} />
+		<Slider label="Drive" value={data.driveDb} min={0} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[0, 6, 12, 24]} onChange={setDrive} />
 	</div>
 </Wrapper>

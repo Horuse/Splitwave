@@ -174,9 +174,20 @@ mod tests {
     fn sibilant_band_is_reduced() {
         // ~9.5 kHz tone, above the 6 kHz crossover and above threshold.
         let (out, refr) = run(1.25, 0.5);
-        let peak_out = out.iter().skip(2 * 3000).map(|v| v.abs()).fold(0.0, f32::max);
-        let peak_ref = refr.iter().skip(2 * 3000).map(|v| v.abs()).fold(0.0, f32::max);
-        assert!(peak_out < peak_ref * 0.7, "high band not reduced: {peak_out} vs {peak_ref}");
+        let peak_out = out
+            .iter()
+            .skip(2 * 3000)
+            .map(|v| v.abs())
+            .fold(0.0, f32::max);
+        let peak_ref = refr
+            .iter()
+            .skip(2 * 3000)
+            .map(|v| v.abs())
+            .fold(0.0, f32::max);
+        assert!(
+            peak_out < peak_ref * 0.7,
+            "high band not reduced: {peak_out} vs {peak_ref}"
+        );
     }
 
     #[test]

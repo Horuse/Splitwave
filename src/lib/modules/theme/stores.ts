@@ -21,11 +21,7 @@ function resolve(pref: ThemePref): 'light' | 'dark' {
 
 function paint(pref: ThemePref): void {
 	if (!browser) return;
-	withoutTransition(() =>
-		resolve(pref) === 'dark'
-			? document.documentElement.classList.add('dark')
-			: document.documentElement.classList.remove('dark')
-	);
+	withoutTransition(() => (resolve(pref) === 'dark' ? document.documentElement.classList.add('dark') : document.documentElement.classList.remove('dark')));
 }
 
 export const themeStore = writable<ThemePref>(stored());

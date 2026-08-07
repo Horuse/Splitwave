@@ -41,23 +41,11 @@
 	}
 </script>
 
-<Wrapper
-	label="Noise Suppressor"
-	icon={Wand}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Noise Suppressor" icon={Wand} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
-		<p class="text-[10px] leading-tight text-neutral-400">
-			DeepFilterNet speech denoise. 48 kHz only.
-		</p>
+		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. 48 kHz only.</p>
 		<Slider
 			label="Attenuation"
 			value={data.attenuationLimitDb}
@@ -67,8 +55,7 @@
 			format={dbFmt}
 			defaultValue={100}
 			ticks={[25, 50, 75]}
-			onChange={(v) => patch('attenuationLimitDb', v)}
-		/>
+			onChange={(v) => patch('attenuationLimitDb', v)} />
 		<Slider
 			label="Post-filter"
 			value={data.postFilterBeta ?? 0}
@@ -78,8 +65,7 @@
 			format={pfFmt}
 			defaultValue={0}
 			ticks={[0.01, 0.02, 0.03, 0.04]}
-			onChange={(v) => patch('postFilterBeta', v)}
-		/>
+			onChange={(v) => patch('postFilterBeta', v)} />
 		<Slider
 			label="Min thresh"
 			value={data.minThreshDb ?? -10}
@@ -89,8 +75,7 @@
 			format={threshFmt}
 			defaultValue={-10}
 			ticks={[0, 15, 25]}
-			onChange={(v) => patch('minThreshDb', v)}
-		/>
+			onChange={(v) => patch('minThreshDb', v)} />
 		<Slider
 			label="Max ERB thresh"
 			value={data.maxErbThreshDb ?? 30}
@@ -100,8 +85,7 @@
 			format={threshFmt}
 			defaultValue={30}
 			ticks={[0, 15, 25]}
-			onChange={(v) => patch('maxErbThreshDb', v)}
-		/>
+			onChange={(v) => patch('maxErbThreshDb', v)} />
 		<Slider
 			label="Max DF thresh"
 			value={data.maxDfThreshDb ?? 20}
@@ -111,7 +95,6 @@
 			format={threshFmt}
 			defaultValue={20}
 			ticks={[0, 15, 25]}
-			onChange={(v) => patch('maxDfThreshDb', v)}
-		/>
+			onChange={(v) => patch('maxDfThreshDb', v)} />
 	</div>
 </Wrapper>

@@ -146,7 +146,9 @@ pub async fn wire_data_channel(
     dc.on_message(Box::new(move |msg: DataChannelMessage| {
         let session = session_recv.clone();
         let peer_id = peer_id_recv.clone();
-        Box::pin(async move { decode_and_write(msg.data, &session, &peer_id).await; })
+        Box::pin(async move {
+            decode_and_write(msg.data, &session, &peer_id).await;
+        })
     }));
 }
 

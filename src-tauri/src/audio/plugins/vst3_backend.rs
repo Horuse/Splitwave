@@ -5,11 +5,11 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use vst3::ComPtr;
 use vst3::Steinberg::{
     IPluginFactory, IPluginFactory2Trait, IPluginFactoryTrait, PClassInfo, PClassInfo2,
     PFactoryInfo, TUID,
 };
-use vst3::ComPtr;
 
 use super::{PluginBackend, PluginDescriptor, PluginFormat};
 
@@ -399,7 +399,10 @@ impl Vst3Module {
     }
 
     pub fn factory(&self) -> &ComPtr<IPluginFactory> {
-        self.0.factory.as_ref().expect("set in load, cleared in drop")
+        self.0
+            .factory
+            .as_ref()
+            .expect("set in load, cleared in drop")
     }
 
     /// Every audio effect class the factory advertises.

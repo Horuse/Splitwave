@@ -190,10 +190,7 @@ unsafe fn device_uid(device_id: AudioObjectID) -> Option<String> {
 /// AUHAL requires this to bind the device for I/O — devices with a static
 /// channel layout but no stream objects (typical of non-routable aliases)
 /// can't be opened and must not appear in the user-facing list.
-unsafe fn has_streams_in_scope(
-    device_id: AudioObjectID,
-    scope: AudioObjectPropertyScope,
-) -> bool {
+unsafe fn has_streams_in_scope(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> bool {
     let addr = AudioObjectPropertyAddress {
         selector: K_AUDIO_DEVICE_PROPERTY_STREAMS,
         scope,
@@ -206,18 +203,14 @@ unsafe fn has_streams_in_scope(
     (size as usize / mem::size_of::<AudioObjectID>()) > 0
 }
 
-unsafe fn channel_count_in_scope(
-    device_id: AudioObjectID,
-    scope: AudioObjectPropertyScope,
-) -> u32 {
+unsafe fn channel_count_in_scope(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> u32 {
     let addr = AudioObjectPropertyAddress {
         selector: K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION,
         scope,
         element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
     };
     let mut size: u32 = 0;
-    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0
-        || size == 0
+    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0 || size == 0
     {
         return 0;
     }
@@ -388,8 +381,7 @@ fn find_device_id(name: &str, scope: AudioObjectPropertyScope) -> Option<AudioOb
 /// True for our own private CATap capture aggregate; CoreAudio hands a
 /// process its own private aggregates, so they must be hidden from the menus.
 unsafe fn is_tap_aggregate(device_id: AudioObjectID) -> bool {
-    device_uid(device_id)
-        .is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
+    device_uid(device_id).is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
 }
 
 unsafe fn read_volume_for_element(
@@ -504,11 +496,7 @@ pub fn device_volume(kind: crate::audio::device::DeviceKind, name: &str) -> Opti
 }
 
 /// Returns false when the property isn't settable.
-pub fn set_device_volume(
-    kind: crate::audio::device::DeviceKind,
-    name: &str,
-    scalar: f32,
-) -> bool {
+pub fn set_device_volume(kind: crate::audio::device::DeviceKind, name: &str, scalar: f32) -> bool {
     let scope = scope_for(kind);
     let Some(device_id) = find_device_id(name, scope) else {
         return false;
@@ -521,7 +509,8 @@ pub fn set_device_volume(
             write_volume_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, 0.0);
             write_volume_for_element(device_id, scope, 1, 0.0);
             write_volume_for_element(device_id, scope, 2, 0.0);
-            if write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, true) {
+            if write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, true)
+            {
                 return true;
             }
             let l = write_mute_for_element(device_id, scope, 1, true);
@@ -529,10 +518,20 @@ pub fn set_device_volume(
             return l || r;
         }
         // Non-zero: clear mute so audio can pass through, then apply scalar.
-        let _ = write_mute_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, false);
+        let _ = write_mute_for_element(
+            device_id,
+            scope,
+            K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+            false,
+        );
         let _ = write_mute_for_element(device_id, scope, 1, false);
         let _ = write_mute_for_element(device_id, scope, 2, false);
-        if write_volume_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, scalar) {
+        if write_volume_for_element(
+            device_id,
+            scope,
+            K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+            scalar,
+        ) {
             return true;
         }
         let l = write_volume_for_element(device_id, scope, 1, scalar);

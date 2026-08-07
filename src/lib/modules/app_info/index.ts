@@ -13,13 +13,7 @@ let cached: AppInfo | null = null;
 
 export async function loadAppInfo(): Promise<AppInfo> {
 	if (cached) return cached;
-	const [appVersion, tauriVersion, plat, ver, ar] = await Promise.all([
-		getVersion(),
-		getTauriVersion(),
-		platform(),
-		version(),
-		arch()
-	]);
+	const [appVersion, tauriVersion, plat, ver, ar] = await Promise.all([getVersion(), getTauriVersion(), platform(), version(), arch()]);
 	cached = { appVersion, tauriVersion, platform: plat, osVersion: ver, arch: ar };
 	return cached;
 }
@@ -29,7 +23,6 @@ export function getCachedAppInfo(): AppInfo | null {
 }
 
 export function formatAppInfo(info: AppInfo): string {
-	const osLabel =
-		info.platform === 'macos' ? 'macOS' : info.platform === 'linux' ? 'Linux' : info.platform;
+	const osLabel = info.platform === 'macos' ? 'macOS' : info.platform === 'linux' ? 'Linux' : info.platform;
 	return `${osLabel} ${info.osVersion} (${info.arch})`;
 }

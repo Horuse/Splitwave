@@ -6,10 +6,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use symphonia::core::codecs::audio::{AudioDecoderOptions, AudioDecoder};
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
@@ -64,15 +64,20 @@ pub(super) struct AudioFileInfo {
 }
 
 pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
-    let file = File::open(path)
-        .map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
+    let file =
+        File::open(path).map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
     let format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
     let track = format
         .default_track(TrackType::Audio)
@@ -85,7 +90,12 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
     let sample_rate = audio
         .sample_rate
         .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
-    let channels = audio.channels.as_ref().map(|c| c.count() as u32).unwrap_or(2).max(1);
+    let channels = audio
+        .channels
+        .as_ref()
+        .map(|c| c.count() as u32)
+        .unwrap_or(2)
+        .max(1);
     let total_frames = track.num_frames.unwrap_or(0);
     Ok(AudioFileInfo {
         sample_rate,
@@ -128,7 +138,12 @@ pub(super) fn start_audio_file_reader(
         })
         .map_err(|e| AppError::Stream(format!("spawn audio file reader: {e}")))?;
 
-    Ok(AudioFileReader { stop, join: Some(join), seek_to, loop_enabled })
+    Ok(AudioFileReader {
+        stop,
+        join: Some(join),
+        seek_to,
+        loop_enabled,
+    })
 }
 
 struct OpenedDecoder {
@@ -141,15 +156,20 @@ struct OpenedDecoder {
 }
 
 fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
-    let file = File::open(path)
-        .map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
+    let file =
+        File::open(path).map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
     let format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
 
     let (track_id, sample_rate, channels, total_frames, audio_params) = {
@@ -165,7 +185,12 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
             .sample_rate
             .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
         let total_frames = track.num_frames.unwrap_or(0);
-        let channels = audio.channels.as_ref().map(|c| c.count()).unwrap_or(2).max(1);
+        let channels = audio
+            .channels
+            .as_ref()
+            .map(|c| c.count())
+            .unwrap_or(2)
+            .max(1);
         let audio_params = audio.clone();
         (track.id, sample_rate, channels, total_frames, audio_params)
     };
@@ -187,7 +212,13 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
 fn do_seek(od: &mut OpenedDecoder, target_frame: u64) {
     let secs_f64 = target_frame as f64 / od.sample_rate as f64;
     let time = Time::try_from_secs_f64(secs_f64).unwrap_or(Time::ZERO);
-    match od.format.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: None }) {
+    match od.format.seek(
+        SeekMode::Accurate,
+        SeekTo::Time {
+            time,
+            track_id: None,
+        },
+    ) {
         Ok(_) => {}
         Err(e) => warn!("seek failed: {e}"),
     }
@@ -215,7 +246,16 @@ fn run(
 
     let mut frames_played: u64 = 0;
     let mut last_progress = Instant::now();
-    emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, od.channels as u32, false, false);
+    emit_progress(
+        app,
+        &node_id,
+        0,
+        od.total_frames,
+        od.sample_rate,
+        od.channels as u32,
+        false,
+        false,
+    );
 
     let mut interleaved: Vec<f32> = Vec::new();
     let ch = od.channels;
@@ -234,7 +274,14 @@ fn run(
     loop {
         if stop.load(Ordering::SeqCst) {
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, true, false,
+                app,
+                &node_id,
+                frames_played,
+                od.total_frames,
+                od.sample_rate,
+                od.channels as u32,
+                true,
+                false,
             );
             return Ok(());
         }
@@ -248,7 +295,14 @@ fn run(
             }
             if last_paused_progress.elapsed() >= PROGRESS_INTERVAL {
                 emit_progress(
-                    app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, true,
+                    app,
+                    &node_id,
+                    frames_played,
+                    od.total_frames,
+                    od.sample_rate,
+                    od.channels as u32,
+                    false,
+                    true,
                 );
                 last_paused_progress = Instant::now();
             }
@@ -263,7 +317,14 @@ fn run(
             do_seek(&mut od, target);
             frames_played = target;
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
+                app,
+                &node_id,
+                frames_played,
+                od.total_frames,
+                od.sample_rate,
+                od.channels as u32,
+                false,
+                false,
             );
             last_progress = Instant::now();
         }
@@ -319,7 +380,16 @@ fn run(
             paused.store(true, Ordering::SeqCst);
             do_seek(&mut od, 0);
             frames_played = 0;
-            emit_progress(app, &node_id, 0, od.total_frames, od.sample_rate, od.channels as u32, false, true);
+            emit_progress(
+                app,
+                &node_id,
+                0,
+                od.total_frames,
+                od.sample_rate,
+                od.channels as u32,
+                false,
+                true,
+            );
             last_progress = Instant::now();
             continue;
         }
@@ -337,7 +407,14 @@ fn run(
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
             emit_progress(
-                app, &node_id, frames_played, od.total_frames, od.sample_rate, od.channels as u32, false, false,
+                app,
+                &node_id,
+                frames_played,
+                od.total_frames,
+                od.sample_rate,
+                od.channels as u32,
+                false,
+                false,
             );
             last_progress = Instant::now();
         }
@@ -408,7 +485,11 @@ fn decode_next(
 }
 
 fn clamp_frame(frame: u64, total: u64) -> u64 {
-    if total == 0 { frame } else { frame.min(total) }
+    if total == 0 {
+        frame
+    } else {
+        frame.min(total)
+    }
 }
 
 fn emit_progress(

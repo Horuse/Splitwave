@@ -35,15 +35,7 @@
 
 	// 4-level scale mapped onto the rendered bar count.
 	let filled = $derived(level < 0 ? 0 : Math.round((level / 4) * bars));
-	let color = $derived(
-		level < 0
-			? 'unknown'
-			: level >= 3
-				? 'good'
-				: level === 2
-					? 'fair'
-					: 'poor'
-	);
+	let color = $derived(level < 0 ? 'unknown' : level >= 3 ? 'good' : level === 2 ? 'fair' : 'poor');
 </script>
 
 <div class="flex items-end gap-[2px]" title={level < 0 ? 'no data' : `quality ${level}/4`}>
@@ -54,7 +46,6 @@
 			class:bg-green-500={i < filled && color === 'good'}
 			class:bg-yellow-500={i < filled && color === 'fair'}
 			class:bg-red-500={i < filled && color === 'poor'}
-			style="height: {4 + i * 3}px"
-		></span>
+			style="height: {4 + i * 3}px"></span>
 	{/each}
 </div>

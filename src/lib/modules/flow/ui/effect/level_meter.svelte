@@ -83,9 +83,7 @@
 	let lastFrame = 0;
 
 	function fall(target: number, current: number, dt: number): number {
-		return target > current
-			? target
-			: Math.max(target, DB_FLOOR, current - PEAK_FALL_DB_PER_SEC * dt);
+		return target > current ? target : Math.max(target, DB_FLOOR, current - PEAK_FALL_DB_PER_SEC * dt);
 	}
 
 	function tick(now: number) {
@@ -153,16 +151,7 @@
 	});
 </script>
 
-<Wrapper
-	label="Level Meter"
-	accent="monitor"
-	icon={DataBar}
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	wide
->
+<Wrapper label="Level Meter" accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide>
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">
 			<div class="flex flex-col gap-0.5">
@@ -171,10 +160,11 @@
 					{#each clipVals as c, i (i)}
 						<button
 							type="button"
-							class="flex-1 transition-colors {c ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]' : 'bg-neutral-200'} {i > 0 ? 'border-l border-neutral-300' : ''}"
+							class="flex-1 transition-colors {c ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]' : 'bg-neutral-200'} {i > 0
+								? 'border-l border-neutral-300'
+								: ''}"
 							onclick={resetPeaks}
-							aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"
-						></button>
+							aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"></button>
 					{/each}
 				</div>
 
@@ -186,8 +176,7 @@
 					onkeydown={handleBarKey}
 					role="button"
 					tabindex="0"
-					aria-label="Level meter — click to reset peaks, hover to read level"
-				>
+					aria-label="Level meter — click to reset peaks, hover to read level">
 					{#each barVals as p, i (i)}
 						<MeterBar
 							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
@@ -196,11 +185,14 @@
 							ghost
 							hover
 							{hoverLabel}
-							pct={dbToPct(p)}
-						>
-							<div class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;"></div>
+							pct={dbToPct(p)}>
+							<div class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;">
+							</div>
 							{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
-								<div class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]" style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);"></div>
+								<div
+									class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]"
+									style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);">
+								</div>
 							{/if}
 						</MeterBar>
 					{/each}
@@ -212,7 +204,7 @@
 				{#each minorTickPos as t (t.db)}
 					<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
 						<div class="shrink-0 bg-neutral-700 {t.major ? 'w-2' : 'w-1'}" style="height: 1px;"></div>
-						{#if t.major}<span class="ml-0.5 mb-px leading-none">{t.db}</span>{/if}
+						{#if t.major}<span class="mb-px ml-0.5 leading-none">{t.db}</span>{/if}
 					</div>
 				{/each}
 				<div class="absolute bottom-0 left-2.5 leading-none">dB</div>
@@ -224,7 +216,7 @@
 			{#each barVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>
+					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db)}</span>
 				</div>
 			{/each}
 		</div>
@@ -235,12 +227,11 @@
 			onclick={resetPeaks}
 			title="Reset peaks"
 			class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-200 transition-colors hover:opacity-80"
-			style="width: {channelCount * BAR_W}px;"
-		>
+			style="width: {channelCount * BAR_W}px;">
 			{#each maxVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none text-neutral-500">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono tabular-nums text-[8px] leading-tight {dbTextClass(db)}">{formatDb(db)}</span>
+					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db)}</span>
 				</div>
 			{/each}
 		</button>

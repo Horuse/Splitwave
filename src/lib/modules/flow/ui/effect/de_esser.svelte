@@ -32,17 +32,7 @@
 	}
 </script>
 
-<Wrapper
-	label="De-esser"
-	icon={SoundWave}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="De-esser" icon={SoundWave} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="deEsser" {data} onApply={applyPreset} />
 
@@ -56,8 +46,7 @@
 			defaultValue={6500}
 			format={fmtHz}
 			ticks={[4000, 6500, 9000, 12000]}
-			onChange={(v) => set({ frequency: v })}
-		/>
+			onChange={(v) => set({ frequency: v })} />
 		<Slider
 			label="Threshold"
 			value={data.thresholdDb}
@@ -67,8 +56,7 @@
 			unit=" dB"
 			defaultValue={-30}
 			ticks={[-60, -40, -20, 0]}
-			onChange={(v) => set({ thresholdDb: v })}
-		/>
+			onChange={(v) => set({ thresholdDb: v })} />
 		<Slider
 			label="Ratio"
 			value={data.ratio}
@@ -78,11 +66,9 @@
 			unit=":1"
 			defaultValue={4}
 			ticks={[2, 4, 8, 12]}
-			onChange={(v) => set({ ratio: v })}
-		/>
+			onChange={(v) => set({ ratio: v })} />
 		<span class="text-[9px] leading-tight text-neutral-500">
-			Compresses only the band above Frequency when it passes Threshold, so
-			sibilance softens while the rest of the voice stays untouched.
+			Compresses only the band above Frequency when it passes Threshold, so sibilance softens while the rest of the voice stays untouched.
 		</span>
 	</div>
 </Wrapper>

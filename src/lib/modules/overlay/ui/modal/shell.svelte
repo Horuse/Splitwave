@@ -50,17 +50,12 @@
 	role="dialog"
 	aria-modal="true"
 	transition:fade|global={{ duration: 150 }}
-	onclick={onBackdrop}
->
+	onclick={onBackdrop}>
 	<div
-		class={[
-			'flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-300 bg-neutral-100 shadow-2xl',
-			WIDTH[size]
-		]}
+		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-300 bg-neutral-100 shadow-2xl', WIDTH[size]]}
 		transition:fly|global={{ duration: 200, y: 8, easing: cubicOut }}
 		onclick={(e) => e.stopPropagation()}
-		role="presentation"
-	>
+		role="presentation">
 		{#if title || badge || canClose}
 			<header class="flex items-start justify-between gap-3 px-5 pt-4">
 				<div class="flex min-w-0 flex-col gap-0.5">
@@ -76,12 +71,10 @@
 							type="button"
 							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-neutral-300"
 							aria-label="Close"
-							onclick={() => onClose?.()}
-						>
+							onclick={() => onClose?.()}>
 							<svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
 								<path
-									d="M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94 4.28 3.22Z"
-								/>
+									d="M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94 4.28 3.22Z" />
 							</svg>
 						</button>
 					{/if}

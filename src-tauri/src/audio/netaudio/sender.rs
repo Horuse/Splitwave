@@ -66,7 +66,12 @@ pub fn get_or_create(
     opus_bitrate: u32,
     opus_application: OpusApplication,
 ) -> Arc<NetSender> {
-    let config = Config { target, format, opus_bitrate, opus_application };
+    let config = Config {
+        target,
+        format,
+        opus_bitrate,
+        opus_application,
+    };
     let mut reg = registry().lock().unwrap();
     if let Some(s) = reg.get(node_id) {
         if s.config == config {

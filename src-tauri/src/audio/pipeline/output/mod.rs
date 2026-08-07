@@ -79,9 +79,9 @@ pub(super) fn resolve_output(
     file_sr_hint: Option<u32>,
 ) -> AppResult<ResolvedOutput> {
     match &out.spec {
-        OutputSpec::Speaker { device_id } => {
-            Ok(ResolvedOutput::Speaker(platform::resolve_speaker(device_id)?))
-        }
+        OutputSpec::Speaker { device_id } => Ok(ResolvedOutput::Speaker(
+            platform::resolve_speaker(device_id)?,
+        )),
         OutputSpec::FileRecording {
             file_path,
             format,
@@ -193,7 +193,9 @@ pub(super) fn speaker_ring(
     let fill = move |out: &mut [f32], _frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);
         level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
-        io_cb.requested.fetch_add(out.len() as u64, Ordering::Relaxed);
+        io_cb
+            .requested
+            .fetch_add(out.len() as u64, Ordering::Relaxed);
         io_cb.read.fetch_add(read as u64, Ordering::Relaxed);
         io_cb.callbacks.fetch_add(1, Ordering::Relaxed);
     };
@@ -266,13 +268,17 @@ pub(super) fn spawn_speaker_worker(
             });
         })
         .map_err(|e| AppError::Stream(format!("spawn speaker worker: {e}")))?;
-    Ok((SpeakerWorker { stop, join: Some(join) }, ctrl))
+    Ok((
+        SpeakerWorker {
+            stop,
+            join: Some(join),
+        },
+        ctrl,
+    ))
 }
 
 // Drives analyzers when there's no real output; sink discards the mix.
-pub(super) fn start_monitor_worker(
-    graph: OutputGraph,
-) -> AppResult<(RecorderWorker, WorkerCtrl)> {
+pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     // Live monitors are paced by wall-clock like a speaker, not by source

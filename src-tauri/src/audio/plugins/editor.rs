@@ -193,7 +193,8 @@ pub unsafe fn inset_below_titlebar(
             NSSize::new(bounds.size.width, (bounds.size.height - titlebar).max(1.0)),
         );
         let _: () = msg_send![view, setFrame: frame];
-        let _: () = msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
+        let _: () =
+            msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
     }
 }
 

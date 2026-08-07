@@ -103,8 +103,7 @@ impl NoiseGateEffect {
         let sr = self.sample_rate as f32;
         let attack_coeff = 1.0 - (-1.0 / (attack_ms * 0.001 * sr)).exp();
         let release_coeff = 1.0 - (-1.0 / (release_ms * 0.001 * sr)).exp();
-        let detector_release_coeff =
-            1.0 - (-1.0 / (GATE_DETECTOR_RELEASE_MS * 0.001 * sr)).exp();
+        let detector_release_coeff = 1.0 - (-1.0 / (GATE_DETECTOR_RELEASE_MS * 0.001 * sr)).exp();
         let threshold_lin = db_to_linear(threshold_db);
         let closed_gain = db_to_linear(range_db);
         let hold_samples = (hold_ms * 0.001 * sr) as u32;
@@ -116,7 +115,11 @@ impl NoiseGateEffect {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),
                 None => frame[0].abs().max(frame[1].abs()),
             };
-            let coeff = if detected > self.envelope { attack_coeff } else { detector_release_coeff };
+            let coeff = if detected > self.envelope {
+                attack_coeff
+            } else {
+                detector_release_coeff
+            };
             self.envelope += (detected - self.envelope) * coeff;
 
             let target_gain = if self.envelope >= threshold_lin {
@@ -129,7 +132,11 @@ impl NoiseGateEffect {
                 closed_gain
             };
 
-            let coeff = if target_gain > self.current_gain { attack_coeff } else { release_coeff };
+            let coeff = if target_gain > self.current_gain {
+                attack_coeff
+            } else {
+                release_coeff
+            };
             self.current_gain += (target_gain - self.current_gain) * coeff;
 
             frame[0] *= self.current_gain;

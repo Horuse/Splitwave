@@ -26,14 +26,20 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
 
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     Ok(unique_named(
-        macos_hal::list_input_devices().into_iter().map(|d| d.name).collect(),
+        macos_hal::list_input_devices()
+            .into_iter()
+            .map(|d| d.name)
+            .collect(),
         DeviceKind::Input,
     ))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     Ok(unique_named(
-        macos_hal::list_output_devices().into_iter().map(|d| d.name).collect(),
+        macos_hal::list_output_devices()
+            .into_iter()
+            .map(|d| d.name)
+            .collect(),
         DeviceKind::Output,
     ))
 }

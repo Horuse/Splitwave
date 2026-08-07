@@ -32,26 +32,12 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-2">
-			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm"
-				>Pipelines</a
-			>
+			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
 			{#if !isWindows}
-				<a
-					class:active={page.route.id === '/virtual-devices'}
-					href="/virtual-devices"
-					class="button-header px-4 text-sm">Virtual devices</a
-				>
+				<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
 			{/if}
-			<a
-				class:active={page.route.id === '/wiki'}
-				href="/wiki"
-				class="button-header px-4 text-sm">Wiki</a
-			>
-			<a
-				class:active={page.route.id === '/settings'}
-				href="/settings"
-				class="button-header px-4 text-sm">Settings</a
-			>
+			<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
+			<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
 		</div>
 	{/snippet}
 </Header>
@@ -65,13 +51,7 @@
 					<p class="text-xs text-neutral-900">{entry.body}</p>
 				</div>
 
-				<video
-					autoplay
-					loop
-					muted
-					playsinline
-					class="w-full rounded-xl border border-neutral-400 bg-neutral-100"
-				>
+				<video autoplay loop muted playsinline class="w-full rounded-xl border border-neutral-400 bg-neutral-100">
 					<source src={entry.video} type="video/mp4" />
 					<source src={entry.video.replace('.mp4', '.webm')} type="video/webm" />
 				</video>

@@ -42,28 +42,16 @@
 		<button
 			type="button"
 			onclick={() => pick(t)}
-			class={[
-				'flex h-full min-h-44 flex-col items-center justify-center gap-3 rounded-xl border p-4 text-center transition-colors',
-				CARD[t.accent]
-			]}
-		>
+			class={['flex h-full min-h-44 flex-col items-center justify-center gap-3 rounded-xl border p-4 text-center transition-colors', CARD[t.accent]]}>
 			<div class="flex min-h-9 flex-wrap items-center justify-center gap-1.5">
 				{#if t.nodes.length === 0}
-					<span
-						class={[
-							'flex size-9 items-center justify-center rounded-lg border border-dashed border-neutral-500',
-							TILE[t.accent]
-						]}
-					>
+					<span class={['flex size-9 items-center justify-center rounded-lg border border-dashed border-neutral-500', TILE[t.accent]]}>
 						<Add class="size-4" />
 					</span>
 				{:else}
 					{#each kinds(t) as kind (kind)}
 						{@const entry = registry[kind]}
-						<span
-							class={['flex size-9 items-center justify-center rounded-lg', TILE[t.accent]]}
-							title={entry.label}
-						>
+						<span class={['flex size-9 items-center justify-center rounded-lg', TILE[t.accent]]} title={entry.label}>
 							<entry.icon class="size-4" />
 						</span>
 					{/each}

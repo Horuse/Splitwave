@@ -105,7 +105,9 @@
 		pipelineStore.refresh().catch(() => {});
 		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
-			.then((fn) => { unlistenMenu = fn; })
+			.then((fn) => {
+				unlistenMenu = fn;
+			})
 			.catch(() => {});
 		// plugin-os reads a Tauri-injected global; absent in plain-browser preview.
 		try {
@@ -141,4 +143,3 @@
 {#if isDev}
 	<DebugPanel />
 {/if}
-

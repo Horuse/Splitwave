@@ -1,10 +1,11 @@
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplitwave.app%2Fapi%2Fdownloads&query=downloads&label=downloads&color=brightgreen)](https://github.com/Horuse/Splitwave/releases/latest)
 [![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#support)
+
 # Splitwave
+
 Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire microphones, system audio, per-app capture, and WAV files into a visual graph, run them through a chain of effects — EQ, compression, reverb, limiting, and more, plus your own CLAP, VST3 and AU plugins — then send the result to speakers or record it in WAV, FLAC, AIFF, MP3, Opus, or AAC.
 
 ![Splitwave preview](./preview.webp)
-
 
 ## Installation
 
@@ -44,20 +45,20 @@ Virtual audio devices are not available on Windows.
 
 ## Platform support
 
-| Feature | macOS | Linux | Windows |
-| --- | :---: | :---: | :---: |
-| Mic / speaker device I/O | ✅ | ✅ | ✅ |
-| System audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ WASAPI loopback |
-| Per-app audio capture | ✅ ScreenCaptureKit | ✅ PipeWire | ✅ Process Loopback (Win10 2004+) |
-| App icons in the picker | ✅ | ✅ | ✅ |
-| Device volume control | ✅ | ✅ | ✅ |
-| Recording: WAV / FLAC / AIFF / MP3 / Opus | ✅ | ✅ | ✅ |
-| Recording: AAC (M4A) | ✅ | ❌ | ❌ |
-| Virtual audio devices | ✅ AudioServerPlugin | ✅ PipeWire null-sinks | ❌ (no user-mode driver model) |
-| Effects, metering, file playback | ✅ | ✅ | ✅ |
-| CLAP plugins | ✅ | ✅ | ✅ |
-| VST3 plugins | ✅ | ✅ X11 | ✅ |
-| Audio Unit plugins | ✅ | ❌ | ❌ |
+| Feature                                   |        macOS         |         Linux          |              Windows              |
+| ----------------------------------------- | :------------------: | :--------------------: | :-------------------------------: |
+| Mic / speaker device I/O                  |          ✅          |           ✅           |                ✅                 |
+| System audio capture                      | ✅ ScreenCaptureKit  |      ✅ PipeWire       |        ✅ WASAPI loopback         |
+| Per-app audio capture                     | ✅ ScreenCaptureKit  |      ✅ PipeWire       | ✅ Process Loopback (Win10 2004+) |
+| App icons in the picker                   |          ✅          |           ✅           |                ✅                 |
+| Device volume control                     |          ✅          |           ✅           |                ✅                 |
+| Recording: WAV / FLAC / AIFF / MP3 / Opus |          ✅          |           ✅           |                ✅                 |
+| Recording: AAC (M4A)                      |          ✅          |           ❌           |                ❌                 |
+| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks |  ❌ (no user-mode driver model)   |
+| Effects, metering, file playback          |          ✅          |           ✅           |                ✅                 |
+| CLAP plugins                              |          ✅          |           ✅           |                ✅                 |
+| VST3 plugins                              |          ✅          |         ✅ X11         |                ✅                 |
+| Audio Unit plugins                        |          ✅          |           ❌           |                ❌                 |
 
 ## Features
 
@@ -100,7 +101,6 @@ Windows has no user-mode virtual-device model, so they are unavailable there.
   loopback + Process Loopback capture, `IAudioEndpointVolume`, audio-session
   enumeration, and exe icon extraction (`png` for encoding)
 
-
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for prerequisites, setup, useful commands,
@@ -112,6 +112,7 @@ Splitwave is licensed under [MIT](LICENSE).
 Third-party component notices (LGPL, MPL-2.0, etc.) are in [NOTICE](NOTICE).
 
 ## Support
+
 If you find this app useful, consider supporting it:
 
 - Tether USDT (TRC20): `TLhTvnn8CtVuQZruLXmRurGhR9GWd7DrWZ`

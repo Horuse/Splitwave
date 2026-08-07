@@ -243,20 +243,13 @@
 	});
 </script>
 
-<div
-	class={[
-		'flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm',
-		isPreview ? 'h-40 w-80' : 'h-full w-full'
-	]}
->
+<div class={['flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
 	{#if !isPreview}
 		<NodeResizer minWidth={200} maxWidth={1400} minHeight={110} maxHeight={1400} />
 	{/if}
 
 	<div class="flex shrink-0 items-center justify-between gap-2 px-3 pt-2 pb-1">
-		<span
-			class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase"
-		>
+		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			<DataBar class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
 			Spectrum
 		</span>
@@ -271,8 +264,7 @@
 					step="0.01"
 					value={smoothing}
 					oninput={(e) => setSmoothing(e.currentTarget.valueAsNumber)}
-					title={`Smoothing ${Math.round(smoothing * 100)}%`}
-				/>
+					title={`Smoothing ${Math.round(smoothing * 100)}%`} />
 				<span class="flex items-baseline">
 					<input
 						type="number"
@@ -284,8 +276,7 @@
 						oninput={(e) => {
 							const n = e.currentTarget.valueAsNumber;
 							if (!Number.isNaN(n)) setSmoothing(Math.max(0, Math.min(1, n / 100)));
-						}}
-					/>
+						}} />
 					<span class="text-neutral-400">%</span>
 				</span>
 			</label>
@@ -297,34 +288,15 @@
 			<ChannelHandles nodeId={id} side="target" />
 		{/if}
 		<div bind:this={plotWrap} class="nowheel min-w-0 flex-1 self-stretch overflow-hidden">
-			<svg
-				viewBox={`0 0 ${W} ${Hpx}`}
-				style="display:block; width:100%; height:100%;"
-				aria-hidden="true"
-			>
+			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" aria-hidden="true">
 				<rect width={W} height={Hpx} fill="#111" rx="10" />
 
 				<!-- dB grid + scale rail -->
 				{#each DB_TICKS as db (db)}
 					{@const y = dbToY(db)}
-					<line
-						x1={SCALE_W}
-						y1={y}
-						x2={W - RIGHT_PAD}
-						y2={y}
-						stroke="rgba(255,255,255,0.07)"
-						stroke-width="1"
-						shape-rendering="crispEdges"
-					/>
-					<text
-						x={SCALE_W - 4}
-						y={y}
-						fill="rgba(255,255,255,0.45)"
-						font-size="7"
-						font-family="monospace"
-						text-anchor="end"
-						dominant-baseline="middle">{db}</text
-					>
+					<line x1={SCALE_W} y1={y} x2={W - RIGHT_PAD} y2={y} stroke="rgba(255,255,255,0.07)" stroke-width="1" shape-rendering="crispEdges" />
+					<text x={SCALE_W - 4} {y} fill="rgba(255,255,255,0.45)" font-size="7" font-family="monospace" text-anchor="end" dominant-baseline="middle"
+						>{db}</text>
 				{/each}
 
 				<!-- frequency grid -->
@@ -337,17 +309,15 @@
 						y2={plotH}
 						stroke={t.major ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)'}
 						stroke-width="1"
-						shape-rendering="crispEdges"
-					/>
+						shape-rendering="crispEdges" />
 					<text
-						x={x}
+						{x}
 						y={plotH + 8}
 						fill={t.major ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.38)'}
 						font-size="6.5"
 						font-family="monospace"
 						text-anchor="middle"
-						dominant-baseline="middle">{t.label}</text
-					>
+						dominant-baseline="middle">{t.label}</text>
 				{/each}
 
 				<line
@@ -357,18 +327,10 @@
 					y2={plotH}
 					stroke="rgba(255,255,255,0.12)"
 					stroke-width="1"
-					shape-rendering="crispEdges"
-				/>
+					shape-rendering="crispEdges" />
 
 				{#each bars as bar, b (b)}
-					<rect
-						x={bar.x}
-						y={bar.y}
-						width={bar.w}
-						height={bar.h}
-						fill={`hsl(${bar.hue} 85% 55%)`}
-						rx="1"
-					/>
+					<rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={`hsl(${bar.hue} 85% 55%)`} rx="1" />
 				{/each}
 			</svg>
 		</div>

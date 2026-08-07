@@ -34,14 +34,7 @@
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
 		if (current.cueEnabled && current.cueDeviceId) {
-			audioMethods
-				.playCue(
-					current.cueDeviceId,
-					muted,
-					(current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100,
-					beep
-				)
-				.catch(() => {});
+			audioMethods.playCue(current.cueDeviceId, muted, (current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100, beep).catch(() => {});
 		}
 	}
 
@@ -108,9 +101,7 @@
 	}
 
 	let cueOptions = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
-	let cueMissing = $derived(
-		!!data.cueDeviceId && !audioStore.outputDevices.some((d) => d.id === data.cueDeviceId)
-	);
+	let cueMissing = $derived(!!data.cueDeviceId && !audioStore.outputDevices.some((d) => d.id === data.cueDeviceId));
 
 	onMount(() => {
 		if (audioStore.outputDevices.length === 0) audioStore.refreshOutputDevices();
@@ -144,44 +135,25 @@
 	}
 </script>
 
-<Wrapper
-	label="Mute"
-	icon={SpeakerMute}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Mute" icon={SpeakerMute} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<button
 		title="Toggle mute (M)"
 		class={[
 			'nodrag nopan flex w-40 items-center justify-center gap-2 rounded-lg border px-3 py-2 transition-colors',
-			data.muted
-				? 'border-red-500/60 bg-red-500/10'
-				: 'border-neutral-400 bg-neutral-100 hover:bg-neutral-200'
+			data.muted ? 'border-red-500/60 bg-red-500/10' : 'border-neutral-400 bg-neutral-100 hover:bg-neutral-200'
 		]}
-		onclick={toggle}
-	>
+		onclick={toggle}>
 		<span
 			class={[
 				'relative flex h-6 w-6 items-center justify-center rounded-full font-mono text-sm font-bold transition-colors',
-				data.muted
-					? 'bg-red-500 text-white shadow-[0_0_8px_rgba(239,68,68,0.7)]'
-					: 'bg-neutral-300 text-neutral-600'
-			]}
-		>
+				data.muted ? 'bg-red-500 text-white shadow-[0_0_8px_rgba(239,68,68,0.7)]' : 'bg-neutral-300 text-neutral-600'
+			]}>
 			M
 			{#if data.muted}
 				<span class="absolute inset-0 animate-ping rounded-full bg-red-500/40"></span>
 			{/if}
 		</span>
-		<span class={[
-			'text-sm font-medium',
-			data.muted ? 'text-red-500' : 'text-neutral-1100'
-		]}>
+		<span class={['text-sm font-medium', data.muted ? 'text-red-500' : 'text-neutral-1100']}>
 			{data.muted ? 'MUTED' : 'Active'}
 		</span>
 	</button>
@@ -191,20 +163,16 @@
 			title={binding ? 'Press any key, Esc to cancel' : 'Bind a global shortcut'}
 			class={[
 				'flex-1 truncate rounded-md border px-2 py-1 font-mono text-xs tabular-nums transition-colors',
-				binding
-					? 'border-blue-500/60 bg-blue-500/10 text-blue-500'
-					: 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
+				binding ? 'border-blue-500/60 bg-blue-500/10 text-blue-500' : 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
 			]}
-			onclick={() => (binding = !binding)}
-		>
+			onclick={() => (binding = !binding)}>
 			{binding ? 'Press a key...' : data.hotkey ? formatAccelerator(data.hotkey) : 'Bind key'}
 		</button>
 		{#if data.hotkey && !binding}
 			<button
 				title="Clear shortcut"
 				class="rounded-md border border-neutral-400 bg-neutral-100 p-1 text-neutral-900 hover:bg-neutral-200"
-				onclick={clearHotkey}
-			>
+				onclick={clearHotkey}>
 				<Dismiss class="size-3" />
 			</button>
 		{/if}
@@ -216,39 +184,22 @@
 
 	{#if data.hotkey}
 		<div class="nodrag nopan mt-2 w-40">
-			<Toggle
-				size="sm"
-				checked={data.pushToTalk ?? false}
-				label="Push-to-talk"
-				onChange={setPushToTalk}
-			/>
+			<Toggle size="sm" checked={data.pushToTalk ?? false} label="Push-to-talk" onChange={setPushToTalk} />
 		</div>
 	{/if}
 
 	<div class="nodrag nopan mt-3 flex w-40 flex-col gap-1 border-t border-neutral-400 pt-2">
-		<Toggle
-			size="sm"
-			checked={data.cueEnabled ?? false}
-			label="Sound cue"
-			onChange={setCueEnabled}
-		/>
+		<Toggle size="sm" checked={data.cueEnabled ?? false} label="Sound cue" onChange={setCueEnabled} />
 
 		{#if data.cueEnabled}
 			<span class="text-[10px] text-neutral-900">Plays on the output device</span>
-			<Combobox
-				class="w-full"
-				options={cueOptions}
-				value={data.cueDeviceId ?? null}
-				placeholder="— Select output —"
-				onChange={setCueDevice}
-			>
+			<Combobox class="w-full" options={cueOptions} value={data.cueDeviceId ?? null} placeholder="— Select output —" onChange={setCueDevice}>
 				{#snippet footer(close)}
 					<RescanButton
 						onRescan={() => {
 							close();
 							audioStore.refreshOutputDevices();
-						}}
-					/>
+						}} />
 				{/snippet}
 			</Combobox>
 			{#if cueMissing}
@@ -263,8 +214,7 @@
 				format={formatPct}
 				defaultValue={CUE_VOLUME_DEFAULT}
 				ticks={[25, 50, 75]}
-				onChange={setCueVolume}
-			/>
+				onChange={setCueVolume} />
 		{/if}
 	</div>
 </Wrapper>

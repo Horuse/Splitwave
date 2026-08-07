@@ -101,7 +101,7 @@ field.
   feature can ship as three small PRs, ship three.
 - One deterministic path per decision. Surface failures; never fall back
   silently to a different device, rate, or format.
-- Comments explain non-obvious *why*, in one terse line. Naming covers *what*.
+- Comments explain non-obvious _why_, in one terse line. Naming covers _what_.
   Never write comments that narrate the edit ("now uses", "instead of",
   "previously") — they describe the code as it stands.
 - If the same UI block or helper appears twice, factor it out before opening

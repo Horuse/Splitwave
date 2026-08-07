@@ -122,7 +122,8 @@ impl WebRtcSession {
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.
     pub fn attach_channel(&self, peer: String, channel: u8, first_seq: u16) -> ChannelBroadcast {
-        self.fanout.attach_channel(format!("{peer}:{channel}"), first_seq)
+        self.fanout
+            .attach_channel(format!("{peer}:{channel}"), first_seq)
     }
 
     /// Drops a disconnected peer's channels so new bridges don't wire to them.

@@ -1,10 +1,5 @@
 <script lang="ts">
-	import {
-		getBezierPath,
-		getSmoothStepPath,
-		getStraightPath,
-		useConnection
-	} from '@xyflow/svelte';
+	import { getBezierPath, getSmoothStepPath, getStraightPath, useConnection } from '@xyflow/svelte';
 	import { channelColor, parseHandle } from '$lib/modules/flow/utils';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';

@@ -1,12 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import {
-		useNodeConnections,
-		useSvelteFlow,
-		Position,
-		type Node,
-		type NodeProps
-	} from '@xyflow/svelte';
+	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
 	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
@@ -65,25 +59,13 @@
 		const prefix = `peer:${peerId}:`;
 		const orphaned = flow
 			.getEdges()
-			.filter(
-				(e) =>
-					e.source === id && (e.sourceHandle === mix || e.sourceHandle?.startsWith(prefix))
-			)
+			.filter((e) => e.source === id && (e.sourceHandle === mix || e.sourceHandle?.startsWith(prefix)))
 			.map((e) => ({ id: e.id }));
 		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
 	}
 
 	function pushIdentity(name: string, channels: number) {
-		audioMethods
-			.webrtcSetIdentity(
-				id,
-				name,
-				channels,
-				data.codec ?? 'opus',
-				data.opusBitrate,
-				data.opusApplication
-			)
-			.catch(() => {});
+		audioMethods.webrtcSetIdentity(id, name, channels, data.codec ?? 'opus', data.opusBitrate, data.opusApplication).catch(() => {});
 	}
 
 	function setName(name: string) {
@@ -168,8 +150,7 @@
 	}
 
 	async function destroy() {
-		if (!(await confirmAction('Destroy this room? All participants will be disconnected.', 'Destroy')))
-			return;
+		if (!(await confirmAction('Destroy this room? All participants will be disconnected.', 'Destroy'))) return;
 		await cancel();
 	}
 
@@ -228,7 +209,10 @@
 	}
 
 	function stopPingPolling() {
-		if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+		if (pingInterval) {
+			clearInterval(pingInterval);
+			pingInterval = null;
+		}
 		bufferMs = 0;
 	}
 
@@ -236,8 +220,7 @@
 		audioMethods.onWebrtcConnected((e) => {
 			if (e.nodeId !== id) return;
 			busy = false;
-			if (!peers.find((p) => p.peerId === e.peerId))
-				peers = [...peers, { peerId: e.peerId, muted: false, name: '', channels: [] }];
+			if (!peers.find((p) => p.peerId === e.peerId)) peers = [...peers, { peerId: e.peerId, muted: false, name: '', channels: [] }];
 			startPingPolling();
 		}),
 		audioMethods.onWebrtcDisconnected((e) => {
@@ -295,30 +278,20 @@
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
 				placeholder="This device"
 				value={data.name ?? ''}
-				onchange={(e) => setName(e.currentTarget.value)}
-			/>
+				onchange={(e) => setName(e.currentTarget.value)} />
 		</div>
-
 
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<SegmentedButtons
-				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
-				value={data.codec}
-				onSelect={setCodec}
-			/>
+			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<SegmentedButtons
-					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
-					value={data.opusBitrate}
-					onSelect={setBitrate}
-				/>
+				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
@@ -327,8 +300,7 @@
 				<SegmentedButtons
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
-					onSelect={setApp}
-				/>
+					onSelect={setApp} />
 			</div>
 		{/if}
 
@@ -336,11 +308,7 @@
 
 		{#if phase === 'idle'}
 			<PasswordInput bind:value={password} placeholder="Password (optional)" />
-			<button
-				class="nodrag nopan button-main primary h-6 rounded-md px-2 font-mono text-[10px]"
-				disabled={busy}
-				onclick={createRoom}
-			>
+			<button class="nodrag nopan button-main primary h-6 rounded-md px-2 font-mono text-[10px]" disabled={busy} onclick={createRoom}>
 				{busy ? 'creating…' : 'Create room'}
 			</button>
 			<hr class="border-neutral-200" />
@@ -349,25 +317,21 @@
 				placeholder="Room code"
 				inputmode="numeric"
 				maxlength={6}
-				bind:value={joinInput}
-			/>
+				bind:value={joinInput} />
 			<div class="flex gap-1">
 				<PasswordInput bind:value={joinPassword} placeholder="Password" />
 				<button
 					class="nodrag nopan button-main primary h-6 rounded-md px-3 font-mono text-[10px]"
 					disabled={busy || joinInput.trim().length < 6}
-					onclick={joinRoom}
-				>
+					onclick={joinRoom}>
 					Join
 				</button>
 			</div>
 		{:else if phase === 'hosting'}
 			<div class="flex items-center justify-between">
 				<span class="font-mono text-[9px] text-neutral-500">Room code</span>
-				<button
-					class="nodrag nopan button-main secondary h-4 rounded px-1.5 font-mono text-[9px]"
-					onclick={() => copy(roomCode)}>{copied ? 'copied!' : 'copy'}</button
-				>
+				<button class="nodrag nopan button-main secondary h-4 rounded px-1.5 font-mono text-[9px]" onclick={() => copy(roomCode)}
+					>{copied ? 'copied!' : 'copy'}</button>
 			</div>
 			<div class="flex items-center justify-between rounded border border-neutral-300 bg-neutral-50 px-2 py-1">
 				<span class="font-mono text-base font-bold tracking-widest text-neutral-900">{roomCode}</span>
@@ -375,28 +339,13 @@
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
 			{/if}
-			<button
-				class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
-				onclick={destroy}
-			>
-				Destroy
-			</button>
+			<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={destroy}> Destroy </button>
 		{:else if phase === 'joining'}
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-				<button
-					class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
-					onclick={cancel}
-				>
-					Cancel
-				</button>
+				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={cancel}> Cancel </button>
 			{:else}
-				<button
-					class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]"
-					onclick={leave}
-				>
-					Leave
-				</button>
+				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={leave}> Leave </button>
 			{/if}
 		{/if}
 
@@ -408,7 +357,7 @@
 		{#if peers.length > 0}
 			<div class="flex items-center justify-between">
 				<span class="font-mono text-[9px] text-neutral-500">delay</span>
-				<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
 					{bufferMs ? `${bufferMs}ms` : '--'}
 				</span>
 			</div>
@@ -420,13 +369,7 @@
 				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
 					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
-					<Handle
-						type="source"
-						id="mixed"
-						position={Position.Right}
-						class="handle"
-						style={handleEdgeStyle('#a3a3a3', 'source')}
-					/>
+					<Handle type="source" id="mixed" position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>
 			{/if}
 			{#each peers as peer (peer.peerId)}
@@ -436,38 +379,20 @@
 						{peer.name || peer.peerId.slice(0, 10)}
 					</span>
 					<div class="flex shrink-0 items-center gap-1">
-						<SignalBars
-							loss={quality[peer.peerId]?.loss ?? null}
-							ping={quality[peer.peerId]?.ping ?? null}
-						/>
-						<span class="font-mono text-[9px] tabular-nums text-neutral-400">
+						<SignalBars loss={quality[peer.peerId]?.loss ?? null} ping={quality[peer.peerId]?.ping ?? null} />
+						<span class="font-mono text-[9px] text-neutral-400 tabular-nums">
 							{quality[peer.peerId]?.ping ? `${quality[peer.peerId].ping}ms` : '--'}
 						</span>
 					</div>
 					<div class="flex gap-1">
 						<button
-							class={[
-								'nodrag nopan button-main h-4 rounded px-1 font-mono text-[9px]',
-								peer.muted ? 'secondary' : 'green'
-							]}
-							onclick={() => toggleMute(peer.peerId, peer.muted)}
-						>
+							class={['nodrag nopan button-main h-4 rounded px-1 font-mono text-[9px]', peer.muted ? 'secondary' : 'green']}
+							onclick={() => toggleMute(peer.peerId, peer.muted)}>
 							{peer.muted ? 'M' : 'ON'}
 						</button>
-						<button
-							class="nodrag nopan button-main red h-4 rounded px-1 font-mono text-[9px]"
-							onclick={() => disconnect(peer.peerId)}
-						>
-							x
-						</button>
+						<button class="nodrag nopan button-main red h-4 rounded px-1 font-mono text-[9px]" onclick={() => disconnect(peer.peerId)}> x </button>
 					</div>
-					<Handle
-						type="source"
-						id={`peer:${peer.peerId}`}
-						position={Position.Right}
-						class="handle"
-						style={handleEdgeStyle('#a3a3a3', 'source')}
-					/>
+					<Handle type="source" id={`peer:${peer.peerId}`} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>
 				<!-- per-channel outputs for this peer -->
 				{#each peer.channels as c (c)}
@@ -480,8 +405,7 @@
 							id={`peer:${peer.peerId}:${c}`}
 							position={Position.Right}
 							class="handle"
-							style={handleEdgeStyle(channelColor(c), 'source')}
-						/>
+							style={handleEdgeStyle(channelColor(c), 'source')} />
 					</div>
 				{/each}
 			{/each}

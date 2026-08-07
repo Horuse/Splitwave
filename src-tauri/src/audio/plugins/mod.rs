@@ -7,6 +7,15 @@ mod au_backend;
 #[cfg(target_os = "macos")]
 pub mod au_host;
 mod clap_backend;
+pub mod clap_host;
+pub mod clap_registry;
+pub mod editor;
+pub mod host_api;
+pub mod main_thread;
+mod node;
+pub mod param_ring;
+pub mod registry;
+pub mod scan;
 pub mod vst3_backend;
 pub mod vst3_com;
 pub mod vst3_editor;
@@ -15,15 +24,6 @@ pub mod vst3_node;
 pub mod vst3_registry;
 #[cfg(target_os = "linux")]
 pub mod vst3_runloop;
-pub mod clap_host;
-pub mod clap_registry;
-pub mod editor;
-pub mod host_api;
-pub mod main_thread;
-mod node;
-pub mod registry;
-pub mod param_ring;
-pub mod scan;
 
 #[cfg(target_os = "macos")]
 pub use au_host::AuNode;

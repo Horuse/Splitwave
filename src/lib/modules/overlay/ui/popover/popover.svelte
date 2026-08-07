@@ -15,14 +15,7 @@
 		onOpenChange?: (open: boolean) => void;
 	}
 
-	let {
-		open = $bindable(false),
-		placement = 'bottom-start',
-		offsetPx = 6,
-		trigger,
-		children,
-		onOpenChange
-	}: Props = $props();
+	let { open = $bindable(false), placement = 'bottom-start', offsetPx = 6, trigger, children, onOpenChange }: Props = $props();
 
 	let triggerEl = $state<HTMLElement>();
 	let contentEl = $state<HTMLElement>();
@@ -68,13 +61,7 @@
 </div>
 
 {#if open}
-	<div
-		bind:this={contentEl}
-		use:portal={'#overlays'}
-		use:floatingContent
-		transition:fly={{ duration: 200, y: 5 }}
-		class="z-[150]"
-	>
+	<div bind:this={contentEl} use:portal={'#overlays'} use:floatingContent transition:fly={{ duration: 200, y: 5 }} class="z-[150]">
 		{@render children()}
 	</div>
 {/if}

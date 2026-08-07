@@ -42,7 +42,10 @@ impl Playback {
                 tracing::error!("pipewire playback: {e:?}");
             }
         });
-        Ok(Playback { sender, thread: Some(thread) })
+        Ok(Playback {
+            sender,
+            thread: Some(thread),
+        })
     }
 }
 
@@ -73,7 +76,9 @@ fn run(
     let _listener = stream
         .add_local_listener_with_user_data(user_data)
         .process(|stream, user_data| {
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;

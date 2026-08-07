@@ -42,8 +42,8 @@
 		<div class="pointer-events-none absolute inset-0.5">
 			<div
 				class="absolute rounded-sm bg-neutral-900 transition-[left,top] duration-200 ease-out"
-				style="width:{100 / cols}%; height:{100 / rows}%; left:{(col * 100) / cols}%; top:{(row * 100) / rows}%;"
-			></div>
+				style="width:{100 / cols}%; height:{100 / rows}%; left:{(col * 100) / cols}%; top:{(row * 100) / rows}%;">
+			</div>
 		</div>
 	{/if}
 
@@ -56,11 +56,8 @@
 				title={opt.subtitle || opt.label}
 				class={[
 					'relative z-10 flex flex-col items-center justify-center rounded-sm px-1 py-1.5 leading-none transition-colors disabled:opacity-30',
-					value === opt.value
-						? 'text-white'
-						: 'text-neutral-900 not-disabled:hover:bg-neutral-200/60'
-				]}
-			>
+					value === opt.value ? 'text-white' : 'text-neutral-900 not-disabled:hover:bg-neutral-200/60'
+				]}>
 				<span class="font-mono text-[9px] tabular-nums">{opt.label}</span>
 				{#if opt.subtitle}
 					<span class="mt-0.5 text-[7px] opacity-70">{opt.subtitle}</span>

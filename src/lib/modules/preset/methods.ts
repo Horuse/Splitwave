@@ -19,17 +19,11 @@ async function userPresets(): Promise<Preset[]> {
 export const methods = {
 	/** Factory presets first, then the user's newest-first. */
 	async list(kind: PresetKind): Promise<Preset[]> {
-		const mine = (await userPresets())
-			.filter((p) => p.kind === kind)
-			.sort((a, b) => b.createdAt - a.createdAt);
+		const mine = (await userPresets()).filter((p) => p.kind === kind).sort((a, b) => b.createdAt - a.createdAt);
 		return [...FACTORY_PRESETS.filter((p) => p.kind === kind), ...mine];
 	},
 
-	async create<K extends PresetKind>(
-		kind: K,
-		name: string,
-		data: PresetData<K>
-	): Promise<Preset<K>> {
+	async create<K extends PresetKind>(kind: K, name: string, data: PresetData<K>): Promise<Preset<K>> {
 		const preset: Preset<K> = {
 			id: createId(),
 			kind,

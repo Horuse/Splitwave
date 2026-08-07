@@ -54,9 +54,7 @@
 	}
 
 	function asText(list: LogEntry[]): string {
-		return list
-			.map((e) => `${time(e.at)} ${e.level.padEnd(5)} [${e.target}] ${e.message}`)
-			.join('\n');
+		return list.map((e) => `${time(e.at)} ${e.level.padEnd(5)} [${e.target}] ${e.message}`).join('\n');
 	}
 
 	// The backend buffer is polled -- tracing events carry no Tauri event of their own.
@@ -81,8 +79,7 @@
 				type="text"
 				placeholder="Filter…"
 				spellcheck="false"
-				class="flex-1 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-sm outline-none"
-			/>
+				class="flex-1 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-sm outline-none" />
 			<div class="flex items-center gap-1">
 				{#each LEVELS as l (l)}
 					<button
@@ -91,20 +88,17 @@
 							'rounded-md px-2 py-1 font-mono text-[10px]',
 							level === l ? 'bg-neutral-300 text-neutral-1100' : 'text-neutral-900 hover:bg-neutral-200'
 						]}
-						onclick={() => (level = l)}
-					>
+						onclick={() => (level = l)}>
 						{l}
 					</button>
 				{/each}
 			</div>
 		</div>
 
-		<div
-			class="h-[26rem] overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-2 font-mono text-[11px] leading-relaxed"
-		>
+		<div class="h-[26rem] overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-2 font-mono text-[11px] leading-relaxed">
 			{#each filtered as e (e.origin + e.at + e.message)}
-				<div class="flex gap-2 whitespace-pre-wrap break-words">
-					<span class="shrink-0 tabular-nums text-neutral-800">{time(e.at)}</span>
+				<div class="flex gap-2 break-words whitespace-pre-wrap">
+					<span class="shrink-0 text-neutral-800 tabular-nums">{time(e.at)}</span>
 					<span class="w-10 shrink-0 font-semibold {levelClass(e.level)}">
 						{e.level.toUpperCase()}
 					</span>
@@ -126,20 +120,8 @@
 	</div>
 
 	{#snippet footer()}
-		<button
-			type="button"
-			class="button-main primary rounded-lg"
-			onclick={() => logStore.clear()}
-		>
-			Clear
-		</button>
+		<button type="button" class="button-main primary rounded-lg" onclick={() => logStore.clear()}> Clear </button>
 		<CopyButton text={() => asText(filtered)} label="Copy" />
-		<button
-			type="button"
-			class="button-main green rounded-lg"
-			onclick={() => (logStore.open = false)}
-		>
-			Close
-		</button>
+		<button type="button" class="button-main green rounded-lg" onclick={() => (logStore.open = false)}> Close </button>
 	{/snippet}
 </ModalShell>

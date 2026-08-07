@@ -109,8 +109,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'audioFile',
 		category: 'input',
 		label: 'Audio File',
-		description:
-			'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
+		description: 'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
 		component: AudioFile,
 		icon: MusicNoteIcon,
 		defaultData: DEFAULT_NODE_DATA['audioFile']
@@ -164,8 +163,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'saturator',
 		category: 'effect',
 		label: 'Saturator',
-		description:
-			'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
+		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
 		component: Saturator,
 		icon: SaturatorIcon,
 		defaultData: DEFAULT_NODE_DATA['saturator']
@@ -192,8 +190,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'lufsMeter',
 		category: 'monitor',
 		label: 'Loudness',
-		description:
-			'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
+		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
 		component: LufsMeter,
 		icon: GaugeIcon,
 		defaultData: DEFAULT_NODE_DATA['lufsMeter']
@@ -220,8 +217,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'limiter',
 		category: 'effect',
 		label: 'Limiter',
-		description:
-			'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
+		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
 		component: Limiter,
 		icon: LimiterIcon,
 		defaultData: DEFAULT_NODE_DATA['limiter']
@@ -230,8 +226,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'compressor',
 		category: 'effect',
 		label: 'Compressor',
-		description:
-			'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
+		description: 'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
 		component: Compressor,
 		icon: CompressorIcon,
 		defaultData: DEFAULT_NODE_DATA['compressor']
@@ -240,8 +235,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'noiseGate',
 		category: 'effect',
 		label: 'Noise Gate',
-		description:
-			'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
+		description: 'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
 		component: NoiseGate,
 		icon: NoiseGateIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseGate']
@@ -268,8 +262,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'noiseSuppressor',
 		category: 'effect',
 		label: 'Noise Suppressor',
-		description:
-			'DeepFilterNet deep-learning speech denoise. Model runs at 48 kHz mono; resampled and downmixed for you.',
+		description: 'DeepFilterNet deep-learning speech denoise. Model runs at 48 kHz mono; resampled and downmixed for you.',
 		component: NoiseSuppressor,
 		icon: WandIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']
@@ -278,8 +271,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'declick',
 		category: 'effect',
 		label: 'Declick',
-		description:
-			'Removes short impulsive clicks and crackle — median detector replaces spikes, clean audio passes through.',
+		description: 'Removes short impulsive clicks and crackle — median detector replaces spikes, clean audio passes through.',
 		component: Declick,
 		icon: BackspaceIcon,
 		defaultData: DEFAULT_NODE_DATA['declick']
@@ -288,8 +280,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'deEsser',
 		category: 'effect',
 		label: 'De-esser',
-		description:
-			'Tames harsh "s"/"sh" sibilance — splits off the high band and compresses only that, leaving the voice body untouched.',
+		description: 'Tames harsh "s"/"sh" sibilance — splits off the high band and compresses only that, leaving the voice body untouched.',
 		component: DeEsser,
 		icon: SoundWaveIcon,
 		defaultData: DEFAULT_NODE_DATA['deEsser']
@@ -298,8 +289,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'plugin',
 		category: 'effect',
 		label: 'Plugin',
-		description:
-			'Host a third-party CLAP audio plugin as a node — scan installed plugins and route channels through it like any effect.',
+		description: 'Host a third-party CLAP audio plugin as a node — scan installed plugins and route channels through it like any effect.',
 		component: Plugin,
 		icon: PlugIcon,
 		defaultData: DEFAULT_NODE_DATA['plugin']
@@ -308,8 +298,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'webRtcCollaborator',
 		category: 'network',
 		label: 'WebRTC',
-		description:
-			'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
+		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
 		component: WebRtcCollaborator,
 		icon: PeopleTeamIcon,
 		defaultData: DEFAULT_NODE_DATA['webRtcCollaborator']
@@ -334,9 +323,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	})
 };
 
-export const nodeTypes: NodeTypes = Object.fromEntries(
-	Object.entries(registry).map(([kind, entry]) => [kind, entry.component])
-);
+export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).map(([kind, entry]) => [kind, entry.component]));
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 

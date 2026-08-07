@@ -82,7 +82,12 @@ fn decode_mono(bytes: &'static [u8], target_rate: u32) -> AppResult<Vec<f32>> {
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let mut format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| AppError::Stream(format!("probe cue: {e}")))?;
 
     let (track_id, src_rate, params) = {

@@ -52,8 +52,7 @@
 		const url = `https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
 		try {
 			await openUrl(url);
-		} catch {
-		}
+		} catch {}
 	}
 
 	function dismiss() {
@@ -75,11 +74,8 @@
 {#if current}
 	<ModalShell
 		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
-		titleClass={current.previousRun
-			? 'text-sm font-semibold text-amber-500'
-			: 'text-sm font-semibold text-red-500'}
-		onClose={dismiss}
-	>
+		titleClass={current.previousRun ? 'text-sm font-semibold text-amber-500' : 'text-sm font-semibold text-red-500'}
+		onClose={dismiss}>
 		{#snippet badge()}
 			<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
 				{sourceLabel(current.source)}
@@ -94,27 +90,21 @@
 					Please report this so we can fix it.
 				{/if}
 			</p>
-			<pre class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1100">{current.message}</pre>
+			<pre
+				class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1100">{current.message}</pre>
 			{#if current.stack}
 				<details class="group">
 					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Stack trace</summary>
-					<pre class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words text-neutral-1000">{current.stack}</pre>
+					<pre
+						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.stack}</pre>
 				</details>
 			{/if}
 		</div>
 
 		{#snippet footer()}
-			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
-				Dismiss
-			</button>
-			<CopyButton
-				text={buildDetails}
-				label="Copy details"
-				class="button-main primary gap-3 rounded-lg"
-			/>
-			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}>
-				Report on GitHub
-			</button>
+			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
+			<CopyButton text={buildDetails} label="Copy details" class="button-main primary gap-3 rounded-lg" />
+			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}> Report on GitHub </button>
 		{/snippet}
 	</ModalShell>
 {/if}

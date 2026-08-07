@@ -66,9 +66,7 @@
 	);
 
 	// Slots follow the stream, falling back to the cables when nothing arrives yet.
-	let channelCount = $derived(
-		Math.max(1, Math.min(Math.max(received, wiredChannels), MAX_CHANNELS))
-	);
+	let channelCount = $derived(Math.max(1, Math.min(Math.max(received, wiredChannels), MAX_CHANNELS)));
 
 	$effect(() => {
 		const next = channelCount;
@@ -79,10 +77,18 @@
 		const port = Math.max(1, Math.min(65535, Math.floor(Number(value)) || 0));
 		flow.updateNodeData(id, { port });
 	}
-
 </script>
 
-<Wrapper label="Net Receiver" icon={ArrowDownload} accent="network" hasOutput channelIo nodeId={id} maxChannels={MAX_CHANNELS} minChannels={received} selfGrowing>
+<Wrapper
+	label="Net Receiver"
+	icon={ArrowDownload}
+	accent="network"
+	hasOutput
+	channelIo
+	nodeId={id}
+	maxChannels={MAX_CHANNELS}
+	minChannels={received}
+	selfGrowing>
 	<div class="nodrag nopan flex w-44 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">
@@ -93,25 +99,24 @@
 				min="1"
 				max="65535"
 				value={data.port}
-				onchange={(e) => setPort(e.currentTarget.value)}
-			/>
+				onchange={(e) => setPort(e.currentTarget.value)} />
 		</div>
 
 		<!-- quality + throughput -->
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-1">
 				<SignalBars {loss} />
-				<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
 					{loss == null ? '--' : `${(loss * 100).toFixed(1)}%`}
 				</span>
 			</div>
-			<span class="font-mono text-[9px] tabular-nums text-neutral-500">{formatRate(rate)}</span>
+			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">{formatRate(rate)}</span>
 		</div>
 
 		<!-- added latency -->
 		<div class="flex items-center justify-between">
 			<span class="font-mono text-[9px] text-neutral-500">delay</span>
-			<span class="font-mono text-[9px] tabular-nums text-neutral-500">
+			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
 				{bufferMs ? `${bufferMs}ms` : '--'}
 			</span>
 		</div>

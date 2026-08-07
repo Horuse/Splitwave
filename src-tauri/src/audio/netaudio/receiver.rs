@@ -137,7 +137,9 @@ impl NetReceiver {
                 Ok((n, _)) => n,
                 Err(_) => continue,
             };
-            let Some(pkt) = packet::parse(&buf[..n]) else { continue };
+            let Some(pkt) = packet::parse(&buf[..n]) else {
+                continue;
+            };
             self.bytes.fetch_add(n as u64, Ordering::Relaxed);
             self.packets.fetch_add(1, Ordering::Relaxed);
             let channel = self.channel(pkt.channel, pkt.seq);

@@ -261,17 +261,7 @@
 	});
 </script>
 
-<Wrapper
-	label="Loudness"
-	icon={Gauge}
-	accent="monitor"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	maxChannels={2}
-	wide
->
+<Wrapper label="Loudness" icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide>
 	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			{#snippet group(
@@ -290,8 +280,7 @@
 							onclick={resetPeaks}
 							{title}
 							class="nodrag nopan relative flex items-stretch overflow-hidden rounded-sm border border-neutral-300"
-							style="width: {BAR_W * bars.length}px; height: {BAR_H}px;"
-						>
+							style="width: {BAR_W * bars.length}px; height: {BAR_H}px;">
 							{#each bars as bar, i (bar.label)}
 								<MeterBar
 									class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
@@ -301,41 +290,24 @@
 									hover
 									hoverLabel={hoverLabel(floor)}
 									pct={dbToPct(bar.val, floor)}
-									hold={bar.hold != null && bar.hold > LUFS_SILENT
-										? dbToPct(bar.hold, floor)
-										: null}
-								/>
+									hold={bar.hold != null && bar.hold > LUFS_SILENT ? dbToPct(bar.hold, floor) : null} />
 							{/each}
 
 							{#if zone}
 								<div
 									class="pointer-events-none absolute right-0 left-0 border-y border-green-600/70 bg-green-500/15"
-									style="bottom: {dbToPct(zone[0], floor)}%; height: {dbToPct(
-										zone[1],
-										floor
-									) - dbToPct(zone[0], floor)}%;"
-								></div>
+									style="bottom: {dbToPct(zone[0], floor)}%; height: {dbToPct(zone[1], floor) - dbToPct(zone[0], floor)}%;">
+								</div>
 							{:else if target != null}
-								<div
-									class="pointer-events-none absolute right-0 left-0 h-px bg-neutral-900"
-									style="bottom: {dbToPct(target, floor)}%;"
-								>
-									<div
-										class="absolute top-1/2 -right-px h-1.5 w-1.5 translate-x-full -translate-y-1/2 rotate-45 bg-neutral-900"
-									></div>
+								<div class="pointer-events-none absolute right-0 left-0 h-px bg-neutral-900" style="bottom: {dbToPct(target, floor)}%;">
+									<div class="absolute top-1/2 -right-px h-1.5 w-1.5 translate-x-full -translate-y-1/2 rotate-45 bg-neutral-900"></div>
 								</div>
 							{/if}
 						</button>
 
-						<div
-							class="relative w-7 text-[8px] text-neutral-700 select-none"
-							style="height: {BAR_H}px;"
-						>
+						<div class="relative w-7 text-[8px] text-neutral-700 select-none" style="height: {BAR_H}px;">
 							{#each ticks as db (db)}
-								<div
-									class="absolute left-0 flex items-center"
-									style="bottom: {dbToPct(db, floor)}%; height: 1px;"
-								>
+								<div class="absolute left-0 flex items-center" style="bottom: {dbToPct(db, floor)}%; height: 1px;">
 									<div class="h-px w-1.5 shrink-0 bg-neutral-400"></div>
 									<span class="ml-0.5 leading-none">{db}</span>
 								</div>
@@ -343,23 +315,11 @@
 						</div>
 					</div>
 
-					<div
-						class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100"
-						style="width: {BAR_W * bars.length}px;"
-					>
+					<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {BAR_W * bars.length}px;">
 						{#each bars as bar, i (bar.label)}
-							<div
-								class={[
-									'flex flex-1 flex-col items-center py-0.5',
-									i > 0 && 'border-l border-neutral-300'
-								]}
-							>
-								<span class="text-[7px] leading-none text-neutral-500"
-									>{bar.label}</span
-								>
-								<span class="text-[8px] leading-tight tabular-nums"
-									>{format(bar.val)}</span
-								>
+							<div class={['flex flex-1 flex-col items-center py-0.5', i > 0 && 'border-l border-neutral-300']}>
+								<span class="text-[7px] leading-none text-neutral-500">{bar.label}</span>
+								<span class="text-[8px] leading-tight tabular-nums">{format(bar.val)}</span>
 								<span class="text-[7px] leading-none text-neutral-400">{unit}</span>
 							</div>
 						{/each}
@@ -368,49 +328,21 @@
 			{/snippet}
 
 			<div class="flex flex-col gap-0.5">
-				{@render group(
-					lufsBars,
-					LUFS_FLOOR,
-					LUFS_TICKS,
-					profile.target ?? null,
-					null,
-					'Reset peaks',
-					'LUFS'
-				)}
-				<div
-					class="h-3 text-center text-[8px] leading-3 font-semibold {targetClass(
-						integrated,
-						profile.target
-					)}"
-					style="width: {BAR_W * 3}px;"
-				>
+				{@render group(lufsBars, LUFS_FLOOR, LUFS_TICKS, profile.target ?? null, null, 'Reset peaks', 'LUFS')}
+				<div class="h-3 text-center text-[8px] leading-3 font-semibold {targetClass(integrated, profile.target)}" style="width: {BAR_W * 3}px;">
 					{targetDelta(integrated, profile.target) ?? ''}
 				</div>
 			</div>
 
-			{@render group(
-				rmsBars,
-				RMS_FLOOR,
-				RMS_TICKS,
-				null,
-				profile.rmsRange ?? null,
-				'Reset peaks',
-				'dBFS'
-			)}
+			{@render group(rmsBars, RMS_FLOOR, RMS_TICKS, null, profile.rmsRange ?? null, 'Reset peaks', 'dBFS')}
 
 			<!-- Program stats -->
 			<div class="flex flex-col gap-1" style="width: {BAR_W * 2}px;">
 				{#each [{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) }, { label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) }, { label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) }, { label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }, { label: 'Sample Peak', unit: 'dBFS', val: format(samplePeak) }, { label: 'DC Offset', unit: 'dBFS', val: formatDc(dcOffset) }, { label: 'Correlation', unit: '', val: correlation.toFixed(2) }, { label: 'Clipped', unit: 'smp', val: String(clips) }] as stat (stat.label)}
-					<div
-						class="flex flex-col rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1"
-					>
+					<div class="flex flex-col rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
 						<span class="text-[7px] leading-none text-neutral-500">{stat.label}</span>
-						<span
-							class="text-[11px] leading-tight font-semibold text-neutral-900 tabular-nums"
-						>
-							{stat.val}<span class="ml-0.5 text-[7px] font-normal text-neutral-400"
-								>{stat.unit}</span
-							>
+						<span class="text-[11px] leading-tight font-semibold text-neutral-900 tabular-nums">
+							{stat.val}<span class="ml-0.5 text-[7px] font-normal text-neutral-400">{stat.unit}</span>
 						</span>
 					</div>
 				{/each}
@@ -421,37 +353,24 @@
 			type="button"
 			onclick={resetPeaks}
 			class="nodrag nopan flex items-center justify-center gap-1 rounded-sm border border-neutral-300 bg-neutral-100 py-1 text-[8px] text-neutral-900 transition-colors hover:bg-neutral-200 hover:text-theme"
-			title="Clear held peaks and the true-peak maximum"
-		>
+			title="Clear held peaks and the true-peak maximum">
 			<Refresh class="size-2.5" />
 			Reset peaks
 		</button>
 
 		<!-- delivery profile -->
 		<div class="flex flex-col gap-0.5">
-			<Combobox
-				options={PROFILES.map((p) => ({ value: p.id, label: p.label }))}
-				value={profile.id}
-				size="sm"
-				onChange={setProfile}
-			/>
+			<Combobox options={PROFILES.map((p) => ({ value: p.id, label: p.label }))} value={profile.id} size="sm" onChange={setProfile} />
 			<span class="text-[8px] leading-tight text-neutral-500">{profile.note}</span>
 		</div>
 
 		{#if checks.length > 0}
 			<div class="flex flex-col gap-0.5">
 				{#each checks as c (c.label)}
-					<div
-						class="flex items-center gap-1.5 rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1"
-					>
-						<span
-							class={[
-								'size-1.5 shrink-0 rounded-full',
-								!measured ? 'bg-neutral-400' : c.ok ? 'bg-green-500' : 'bg-red-500'
-							]}
-						></span>
+					<div class="flex items-center gap-1.5 rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
+						<span class={['size-1.5 shrink-0 rounded-full', !measured ? 'bg-neutral-400' : c.ok ? 'bg-green-500' : 'bg-red-500']}></span>
 						<span class="flex-1 text-[8px] text-neutral-900">{c.label}</span>
-						<span class="text-[8px] tabular-nums text-neutral-500">{c.want}</span>
+						<span class="text-[8px] text-neutral-500 tabular-nums">{c.want}</span>
 					</div>
 				{/each}
 			</div>

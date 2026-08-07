@@ -43,11 +43,7 @@
 	}
 	type End = { kind: 'handle'; x: number; y: number } | { kind: 'node'; rect: Rect };
 
-	function resolve(
-		nodeId: string,
-		handleId: string | null | undefined,
-		side: 'source' | 'target'
-	): End | null {
+	function resolve(nodeId: string, handleId: string | null | undefined, side: 'source' | 'target'): End | null {
 		const node = store.nodeLookup.get(nodeId);
 		if (!node) return null;
 		const w = node.measured.width ?? 0;
@@ -64,9 +60,7 @@
 	}
 
 	function centre(end: End): { x: number; y: number } {
-		return end.kind === 'handle'
-			? { x: end.x, y: end.y }
-			: { x: end.rect.x + end.rect.w / 2, y: end.rect.y + end.rect.h / 2 };
+		return end.kind === 'handle' ? { x: end.x, y: end.y } : { x: end.rect.x + end.rect.w / 2, y: end.rect.y + end.rect.h / 2 };
 	}
 
 	const GAP = 5;
@@ -78,10 +72,7 @@
 		const dx = to.x - cx;
 		const dy = to.y - cy;
 		if (dx === 0 && dy === 0) return { x: cx, y: cy };
-		const scale = Math.min(
-			dx === 0 ? Infinity : rect.w / 2 / Math.abs(dx),
-			dy === 0 ? Infinity : rect.h / 2 / Math.abs(dy)
-		);
+		const scale = Math.min(dx === 0 ? Infinity : rect.w / 2 / Math.abs(dx), dy === 0 ? Infinity : rect.h / 2 / Math.abs(dy));
 		// Clear of the node's own border so the line meets the outline, not the node.
 		const len = Math.hypot(dx, dy);
 		return { x: cx + dx * scale + (dx / len) * GAP, y: cy + dy * scale + (dy / len) * GAP };
@@ -141,7 +132,7 @@
 </script>
 
 <ViewportPortal target="back">
-	<svg class="absolute overflow-visible z-10" style="width:1px;height:1px;pointer-events:none">
+	<svg class="absolute z-10 overflow-visible" style="width:1px;height:1px;pointer-events:none">
 		{#each orphans as o (o.id)}
 			<path
 				d="M {o.from.x},{o.from.y} L {o.to.x},{o.to.y}"
@@ -155,8 +146,7 @@
 				onmouseenter={() => hold(o.id)}
 				onmouseleave={release}
 				onclick={() => hold(o.id)}
-				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && hold(o.id)}
-			/>
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && hold(o.id)} />
 			<path
 				class="orphan"
 				class:active={active === o.id}
@@ -165,8 +155,7 @@
 				stroke="#f59e0b"
 				stroke-width="2"
 				stroke-dasharray="6 4"
-				style="pointer-events:none"
-			/>
+				style="pointer-events:none" />
 		{/each}
 	</svg>
 </ViewportPortal>
@@ -184,23 +173,21 @@
 				fill="none"
 				stroke="#f59e0b"
 				stroke-width="2"
-				stroke-dasharray="6 4"
-			/>
+				stroke-dasharray="6 4" />
 		{/each}
 	</svg>
 
 	{#each outlined as n (n.id)}
 		<div
 			class="pointer-events-none absolute rounded-lg border border-amber-500/60 bg-amber-500/15 px-2 py-1 text-[10px] leading-snug text-amber-700 dark:text-amber-300"
-			style="left:{n.rect.x}px;top:{n.rect.y + n.rect.h + 8}px;width:{n.rect.w}px"
-		>
-			{n.count === 1 ? 'A cable is' : `${n.count} cables are`} still plugged in here, but there is nowhere
-			to take {n.count === 1 ? 'it' : 'them'} right now.
+			style="left:{n.rect.x}px;top:{n.rect.y + n.rect.h + 8}px;width:{n.rect.w}px">
+			{n.count === 1 ? 'A cable is' : `${n.count} cables are`} still plugged in here, but there is nowhere to take {n.count === 1 ? 'it' : 'them'} right now.
 			{#if n.device}
 				Pick a device with enough channels, or remove the {n.count === 1 ? 'cable' : 'cables'}.
 			{:else}
-				This node passes channels through, so its outputs disappear once its input is
-				disconnected. Feed it again, or remove the {n.count === 1 ? 'cable' : 'cables'}.
+				This node passes channels through, so its outputs disappear once its input is disconnected. Feed it again, or remove the {n.count === 1
+					? 'cable'
+					: 'cables'}.
 			{/if}
 		</div>
 	{/each}
@@ -209,13 +196,12 @@
 		{#if active === o.id}
 			<button
 				type="button"
-				class="nodrag nopan z-10 pointer-events-auto absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-500 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
+				class="nodrag nopan pointer-events-auto absolute z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-500 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
 				style="left:{o.mid.x}px;top:{o.mid.y}px"
 				title="Remove this connection"
 				onmouseenter={() => hold(o.id)}
 				onmouseleave={release}
-				onclick={() => onDelete(o.id)}
-			>
+				onclick={() => onDelete(o.id)}>
 				<Delete class="h-3 w-3" />
 			</button>
 		{/if}

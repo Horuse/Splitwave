@@ -80,9 +80,7 @@ export type DeclickNodeData = XyData<DeclickData>;
 export type DeEsserNodeData = XyData<DeEsserData>;
 // `name` / `vendor` are FE-only display labels for the chosen plugin; the
 // engine reads path / pluginId / bypassed / state from PluginData.
-export type PluginNodeData = XyData<
-	PluginData & { name?: string; vendor?: string; showParams?: boolean }
->;
+export type PluginNodeData = XyData<PluginData & { name?: string; vendor?: string; showParams?: boolean }>;
 // `name` is a FE-only participant label shared over the ctrl channel; the
 // engine ignores it, so it lives outside the Rust WebRtcCollaboratorData struct.
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
@@ -91,9 +89,7 @@ export type NetSenderNodeData = XyData<NetSenderData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
-export type LufsMeterNodeData = XyData<
-	LufsMeterData & { target: number | null; profile?: string }
->;
+export type LufsMeterNodeData = XyData<LufsMeterData & { target: number | null; profile?: string }>;
 
 export type NodeDataMap = {
 	microphone: MicrophoneNodeData;

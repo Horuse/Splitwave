@@ -31,7 +31,9 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
                 sample_rate: native.sample_rate,
             })
         }
-        InputSpec::SystemAudio { exclude_current_app } => Ok(ResolvedInput::SystemAudio {
+        InputSpec::SystemAudio {
+            exclude_current_app,
+        } => Ok(ResolvedInput::SystemAudio {
             sample_rate: crate::audio::capture::loopback_mix_rate().unwrap_or(SCK_SR),
             exclude_current_app: *exclude_current_app,
         }),

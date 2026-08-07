@@ -58,12 +58,8 @@ impl ResultCode {
     }
 }
 
-type SampleCallback = extern "C" fn(
-    user_data: *mut c_void,
-    samples: *const f32,
-    frames: i32,
-    channels: i32,
-);
+type SampleCallback =
+    extern "C" fn(user_data: *mut c_void, samples: *const f32, frames: i32, channels: i32);
 
 extern "C" {
     fn ba_sck_create() -> *mut c_void;
@@ -150,7 +146,9 @@ impl SckCapture {
     ) -> AppResult<Self> {
         let handle = unsafe { ba_sck_create() };
         if handle.is_null() {
-            return Err(AppError::Stream("ScreenCaptureKit requires macOS 13.0+".into()));
+            return Err(AppError::Stream(
+                "ScreenCaptureKit requires macOS 13.0+".into(),
+            ));
         }
 
         let state = Arc::new(CallbackState {
@@ -195,7 +193,9 @@ impl SckCapture {
     ) -> AppResult<Self> {
         let handle = unsafe { ba_sck_create() };
         if handle.is_null() {
-            return Err(AppError::Stream("ScreenCaptureKit requires macOS 13.0+".into()));
+            return Err(AppError::Stream(
+                "ScreenCaptureKit requires macOS 13.0+".into(),
+            ));
         }
 
         let state = Arc::new(CallbackState {

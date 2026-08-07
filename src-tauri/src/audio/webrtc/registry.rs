@@ -27,7 +27,11 @@ pub fn get_or_create(
     if let Some(s) = reg.get(node_id) {
         return s.clone();
     }
-    let session = Arc::new(WebRtcSession::new(node_id.to_string(), opus_bitrate, opus_application));
+    let session = Arc::new(WebRtcSession::new(
+        node_id.to_string(),
+        opus_bitrate,
+        opus_application,
+    ));
     reg.insert(node_id.to_string(), session.clone());
     session
 }
@@ -67,8 +71,7 @@ pub async fn leave_room(node_id: &str) {
     }
     *session.phase.lock().unwrap() = "idle";
     *session.room_code.lock().unwrap() = None;
-    let peers: Vec<Arc<PeerState>> =
-        session.peers.lock().await.drain().map(|(_, p)| p).collect();
+    let peers: Vec<Arc<PeerState>> = session.peers.lock().await.drain().map(|(_, p)| p).collect();
     for peer in &peers {
         // Tell peers we're leaving so they react immediately instead of waiting
         // out the ICE disconnect timeout.
@@ -88,7 +91,10 @@ pub async fn leave_room(node_id: &str) {
 pub fn set_identity(node_id: &str, name: String, channels: u32, codec: NetCodec) {
     if let Some(session) = get(node_id) {
         *session.local_name.lock().unwrap() = name;
-        session.local_channels.store(channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32), Ordering::Relaxed);
+        session.local_channels.store(
+            channels.clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
+            Ordering::Relaxed,
+        );
         session.set_codec(codec);
     }
 }
@@ -190,7 +196,9 @@ pub fn peer_pings(node_id: &str) -> HashMap<String, u32> {
 /// per peer -- the buffer is a property of the consumer, and every peer plays
 /// out of it.
 pub fn buffer_ms(node_id: &str) -> u32 {
-    let Some(session) = get(node_id) else { return 0 };
+    let Some(session) = get(node_id) else {
+        return 0;
+    };
     session
         .fanout
         .buffer_depth()

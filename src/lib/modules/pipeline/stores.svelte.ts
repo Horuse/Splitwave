@@ -26,11 +26,7 @@ export type ClipboardEntry = {
 
 export type EditorActions = {
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
-	addNodeWithData: (
-		kind: NodeKind,
-		data: Record<string, unknown>,
-		position?: { x: number; y: number }
-	) => void;
+	addNodeWithData: (kind: NodeKind, data: Record<string, unknown>, position?: { x: number; y: number }) => void;
 	getSnapshot: () => Pipeline | null;
 	revertToSnapshot: (p: Pipeline) => void;
 	undo: () => void;

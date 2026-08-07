@@ -131,29 +131,47 @@ impl NoiseSuppressorEffect {
             max_erb_thresh_db: Arc::new(AtomicU32::new(d.max_erb_thresh_db.to_bits())),
             max_df_thresh_db: Arc::new(AtomicU32::new(d.max_df_thresh_db.to_bits())),
         };
-        let control = EffectControl::NoiseSuppressor { controls: ctl.clone() };
+        let control = EffectControl::NoiseSuppressor {
+            controls: ctl.clone(),
+        };
         (Self::from_state(ctl, sample_rate, realtime), control)
     }
 
     pub fn from_state(ctl: NoiseSuppressorControls, sample_rate: u32, realtime: bool) -> Self {
         let initial = Params::load(&ctl);
         let Some(state) = ModelState::build(initial, sample_rate) else {
-            return Self { backend: None, latency: 0 };
+            return Self {
+                backend: None,
+                latency: 0,
+            };
         };
         let model_latency = state.latency;
-        let worker = ModelWorker { ctl, state, last: initial };
+        let worker = ModelWorker {
+            ctl,
+            state,
+            last: initial,
+        };
         if !realtime {
             let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
-            return Self { backend: Some(Backend::Inline { worker, out }), latency: model_latency };
+            return Self {
+                backend: Some(Backend::Inline { worker, out }),
+                latency: model_latency,
+            };
         }
         match Offload::spawn("noise_suppressor", worker, 2) {
             Ok(offload) => {
                 let latency = model_latency + offload.latency_frames();
-                Self { backend: Some(Backend::Offloaded(offload)), latency }
+                Self {
+                    backend: Some(Backend::Offloaded(offload)),
+                    latency,
+                }
             }
             Err(worker) => {
                 let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
-                Self { backend: Some(Backend::Inline { worker, out }), latency: model_latency }
+                Self {
+                    backend: Some(Backend::Inline { worker, out }),
+                    latency: model_latency,
+                }
             }
         }
     }
@@ -200,7 +218,11 @@ impl ModelState {
             }
         };
 
-        let prime = if resample.is_some() { hop + DOWN_CHUNK } else { hop };
+        let prime = if resample.is_some() {
+            hop + DOWN_CHUNK
+        } else {
+            hop
+        };
         let mut out = VecDeque::with_capacity(CAP);
         // Prime so a block read never outruns the hop-aligned producer.
         out.extend(std::iter::repeat(0.0).take(prime * 2));

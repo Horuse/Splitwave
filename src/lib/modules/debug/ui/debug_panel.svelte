@@ -13,8 +13,7 @@
 		errorStore.report({
 			source: 'rustPanic',
 			message: "panicked at 'index out of bounds: the len is 0 but the index is 0'",
-			stack:
-				'   0: std::backtrace_rs::backtrace::libunwind::trace\n   1: core::panicking::panic_fmt\n   2: splitwave_lib::audio::pipeline::worker::run\n   3: std::sys_common::backtrace::__rust_begin_short_backtrace',
+			stack: '   0: std::backtrace_rs::backtrace::libunwind::trace\n   1: core::panicking::panic_fmt\n   2: splitwave_lib::audio::pipeline::worker::run\n   3: std::sys_common::backtrace::__rust_begin_short_backtrace',
 			thread: 'dsp-worker',
 			at: Date.now()
 		});
@@ -30,8 +29,7 @@
 		errorStore.report({
 			source: 'jsError',
 			message: "Cannot read properties of undefined (reading 'foo')",
-			stack:
-				"TypeError: Cannot read properties of undefined (reading 'foo')\n    at editor.svelte:42:10",
+			stack: "TypeError: Cannot read properties of undefined (reading 'foo')\n    at editor.svelte:42:10",
 			at: Date.now()
 		});
 	}
@@ -74,7 +72,6 @@
 		};
 	}
 
-
 	function fakeUpdateError() {
 		updaterStore.state = { phase: 'error', message: 'signature verification failed' };
 	}
@@ -104,12 +101,7 @@
 		</div>
 	{/if}
 
-	<button
-		type="button"
-		class="button-header size-7 px-3 text-xs"
-		onclick={() => (open = !open)}
-		title="Dev triggers"
-	>
+	<button type="button" class="button-header size-7 px-3 text-xs" onclick={() => (open = !open)} title="Dev triggers">
 		{open ? 'Close' : 'Dev'}
 	</button>
 </div>

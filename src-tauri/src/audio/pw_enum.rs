@@ -38,13 +38,19 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
             if props.get("media.class") != Some(want.as_str()) {
                 return;
             }
-            let Some(name) = props.get("node.name") else { return };
+            let Some(name) = props.get("node.name") else {
+                return;
+            };
             let description = props
                 .get("node.description")
                 .filter(|d| !d.is_empty())
                 .unwrap_or(name)
                 .to_string();
-            nodes_cb.borrow_mut().push(PwNode { id: global.id, name: name.to_string(), description });
+            nodes_cb.borrow_mut().push(PwNode {
+                id: global.id,
+                name: name.to_string(),
+                description,
+            });
         })
         .register();
 

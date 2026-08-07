@@ -9,9 +9,9 @@ use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
 use crate::audio::engine::Command;
 use crate::audio::graph::{GraphSpec, OpusApplication};
 use crate::audio::permission::{self, CapturePermission};
-use crate::audio::{signaling, webrtc};
 use crate::audio::system_audio::{self, AudioApplication};
 use crate::audio::virtual_device::{self, VirtualDeviceConfig, VirtualDriverStatus};
+use crate::audio::{signaling, webrtc};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
@@ -162,12 +162,10 @@ pub fn debug_panic(app: AppHandle) {
 #[tauri::command]
 pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
     let id = node_id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::audio::plugins::editor::close(&id)
-    })
-    .await
-    .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
-    .map_err(AppError::Plugin)
+    tauri::async_runtime::spawn_blocking(move || crate::audio::plugins::editor::close(&id))
+        .await
+        .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
+        .map_err(AppError::Plugin)
 }
 
 #[tauri::command]
@@ -176,7 +174,7 @@ pub async fn play_cue(device_id: String, muted: bool, gain: f32, beep: bool) -> 
         crate::audio::pipeline::play_cue(&device_id, muted, gain, beep)
     })
     .await
-        .map_err(|_| AppError::Stream("cue task failed".into()))?
+    .map_err(|_| AppError::Stream("cue task failed".into()))?
 }
 
 #[tauri::command]
@@ -495,7 +493,16 @@ pub struct PeerStats {
 pub fn webrtc_peer_stats(node_id: String) -> std::collections::HashMap<String, PeerStats> {
     webrtc::peer_stats(&node_id)
         .into_iter()
-        .map(|(id, (ping_ms, packets, lost))| (id, PeerStats { ping_ms, packets, lost }))
+        .map(|(id, (ping_ms, packets, lost))| {
+            (
+                id,
+                PeerStats {
+                    ping_ms,
+                    packets,
+                    lost,
+                },
+            )
+        })
         .collect()
 }
 
@@ -532,14 +539,15 @@ pub fn net_receiver_release(node_id: String) {
 /// (windowed into a recent loss ratio / rate on the frontend).
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
-    crate::audio::netaudio::receiver::stats(&node_id)
-        .map(|(bytes, packets, lost, channels, buffer_ms)| NetReceiverStats {
+    crate::audio::netaudio::receiver::stats(&node_id).map(
+        |(bytes, packets, lost, channels, buffer_ms)| NetReceiverStats {
             bytes,
             packets,
             lost,
             channels,
             buffer_ms,
-        })
+        },
+    )
 }
 
 #[derive(serde::Serialize)]

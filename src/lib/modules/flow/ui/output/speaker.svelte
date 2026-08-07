@@ -44,9 +44,7 @@
 	onDestroy(() => unlistenRefresh?.());
 
 	let options = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
-	let missing = $derived(
-		!!data.deviceId && !audioStore.outputDevices.some((d) => d.id === data.deviceId)
-	);
+	let missing = $derived(!!data.deviceId && !audioStore.outputDevices.some((d) => d.id === data.deviceId));
 
 	$effect(() => {
 		const deviceId = data.deviceId;
@@ -114,14 +112,7 @@
 
 <Wrapper label="Speaker" accent="output" icon={Speaker}>
 	<div class="flex w-50 flex-col gap-1">
-		<Combobox
-			class="w-full"
-			{options}
-			value={data.deviceId ?? null}
-			placeholder="— Select output —"
-			onChange={setDevice}
-			onOpen={() => refresh()}
-		>
+		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				{#if supportsVirtualDevices}
@@ -131,8 +122,7 @@
 						onclick={() => {
 							close();
 							goto('/virtual-devices');
-						}}
-					/>
+						}} />
 				{/if}
 			{/snippet}
 		</Combobox>
@@ -146,26 +136,11 @@
 
 		{#if data.deviceId && !missing}
 			{#if unsupported}
-				<span class="text-[10px] text-neutral-900">
-					Hardware volume not adjustable for this device
-				</span>
+				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
 			{:else if volume !== null}
-				<Slider
-					label="Volume"
-					value={volumePct}
-					min={0}
-					max={100}
-					step={1}
-					format={formatPct}
-					ticks={[25, 50, 75]}
-					onChange={setVolumePct}
-				/>
+				<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
 			{/if}
-			<InputMeter
-				nodeId={id}
-				side="target"
-				channelCount={channelCount}
-			/>
+			<InputMeter nodeId={id} side="target" {channelCount} />
 		{/if}
 	</div>
 </Wrapper>

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use windows::core::{implement, Interface, Ref, IUnknown, HRESULT, PCWSTR};
+use windows::core::{implement, IUnknown, Interface, Ref, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Media::Audio::{
     eConsole, eRender, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
@@ -174,8 +174,7 @@ fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) ->
         pv.Anonymous.blob.pBlobData = &mut params as *mut _ as *mut u8;
 
         let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(com_err)?;
-        let handler: IActivateAudioInterfaceCompletionHandler =
-            ActivateHandler { event }.into();
+        let handler: IActivateAudioInterfaceCompletionHandler = ActivateHandler { event }.into();
 
         let op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
             VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
@@ -193,7 +192,8 @@ fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) ->
 
         let mut hr = HRESULT(0);
         let mut unknown: Option<IUnknown> = None;
-        op.GetActivateResult(&mut hr, &mut unknown).map_err(com_err)?;
+        op.GetActivateResult(&mut hr, &mut unknown)
+            .map_err(com_err)?;
         hr.ok().map_err(com_err)?;
         let client: IAudioClient = unknown
             .ok_or_else(|| AppError::Stream("process loopback returned no client".into()))?
@@ -222,7 +222,13 @@ fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) ->
 
         let capture: IAudioCaptureClient = client.GetService().map_err(com_err)?;
         client.Start().map_err(com_err)?;
-        let r = pump(&capture, TARGET_CHANNELS as usize, TARGET_RATE, &stop, bridge);
+        let r = pump(
+            &capture,
+            TARGET_CHANNELS as usize,
+            TARGET_RATE,
+            &stop,
+            bridge,
+        );
         let _ = client.Stop();
         r
     }

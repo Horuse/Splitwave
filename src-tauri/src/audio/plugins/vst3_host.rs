@@ -12,9 +12,9 @@ use vst3::{ComPtr, ComWrapper, Interface};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use super::host_api::PluginParamInfo;
 use super::vst3_backend::{parse_cid, Vst3Module};
 use super::vst3_com::{host_context, ComponentHandler, EditListener, MemoryStream};
-use super::host_api::PluginParamInfo;
 use super::vst3_node::{supports_f32, Vst3Node};
 use super::ParamRing;
 
@@ -105,8 +105,8 @@ impl Vst3Instance {
                 return Err(at("component rejected the host context"));
             }
 
-            let (controller, separate) = Self::resolve_controller(&factory, &component, &host)
-                .map_err(|step| at(&step))?;
+            let (controller, separate) =
+                Self::resolve_controller(&factory, &component, &host).map_err(|step| at(&step))?;
 
             if separate {
                 Self::connect(&component, &controller).map_err(|step| at(&step))?;
@@ -177,7 +177,10 @@ impl Vst3Instance {
     /// Hands the component's state to the controller. Skipping this is why a
     /// plugin's editor can open showing defaults while its audio runs on
     /// something else entirely.
-    unsafe fn sync_controller(component: &ComPtr<IComponent>, controller: &ComPtr<IEditController>) {
+    unsafe fn sync_controller(
+        component: &ComPtr<IComponent>,
+        controller: &ComPtr<IEditController>,
+    ) {
         let stream = ComWrapper::new(MemoryStream::new(Vec::new()));
         let Some(s) = stream.to_com_ptr::<IBStream>() else {
             return;
@@ -194,10 +197,10 @@ impl Vst3Instance {
     /// normalised, so the range is 0..1 and the plugin's own text renders the
     /// real units.
     pub fn params(&self) -> Vec<PluginParamInfo> {
+        use vst3::Steinberg::Vst::ParameterInfo;
         use vst3::Steinberg::Vst::ParameterInfo_::ParameterFlags_::{
             kIsHidden, kIsList, kIsProgramChange, kIsReadOnly,
         };
-        use vst3::Steinberg::Vst::ParameterInfo;
 
         let mut out = Vec::new();
         // SAFETY: indices below the count the controller reports.
@@ -314,8 +317,10 @@ impl Vst3Instance {
     ) -> Result<Vst3Node, String> {
         use vst3::Steinberg::Vst::{
             BusDirections_::{kInput, kOutput},
-            IAudioProcessor, IAudioProcessorTrait, MediaTypes_::kAudio,
-            ProcessModes_::kRealtime, ProcessSetup,
+            IAudioProcessor, IAudioProcessorTrait,
+            MediaTypes_::kAudio,
+            ProcessModes_::kRealtime,
+            ProcessSetup,
             SymbolicSampleSizes_::kSample32,
         };
 
@@ -455,8 +460,8 @@ impl Vst3Instance {
 
 /// Puts a stream back at offset zero, the position a reader expects.
 pub unsafe fn rewind(stream: &ComPtr<IBStream>) {
-    use vst3::Steinberg::IBStream_::IStreamSeekMode_::kIBSeekSet;
     use vst3::Steinberg::IBStreamTrait;
+    use vst3::Steinberg::IBStream_::IStreamSeekMode_::kIBSeekSet;
 
     let mut landed = 0;
     stream.seek(0, kIBSeekSet as i32, &mut landed);

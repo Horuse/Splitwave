@@ -17,8 +17,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
@@ -48,8 +47,7 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
 
 unsafe fn enumerate() -> windows::core::Result<Vec<AudioApplication>> {
     ensure_com();
-    let enumerator: IMMDeviceEnumerator =
-        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
     let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
     let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
     let sessions = manager.GetSessionEnumerator()?;
@@ -96,14 +94,14 @@ pub fn pid_for_exe(target: &str) -> Option<u32> {
         let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
         let sessions = manager.GetSessionEnumerator().ok()?;
         for i in 0..sessions.GetCount().ok()? {
-            let Ok(ctrl2) = sessions.GetSession(i).and_then(|c| c.cast::<IAudioSessionControl2>())
+            let Ok(ctrl2) = sessions
+                .GetSession(i)
+                .and_then(|c| c.cast::<IAudioSessionControl2>())
             else {
                 continue;
             };
             let pid = ctrl2.GetProcessId().ok()?;
-            if pid != 0
-                && process_exe_path(pid).map(|p| base_name(&p)).as_deref() == Some(target)
-            {
+            if pid != 0 && process_exe_path(pid).map(|p| base_name(&p)).as_deref() == Some(target) {
                 return Some(pid);
             }
         }
@@ -144,8 +142,12 @@ unsafe fn process_exe_path(pid: u32) -> Option<String> {
     let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
     let mut buf = [0u16; MAX_PATH as usize];
     let mut len = buf.len() as u32;
-    let res =
-        QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+    let res = QueryFullProcessImageNameW(
+        handle,
+        PROCESS_NAME_WIN32,
+        PWSTR(buf.as_mut_ptr()),
+        &mut len,
+    );
     let _ = CloseHandle(handle);
     res.ok()?;
     Some(String::from_utf16_lossy(&buf[..len as usize]))

@@ -53,51 +53,25 @@
 	}
 </script>
 
-<Wrapper
-	label="Channel Balance"
-	icon={Balance}
-	accent="effect"
-	hasInput
-	hasOutput
-	channelIo
-	nodeId={id}
-	bypassed={data.bypassed}
-	onBypass={toggleBypass}
->
+<Wrapper label="Channel Balance" icon={Balance} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<div class="flex flex-col gap-0.5 text-[10px] text-neutral-1000">
 			<div class="flex items-baseline justify-between">
 				<span class="opacity-60">L</span>
-				<span class="font-mono tabular-nums text-neutral-900">{panLabel()}</span>
+				<span class="font-mono text-neutral-900 tabular-nums">{panLabel()}</span>
 				<span class="opacity-60">R</span>
 			</div>
 			<div class="relative h-2 w-full overflow-hidden rounded border border-neutral-300 bg-neutral-200">
 				<div class="absolute top-0 bottom-0 left-1/2 w-px bg-neutral-500"></div>
 				{#if panNorm() >= 0}
-					<div
-						class="absolute top-0 bottom-0 left-1/2 bg-emerald-500/60"
-						style="width: {panNorm() * 50}%;"
-					></div>
+					<div class="absolute top-0 bottom-0 left-1/2 bg-emerald-500/60" style="width: {panNorm() * 50}%;"></div>
 				{:else}
-					<div
-						class="absolute top-0 bottom-0 right-1/2 bg-emerald-500/60"
-						style="width: {-panNorm() * 50}%;"
-					></div>
+					<div class="absolute top-0 right-1/2 bottom-0 bg-emerald-500/60" style="width: {-panNorm() * 50}%;"></div>
 				{/if}
 			</div>
 		</div>
 
-		<Slider
-			label="Left"
-			value={data.leftGainDb}
-			min={-24}
-			max={24}
-			step={0.1}
-			unit=" dB"
-			defaultValue={0}
-			ticks={[-12, -6, 0, 6, 12]}
-			onChange={setLeft}
-		/>
+		<Slider label="Left" value={data.leftGainDb} min={-24} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[-12, -6, 0, 6, 12]} onChange={setLeft} />
 		<Slider
 			label="Right"
 			value={data.rightGainDb}
@@ -107,15 +81,10 @@
 			unit=" dB"
 			defaultValue={0}
 			ticks={[-12, -6, 0, 6, 12]}
-			onChange={setRight}
-		/>
+			onChange={setRight} />
 
 		<div class="flex items-center justify-between text-[10px] text-neutral-1000">
-			<button
-				type="button"
-				class="nodrag nopan rounded border border-neutral-300 bg-neutral-100 px-2 py-0.5 hover:bg-neutral-200"
-				onclick={center}
-			>
+			<button type="button" class="nodrag nopan rounded border border-neutral-300 bg-neutral-100 px-2 py-0.5 hover:bg-neutral-200" onclick={center}>
 				Center
 			</button>
 			<Toggle size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />

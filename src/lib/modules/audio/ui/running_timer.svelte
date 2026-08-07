@@ -25,4 +25,4 @@
 	}
 </script>
 
-<span class="font-mono tabular-nums text-xs text-neutral-800">{format(elapsed)}</span>
+<span class="font-mono text-xs text-neutral-800 tabular-nums">{format(elapsed)}</span>

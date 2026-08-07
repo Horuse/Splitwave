@@ -16,11 +16,15 @@ fn main() {
 fn compile_swift_static_lib() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let native_dir = manifest_dir.join("native");
-    let swift_sources: Vec<PathBuf> = ["SCKAudioCapture.swift", "CATapCapture.swift", "AACEncoder.swift"]
-        .iter()
-        .map(|n| native_dir.join(n))
-        .filter(|p| p.exists())
-        .collect();
+    let swift_sources: Vec<PathBuf> = [
+        "SCKAudioCapture.swift",
+        "CATapCapture.swift",
+        "AACEncoder.swift",
+    ]
+    .iter()
+    .map(|n| native_dir.join(n))
+    .filter(|p| p.exists())
+    .collect();
     if swift_sources.is_empty() {
         return;
     }
@@ -90,8 +94,14 @@ fn build_virtual_driver() {
         return;
     }
 
-    println!("cargo:rerun-if-changed={}", driver_dir.join("SplitAudioDriver.cpp").display());
-    println!("cargo:rerun-if-changed={}", driver_dir.join("Info.plist").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        driver_dir.join("SplitAudioDriver.cpp").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        driver_dir.join("Info.plist").display()
+    );
 
     const LIBASPL_COMMIT: &str = "633e0f70203edd87d320fc5a3cae901e1363aac5";
 
@@ -120,7 +130,12 @@ fn build_virtual_driver() {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if head.as_deref() != Some(LIBASPL_COMMIT) {
         let status = Command::new("git")
-            .args(["-C", libaspl_dir.to_str().unwrap(), "checkout", LIBASPL_COMMIT])
+            .args([
+                "-C",
+                libaspl_dir.to_str().unwrap(),
+                "checkout",
+                LIBASPL_COMMIT,
+            ])
             .status()
             .expect("git checkout libASPL pin");
         if !status.success() {
@@ -168,15 +183,21 @@ fn build_virtual_driver() {
     cmd.args([
         "-std=c++17",
         "-dynamiclib",
-        "-arch", "arm64",
-        "-arch", "x86_64",
+        "-arch",
+        "arm64",
+        "-arch",
+        "x86_64",
         "-mmacosx-version-min=13.0",
         "-O2",
         "-fblocks",
-        "-framework", "CoreAudio",
-        "-framework", "CoreFoundation",
-        "-I", libaspl_dir.join("include").to_str().unwrap(),
-        "-o", dylib_out.to_str().unwrap(),
+        "-framework",
+        "CoreAudio",
+        "-framework",
+        "CoreFoundation",
+        "-I",
+        libaspl_dir.join("include").to_str().unwrap(),
+        "-o",
+        dylib_out.to_str().unwrap(),
     ]);
     for src in &sources {
         cmd.arg(src);

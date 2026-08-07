@@ -168,8 +168,14 @@ pub async fn guest_join(
     opus_application: OpusApplication,
 ) -> AppResult<()> {
     for attempt in 1..=JOIN_ATTEMPTS {
-        match guest_attempt(&room_code, &password_hash, &node_id, opus_bitrate, opus_application)
-            .await
+        match guest_attempt(
+            &room_code,
+            &password_hash,
+            &node_id,
+            opus_bitrate,
+            opus_application,
+        )
+        .await
         {
             Ok(true) => return Ok(()),
             Ok(false) => info!(attempt, "join attempt failed, retrying"),

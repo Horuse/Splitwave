@@ -44,7 +44,10 @@ impl MeterHandle {
     /// Snapshot current values and decay the peaks — called from the engine's
     /// tick thread.
     pub fn snapshot_and_decay(&self) -> MeterSnapshot {
-        let n = self.channels.load(Ordering::Relaxed).min(MAX_METER_CHANNELS);
+        let n = self
+            .channels
+            .load(Ordering::Relaxed)
+            .min(MAX_METER_CHANNELS);
         let mut peaks = Vec::with_capacity(n);
         let mut rms = Vec::with_capacity(n);
         for c in 0..n {
@@ -76,7 +79,11 @@ impl LevelMeterEffect {
 impl Effect for LevelMeterEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let channels = if frames == 0 { 0 } else { samples.len() / frames };
+        let channels = if frames == 0 {
+            0
+        } else {
+            samples.len() / frames
+        };
         update_meter(&self.handle, &samples[..frames * channels.max(1)], channels);
     }
 }

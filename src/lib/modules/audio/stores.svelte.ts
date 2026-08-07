@@ -1,11 +1,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import toast from 'svelte-french-toast';
 import { methods } from './methods';
-import type {
-	AudioApplication,
-	AudioDevice,
-	StartPipelinePayload
-} from './types';
+import type { AudioApplication, AudioDevice, StartPipelinePayload } from './types';
 
 class AudioStore {
 	inputDevices = $state<AudioDevice[]>([]);
@@ -37,9 +33,7 @@ class AudioStore {
 		methods
 			.getAppIcons(apps.map((a) => a.bundleId))
 			.then((icons) => {
-				this.audioApplications = this.audioApplications.map((a) =>
-					icons[a.bundleId] ? { ...a, icon: icons[a.bundleId] } : a
-				);
+				this.audioApplications = this.audioApplications.map((a) => (icons[a.bundleId] ? { ...a, icon: icons[a.bundleId] } : a));
 			})
 			.catch(() => {});
 	}
@@ -64,24 +58,29 @@ class AudioStore {
 				this.reportError(e.message);
 			}
 		});
-		methods.onSpeakerError(() => {
-			if (this.speakerRecovering || !this.lastGraph || !this.isRunning) return;
-			this.speakerRecovering = true;
-			methods
-				.reconcilePipeline(this.lastGraph)
-				.catch((e: unknown) => {
-					const msg = e instanceof Error ? e.message : String(e);
-					if (!msg.includes('not running')) {
-						this.isRunning = false;
-						this.runningPipelineId = null;
-						this.startedAt = null;
-						this.reportError(msg);
-					}
-				})
-				.finally(() => {
-					this.speakerRecovering = false;
-				});
-		}).then((fn) => { this.unlistenSpeakerError = fn; }).catch(() => {});
+		methods
+			.onSpeakerError(() => {
+				if (this.speakerRecovering || !this.lastGraph || !this.isRunning) return;
+				this.speakerRecovering = true;
+				methods
+					.reconcilePipeline(this.lastGraph)
+					.catch((e: unknown) => {
+						const msg = e instanceof Error ? e.message : String(e);
+						if (!msg.includes('not running')) {
+							this.isRunning = false;
+							this.runningPipelineId = null;
+							this.startedAt = null;
+							this.reportError(msg);
+						}
+					})
+					.finally(() => {
+						this.speakerRecovering = false;
+					});
+			})
+			.then((fn) => {
+				this.unlistenSpeakerError = fn;
+			})
+			.catch(() => {});
 	}
 
 	async activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {

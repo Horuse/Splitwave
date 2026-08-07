@@ -15,21 +15,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use objc2_audio_toolbox::{
-    AUParameterListenerNotify, AURenderCallbackStruct, AudioComponentInstanceDispose,
-    AudioComponentInstanceNew, AudioUnit, AudioUnitParameter,
-    AudioUnitCocoaViewInfo, AudioUnitGetParameter, AudioUnitGetProperty, AudioUnitGetPropertyInfo,
-    AudioUnitInitialize, AudioUnitParameterInfo, AudioUnitParameterOptions, AudioUnitParameterUnit,
+    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_Latency,
+    kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitProperty_ParameterInfo,
+    kAudioUnitProperty_ParameterList, kAudioUnitProperty_SetRenderCallback,
+    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global, kAudioUnitScope_Input,
+    kAudioUnitScope_Output, AUParameterListenerNotify, AURenderCallbackStruct,
+    AudioComponentInstanceDispose, AudioComponentInstanceNew, AudioUnit, AudioUnitCocoaViewInfo,
+    AudioUnitGetParameter, AudioUnitGetProperty, AudioUnitGetPropertyInfo, AudioUnitInitialize,
+    AudioUnitParameter, AudioUnitParameterInfo, AudioUnitParameterOptions, AudioUnitParameterUnit,
     AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitSetParameter, AudioUnitSetProperty,
-    AudioUnitUninitialize, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_MaximumFramesPerSlice,
-    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_ParameterInfo, kAudioUnitProperty_ParameterList,
-    kAudioUnitProperty_Latency, kAudioUnitProperty_SetRenderCallback,
-    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
-    kAudioUnitScope_Input, kAudioUnitScope_Output,
+    AudioUnitUninitialize,
 };
 use objc2_core_audio_types::{
-    AudioBuffer, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp, AudioTimeStampFlags,
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM,
+    kAudioFormatLinearPCM, AudioBuffer, AudioBufferList, AudioStreamBasicDescription,
+    AudioTimeStamp, AudioTimeStampFlags,
 };
 use objc2_core_foundation::CFRetained;
 
@@ -40,9 +40,9 @@ use super::host_api::{
     alive_flag, ActivateRequest, AliveFlag, EditorSize, Graveyard, HostedNode, PluginHost,
     PluginParamInfo, PluginStatus, Unsupported,
 };
-use super::{editor, main_thread};
 use super::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use super::ParamRing;
+use super::{editor, main_thread};
 
 /// Widest layout offered to a unit, and the fixed capacity of the buffer list
 /// below. Beyond 7.1 there is no arrangement the other formats name either, so
@@ -253,7 +253,10 @@ fn activate(
         2
     };
     let mut node = AuNode {
-        instance: Arc::new(AuInstance { unit, url: url.to_string() }),
+        instance: Arc::new(AuInstance {
+            unit,
+            url: url.to_string(),
+        }),
         alive: alive.clone(),
         input: Box::new(RenderInput {
             channels: vec![vec![0.0; max_frames]; offered],
@@ -455,7 +458,15 @@ fn save_class_info(node_id: &str) -> Option<Vec<u8>> {
     let len = data.length();
     let mut bytes = vec![0u8; len as usize];
     // SAFETY: the buffer is exactly the range asked for.
-    unsafe { data.bytes(CFRange { location: 0, length: len }, bytes.as_mut_ptr()) };
+    unsafe {
+        data.bytes(
+            CFRange {
+                location: 0,
+                length: len,
+            },
+            bytes.as_mut_ptr(),
+        )
+    };
 
     Some(bytes)
 }
@@ -506,7 +517,12 @@ fn loaded_path(node_id: &str) -> Option<String> {
 /// Whether the running unit can produce an editor view at all, so the node can
 /// say so instead of offering a button that only ever errors.
 fn has_editor(node_id: &str) -> bool {
-    let Some(instance) = instances().lock().unwrap().get(node_id).map(|s| s.instance.clone()) else {
+    let Some(instance) = instances()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .map(|s| s.instance.clone())
+    else {
         return false;
     };
     let mut size = 0u32;
@@ -531,7 +547,12 @@ fn has_editor(node_id: &str) -> bool {
 ///
 /// Never call from the DSP worker -- the notification takes locks.
 fn notify_param_changed(node_id: &str, param_id: u32) {
-    let Some(instance) = instances().lock().unwrap().get(node_id).map(|s| s.instance.clone()) else {
+    let Some(instance) = instances()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .map(|s| s.instance.clone())
+    else {
         return;
     };
     let parameter = AudioUnitParameter {
@@ -550,7 +571,12 @@ fn notify_param_changed(node_id: &str, param_id: u32) {
 /// Enumerates a running unit's global-scope parameters for the node UI. Empty
 /// when the node is not running an AU.
 fn get_params(node_id: &str) -> Vec<PluginParamInfo> {
-    let Some(instance) = instances().lock().unwrap().get(node_id).map(|s| s.instance.clone()) else {
+    let Some(instance) = instances()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .map(|s| s.instance.clone())
+    else {
         return Vec::new();
     };
     let unit = instance.unit;
@@ -614,7 +640,11 @@ fn param_info(unit: AudioUnit, id: u32) -> Option<PluginParamInfo> {
             NonNull::from(&mut size),
         )
     };
-    if status != 0 || !info.flags.contains(AudioUnitParameterOptions::Flag_IsReadable) {
+    if status != 0
+        || !info
+            .flags
+            .contains(AudioUnitParameterOptions::Flag_IsReadable)
+    {
         return None;
     }
 
@@ -642,7 +672,9 @@ fn param_info(unit: AudioUnit, id: u32) -> Option<PluginParamInfo> {
             info.unit,
             AudioUnitParameterUnit::Indexed | AudioUnitParameterUnit::Boolean
         ),
-        read_only: !info.flags.contains(AudioUnitParameterOptions::Flag_IsWritable),
+        read_only: !info
+            .flags
+            .contains(AudioUnitParameterOptions::Flag_IsWritable),
     })
 }
 
@@ -796,10 +828,18 @@ fn create_view(node_id: &str) -> Result<*mut objc2::runtime::AnyObject, String> 
     }
 
     let name = class_name.to_string();
-    let c_name = std::ffi::CString::new(name.clone())
-        .map_err(|e| at("view class", format!("{name:?} is not a valid class name: {e}")))?;
-    let class = AnyClass::get(&c_name)
-        .ok_or_else(|| at("view class", format!("{name} not found in the loaded bundle")))?;
+    let c_name = std::ffi::CString::new(name.clone()).map_err(|e| {
+        at(
+            "view class",
+            format!("{name:?} is not a valid class name: {e}"),
+        )
+    })?;
+    let class = AnyClass::get(&c_name).ok_or_else(|| {
+        at(
+            "view class",
+            format!("{name} not found in the loaded bundle"),
+        )
+    })?;
 
     // `uiViewForAudioUnit:withSize:` is the AUCocoaUIBase protocol; the factory
     // is a plain object, and the view it returns is autoreleased.
@@ -1026,7 +1066,10 @@ mod tests {
                 wide += 1;
             }
         }
-        println!("{wide} of {} audio units take more than stereo", found.len());
+        println!(
+            "{wide} of {} audio units take more than stereo",
+            found.len()
+        );
     }
 
     /// A unit driven at the node's full width must keep every channel separate
@@ -1106,7 +1149,10 @@ mod tests {
         assert_eq!(gain.name, "Global Gain");
         assert_eq!((gain.min, gain.max), (-96.0, 24.0));
         assert!(!gain.read_only);
-        assert!(params.iter().any(|p| p.stepped), "no stepped parameter found");
+        assert!(
+            params.iter().any(|p| p.stepped),
+            "no stepped parameter found"
+        );
 
         drop(node);
         forget("params-test");
@@ -1119,8 +1165,17 @@ mod tests {
         const URL: &str = "au://aufx/nbeq/appl";
         const GAIN: u32 = 0;
 
-        let node = activate("st", URL, 48_000, 512, CHANNELS, None, true, Arc::new(ParamRing::new()))
-            .expect("activate");
+        let node = activate(
+            "st",
+            URL,
+            48_000,
+            512,
+            CHANNELS,
+            None,
+            true,
+            Arc::new(ParamRing::new()),
+        )
+        .expect("activate");
         let unit = instances().lock().unwrap()["st"].instance.unit;
         unsafe { AudioUnitSetParameter(unit, GAIN, kAudioUnitScope_Global, 0, -12.0, 0) };
 
@@ -1216,7 +1271,8 @@ impl PluginHost for AuHost {
         // because the window outlives the editor.
         let view_addr = window
             .ns_view()
-            .map_err(|e| format!("au {node_id}: content view: {e}"))? as usize;
+            .map_err(|e| format!("au {node_id}: content view: {e}"))?
+            as usize;
         let (_, titlebar) = editor::decoration_overhead(window);
         let id = node_id.to_string();
         // An NSView's frame is the real laid-out geometry rather than a plugin's

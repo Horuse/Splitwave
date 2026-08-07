@@ -101,8 +101,7 @@ export const TEMPLATES: Template[] = [
 		id: 'full-voice-and-ducking',
 		accent: 'rose',
 		name: 'Full voice + ducking',
-		description:
-			'Mic denoised and ducking app audio when you speak, app audio limited so it never overloads.',
+		description: 'Mic denoised and ducking app audio when you speak, app audio limited so it never overloads.',
 		nodes: [
 			{ key: 'mic', kind: 'microphone', position: { x: 0, y: 0 } },
 			{ key: 'ns', kind: 'noiseSuppressor', position: { x: COL, y: 0 } },

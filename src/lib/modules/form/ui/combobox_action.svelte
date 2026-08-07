@@ -15,8 +15,7 @@
 <button
 	type="button"
 	class="nodrag nopan flex w-full items-center gap-1.5 border-t border-neutral-300 bg-neutral-100 px-2 py-1.5 text-left text-xs font-medium text-neutral-1000 hover:bg-neutral-200"
-	{onclick}
->
+	{onclick}>
 	{#if Icon}
 		<Icon class="size-3.5 shrink-0 {iconClass}" />
 	{/if}

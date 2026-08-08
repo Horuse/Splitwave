@@ -257,7 +257,10 @@ pub async fn update_effect(
 }
 
 #[tauri::command]
-pub fn get_device_volume(kind: DeviceKind, name: String) -> Option<f32> {
+pub fn get_device_volume(
+    kind: DeviceKind,
+    name: String,
+) -> Option<crate::audio::volume::DeviceVolume> {
     crate::audio::volume::device_volume(kind, &name)
 }
 

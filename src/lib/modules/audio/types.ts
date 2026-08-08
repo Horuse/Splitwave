@@ -48,6 +48,12 @@ export interface NativeDeviceInfo {
 	sampleFormat: string;
 }
 
+/** `db` is the device's own attenuation; `null` when the backend can't report it. */
+export interface DeviceVolume {
+	scalar: number;
+	db: number | null;
+}
+
 export type PermissionState = 'allowed' | 'denied' | 'unknown';
 
 /** `systemaudio` has no preflight API — it resolves on the first capture. */

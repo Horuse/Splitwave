@@ -1,3 +1,17 @@
+use serde::Serialize;
+
+/// `db` is the device's own attenuation, needed to show output meters at the
+/// level actually leaving the device. `None` when the backend cannot report it.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceVolume {
+    pub scalar: f32,
+    pub db: Option<f32>,
+}
+
+/// Muted devices report this instead of -inf, which serde emits as `null`.
+pub const MUTED_DB: f32 = -120.0;
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

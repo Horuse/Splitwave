@@ -1,6 +1,7 @@
+use super::DeviceVolume;
 use crate::audio::device::DeviceKind;
 
-pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
+pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
     crate::audio::macos_hal::device_volume(kind, name)
 }
 

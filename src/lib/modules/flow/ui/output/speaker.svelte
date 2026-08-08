@@ -4,6 +4,7 @@
 	import type { SpeakerNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
@@ -24,9 +25,7 @@
 
 	let info = $state<NativeDeviceInfo | null>(null);
 
-	let volume = $state<number | null>(null);
-	// unsupported: device has no settable volume property.
-	let unsupported = $state(false);
+	const volume = deviceVolume('output', () => (missing ? null : (data.deviceId ?? null)));
 
 	function setDevice(value: string | null) {
 		flow.updateNodeData(id, { deviceId: value });
@@ -34,7 +33,6 @@
 
 	async function refresh() {
 		await audioStore.refreshOutputDevices();
-		await loadVolume();
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -50,8 +48,6 @@
 		const deviceId = data.deviceId;
 		if (!deviceId || missing) {
 			info = null;
-			volume = null;
-			unsupported = false;
 			return;
 		}
 		let cancelled = false;
@@ -63,38 +59,13 @@
 			.catch(() => {
 				if (!cancelled) info = null;
 			});
-		void loadVolume();
 		return () => {
 			cancelled = true;
 		};
 	});
 
-	async function loadVolume() {
-		if (!data.deviceId) return;
-		try {
-			const v = await audioMethods.getDeviceVolume('output', data.deviceId);
-			if (v === null) {
-				unsupported = true;
-				volume = null;
-			} else {
-				unsupported = false;
-				volume = v;
-			}
-		} catch {
-			unsupported = true;
-			volume = null;
-		}
-	}
-
 	async function setVolumePct(pct: number) {
-		if (!data.deviceId || unsupported) return;
-		const scalar = Math.max(0, Math.min(1, pct / 100));
-		volume = scalar; // optimistic — slider stays where the user dragged it
-		try {
-			await audioMethods.setDeviceVolume('output', data.deviceId, scalar);
-		} catch {
-			unsupported = true;
-		}
+		await volume.set(pct / 100);
 	}
 
 	function formatRate(hz: number): string {
@@ -105,7 +76,10 @@
 		return `${Math.round(p)}%`;
 	}
 
-	let volumePct = $derived(volume === null ? 0 : volume * 100);
+	let volumePct = $derived((volume.scalar ?? 0) * 100);
+	// The graph mix is metered before the device attenuates it; without the
+	// device's own dB the reading cannot be corrected to what is heard.
+	let meterOffsetDb = $derived(volume.db ?? 0);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
 </script>
@@ -135,12 +109,15 @@
 		{/if}
 
 		{#if data.deviceId && !missing}
-			{#if unsupported}
+			{#if volume.unsupported}
 				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
-			{:else if volume !== null}
+			{:else if volume.scalar !== null}
 				<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
 			{/if}
-			<InputMeter nodeId={id} side="target" {channelCount} />
+			<InputMeter nodeId={id} side="target" {channelCount} dbOffset={meterOffsetDb} />
+			{#if volume.scalar !== null && volume.db === null}
+				<span class="text-[10px] text-neutral-900">Meter is pre-volume</span>
+			{/if}
 		{/if}
 	</div>
 </Wrapper>

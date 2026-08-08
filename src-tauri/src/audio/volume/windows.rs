@@ -8,6 +8,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
 };
 
+use super::{DeviceVolume, MUTED_DB};
 use crate::audio::device::DeviceKind;
 
 fn flow(kind: DeviceKind) -> EDataFlow {
@@ -54,13 +55,19 @@ unsafe fn endpoint_volume(kind: DeviceKind, name: &str) -> Option<IAudioEndpoint
     None
 }
 
-pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
+pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
     unsafe {
         let vol = endpoint_volume(kind, name)?;
         if vol.GetMute().ok()?.as_bool() {
-            return Some(0.0);
+            return Some(DeviceVolume {
+                scalar: 0.0,
+                db: Some(MUTED_DB),
+            });
         }
-        Some(vol.GetMasterVolumeLevelScalar().ok()?.clamp(0.0, 1.0))
+        Some(DeviceVolume {
+            scalar: vol.GetMasterVolumeLevelScalar().ok()?.clamp(0.0, 1.0),
+            db: vol.GetMasterVolumeLevel().ok().filter(|db| db.is_finite()),
+        })
     }
 }
 

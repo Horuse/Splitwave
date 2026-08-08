@@ -5,6 +5,7 @@ import type {
 	AudioDevice,
 	AudioStateEvent,
 	CapturePermission,
+	DeviceVolume,
 	NativeDeviceInfo,
 	PluginDescriptor,
 	PluginParam,
@@ -49,7 +50,7 @@ export const methods = {
 	/** Live volume update for an input node (App Audio, System Audio, Audio File). No-op when not running. */
 	setInputVolume: (nodeId: string, scalar: number): Promise<void> => invoke('set_input_volume', { nodeId, scalar }),
 	/** `null` when the device has no software-settable volume in that scope. */
-	getDeviceVolume: (kind: 'input' | 'output', name: string): Promise<number | null> => invoke<number | null>('get_device_volume', { kind, name }),
+	getDeviceVolume: (kind: 'input' | 'output', name: string): Promise<DeviceVolume | null> => invoke<DeviceVolume | null>('get_device_volume', { kind, name }),
 	/** Throws when not settable. */
 	setDeviceVolume: (kind: 'input' | 'output', name: string, scalar: number): Promise<void> => invoke('set_device_volume', { kind, name, scalar }),
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> => listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),

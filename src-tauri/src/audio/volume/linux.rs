@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use super::{DeviceVolume, MUTED_DB};
 use crate::audio::device::DeviceKind;
 use crate::audio::pw_enum;
 
@@ -27,7 +28,7 @@ fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
     nodes.into_iter().find(|n| n.name == name).map(|n| n.id)
 }
 
-pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
+pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
     let id = target(kind, name)?;
     let out = Command::new("wpctl")
         .args(["get-volume", &id])
@@ -38,10 +39,70 @@ pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
     }
     let s = String::from_utf8_lossy(&out.stdout);
     if s.contains("[MUTED]") {
-        return Some(0.0);
+        return Some(DeviceVolume {
+            scalar: 0.0,
+            db: Some(MUTED_DB),
+        });
     }
     let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(v.clamp(0.0, 1.0))
+    Some(DeviceVolume {
+        scalar: v.clamp(0.0, 1.0),
+        db: volume_db(kind, name),
+    })
+}
+
+// wpctl reports only a cubic-scale factor; the pulse compatibility layer is the
+// one interface that states the device's attenuation in decibels.
+fn volume_db(kind: DeviceKind, name: &str) -> Option<f32> {
+    let (subcommand, default) = match kind {
+        DeviceKind::Input => ("get-source-volume", "@DEFAULT_SOURCE@"),
+        DeviceKind::Output => ("get-sink-volume", "@DEFAULT_SINK@"),
+    };
+    let target = match name {
+        "default" | "pipewire" | "sysdefault" => default,
+        _ => name,
+    };
+    let out = Command::new("pactl")
+        .args([subcommand, target])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_db(&String::from_utf8_lossy(&out.stdout))
+}
+
+// "front-left: 32768 /  50% / -18.06 dB, front-right: ..." — first channel wins.
+fn parse_db(output: &str) -> Option<f32> {
+    let tokens: Vec<&str> = output.split_whitespace().collect();
+    let idx = tokens
+        .iter()
+        .position(|t| t.trim_end_matches(',') == "dB")?;
+    tokens.get(idx.checked_sub(1)?)?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_db;
+
+    #[test]
+    fn reads_the_first_channel_decibels() {
+        let out = "Volume: front-left: 32768 /  50% / -18.06 dB,   front-right: 32768 /  50% / -18.06 dB\n        balance 0.00\n";
+        assert_eq!(parse_db(out), Some(-18.06));
+    }
+
+    #[test]
+    fn reads_mono_and_zero_decibels() {
+        assert_eq!(
+            parse_db("Volume: mono: 65536 / 100% / 0.00 dB\n"),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn rejects_output_without_decibels() {
+        assert_eq!(parse_db("Volume: mono: 65536 / 100%\n"), None);
+    }
 }
 
 pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {

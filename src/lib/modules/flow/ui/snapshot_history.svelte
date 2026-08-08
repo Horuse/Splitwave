@@ -53,7 +53,7 @@
 			{#if snapshots.length === 0}
 				<li class="px-3 py-3 text-xs text-neutral-900 italic">No snapshots yet. Edit the graph to create one.</li>
 			{:else}
-				{#each [...snapshots].reverse() as snap (snap.takenAt)}
+				{#each [...snapshots].reverse() as snap, i (i)}
 					<li>
 						<button
 							type="button"

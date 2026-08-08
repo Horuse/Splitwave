@@ -96,7 +96,7 @@
 		</div>
 
 		<div class="h-[26rem] overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-2 font-mono text-[11px] leading-relaxed">
-			{#each filtered as e (e.origin + e.at + e.message)}
+			{#each filtered as e, i (i)}
 				<div class="flex gap-2 break-words whitespace-pre-wrap">
 					<span class="shrink-0 text-neutral-800 tabular-nums">{time(e.at)}</span>
 					<span class="w-10 shrink-0 font-semibold {levelClass(e.level)}">

@@ -103,7 +103,28 @@ extern "C" {
         in_address: *const AudioObjectPropertyAddress,
         out_is_settable: *mut u8,
     ) -> OSStatus;
+
+    fn AudioObjectAddPropertyListener(
+        in_object: AudioObjectID,
+        in_address: *const AudioObjectPropertyAddress,
+        in_listener: AudioObjectPropertyListenerProc,
+        in_client_data: *mut c_void,
+    ) -> OSStatus;
+
+    fn AudioObjectRemovePropertyListener(
+        in_object: AudioObjectID,
+        in_address: *const AudioObjectPropertyAddress,
+        in_listener: AudioObjectPropertyListenerProc,
+        in_client_data: *mut c_void,
+    ) -> OSStatus;
 }
+
+type AudioObjectPropertyListenerProc = extern "C" fn(
+    in_object: AudioObjectID,
+    in_number_addresses: u32,
+    in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
@@ -521,6 +542,94 @@ pub fn device_volume(
         };
         Some(crate::audio::volume::DeviceVolume { scalar, db })
     }
+}
+
+/// Registered CoreAudio volume/mute listeners for one device; dropping removes
+/// them. The listener proc runs on a CoreAudio thread and only signals.
+pub struct VolumeListener {
+    device_id: AudioObjectID,
+    addresses: Vec<AudioObjectPropertyAddress>,
+    notify: *mut crate::audio::volume::Notify,
+}
+
+// The device id and the notify box are plain data; CoreAudio accepts add and
+// remove from any thread, so the handle can live in the watch registry.
+unsafe impl Send for VolumeListener {}
+
+impl Drop for VolumeListener {
+    fn drop(&mut self) {
+        unsafe {
+            for addr in &self.addresses {
+                AudioObjectRemovePropertyListener(
+                    self.device_id,
+                    addr,
+                    volume_listener_proc,
+                    self.notify as *mut c_void,
+                );
+            }
+            drop(Box::from_raw(self.notify));
+        }
+    }
+}
+
+extern "C" fn volume_listener_proc(
+    _in_object: AudioObjectID,
+    _in_number_addresses: u32,
+    _in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus {
+    if !in_client_data.is_null() {
+        let notify = unsafe { &*(in_client_data as *const crate::audio::volume::Notify) };
+        notify();
+    }
+    0
+}
+
+/// Returns None when the device exposes neither volume nor mute to listen on.
+pub fn watch_volume(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+    notify: crate::audio::volume::Notify,
+) -> Option<VolumeListener> {
+    let scope = scope_for(kind);
+    let device_id = find_device_id(name, scope)?;
+    let notify = Box::into_raw(Box::new(notify));
+    let mut addresses = Vec::new();
+    unsafe {
+        for selector in [
+            K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR,
+            K_AUDIO_DEVICE_PROPERTY_MUTE,
+        ] {
+            for element in [K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, 1, 2] {
+                let addr = AudioObjectPropertyAddress {
+                    selector,
+                    scope,
+                    element,
+                };
+                if AudioObjectHasProperty(device_id, &addr) == 0 {
+                    continue;
+                }
+                if AudioObjectAddPropertyListener(
+                    device_id,
+                    &addr,
+                    volume_listener_proc,
+                    notify as *mut c_void,
+                ) == 0
+                {
+                    addresses.push(addr);
+                }
+            }
+        }
+    }
+    if addresses.is_empty() {
+        unsafe { drop(Box::from_raw(notify)) };
+        return None;
+    }
+    Some(VolumeListener {
+        device_id,
+        addresses,
+        notify,
+    })
 }
 
 unsafe fn read_element_average(

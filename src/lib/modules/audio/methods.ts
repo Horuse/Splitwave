@@ -12,10 +12,12 @@ import type {
 	PluginStatus,
 	StartPipelinePayload,
 	VirtualDeviceConfig,
-	VirtualDriverStatus
+	VirtualDriverStatus,
+	VolumeChange
 } from './types';
 
 const AUDIO_STATE_EVENT = 'audio://state';
+const DEVICE_VOLUME_EVENT = 'audio://device_volume';
 
 export const methods = {
 	scanPlugins: (): Promise<PluginDescriptor[]> => invoke<PluginDescriptor[]>('scan_plugins'),
@@ -51,6 +53,10 @@ export const methods = {
 	setInputVolume: (nodeId: string, scalar: number): Promise<void> => invoke('set_input_volume', { nodeId, scalar }),
 	/** `null` when the device has no software-settable volume in that scope. */
 	getDeviceVolume: (kind: 'input' | 'output', name: string): Promise<DeviceVolume | null> => invoke<DeviceVolume | null>('get_device_volume', { kind, name }),
+	/** Starts `audio://device_volume` for this device. Throws when the OS reports no changes for it. */
+	watchDeviceVolume: (kind: 'input' | 'output', name: string): Promise<void> => invoke('watch_device_volume', { kind, name }),
+	unwatchDeviceVolume: (kind: 'input' | 'output', name: string): Promise<void> => invoke('unwatch_device_volume', { kind, name }),
+	onDeviceVolume: (cb: (e: VolumeChange) => void): Promise<UnlistenFn> => listen<VolumeChange>(DEVICE_VOLUME_EVENT, (evt) => cb(evt.payload)),
 	/** Throws when not settable. */
 	setDeviceVolume: (kind: 'input' | 'output', name: string, scalar: number): Promise<void> => invoke('set_device_volume', { kind, name, scalar }),
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> => listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),

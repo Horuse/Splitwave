@@ -113,6 +113,9 @@
 				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
 			{:else if volume.scalar !== null}
 				<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
+				{#if volume.unsynced}
+					<span class="text-[10px] text-neutral-900">Volume changed elsewhere won't show here</span>
+				{/if}
 			{/if}
 			<InputMeter nodeId={id} side="target" {channelCount} dbOffset={meterOffsetDb} />
 			{#if volume.scalar !== null && volume.db === null}

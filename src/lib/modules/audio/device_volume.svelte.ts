@@ -1,9 +1,10 @@
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { methods } from './methods';
 import type { DeviceKind } from './types';
 
-const POLL_MS = 1000;
-// A poll answered from before our write would snap the slider back.
-const SETTLE_MS = 500;
+// An `audio://device_volume` event for a write we just made can land after the
+// user has already dragged the slider further; ignore that echo.
+const SETTLE_MS = 200;
 
 export interface DeviceVolumeState {
 	/** `null` while unknown or unsupported. */
@@ -12,18 +13,20 @@ export interface DeviceVolumeState {
 	readonly db: number | null;
 	/** The device exposes no software-settable volume. */
 	readonly unsupported: boolean;
+	/** The OS reports no volume changes for this device, so the value can go stale. */
+	readonly unsynced: boolean;
 	set(scalar: number): Promise<void>;
 }
 
 /**
- * Tracks one device's hardware volume, polling so changes made outside the app
- * show up. The interface is event-shaped so native change notifications can
- * replace the polling without touching callers.
+ * Tracks one device's hardware volume, following changes made outside the app
+ * through the backend's native listener.
  */
 export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): DeviceVolumeState {
 	let scalar = $state<number | null>(null);
 	let db = $state<number | null>(null);
 	let unsupported = $state(false);
+	let unsynced = $state(false);
 	let settleUntil = 0;
 
 	async function load(id: string, force = false) {
@@ -46,14 +49,33 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 			scalar = null;
 			db = null;
 			unsupported = false;
+			unsynced = false;
 			return;
 		}
+		let unlisten: UnlistenFn | undefined;
+		let stopped = false;
 		void load(id);
-		const timer = setInterval(() => {
-			if (document.hidden || Date.now() < settleUntil) return;
-			void load(id);
-		}, POLL_MS);
-		return () => clearInterval(timer);
+		void methods
+			.watchDeviceVolume(kind, id)
+			.then(async () => {
+				unsynced = false;
+				const un = await methods.onDeviceVolume((e) => {
+					if (e.kind !== kind || e.name !== id || Date.now() < settleUntil) return;
+					unsupported = false;
+					scalar = e.scalar;
+					db = e.db;
+				});
+				if (stopped) un();
+				else unlisten = un;
+			})
+			.catch(() => {
+				unsynced = true;
+			});
+		return () => {
+			stopped = true;
+			unlisten?.();
+			void methods.unwatchDeviceVolume(kind, id);
+		};
 	});
 
 	return {
@@ -65,6 +87,9 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 		},
 		get unsupported() {
 			return unsupported;
+		},
+		get unsynced() {
+			return unsynced;
 		},
 		async set(next: number) {
 			const id = deviceId();

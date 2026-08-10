@@ -111,6 +111,9 @@
 				<span class="text-[10px] text-neutral-900"> Input gain not adjustable for this device </span>
 			{:else if gain.scalar !== null}
 				<Slider label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
+				{#if gain.unsynced}
+					<span class="text-[10px] text-neutral-900">Gain changed elsewhere won't show here</span>
+				{/if}
 			{/if}
 			<InputMeter nodeId={id} {channelCount} />
 		{/if}

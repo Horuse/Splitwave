@@ -54,6 +54,11 @@ export interface DeviceVolume {
 	db: number | null;
 }
 
+export interface VolumeChange extends DeviceVolume {
+	kind: DeviceKind;
+	name: string;
+}
+
 export type PermissionState = 'allowed' | 'denied' | 'unknown';
 
 /** `systemaudio` has no preflight API — it resolves on the first capture. */

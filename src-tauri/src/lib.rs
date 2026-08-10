@@ -242,6 +242,8 @@ pub fn run() {
             commands::set_input_volume,
             commands::get_device_volume,
             commands::set_device_volume,
+            commands::watch_device_volume,
+            commands::unwatch_device_volume,
             commands::diagnose_update_error,
             commands::webrtc_create_offer,
             commands::webrtc_accept_offer,

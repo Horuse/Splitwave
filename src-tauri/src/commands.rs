@@ -264,6 +264,17 @@ pub fn get_device_volume(
     crate::audio::volume::device_volume(kind, &name)
 }
 
+/// Starts emitting `audio://device_volume` for this device until unwatched.
+#[tauri::command]
+pub fn watch_device_volume(kind: DeviceKind, name: String, app: AppHandle) -> AppResult<()> {
+    crate::audio::volume::watch_device_volume(&app, kind, name)
+}
+
+#[tauri::command]
+pub fn unwatch_device_volume(kind: DeviceKind, name: String) {
+    crate::audio::volume::unwatch_device_volume(kind, name);
+}
+
 #[tauri::command]
 pub fn set_device_volume(kind: DeviceKind, name: String, scalar: f32) -> AppResult<()> {
     if crate::audio::volume::set_device_volume(kind, &name, scalar) {

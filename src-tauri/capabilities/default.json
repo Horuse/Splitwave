@@ -16,6 +16,7 @@
 		"updater:default",
 		"process:default",
 		"process:allow-restart",
+		"autostart:default",
 		"os:default",
 		"os:allow-platform",
 		"os:allow-version",

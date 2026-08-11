@@ -166,6 +166,7 @@
 	let currentSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 	let totalSec = $derived(sampleRate > 0 ? totalFrames / sampleRate : 0);
 	let canControl = $derived(audioStore.isRunning && !!data.filePath);
+	let missing = $derived(!!data.filePath && audioStore.missingFilePaths.has(data.filePath));
 
 	function setVolume(pct: number) {
 		const scalar = Math.max(0, Math.min(1, pct / 100));
@@ -194,6 +195,10 @@
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
 		</div>
+
+		{#if missing}
+			<span class="text-[10px] text-red-500">File not found</span>
+		{/if}
 
 		{#if sampleRate > 0}
 			<div class="flex justify-between text-[10px] text-neutral-900">

@@ -235,6 +235,7 @@ pub fn run() {
             commands::apply_virtual_devices,
             commands::device_info,
             commands::check_capture_permission,
+            commands::path_exists,
             commands::is_pipeline_running,
             commands::start_pipeline,
             commands::stop_pipeline,

@@ -219,6 +219,11 @@ pub fn check_capture_permission() -> CapturePermission {
 }
 
 #[tauri::command]
+pub fn path_exists(path: String) -> bool {
+    std::fs::metadata(path).is_ok()
+}
+
+#[tauri::command]
 pub async fn start_pipeline(
     graph: GraphSpec,
     state: State<'_, AppState>,

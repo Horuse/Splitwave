@@ -6,6 +6,9 @@ name: Dev build (ARM PR artifacts)
 on:
     workflow_dispatch:
 
+permissions:
+    contents: read
+
 jobs:
     windows-arm64:
         runs-on: windows-11-arm

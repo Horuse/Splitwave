@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use super::{DeviceVolume, Notify, MUTED_DB};
 use crate::audio::device::DeviceKind;
@@ -23,13 +25,32 @@ fn target(kind: DeviceKind, name: &str) -> Option<String> {
     }
 }
 
+// pipewire-pulse mirrors a sink/source's node id as its pulse index, so a
+// resolved id addresses both `wpctl` and `pactl`. Cache it: every volume change
+// re-resolves, and a registry snapshot is a full pipewire round-trip.
+const ID_TTL: Duration = Duration::from_secs(2);
+
 fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
+    let mut cache = id_cache().lock().expect("volume id cache poisoned");
+    let key = (kind, name.to_string());
+    if let Some(&(id, at)) = cache.get(&key) {
+        if at.elapsed() < ID_TTL {
+            return Some(id);
+        }
+    }
     let class = match kind {
         DeviceKind::Input => "Audio/Source",
         DeviceKind::Output => "Audio/Sink",
     };
     let nodes = pw_enum::nodes_by_class(class).ok()?;
-    nodes.into_iter().find(|n| n.name == name).map(|n| n.id)
+    let id = nodes.into_iter().find(|n| n.name == name)?.id;
+    cache.insert(key, (id, Instant::now()));
+    Some(id)
+}
+
+fn id_cache() -> &'static Mutex<HashMap<(DeviceKind, String), (u32, Instant)>> {
+    static CACHE: OnceLock<Mutex<HashMap<(DeviceKind, String), (u32, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
@@ -58,16 +79,22 @@ pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
 // wpctl reports only a cubic-scale factor; the pulse compatibility layer is the
 // one interface that states the device's attenuation in decibels.
 fn volume_db(kind: DeviceKind, name: &str) -> Option<f32> {
-    let (subcommand, default) = match kind {
-        DeviceKind::Input => ("get-source-volume", "@DEFAULT_SOURCE@"),
-        DeviceKind::Output => ("get-sink-volume", "@DEFAULT_SINK@"),
+    let subcommand = match kind {
+        DeviceKind::Input => "get-source-volume",
+        DeviceKind::Output => "get-sink-volume",
     };
-    let target = match name {
-        "default" | "pipewire" | "sysdefault" => default,
-        _ => name,
+    // pactl accepts a pulse index or a @DEFAULT_*@ alias; the resolved node id
+    // doubles as the pulse index, so named devices query by id, not by name.
+    let arg = match name {
+        "default" | "pipewire" | "sysdefault" => match kind {
+            DeviceKind::Input => "@DEFAULT_SOURCE@",
+            DeviceKind::Output => "@DEFAULT_SINK@",
+        }
+        .to_string(),
+        _ => resolve_id(kind, name)?.to_string(),
     };
     let out = Command::new("pactl")
-        .args([subcommand, target])
+        .args([subcommand, &arg])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -81,6 +108,7 @@ fn volume_db(kind: DeviceKind, name: &str) -> Option<f32> {
 // output watchers. The dispatcher re-reads and drops unchanged values.
 struct Subscriber {
     child: Option<Child>,
+    poll: Option<Arc<AtomicBool>>,
     next_id: u64,
     watchers: HashMap<u64, (DeviceKind, Notify)>,
 }
@@ -91,6 +119,7 @@ fn subscriber() -> &'static Mutex<Subscriber> {
     SUBSCRIBER.get_or_init(|| {
         Mutex::new(Subscriber {
             child: None,
+            poll: None,
             next_id: 0,
             watchers: HashMap::new(),
         })
@@ -110,6 +139,9 @@ impl Drop for Watch {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            if let Some(stop) = sub.poll.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -117,8 +149,13 @@ impl Drop for Watch {
 pub fn watch_device(kind: DeviceKind, name: &str, notify: Notify) -> Option<Watch> {
     target(kind, name)?;
     let mut sub = subscriber().lock().expect("pactl subscriber poisoned");
-    if sub.child.is_none() {
-        sub.child = Some(spawn_subscriber()?);
+    if sub.child.is_none() && sub.poll.is_none() {
+        match spawn_subscriber() {
+            Some(child) => sub.child = Some(child),
+            // No pulse compatibility layer (pipewire without pipewire-pulse):
+            // fall back to polling so external volume changes still reach the UI.
+            None => sub.poll = Some(spawn_poller()?),
+        }
     }
     let id = sub.next_id;
     sub.next_id += 1;
@@ -151,6 +188,35 @@ fn spawn_subscriber() -> Option<Child> {
         })
         .ok()?;
     Some(child)
+}
+
+// No pulse module present — poll each watcher so external changes still show.
+// The shared dispatcher re-reads and drops unchanged values, so waking on every
+// tick is harmless.
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+fn spawn_poller() -> Option<Arc<AtomicBool>> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    thread::Builder::new()
+        .name("pactl-poll".into())
+        .spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                let watchers: Vec<Notify> = {
+                    let sub = subscriber().lock().expect("pactl subscriber poisoned");
+                    sub.watchers
+                        .values()
+                        .map(|(_, notify)| notify.clone())
+                        .collect()
+                };
+                for notify in watchers {
+                    notify();
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+        })
+        .ok()?;
+    Some(stop)
 }
 
 // "Event 'change' on sink #45" — sink-input and source-output are streams.

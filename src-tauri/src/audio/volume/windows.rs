@@ -117,6 +117,9 @@ unsafe impl Send for Watch {}
 
 impl Drop for Watch {
     fn drop(&mut self) {
+        // Unregister may run on a thread that never touched COM (e.g. unwatch
+        // on the IPC thread), so initialise the MTA before releasing.
+        ensure_com();
         unsafe {
             let _ = self.endpoint.UnregisterControlChangeNotify(&self.callback);
         }

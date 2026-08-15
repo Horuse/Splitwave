@@ -86,7 +86,6 @@ cuid2 = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
-deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model"] }
 ndarray = "0.15"
 # CLAP plugin hosting. clack is git-only and pre-1.0; pin an exact rev because
 # it has no semver releases and warns of breaking API changes.
@@ -158,3 +157,9 @@ tauri-plugin-global-shortcut = "2.3.2"
 # crate is rejected here because its build.rs uses `swift build` which fails
 # on the host's CLT (PackageDescription dylib ABI mismatch).
 # objc2 stays for NSWorkspace-based app listing.
+
+# tract's arm64 NEON kernels are GNU-as only and can't assemble to COFF, so
+# DeepFilterNet won't compile on Windows ARM64. Excluded there; the effect
+# degrades to passthrough (see noise_suppressor.rs).
+[target.'cfg(not(all(target_os = "windows", target_arch = "aarch64")))'.dependencies]
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model"] }

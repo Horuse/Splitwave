@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use libpulse_binding::callbacks::ListResult;
-use libpulse_binding::context::subscribe::{Facility, InterestMaskSet};
 use libpulse_binding::context::introspect::Introspector;
+use libpulse_binding::context::subscribe::{Facility, InterestMaskSet};
 use libpulse_binding::context::{Context, FlagSet, State};
 use libpulse_binding::mainloop::threaded::Mainloop;
 use libpulse_binding::operation;
@@ -172,11 +172,13 @@ struct Watchers {
 static WATCHERS: OnceLock<Mutex<Watchers>> = OnceLock::new();
 
 fn watchers() -> &'static Mutex<Watchers> {
-    WATCHERS.get_or_init(|| Mutex::new(Watchers {
-        next_id: 0,
-        list: HashMap::new(),
-        stop: None,
-    }))
+    WATCHERS.get_or_init(|| {
+        Mutex::new(Watchers {
+            next_id: 0,
+            list: HashMap::new(),
+            stop: None,
+        })
+    })
 }
 
 pub struct Watch {
@@ -217,7 +219,8 @@ fn spawn_watcher() -> Option<Arc<AtomicBool>> {
             let Some(mut mainloop) = Mainloop::new() else {
                 return;
             };
-            let mut context = match Context::new(&mainloop, APP) {                Some(c) => c,
+            let mut context = match Context::new(&mainloop, APP) {
+                Some(c) => c,
                 None => return,
             };
             if context.connect(None, FlagSet::NOFLAGS, None).is_err() {

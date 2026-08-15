@@ -114,8 +114,8 @@ fn with_session(
     f: impl FnOnce(&pw::core::CoreRc, &pw::main_loop::MainLoopRc) -> Result<(), String>,
 ) -> Result<(), String> {
     pw::init();
-    let mainloop = pw::main_loop::MainLoopRc::new(None)
-        .map_err(|e| format!("pipewire mainloop: {e}"))?;
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).map_err(|e| format!("pipewire mainloop: {e}"))?;
     let context = pw::context::ContextRc::new(&mainloop, None)
         .map_err(|e| format!("pipewire context: {e}"))?;
     let core = context

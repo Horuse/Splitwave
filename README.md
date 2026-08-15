@@ -28,6 +28,8 @@ Then open Splitwave normally.
 ### Linux
 
 Requires a PipeWire-based audio session (default on most current distros).
+Device-volume control additionally needs the PulseAudio compatibility layer
+(`pipewire-pulse`, also default on most distros).
 Download the build for your system from [Releases](https://github.com/Horuse/Splitwave/releases/latest):
 
 - **AppImage** — `chmod +x Splitwave_*.AppImage && ./Splitwave_*.AppImage`
@@ -96,7 +98,9 @@ Windows has no user-mode virtual-device model, so they are unavailable there.
   compiled by `build.rs` via `swiftc`; CoreAudio HAL FFI for device enumeration;
   libASPL-based AudioServerPlugin for the virtual device driver
 - **Linux:** `pipewire` for device I/O, system/app capture, and virtual
-  null-sinks; `freedesktop-desktop-entry` / `freedesktop-icons` for app icons
+  null-sinks; `libpulse-binding` for device-volume control (talks to
+  `pipewire-pulse`); `freedesktop-desktop-entry` / `freedesktop-icons` for app
+  icons
 - **Windows:** `cpal` (WASAPI) device I/O; the `windows` crate for WASAPI
   loopback + Process Loopback capture, `IAudioEndpointVolume`, audio-session
   enumeration, and exe icon extraction (`png` for encoding)

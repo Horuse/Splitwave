@@ -13,6 +13,8 @@ finish-args:
     - --device=dri
     # cpal/ALSA devices and the PipeWire graph (system + per-app capture)
     - --socket=pipewire
+    # device-volume control goes through the PulseAudio compatibility layer
+    - --socket=pulseaudio
     - --device=all
     # recording targets and WAV sources the user picks through the dialog
     - --filesystem=xdg-music

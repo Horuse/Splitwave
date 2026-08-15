@@ -89,7 +89,7 @@ jobs:
                     libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
                     libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
                     libpipewire-0.3-dev clang libclang-dev \
-                    libasound2-dev libopus-dev \
+                    libasound2-dev libopus-dev libpulse-dev \
                     desktop-file-utils xdg-utils patchelf rpm
 
             - name: Install JS deps

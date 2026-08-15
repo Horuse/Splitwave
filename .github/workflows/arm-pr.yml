@@ -33,19 +33,6 @@ jobs:
             - name: Install JS deps
               run: bun install --frozen-lockfile
 
-            # tract-linalg emits GNU-syntax arm64 .S kernels that MSVC cl.exe
-            # cannot assemble (LNK1181). Point its cc-rs at clang/llvm-lib,
-            # which handle both assembling and archiving the COFF objects.
-            - name: Prepare clang for tract asm
-              shell: pwsh
-              run: |
-                  $clang = 'C:\Program Files\LLVM\bin\clang.exe'
-                  if (-not (Test-Path $clang)) {
-                      choco install llvm -y --no-progress
-                  }
-                  Add-Content $env:GITHUB_ENV "CC_aarch64_pc_windows_msvc=C:\Program Files\LLVM\bin\clang.exe"
-                  Add-Content $env:GITHUB_ENV "AR_aarch64_pc_windows_msvc=C:\Program Files\LLVM\bin\llvm-lib.exe"
-
             - name: Build exe
               run: bun run tauri build --bundles nsis
 

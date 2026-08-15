@@ -814,16 +814,6 @@ impl ChannelReceiver {
         self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
     }
 
-    /// Whether at least one channel has enough buffered to produce a block.
-    /// Availability-paced outputs (file recording) use this to run at the
-    /// network arrival rate.
-    pub fn ready(&self, _block_len: usize) -> bool {
-        match self.taps.try_lock() {
-            Ok(taps) => taps.values().any(|t| t.backlog() >= t.need_in()),
-            Err(_) => false,
-        }
-    }
-
     /// Copy one channel's already-resampled scratch into `out`.
     pub fn channel(&self, key: &str, out: &mut [f32]) {
         out.fill(0.0);

@@ -20,7 +20,7 @@ use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
-use super::worker::{dsp_worker, WorkerCtrl, WorkerPacing};
+use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -203,10 +203,10 @@ pub(super) fn speaker_ring(
 }
 
 // Held for the worker's lifetime: dropping the handle restores normal scheduling.
-struct RtThread(Option<RtPriorityHandle>);
+pub(crate) struct RtThread(Option<RtPriorityHandle>);
 
 impl RtThread {
-    fn promote(worker: &'static str, sample_rate: u32) -> Self {
+    pub(crate) fn promote(worker: &'static str, sample_rate: u32) -> Self {
         match promote_current_thread_to_real_time(DSP_BLOCK_FRAMES as u32, sample_rate) {
             Ok(handle) => {
                 info!(worker, "worker thread promoted to real-time");
@@ -251,12 +251,11 @@ pub(super) fn spawn_speaker_worker(
         target_frames,
         level.clone(),
     ));
-    let pacing = WorkerPacing::Clock(clock);
     let join = thread::Builder::new()
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             let _rt = RtThread::promote("speaker", sample_rate);
-            worker.run(stop_thread, pacing, |block| {
+            worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let written = streams::bulk_push_counted(
                     &mut producer,
@@ -288,12 +287,11 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     let sample_rate = graph.sample_rate();
     let ticker = SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES);
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("monitor".into())
         .spawn(move || {
             let _rt = RtThread::promote("monitor", sample_rate);
-            worker.run(stop_thread, pacing, |_block| Ok(()));
+            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn monitor worker: {e}")))?;
     Ok((
@@ -319,12 +317,11 @@ pub(super) fn start_wire_sender_worker(
     let sample_rate = graph.sample_rate();
     let ticker = SystemClockTicker::with_catchup(sample_rate, DSP_BLOCK_FRAMES, 8);
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("netsender".into())
         .spawn(move || {
             let _rt = RtThread::promote("netsender", sample_rate);
-            worker.run(stop_thread, pacing, |_block| Ok(()));
+            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn net sender worker: {e}")))?;
     Ok((
@@ -348,9 +345,13 @@ pub(super) fn start_recorder_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::OnAvailability;
+    // Transport-paced: recording must follow the wall clock, not the source.
+    // A file source decodes faster than real time; availability pacing would
+    // drain it as fast as it arrives and over-run (a 1 s clip becomes 1:22).
+    let clock: Box<dyn ClockSource> =
+        Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
 
-    // No real-time promotion: this worker is availability-paced and blocks on encoder file I/O.
+    // No real-time promotion: this worker blocks on encoder file I/O.
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
@@ -383,7 +384,7 @@ pub(super) fn start_recorder_worker(
             let mut frames_written: u64 = 0;
             let mut encoder = encoder;
 
-            worker.run(stop_thread, pacing, |block| {
+            worker.run(stop_thread, clock, |block| {
                 encoder.write_interleaved(block)?;
                 frames_written += (block.len() / channels as usize) as u64;
 

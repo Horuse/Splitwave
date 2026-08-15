@@ -272,23 +272,6 @@ impl SourceState {
         self.last_pop_at.elapsed() > STALL_THRESHOLD
     }
 
-    /// True when the source can fill one output block without underrun, OR
-    /// when it's been silent long enough that we should stop waiting on it.
-    /// A stalled source contributes silence to the mix (fill_block zero-fills
-    /// the part it can't supply).
-    fn is_ready_for_block(&self) -> bool {
-        if let Some(p) = &self.paused {
-            if p.load(Ordering::SeqCst) {
-                return true;
-            }
-        }
-        if self.is_stalled() {
-            return true;
-        }
-        let have = self.consumer.slots() + self.input_staging.len();
-        have >= self.input_samples_per_block
-    }
-
     /// Taps are filled at the end of `fill_block`, so an early return would
     /// leave them looping their last block -- a buzz at the block rate.
     fn silence(&mut self) {
@@ -596,10 +579,6 @@ impl ProducerState {
             }
         }
     }
-
-    fn is_ready_for_block(&self) -> bool {
-        self.receiver.ready(DSP_BLOCK_FRAMES * 2)
-    }
 }
 
 /// A terminal sink that consumes per-channel inputs (summed by target handle
@@ -871,23 +850,6 @@ impl OutputGraph {
         if let Some(DagNode::Effect(e)) = self.nodes.get_mut(node_idx) {
             e.taps.push(prod);
         }
-    }
-
-    /// True if every source has enough buffered input to produce one full
-    /// output block without underrun. Availability-paced workers use this to
-    /// gate block production.
-    pub(super) fn all_sources_ready(&self) -> bool {
-        for node in &self.nodes {
-            match node {
-                DagNode::Source(s) if !s.is_ready_for_block() => return false,
-                // A network producer paces an availability worker (file
-                // recording) at the real-time arrival rate; without this the
-                // recorder spins flat-out and writes minutes per second.
-                DagNode::Producer(p) if !p.is_ready_for_block() => return false,
-                _ => {}
-            }
-        }
-        true
     }
 
     /// Fill `output` (`DSP_BLOCK_FRAMES * out_channels` long) with one block of

@@ -42,8 +42,6 @@ counters! {
     CLOCK_LATE_BLOCKS,
     /// Worst single deadline miss, microseconds (monotonic high-water mark).
     CLOCK_LATE_MAX_US,
-    /// Availability-paced blocks that gave up waiting and zero-filled.
-    AVAILABILITY_TIMEOUTS,
     /// Fatal cpal stream errors reported via the error callback.
     STREAM_ERRORS,
     /// Samples zero-filled on the RT thread because an offloaded effect's

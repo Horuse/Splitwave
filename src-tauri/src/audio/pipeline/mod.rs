@@ -36,6 +36,8 @@ mod meter;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native;
 mod output;
+#[cfg(target_os = "linux")]
+pub(crate) use output::RtThread;
 mod sig;
 mod worker;
 

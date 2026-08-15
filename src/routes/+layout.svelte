@@ -101,7 +101,10 @@
 		window.addEventListener('keydown', onLogsHotkey);
 		installErrorHandlers().catch(() => {});
 		loadAppInfo().catch(() => {});
-		audioStore.init().catch(() => {});
+		audioStore
+			.init()
+			.then(() => audioStore.autoActivateOnLaunch())
+			.catch(() => {});
 		pipelineStore.refresh().catch(() => {});
 		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))

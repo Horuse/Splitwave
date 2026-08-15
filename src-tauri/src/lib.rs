@@ -206,6 +206,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::spawn())
@@ -231,6 +235,7 @@ pub fn run() {
             commands::apply_virtual_devices,
             commands::device_info,
             commands::check_capture_permission,
+            commands::path_exists,
             commands::is_pipeline_running,
             commands::start_pipeline,
             commands::stop_pipeline,

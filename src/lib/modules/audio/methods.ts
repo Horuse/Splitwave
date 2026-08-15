@@ -32,6 +32,7 @@ export const methods = {
 	getAppIcons: (bundleIds: string[]): Promise<Record<string, string>> => invoke<Record<string, string>>('get_app_icons', { bundleIds }),
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
+	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> => invoke('start_pipeline', { graph }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),

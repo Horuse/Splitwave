@@ -96,6 +96,9 @@ vst3 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pipewire = { version = "0.9", features = ["v0_3_44"] }
+# Native volume read/set and event-driven change notifications. Talks to
+# pipewire-pulse; high-level, so no subprocess or polling like wpctl/pactl.
+libpulse-binding = "2"
 freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 resvg = "0.47"

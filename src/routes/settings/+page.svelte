@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
+	import { onMount } from 'svelte';
 	import Header from '$lib/components/layout/header.svelte';
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
@@ -37,12 +39,31 @@
 	function resetAll() {
 		edgeSettings.reset();
 		appSettings.reset();
+		void disableAutostart();
 	}
 
 	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize'>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
 	}
+
+	async function setLaunchOnStartup(value: boolean): Promise<void> {
+		try {
+			if (value) {
+				await enableAutostart();
+			} else {
+				await disableAutostart();
+			}
+			appSettings.launchOnStartup = value;
+			appSettings.persist();
+		} catch {
+			// Leave the mirror unchanged so the toggle reflects the real (unchanged) OS state.
+		}
+	}
+
+	onMount(() => {
+		void appSettings.syncLaunchOnStartup();
+	});
 </script>
 
 <Header>
@@ -185,6 +206,19 @@
 				label="Check on launch"
 				hint="Looks for a new version each time the app starts."
 				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)} />
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Startup</h2>
+				<p class="text-xs text-neutral-900">Registers Splitwave with your OS's login items.</p>
+			</div>
+
+			<Toggle
+				checked={appSettings.launchOnStartup}
+				label="Launch on system startup"
+				hint="Starts Splitwave automatically when you log in."
+				onChange={() => setLaunchOnStartup(!appSettings.launchOnStartup)} />
 		</section>
 
 		<PresetsSection />

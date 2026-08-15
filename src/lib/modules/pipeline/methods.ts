@@ -8,6 +8,7 @@ import { appSettings } from '$lib/modules/settings/stores.svelte';
 const STORE_FILE = 'pipelines.json';
 const KEY_PREFIX = 'pipeline:';
 const SNAPSHOT_KEY_PREFIX = 'snapshots:';
+const ACTIVE_PIPELINE_KEY = 'activePipelineId';
 const store = new LazyStore(STORE_FILE);
 
 export interface Snapshot {
@@ -41,6 +42,19 @@ export const methods = {
 	async remove(id: string): Promise<void> {
 		await store.delete(KEY_PREFIX + id);
 		await store.delete(SNAPSHOT_KEY_PREFIX + id);
+		await store.save();
+	},
+
+	async getActivePipelineId(): Promise<string | null> {
+		return (await store.get<string>(ACTIVE_PIPELINE_KEY)) ?? null;
+	},
+
+	async setActivePipelineId(id: string | null): Promise<void> {
+		if (id === null) {
+			await store.delete(ACTIVE_PIPELINE_KEY);
+		} else {
+			await store.set(ACTIVE_PIPELINE_KEY, id);
+		}
 		await store.save();
 	},
 

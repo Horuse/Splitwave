@@ -55,7 +55,7 @@
 		busy = id;
 		try {
 			if (audioStore.isRunning) {
-				await audioMethods.stopPipeline();
+				await audioStore.deactivatePipeline();
 			} else {
 				const p = await pipelineMethods.get(id);
 				if (!p || isFromFuture(p)) return;

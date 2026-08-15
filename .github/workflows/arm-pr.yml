@@ -1,0 +1,92 @@
+name: Dev build (ARM PR artifacts)
+
+# Manual only: pick the PR head branch in the "Run workflow" dropdown.
+# Builds the two ARM targets that are painful to build locally (ARM VMs),
+# natively on GitHub's public ARM runners, and uploads them as artifacts.
+on:
+    workflow_dispatch:
+
+jobs:
+    windows-arm64:
+        runs-on: windows-11-arm
+        env:
+            # windows runners ship CMake 4.x, which rejects audiopus_sys's pre-3.5
+            # policy version without this override.
+            CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Setup Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache cargo build
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri
+
+            - name: Install JS deps
+              run: bun install --frozen-lockfile
+
+            - name: Build exe
+              run: bun run tauri build --bundles nsis
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: splitwave-windows-arm64
+                  path: |
+                      src-tauri/target/release/splitwave.exe
+                      src-tauri/target/release/bundle/nsis/*.exe
+                  if-no-files-found: error
+
+    linux-arm64:
+        # Native ARM64 runner; no cross toolchain needed for the rpm.
+        runs-on: ubuntu-24.04-arm
+        env:
+            CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Setup Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache cargo build
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: src-tauri
+
+            - name: Install Linux system deps
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends \
+                    libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+                    libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
+                    libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
+                    libpipewire-0.3-dev clang libclang-dev \
+                    libasound2-dev libopus-dev \
+                    desktop-file-utils xdg-utils patchelf rpm
+
+            - name: Install JS deps
+              run: bun install --frozen-lockfile
+
+            - name: Build rpm
+              run: bun run tauri build --bundles rpm
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: splitwave-linux-arm64
+                  path: src-tauri/target/release/bundle/rpm/*.rpm
+                  if-no-files-found: error

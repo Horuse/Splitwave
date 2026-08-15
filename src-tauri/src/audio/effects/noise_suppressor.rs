@@ -2,7 +2,73 @@ use std::collections::VecDeque;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
+#[cfg(not(all(windows, target_arch = "aarch64")))]
+mod model {
+    pub use deep_filter::tract::{DfParams, DfTract, RuntimeParams};
+}
+
+// DeepFilterNet is excluded from Windows ARM64 (see Cargo.toml): tract's arm64
+// kernels are GNU-as only and can't assemble to COFF. DfTract::new always
+// errors here, so the effect builds no model and runs as passthrough.
+#[cfg(all(windows, target_arch = "aarch64"))]
+mod model {
+    use ndarray::{ArrayView2, ArrayViewMut2};
+
+    pub struct DfParams;
+    impl DfParams {
+        pub fn default() -> Self {
+            DfParams
+        }
+    }
+
+    pub struct RuntimeParams {
+        pub atten_lim_db: f32,
+        pub post_filter_beta: f32,
+        pub post_filter: bool,
+        pub min_db_thresh: f32,
+        pub max_db_erb_thresh: f32,
+        pub max_db_df_thresh: f32,
+    }
+    impl RuntimeParams {
+        pub fn default_with_ch(_ch: usize) -> Self {
+            Self {
+                atten_lim_db: 0.0,
+                post_filter_beta: 0.0,
+                post_filter: false,
+                min_db_thresh: 0.0,
+                max_db_erb_thresh: 0.0,
+                max_db_df_thresh: 0.0,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Unsupported;
+    impl std::fmt::Display for Unsupported {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "DeepFilterNet unavailable on Windows ARM64")
+        }
+    }
+    impl std::error::Error for Unsupported {}
+
+    pub struct DfTract {
+        pub hop_size: usize,
+        pub lookahead: usize,
+        pub min_db_thresh: f32,
+        pub max_db_erb_thresh: f32,
+        pub max_db_df_thresh: f32,
+    }
+    impl DfTract {
+        pub fn new(_p: DfParams, _r: &RuntimeParams) -> Result<Self, Unsupported> {
+            Err(Unsupported)
+        }
+        pub fn set_atten_lim(&mut self, _v: f32) {}
+        pub fn set_pf_beta(&mut self, _v: f32) {}
+        pub fn process(&mut self, _n: ArrayView2<f32>, _e: ArrayViewMut2<f32>) {}
+    }
+}
+
+use model::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;
 
 use crate::audio::graph::NoiseSuppressorData;

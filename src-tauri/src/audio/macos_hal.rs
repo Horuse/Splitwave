@@ -36,6 +36,7 @@ const K_AUDIO_DEVICE_PROPERTY_STREAMS: AudioObjectPropertySelector = fourcc(b"st
 const K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION: AudioObjectPropertySelector = fourcc(b"slay");
 const K_AUDIO_DEVICE_PROPERTY_NOMINAL_SAMPLE_RATE: AudioObjectPropertySelector = fourcc(b"nsrt");
 const K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR: AudioObjectPropertySelector = fourcc(b"volm");
+const K_AUDIO_DEVICE_PROPERTY_VOLUME_DECIBELS: AudioObjectPropertySelector = fourcc(b"vold");
 const K_AUDIO_DEVICE_PROPERTY_MUTE: AudioObjectPropertySelector = fourcc(b"mute");
 const K_AUDIO_OBJECT_PROPERTY_NAME: AudioObjectPropertySelector = fourcc(b"lnam");
 const K_AUDIO_DEVICE_PROPERTY_DEVICE_UID: AudioObjectPropertySelector = fourcc(b"uid ");
@@ -102,7 +103,28 @@ extern "C" {
         in_address: *const AudioObjectPropertyAddress,
         out_is_settable: *mut u8,
     ) -> OSStatus;
+
+    fn AudioObjectAddPropertyListener(
+        in_object: AudioObjectID,
+        in_address: *const AudioObjectPropertyAddress,
+        in_listener: AudioObjectPropertyListenerProc,
+        in_client_data: *mut c_void,
+    ) -> OSStatus;
+
+    fn AudioObjectRemovePropertyListener(
+        in_object: AudioObjectID,
+        in_address: *const AudioObjectPropertyAddress,
+        in_listener: AudioObjectPropertyListenerProc,
+        in_client_data: *mut c_void,
+    ) -> OSStatus;
 }
+
+type AudioObjectPropertyListenerProc = extern "C" fn(
+    in_object: AudioObjectID,
+    in_number_addresses: u32,
+    in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
@@ -384,13 +406,14 @@ unsafe fn is_tap_aggregate(device_id: AudioObjectID) -> bool {
     device_uid(device_id).is_some_and(|uid| uid.starts_with(TAP_AGGREGATE_UID_PREFIX))
 }
 
-unsafe fn read_volume_for_element(
+unsafe fn read_f32_for_element(
     device_id: AudioObjectID,
+    selector: AudioObjectPropertySelector,
     scope: AudioObjectPropertyScope,
     element: u32,
 ) -> Option<f32> {
     let addr = AudioObjectPropertyAddress {
-        selector: K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR,
+        selector,
         scope,
         element,
     };
@@ -410,7 +433,35 @@ unsafe fn read_volume_for_element(
     {
         return None;
     }
-    Some(v.clamp(0.0, 1.0))
+    Some(v)
+}
+
+unsafe fn read_volume_for_element(
+    device_id: AudioObjectID,
+    scope: AudioObjectPropertyScope,
+    element: u32,
+) -> Option<f32> {
+    read_f32_for_element(
+        device_id,
+        K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR,
+        scope,
+        element,
+    )
+    .map(|v| v.clamp(0.0, 1.0))
+}
+
+unsafe fn read_volume_db_for_element(
+    device_id: AudioObjectID,
+    scope: AudioObjectPropertyScope,
+    element: u32,
+) -> Option<f32> {
+    read_f32_for_element(
+        device_id,
+        K_AUDIO_DEVICE_PROPERTY_VOLUME_DECIBELS,
+        scope,
+        element,
+    )
+    .filter(|v| v.is_finite())
 }
 
 unsafe fn write_volume_for_element(
@@ -475,24 +526,160 @@ unsafe fn write_mute_for_element(
 
 /// Returns None when CoreAudio exposes no settable volume — common for
 /// hardware-knob interfaces and some USB mics.
-pub fn device_volume(kind: crate::audio::device::DeviceKind, name: &str) -> Option<f32> {
+pub fn device_volume(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+) -> Option<crate::audio::volume::DeviceVolume> {
     let scope = scope_for(kind);
     let device_id = find_device_id(name, scope)?;
     unsafe {
         // Master element first; per-channel fallback for multi-channel devices.
-        if let Some(v) =
-            read_volume_for_element(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN)
-        {
-            return Some(v);
-        }
-        let l = read_volume_for_element(device_id, scope, 1);
-        let r = read_volume_for_element(device_id, scope, 2);
-        match (l, r) {
-            (Some(l), Some(r)) => Some((l + r) * 0.5),
-            (Some(v), None) | (None, Some(v)) => Some(v),
-            (None, None) => None,
+        let scalar = read_element_average(device_id, scope, read_volume_for_element)?;
+        let db = if read_muted(device_id, scope) {
+            Some(crate::audio::volume::MUTED_DB)
+        } else {
+            read_element_average(device_id, scope, read_volume_db_for_element)
+        };
+        Some(crate::audio::volume::DeviceVolume { scalar, db })
+    }
+}
+
+/// Registered CoreAudio volume/mute listeners for one device; dropping removes
+/// them. The listener proc runs on a CoreAudio thread and only signals.
+pub struct VolumeListener {
+    device_id: AudioObjectID,
+    addresses: Vec<AudioObjectPropertyAddress>,
+    notify: *mut crate::audio::volume::Notify,
+}
+
+// The device id and the notify box are plain data; CoreAudio accepts add and
+// remove from any thread, so the handle can live in the watch registry.
+unsafe impl Send for VolumeListener {}
+
+impl Drop for VolumeListener {
+    fn drop(&mut self) {
+        unsafe {
+            for addr in &self.addresses {
+                AudioObjectRemovePropertyListener(
+                    self.device_id,
+                    addr,
+                    volume_listener_proc,
+                    self.notify as *mut c_void,
+                );
+            }
+            drop(Box::from_raw(self.notify));
         }
     }
+}
+
+extern "C" fn volume_listener_proc(
+    _in_object: AudioObjectID,
+    _in_number_addresses: u32,
+    _in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus {
+    if !in_client_data.is_null() {
+        let notify = unsafe { &*(in_client_data as *const crate::audio::volume::Notify) };
+        notify();
+    }
+    0
+}
+
+/// Returns None when the device exposes neither volume nor mute to listen on.
+pub fn watch_volume(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+    notify: crate::audio::volume::Notify,
+) -> Option<VolumeListener> {
+    let scope = scope_for(kind);
+    let device_id = find_device_id(name, scope)?;
+    let notify = Box::into_raw(Box::new(notify));
+    let mut addresses = Vec::new();
+    unsafe {
+        for selector in [
+            K_AUDIO_DEVICE_PROPERTY_VOLUME_SCALAR,
+            K_AUDIO_DEVICE_PROPERTY_MUTE,
+        ] {
+            for element in [K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, 1, 2] {
+                let addr = AudioObjectPropertyAddress {
+                    selector,
+                    scope,
+                    element,
+                };
+                if AudioObjectHasProperty(device_id, &addr) == 0 {
+                    continue;
+                }
+                if AudioObjectAddPropertyListener(
+                    device_id,
+                    &addr,
+                    volume_listener_proc,
+                    notify as *mut c_void,
+                ) == 0
+                {
+                    addresses.push(addr);
+                }
+            }
+        }
+    }
+    if addresses.is_empty() {
+        unsafe { drop(Box::from_raw(notify)) };
+        return None;
+    }
+    Some(VolumeListener {
+        device_id,
+        addresses,
+        notify,
+    })
+}
+
+unsafe fn read_element_average(
+    device_id: AudioObjectID,
+    scope: AudioObjectPropertyScope,
+    read: unsafe fn(AudioObjectID, AudioObjectPropertyScope, u32) -> Option<f32>,
+) -> Option<f32> {
+    if let Some(v) = read(device_id, scope, K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN) {
+        return Some(v);
+    }
+    match (read(device_id, scope, 1), read(device_id, scope, 2)) {
+        (Some(l), Some(r)) => Some((l + r) * 0.5),
+        (Some(v), None) | (None, Some(v)) => Some(v),
+        (None, None) => None,
+    }
+}
+
+unsafe fn read_muted(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> bool {
+    [K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN, 1, 2]
+        .iter()
+        .any(|&element| read_mute_for_element(device_id, scope, element) == Some(true))
+}
+
+unsafe fn read_mute_for_element(
+    device_id: AudioObjectID,
+    scope: AudioObjectPropertyScope,
+    element: u32,
+) -> Option<bool> {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_MUTE,
+        scope,
+        element,
+    };
+    if AudioObjectHasProperty(device_id, &addr) == 0 {
+        return None;
+    }
+    let mut v: u32 = 0;
+    let mut size: u32 = mem::size_of::<u32>() as u32;
+    if AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut size,
+        &mut v as *mut _ as *mut c_void,
+    ) != 0
+    {
+        return None;
+    }
+    Some(v != 0)
 }
 
 /// Returns false when the property isn't settable.

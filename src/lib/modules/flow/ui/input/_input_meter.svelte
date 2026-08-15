@@ -12,11 +12,14 @@
 	let {
 		nodeId,
 		channelCount = 0,
-		side = 'source'
+		side = 'source',
+		dbOffset = 0
 	}: {
 		nodeId: string;
 		channelCount?: number;
 		side?: 'source' | 'target';
+		/** Gain applied after the graph (e.g. hardware volume), in dB. */
+		dbOffset?: number;
 	} = $props();
 
 	let isSource = $derived(side === 'source');
@@ -67,7 +70,7 @@
 		const nextDisplays = new Array(n);
 		const nextHolds = new Array(n);
 		for (let i = 0; i < n; i++) {
-			const t = ampToDb(targets[i]);
+			const t = ampToDb(targets[i]) + dbOffset;
 			const d = displays[i] ?? -Infinity;
 			const h = holds[i] ?? -Infinity;
 			nextDisplays[i] = t > d ? t : Math.max(t, d - PEAK_FALL_DB_PER_SEC * dt);

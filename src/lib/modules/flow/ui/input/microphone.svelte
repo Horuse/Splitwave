@@ -4,6 +4,7 @@
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
 	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
@@ -24,9 +25,8 @@
 
 	let info = $state<NativeDeviceInfo | null>(null);
 
-	let gain = $state<number | null>(null);
 	// unsupported: device has no software-settable gain (hardware-knob mics).
-	let unsupported = $state(false);
+	const gain = deviceVolume('input', () => (missing ? null : (data.deviceId ?? null)));
 
 	function setDevice(value: string | null) {
 		flow.updateNodeData(id, { deviceId: value });
@@ -34,7 +34,6 @@
 
 	async function refresh() {
 		await audioStore.refreshInputDevices();
-		await loadGain();
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -50,8 +49,6 @@
 		const deviceId = data.deviceId;
 		if (!deviceId || missing) {
 			info = null;
-			gain = null;
-			unsupported = false;
 			return;
 		}
 		let cancelled = false;
@@ -63,38 +60,13 @@
 			.catch(() => {
 				if (!cancelled) info = null;
 			});
-		void loadGain();
 		return () => {
 			cancelled = true;
 		};
 	});
 
-	async function loadGain() {
-		if (!data.deviceId) return;
-		try {
-			const v = await audioMethods.getDeviceVolume('input', data.deviceId);
-			if (v === null) {
-				unsupported = true;
-				gain = null;
-			} else {
-				unsupported = false;
-				gain = v;
-			}
-		} catch {
-			unsupported = true;
-			gain = null;
-		}
-	}
-
 	async function setGainPct(pct: number) {
-		if (!data.deviceId || unsupported) return;
-		const scalar = Math.max(0, Math.min(1, pct / 100));
-		gain = scalar;
-		try {
-			await audioMethods.setDeviceVolume('input', data.deviceId, scalar);
-		} catch {
-			unsupported = true;
-		}
+		await gain.set(pct / 100);
 	}
 
 	function formatRate(hz: number): string {
@@ -105,7 +77,7 @@
 		return `${Math.round(p)}%`;
 	}
 
-	let gainPct = $derived(gain === null ? 0 : gain * 100);
+	let gainPct = $derived((gain.scalar ?? 0) * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
 </script>
@@ -135,10 +107,13 @@
 		{/if}
 
 		{#if data.deviceId && !missing}
-			{#if unsupported}
+			{#if gain.unsupported}
 				<span class="text-[10px] text-neutral-900"> Input gain not adjustable for this device </span>
-			{:else if gain !== null}
+			{:else if gain.scalar !== null}
 				<Slider label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
+				{#if gain.unsynced}
+					<span class="text-[10px] text-neutral-900">Gain changed elsewhere won't show here</span>
+				{/if}
 			{/if}
 			<InputMeter nodeId={id} {channelCount} />
 		{/if}

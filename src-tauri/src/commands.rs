@@ -262,8 +262,22 @@ pub async fn update_effect(
 }
 
 #[tauri::command]
-pub fn get_device_volume(kind: DeviceKind, name: String) -> Option<f32> {
+pub fn get_device_volume(
+    kind: DeviceKind,
+    name: String,
+) -> Option<crate::audio::volume::DeviceVolume> {
     crate::audio::volume::device_volume(kind, &name)
+}
+
+/// Starts emitting `audio://device_volume` for this device until unwatched.
+#[tauri::command]
+pub fn watch_device_volume(kind: DeviceKind, name: String, app: AppHandle) -> AppResult<()> {
+    crate::audio::volume::watch_device_volume(&app, kind, name)
+}
+
+#[tauri::command]
+pub fn unwatch_device_volume(kind: DeviceKind, name: String) {
+    crate::audio::volume::unwatch_device_volume(kind, name);
 }
 
 #[tauri::command]

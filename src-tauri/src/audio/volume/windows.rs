@@ -8,6 +8,13 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
 };
 
+use windows::Win32::Media::Audio::Endpoints::{
+    IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl,
+};
+use windows::Win32::Media::Audio::AUDIO_VOLUME_NOTIFICATION_DATA;
+use windows_core::implement;
+
+use super::{DeviceVolume, Notify, MUTED_DB};
 use crate::audio::device::DeviceKind;
 
 fn flow(kind: DeviceKind) -> EDataFlow {
@@ -54,13 +61,19 @@ unsafe fn endpoint_volume(kind: DeviceKind, name: &str) -> Option<IAudioEndpoint
     None
 }
 
-pub fn device_volume(kind: DeviceKind, name: &str) -> Option<f32> {
+pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
     unsafe {
         let vol = endpoint_volume(kind, name)?;
         if vol.GetMute().ok()?.as_bool() {
-            return Some(0.0);
+            return Some(DeviceVolume {
+                scalar: 0.0,
+                db: Some(MUTED_DB),
+            });
         }
-        Some(vol.GetMasterVolumeLevelScalar().ok()?.clamp(0.0, 1.0))
+        Some(DeviceVolume {
+            scalar: vol.GetMasterVolumeLevelScalar().ok()?.clamp(0.0, 1.0),
+            db: vol.GetMasterVolumeLevel().ok().filter(|db| db.is_finite()),
+        })
     }
 }
 
@@ -77,5 +90,47 @@ pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
         }
         vol.SetMasterVolumeLevelScalar(scalar.clamp(0.0, 1.0), std::ptr::null())
             .is_ok()
+    }
+}
+
+#[implement(IAudioEndpointVolumeCallback)]
+struct VolumeCallback {
+    notify: Notify,
+}
+
+impl IAudioEndpointVolumeCallback_Impl for VolumeCallback_Impl {
+    fn OnNotify(&self, _data: *mut AUDIO_VOLUME_NOTIFICATION_DATA) -> windows_core::Result<()> {
+        (self.notify)();
+        Ok(())
+    }
+}
+
+/// Holds the endpoint alive alongside its callback; dropping unregisters.
+pub struct Watch {
+    endpoint: IAudioEndpointVolume,
+    callback: IAudioEndpointVolumeCallback,
+}
+
+// Both interfaces are activated in the MTA (`ensure_com` uses
+// COINIT_MULTITHREADED), where COM allows calls and release from any thread.
+unsafe impl Send for Watch {}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        // Unregister may run on a thread that never touched COM (e.g. unwatch
+        // on the IPC thread), so initialise the MTA before releasing.
+        ensure_com();
+        unsafe {
+            let _ = self.endpoint.UnregisterControlChangeNotify(&self.callback);
+        }
+    }
+}
+
+pub fn watch_device(kind: DeviceKind, name: &str, notify: Notify) -> Option<Watch> {
+    unsafe {
+        let endpoint = endpoint_volume(kind, name)?;
+        let callback: IAudioEndpointVolumeCallback = VolumeCallback { notify }.into();
+        endpoint.RegisterControlChangeNotify(&callback).ok()?;
+        Some(Watch { endpoint, callback })
     }
 }

@@ -384,8 +384,19 @@ pub(super) fn spawn_meter_thread(
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {
-                    let (interleaved, ch) = s.snapshot();
+                    // Scopes emit a delta since the last tick; spectrum emits the
+                    // full contiguous window it needs for its FFT.
+                    let (start_frame, interleaved, ch) = if s.is_spectrum() {
+                        let (v, ch) = s.snapshot();
+                        (None, v, ch)
+                    } else {
+                        let (start, v, ch) = s.drain();
+                        (Some(start), v, ch)
+                    };
                     let frames = interleaved.len() / ch;
+                    if frames == 0 {
+                        continue;
+                    }
                     let mut chans: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); ch];
                     for f in 0..frames {
                         let base = f * ch;
@@ -393,15 +404,22 @@ pub(super) fn spawn_meter_thread(
                             chans[c].push(interleaved[base + c]);
                         }
                     }
-                    let _ = app.emit(
-                        SCOPE_EVENT,
-                        json!({
+                    let payload = match start_frame {
+                        Some(start) => json!({
+                            "nodeId": s.node_id,
+                            "channels": ch,
+                            "data": chans,
+                            "sampleRate": s.sample_rate,
+                            "startFrame": start,
+                        }),
+                        None => json!({
                             "nodeId": s.node_id,
                             "channels": ch,
                             "data": chans,
                             "sampleRate": s.sample_rate,
                         }),
-                    );
+                    };
+                    let _ = app.emit(SCOPE_EVENT, payload);
                 }
             }
         })

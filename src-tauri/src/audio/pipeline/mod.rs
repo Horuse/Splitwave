@@ -1106,7 +1106,7 @@ impl ActivePipeline {
                         dropped.worker.stop.store(true, Ordering::SeqCst);
                         drop(dropped);
                     }
-                    let (worker, ctrl) = start_recorder_worker(
+                    let (worker, ctrl, wave) = start_recorder_worker(
                         out.id.clone(),
                         path,
                         sample_rate,
@@ -1117,6 +1117,9 @@ impl ActivePipeline {
                         og,
                         app.clone(),
                     )?;
+                    // Scope the recorder's waveform so the meter tick thread
+                    // publishes it alongside the effect nodes' scopes.
+                    self.scopes.insert(out.id.clone(), wave);
                     self.recorders.insert(
                         out.id.clone(),
                         RecorderState {

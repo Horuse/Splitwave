@@ -4,7 +4,11 @@ use crate::audio::graph::WaveformData;
 
 use super::Effect;
 
-pub const WAVEFORM_FRAMES: usize = 1024;
+/// Scope ring holds several blocks so the 33 ms meter tick never outruns the
+/// ~21 ms DSP block rate. Without this, blocks completing between ticks were
+/// overwritten before emission and every scope dropped a different, drifting
+/// subset of blocks, so two identical nodes rendered different waveforms.
+pub const SCOPE_RING_FRAMES: usize = 8192;
 
 /// Spectrum nodes need a longer contiguous window than the scope: a single
 /// 1024-frame block is ~47 Hz/bin and cannot separate low tones. 4096 frames
@@ -20,7 +24,9 @@ struct WaveformState {
     buf: Box<[f32]>, // interleaved, len = frames * MAX_WAVEFORM_CHANNELS
     frames: usize,
     channels: usize,
-    write: usize, // frame write head
+    write: usize,  // ring write head (== total % frames)
+    total: u64,    // absolute frames written
+    emit_pos: u64, // absolute frames already emitted via drain
 }
 
 impl WaveformState {
@@ -30,6 +36,8 @@ impl WaveformState {
             frames,
             channels: 0,
             write: 0,
+            total: 0,
+            emit_pos: 0,
         }
     }
 }
@@ -41,19 +49,32 @@ pub struct WaveformHandle {
     /// frequency without assuming 48 kHz.
     pub sample_rate: u32,
     state: Arc<Mutex<WaveformState>>,
+    spectrum: bool,
 }
 
 impl WaveformHandle {
-    fn new(node_id: String, sample_rate: u32, frames: usize) -> Self {
+    fn with_frames(node_id: String, sample_rate: u32, frames: usize, spectrum: bool) -> Self {
         Self {
             node_id,
             sample_rate,
             state: Arc::new(Mutex::new(WaveformState::new(frames))),
+            spectrum,
         }
     }
 
+    /// Scope-size handle; used by the Waveform effect and by non-effect
+    /// consumers such as the File Recording node.
+    pub fn new(node_id: String, sample_rate: u32) -> Self {
+        Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+    }
+
+    pub fn is_spectrum(&self) -> bool {
+        self.spectrum
+    }
+
     /// Returns the last `frames` frames as a chronologically ordered interleaved
-    /// buffer plus its channel count. Called from the meter tick thread (non-RT).
+    /// buffer plus its channel count. Called from the meter tick thread (non-RT);
+    /// used by the spectrum node, which needs a full contiguous window.
     pub fn snapshot(&self) -> (Vec<f32>, usize) {
         let g = self.state.lock().unwrap();
         let ch = g.channels.max(1);
@@ -65,6 +86,64 @@ impl WaveformHandle {
         out[first_len..].copy_from_slice(&g.buf[..pos]);
         (out, ch)
     }
+
+    /// Returns the frames written since the previous call, in chronological
+    /// order, plus the absolute frame index of the first sample. Scopes consume
+    /// this delta (rather than the whole ring) so consecutive ticks neither
+    /// overlap nor skip. Called from the meter tick thread (non-RT).
+    pub fn drain(&self) -> (u64, Vec<f32>, usize) {
+        let mut g = self.state.lock().unwrap();
+        let ch = g.channels.max(1);
+        let avail = g.total.saturating_sub(g.emit_pos) as usize;
+        let cap = g.frames;
+        let n = avail.min(cap);
+        let start = g.total - n as u64;
+        let mut out = vec![0.0_f32; n * ch];
+        for i in 0..n {
+            let slot = ((start + i as u64) % cap as u64) as usize;
+            out[i * ch..(i + 1) * ch].copy_from_slice(&g.buf[slot * ch..(slot + 1) * ch]);
+        }
+        g.emit_pos = g.total;
+        (start, out, ch)
+    }
+
+    /// Ingests an interleaved block from a non-RT thread (the recorder worker).
+    /// Blocks on the state lock, unlike the effect's `try_lock` path.
+    pub fn push_interleaved(&self, samples: &[f32], frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        let mut g = self.state.lock().unwrap();
+        write(&mut g, samples, frames);
+    }
+}
+
+/// Writes one interleaved block into a `WaveformState`; `channels` is derived
+/// from the stride and a change resets the ring (and its absolute counter)
+/// rather than misaligning it.
+fn write(g: &mut WaveformState, samples: &[f32], frames: usize) {
+    let ch = (samples.len() / frames).clamp(1, MAX_WAVEFORM_CHANNELS);
+    if g.channels != ch {
+        g.channels = ch;
+        g.write = 0;
+        g.total = 0;
+        g.emit_pos = 0;
+    }
+    let cap = g.frames;
+    let n = frames.min(cap);
+    let src = &samples[..n * ch];
+    let pos = g.write;
+    let end = pos + n;
+    if end <= cap {
+        g.buf[pos * ch..end * ch].copy_from_slice(src);
+        g.write = if end == cap { 0 } else { end };
+    } else {
+        let first = (cap - pos) * ch;
+        g.buf[pos * ch..cap * ch].copy_from_slice(&src[..first]);
+        g.buf[..(n * ch - first)].copy_from_slice(&src[first..]);
+        g.write = end - cap;
+    }
+    g.total += n as u64;
 }
 
 pub struct WaveformEffect {
@@ -73,7 +152,7 @@ pub struct WaveformEffect {
 
 impl WaveformEffect {
     pub fn new(_d: WaveformData, node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
-        let handle = WaveformHandle::new(node_id, sample_rate, WAVEFORM_FRAMES);
+        let handle = WaveformHandle::new(node_id, sample_rate);
         (
             Self {
                 handle: handle.clone(),
@@ -89,7 +168,7 @@ impl WaveformEffect {
     /// Spectrum nodes capture identically to the scope, just over a longer
     /// contiguous window; the FFT runs in the UI.
     pub fn new_for(node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
-        let handle = WaveformHandle::new(node_id, sample_rate, SPECTRUM_FRAMES);
+        let handle = WaveformHandle::with_frames(node_id, sample_rate, SPECTRUM_FRAMES, true);
         (
             Self {
                 handle: handle.clone(),
@@ -105,28 +184,9 @@ impl Effect for WaveformEffect {
         if frames == 0 {
             return;
         }
-        let ch = (samples.len() / frames).clamp(1, MAX_WAVEFORM_CHANNELS);
         // try_lock: a miss means this display block is skipped -- acceptable.
         if let Ok(mut g) = self.handle.state.try_lock() {
-            // Channel count changed: reset the ring rather than misalign strides.
-            if g.channels != ch {
-                g.channels = ch;
-                g.write = 0;
-            }
-            let cap = g.frames;
-            let n = frames.min(cap);
-            let src = &samples[..n * ch];
-            let pos = g.write;
-            let end = pos + n;
-            if end <= cap {
-                g.buf[pos * ch..end * ch].copy_from_slice(src);
-                g.write = if end == cap { 0 } else { end };
-            } else {
-                let first = (cap - pos) * ch;
-                g.buf[pos * ch..cap * ch].copy_from_slice(&src[..first]);
-                g.buf[..(n * ch - first)].copy_from_slice(&src[first..]);
-                g.write = end - cap;
-            }
+            write(&mut g, samples, frames);
         }
     }
 }

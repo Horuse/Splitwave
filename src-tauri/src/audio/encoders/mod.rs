@@ -12,6 +12,7 @@ mod dither;
 mod flac;
 mod mp3;
 mod opus;
+mod peaks;
 mod wav;
 
 #[cfg(target_os = "macos")]
@@ -20,6 +21,7 @@ pub use aiff::AiffRecorder;
 pub use flac::FlacRecorder;
 pub use mp3::Mp3Recorder;
 pub use opus::OpusRecorder;
+pub use peaks::{read_peaks, FilePeaks};
 pub use wav::WavRecorder;
 
 pub trait AudioEncoder: Send {

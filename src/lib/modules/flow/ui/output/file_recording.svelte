@@ -18,8 +18,9 @@
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
-	import { channelColor, onNodeAction, parseHandle } from '$lib/modules/flow/utils';
+	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import WaveformScope from '$lib/components/waveform_scope.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
@@ -34,75 +35,13 @@
 		stopped?: boolean;
 	}
 
-	interface WaveformTick {
-		nodeId: string;
-		channels: number;
-		columns: number[][];
-	}
-
-	const WAVE_COLS = 512;
-	const LANE_PX = 48;
-
 	let frames = $state(0);
 	let sampleRate = $state(0);
 	let recording = $state(false);
 	let committedFormat = $state<RecordingFormat | null>(null);
 	let committedMode = $state<RecordingMode | null>(null);
 
-	let waveChannels = $state(1);
-	let wavePaths = $state<string[]>([]);
-	let wavePeaks: Float32Array[] = [];
-	let waveTroughs: Float32Array[] = [];
-
-	function rebuildWavePaths() {
-		const out: string[] = new Array(waveChannels);
-		const amp = 0.44;
-		for (let c = 0; c < waveChannels; c++) {
-			const p = wavePeaks[c];
-			const t = waveTroughs[c];
-			if (!p || !t) {
-				out[c] = '';
-				continue;
-			}
-			const cy = c + 0.5;
-			let d = '';
-			for (let x = 0; x < WAVE_COLS; x++) d += `${x === 0 ? 'M' : 'L'}${x},${(cy - p[x] * amp).toFixed(3)}`;
-			for (let x = WAVE_COLS - 1; x >= 0; x--) d += `L${x},${(cy - t[x] * amp).toFixed(3)}`;
-			out[c] = d + 'Z';
-		}
-		wavePaths = out;
-	}
-
-	function ensureWaveBuffers() {
-		wavePeaks = Array.from({ length: waveChannels }, () => new Float32Array(WAVE_COLS));
-		waveTroughs = Array.from({ length: waveChannels }, () => new Float32Array(WAVE_COLS));
-	}
-
-	function onWaveformTick(p: WaveformTick) {
-		if (p.nodeId !== id) return;
-		if (p.channels !== waveChannels || wavePeaks.length !== waveChannels) {
-			waveChannels = p.channels;
-			ensureWaveBuffers();
-		}
-		const k = Math.min(p.columns.length, WAVE_COLS);
-		if (k === 0) return;
-		for (let c = 0; c < waveChannels; c++) {
-			wavePeaks[c].copyWithin(0, k);
-			waveTroughs[c].copyWithin(0, k);
-		}
-		const start = WAVE_COLS - k;
-		for (let i = 0; i < k; i++) {
-			const col = p.columns[i];
-			for (let c = 0; c < waveChannels; c++) {
-				waveTroughs[c][start + i] = col[c * 2] ?? 0;
-				wavePeaks[c][start + i] = col[c * 2 + 1] ?? 0;
-			}
-		}
-		rebuildWavePaths();
-	}
-
 	let unlisten: UnlistenFn | undefined;
-	let unlistenWave: UnlistenFn | undefined;
 	let unlistenChoose: (() => void) | undefined;
 	onMount(async () => {
 		unlistenChoose = onNodeAction(id, 'chooseFile', () => {
@@ -118,13 +57,7 @@
 			} else {
 				recording = false;
 				committedFormat = null;
-				wavePaths = [];
-				wavePeaks = [];
-				waveTroughs = [];
 			}
-		});
-		unlistenWave = await listen<WaveformTick>('audio://recorder_waveform', (e) => {
-			onWaveformTick(e.payload);
 		});
 	});
 
@@ -165,7 +98,6 @@
 
 	onDestroy(() => {
 		unlisten?.();
-		unlistenWave?.();
 		unlistenChoose?.();
 	});
 
@@ -600,17 +532,7 @@
 			</Tooltip>
 		</div>
 		{#if waveVisible}
-			<div class="nodrag nopan nowheel max-h-44 overflow-y-auto rounded-md" style="background:#0b0b0f">
-				<svg
-					viewBox={`0 0 ${WAVE_COLS} ${waveChannels}`}
-					preserveAspectRatio="none"
-					style={`display:block;width:100%;height:${waveChannels * LANE_PX}px`}
-					aria-hidden="true">
-					{#each wavePaths as d, c (c)}
-						<path {d} fill={channelColor(c)} fill-opacity="0.75" />
-					{/each}
-				</svg>
-			</div>
+			<WaveformScope nodeId={id} filePath={data.filePath} />
 		{/if}
 	</div>
 </Wrapper>

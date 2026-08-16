@@ -33,8 +33,15 @@
 		})();
 	});
 
+	const MAX_NAME_LENGTH = 64;
+	const MIN_NAME_WIDTH_PX = 60;
+	const NAME_EXTRA_PX = 4;
+
 	let nameSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	function onNameInput() {
+		if (pipeline && pipeline.name.length > MAX_NAME_LENGTH) {
+			pipeline.name = pipeline.name.slice(0, MAX_NAME_LENGTH);
+		}
 		clearTimeout(nameSaveTimer);
 		nameSaveTimer = setTimeout(() => {
 			if (!pipeline) return;
@@ -46,6 +53,21 @@
 			pipelineStore.save(next);
 		}, 500);
 	}
+
+	let nameInput = $state<HTMLInputElement | null>(null);
+	let nameMirror = $state<HTMLSpanElement | null>(null);
+	let nameWidth = $state(MIN_NAME_WIDTH_PX);
+
+	$effect(() => {
+		pipeline?.name;
+		if (!nameMirror) return;
+		let width = nameMirror.getBoundingClientRect().width;
+		if (nameInput) {
+			const cs = getComputedStyle(nameInput);
+			width += parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+		}
+		nameWidth = Math.max(MIN_NAME_WIDTH_PX, width + NAME_EXTRA_PX);
+	});
 </script>
 
 <Toaster
@@ -61,7 +83,18 @@
 		<div class="flex items-center gap-3">
 			<a href="/" class="button-header px-4 text-sm">← Back</a>
 			{#if pipeline}
-				<input bind:value={pipeline.name} oninput={onNameInput} class="input-base" />
+				<div class="relative">
+					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
+						{pipeline.name}
+					</span>
+					<input
+						bind:this={nameInput}
+						bind:value={pipeline.name}
+						oninput={onNameInput}
+						maxlength={MAX_NAME_LENGTH}
+						class="input-base !transition-none"
+						style:width="{nameWidth}px" />
+				</div>
 			{/if}
 		</div>
 	{/snippet}

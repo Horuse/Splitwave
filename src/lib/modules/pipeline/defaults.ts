@@ -11,8 +11,9 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	fileRecording: {
 		filePath: null,
 		format: { kind: 'wav', bitDepth: 'f32' },
-		allowOverwrite: false,
-		channels: 2
+		mode: 'new',
+		channels: 2,
+		waveformHidden: false
 	},
 	gain: { gainDb: 0, bypassed: false },
 	mute: { muted: false, bypassed: false },

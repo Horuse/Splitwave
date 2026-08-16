@@ -33,6 +33,7 @@ export type { NetCodec } from './generated/NetCodec';
 export type { NodeKind } from './generated/NodeKind';
 export type { OpusApplication } from './generated/OpusApplication';
 export type { RecordingFormat } from './generated/RecordingFormat';
+export type { RecordingMode } from './generated/RecordingMode';
 export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';

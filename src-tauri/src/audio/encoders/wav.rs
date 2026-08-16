@@ -4,7 +4,7 @@
 //! is always a valid WAV at the last flush boundary.
 
 use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use super::dither::Xorshift;
@@ -85,15 +85,56 @@ impl WavRecorder {
         channels: u16,
         bit_depth: WavBitDepth,
     ) -> AppResult<Self> {
+        Self::open(path, sample_rate, channels, bit_depth, false)
+    }
+
+    /// Opens an existing WAV and positions writes at the end of its data chunk,
+    /// carrying the file's current sample count so `flush` patches the header
+    /// with the cumulative total. Falls back to a fresh file when none exists.
+    pub fn create_append(
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+        bit_depth: WavBitDepth,
+    ) -> AppResult<Self> {
+        Self::open(path, sample_rate, channels, bit_depth, true)
+    }
+
+    fn open(
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+        bit_depth: WavBitDepth,
+        append: bool,
+    ) -> AppResult<Self> {
         let format = WavFormat::from(bit_depth);
-        let file = File::create(path)
-            .map_err(|e| AppError::Stream(format!("create {}: {e}", path.display())))?;
+        let mut samples_per_channel: u64 = 0;
+        let file = if append && path.exists() {
+            let h = read_header(path)?;
+            check_matches(&h, sample_rate, channels, format)?;
+            let mut f = File::options()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|e| {
+                    AppError::Stream(format!("open {} for append: {e}", path.display()))
+                })?;
+            f.seek(SeekFrom::Start(h.data_end))
+                .map_err(|e| AppError::Stream(format!("seek wav data: {e}")))?;
+            samples_per_channel = h.samples_per_channel;
+            f
+        } else {
+            File::create(path)
+                .map_err(|e| AppError::Stream(format!("create {}: {e}", path.display())))?
+        };
         let mut inner = BufWriter::new(file);
-        write_header(&mut inner, sample_rate, channels, format, 0)
-            .map_err(|e| AppError::Stream(format!("write wav header: {e}")))?;
+        if !(append && path.exists()) {
+            write_header(&mut inner, sample_rate, channels, format, 0)
+                .map_err(|e| AppError::Stream(format!("write wav header: {e}")))?;
+        }
         Ok(Self {
             inner,
-            samples_per_channel: 0,
+            samples_per_channel,
             channels,
             format,
             dither: Xorshift::seed(0x9e3779b97f4a7c15),
@@ -226,4 +267,216 @@ fn write_header(
     w.write_all(b"data")?;
     w.write_all(&data_size.to_le_bytes())?;
     Ok(())
+}
+
+struct WavHeader {
+    sample_rate: u32,
+    channels: u16,
+    format: WavFormat,
+    data_end: u64,
+    samples_per_channel: u64,
+}
+
+fn check_matches(
+    h: &WavHeader,
+    sample_rate: u32,
+    channels: u16,
+    format: WavFormat,
+) -> AppResult<()> {
+    if h.sample_rate != sample_rate {
+        return Err(AppError::Validation(format!(
+            "append mismatch: file is {} Hz but this recording is {sample_rate} Hz",
+            h.sample_rate
+        )));
+    }
+    if h.channels != channels {
+        return Err(AppError::Validation(format!(
+            "append mismatch: file has {} channels but this recording uses {channels}",
+            h.channels
+        )));
+    }
+    if h.format != format {
+        return Err(AppError::Validation(format!(
+            "append mismatch: file is {}-bit but this recording is {}-bit",
+            h.format.bits(),
+            format.bits()
+        )));
+    }
+    Ok(())
+}
+
+/// Validates an existing WAV's header against the requested parameters so a
+/// mismatch surfaces synchronously at start rather than after the recorder
+/// thread has opened the file. Returns the file's current sample count.
+pub(crate) fn validate_append(
+    path: &Path,
+    sample_rate: u32,
+    channels: u16,
+    bit_depth: WavBitDepth,
+) -> AppResult<u64> {
+    let h = read_header(path)?;
+    check_matches(&h, sample_rate, channels, WavFormat::from(bit_depth))?;
+    Ok(h.samples_per_channel)
+}
+
+fn wav_format_from_tag(tag: u16, bits: u16) -> AppResult<WavFormat> {
+    match (tag, bits) {
+        (1, 16) => Ok(WavFormat::I16),
+        (1, 24) => Ok(WavFormat::I24),
+        (3, 32) => Ok(WavFormat::F32),
+        _ => Err(AppError::Validation(format!(
+            "unsupported WAV format (tag {tag}, {bits} bits)"
+        ))),
+    }
+}
+
+fn read_header(path: &Path) -> AppResult<WavHeader> {
+    let mut f =
+        File::open(path).map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
+    let mut id = [0u8; 4];
+    let mut u32buf = [0u8; 4];
+    let mut u16buf = [0u8; 2];
+
+    let r = |e: std::io::Error| AppError::Stream(format!("read wav header: {e}"));
+    f.read_exact(&mut id).map_err(r)?;
+    if &id != b"RIFF" {
+        return Err(AppError::Validation(format!(
+            "{} is not a WAV file",
+            path.display()
+        )));
+    }
+    f.read_exact(&mut u32buf).map_err(r)?; // riff size, unused
+    f.read_exact(&mut id).map_err(r)?;
+    if &id != b"WAVE" {
+        return Err(AppError::Validation(format!(
+            "{} is not a WAV file",
+            path.display()
+        )));
+    }
+
+    let mut format = None;
+    let mut sample_rate = 0u32;
+    let mut channels = 0u16;
+    let mut data_end = 0u64;
+    let mut data_size = 0u32;
+
+    loop {
+        let read = f.read(&mut id).map_err(r)?;
+        if read == 0 {
+            break;
+        }
+        if read != 4 {
+            return Err(AppError::Stream("truncated WAV header".into()));
+        }
+        f.read_exact(&mut u32buf).map_err(r)?;
+        let size = u32::from_le_bytes(u32buf);
+        match &id {
+            b"fmt " => {
+                f.read_exact(&mut u16buf).map_err(r)?;
+                let tag = u16::from_le_bytes(u16buf);
+                f.read_exact(&mut u16buf).map_err(r)?;
+                channels = u16::from_le_bytes(u16buf);
+                f.read_exact(&mut u32buf).map_err(r)?;
+                sample_rate = u32::from_le_bytes(u32buf);
+                f.read_exact(&mut u32buf).map_err(r)?; // byte rate
+                f.read_exact(&mut u16buf).map_err(r)?; // block align
+                f.read_exact(&mut u16buf).map_err(r)?; // bits
+                let bits = u16::from_le_bytes(u16buf);
+                format = Some(wav_format_from_tag(tag, bits)?);
+                if size > 16 {
+                    f.seek(SeekFrom::Current((size - 16) as i64)).map_err(r)?;
+                }
+            }
+            b"data" => {
+                let start = f.stream_position().map_err(r)?;
+                data_size = size;
+                data_end = start + size as u64;
+                break;
+            }
+            _ => {
+                let skip = size as u64 + (size & 1) as u64;
+                f.seek(SeekFrom::Current(skip as i64)).map_err(r)?;
+            }
+        }
+    }
+
+    let format = format
+        .ok_or_else(|| AppError::Validation(format!("{} has no fmt chunk", path.display())))?;
+    if channels == 0 || sample_rate == 0 || data_end == 0 {
+        return Err(AppError::Validation(format!(
+            "{} has an invalid or missing header/data chunk",
+            path.display()
+        )));
+    }
+    let bps = format.bytes_per_sample() as u64;
+    let samples_per_channel = (data_size as u64) / ((channels as u64) * bps);
+    Ok(WavHeader {
+        sample_rate,
+        channels,
+        format,
+        data_end,
+        samples_per_channel,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("splitwave_test_{}_{}", std::process::id(), name));
+        p
+    }
+
+    fn encoder(
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+        bit_depth: WavBitDepth,
+        append: bool,
+    ) -> Box<dyn AudioEncoder> {
+        if append {
+            Box::new(WavRecorder::create_append(path, sample_rate, channels, bit_depth).unwrap())
+        } else {
+            Box::new(WavRecorder::create(path, sample_rate, channels, bit_depth).unwrap())
+        }
+    }
+
+    #[test]
+    fn append_extends_existing_wav() {
+        let path = temp_path("append.wav");
+        let _ = std::fs::remove_file(&path);
+        let block = vec![0.25f32; 2048]; // 1024 frames, stereo
+
+        let mut first = encoder(&path, 48_000, 2, WavBitDepth::F32, false);
+        first.write_interleaved(&block).unwrap();
+        first.finalize().unwrap();
+
+        let mut r = encoder(&path, 48_000, 2, WavBitDepth::F32, true);
+        r.write_interleaved(&block).unwrap();
+        r.finalize().unwrap();
+
+        let h = read_header(&path).unwrap();
+        assert_eq!(h.sample_rate, 48_000);
+        assert_eq!(h.channels, 2);
+        assert_eq!(h.format, WavFormat::F32);
+        assert_eq!(h.samples_per_channel, 2048);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn append_mismatch_is_rejected() {
+        let path = temp_path("mismatch.wav");
+        let _ = std::fs::remove_file(&path);
+        let block = vec![0.0f32; 1024]; // 512 frames, mono
+        let mut first = encoder(&path, 48_000, 1, WavBitDepth::I16, false);
+        first.write_interleaved(&block).unwrap();
+        first.finalize().unwrap();
+
+        assert!(WavRecorder::create_append(&path, 44_100, 1, WavBitDepth::I16).is_err());
+        assert!(WavRecorder::create_append(&path, 48_000, 2, WavBitDepth::I16).is_err());
+        assert!(WavRecorder::create_append(&path, 48_000, 1, WavBitDepth::F32).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -14,8 +14,8 @@ use tracing::{info, warn};
 
 use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle};
-use crate::audio::encoders::{build_encoder, AudioEncoder};
-use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
+use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
+use crate::audio::graph::{OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
@@ -63,6 +63,10 @@ pub(super) enum ResolvedOutput {
         sample_rate: u32,
         format: RecordingFormat,
         channels: u16,
+        append: bool,
+        /// Existing per-channel frame count when appending, so counters start
+        /// from the file's current length instead of zero.
+        base_frames: u64,
     },
     // The DAG produces at 48 kHz; the send rings are wired inside
     // `build_output_graph`, so nothing device-specific to resolve here. Covers
@@ -92,12 +96,25 @@ pub(super) fn resolve_output(
             file_path,
             format,
             channels,
-        } => Ok(ResolvedOutput::File {
-            path: PathBuf::from(file_path),
-            sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
-            format: *format,
-            channels: *channels,
-        }),
+            mode,
+        } => {
+            let path = PathBuf::from(file_path);
+            let sample_rate = file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR);
+            let append = *mode == RecordingMode::Append;
+            let base_frames = if append && path.exists() {
+                validate_append_target(&path, sample_rate, *channels, *format)?
+            } else {
+                0
+            };
+            Ok(ResolvedOutput::File {
+                path,
+                sample_rate,
+                format: *format,
+                channels: *channels,
+                append,
+                base_frames,
+            })
+        }
         OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => {
             Ok(ResolvedOutput::WireSender)
         }
@@ -376,6 +393,8 @@ pub(super) fn start_recorder_worker(
     sample_rate: u32,
     format: RecordingFormat,
     channels: u16,
+    append: bool,
+    base_frames: u64,
     graph: OutputGraph,
     app: AppHandle,
 ) -> AppResult<(RecorderWorker, WorkerCtrl)> {
@@ -389,13 +408,14 @@ pub(super) fn start_recorder_worker(
         Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
 
     // No real-time promotion: this worker blocks on encoder file I/O.
+    let channels_usize = channels as usize;
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
             // Inside the worker thread so slow encoder init (libopus,
             // libmp3lame, AVAudioFile) doesn't stagger recorder starts.
             let encoder: Box<dyn AudioEncoder> =
-                match build_encoder(&path, sample_rate, channels, format) {
+                match build_encoder(&path, sample_rate, channels, format, append) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!(node = %node_id, error = %e, "recorder init failed");
@@ -416,14 +436,48 @@ pub(super) fn start_recorder_worker(
             // A crash loses at most one flush interval of audio.
             const FLUSH_INTERVAL: Duration = Duration::from_secs(2);
             const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+            // Waveform: subdivide each block so the envelope scrolls smoothly,
+            // and flush far more often than progress (the recorder's own
+            // cadence) so the UI doesn't jump between coarse chunks.
+            const WAVE_SEGMENTS: usize = 4;
+            const WAVE_INTERVAL: Duration = Duration::from_millis(33);
             let mut last_flush = std::time::Instant::now();
             let mut last_progress = std::time::Instant::now();
-            let mut frames_written: u64 = 0;
+            let mut last_wave = std::time::Instant::now();
+            // Append starts from the file's existing length, so the readouts
+            // reflect total content, not just this session's bytes.
+            let mut frames_written: u64 = base_frames;
             let mut encoder = encoder;
+            let mut wave_columns: Vec<(Vec<f32>, Vec<f32>)> = Vec::new();
 
             worker.run(stop_thread, clock, |block| {
                 encoder.write_interleaved(block)?;
-                frames_written += (block.len() / channels as usize) as u64;
+                frames_written += (block.len() / channels_usize) as u64;
+
+                let frames = block.len() / channels_usize;
+                let seg_frames = (frames + WAVE_SEGMENTS - 1).max(1) / WAVE_SEGMENTS;
+                for seg in 0..WAVE_SEGMENTS {
+                    let f0 = seg * seg_frames;
+                    let f1 = (f0 + seg_frames).min(frames);
+                    if f0 >= f1 {
+                        break;
+                    }
+                    let mut mins = vec![f32::INFINITY; channels_usize];
+                    let mut maxs = vec![f32::NEG_INFINITY; channels_usize];
+                    for f in f0..f1 {
+                        let base = f * channels_usize;
+                        for c in 0..channels_usize {
+                            let s = block[base + c];
+                            if s < mins[c] {
+                                mins[c] = s;
+                            }
+                            if s > maxs[c] {
+                                maxs[c] = s;
+                            }
+                        }
+                    }
+                    wave_columns.push((mins, maxs));
+                }
 
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
                     if let Err(e) = encoder.flush() {
@@ -441,6 +495,29 @@ pub(super) fn start_recorder_worker(
                         }),
                     );
                     last_progress = std::time::Instant::now();
+                }
+                if last_wave.elapsed() >= WAVE_INTERVAL && !wave_columns.is_empty() {
+                    let columns: Vec<serde_json::Value> = wave_columns
+                        .iter()
+                        .map(|(mins, maxs)| {
+                            let mut flat = Vec::with_capacity(channels_usize * 2);
+                            for c in 0..channels_usize {
+                                flat.push(serde_json::json!(mins[c]));
+                                flat.push(serde_json::json!(maxs[c]));
+                            }
+                            serde_json::json!(flat)
+                        })
+                        .collect();
+                    let _ = app.emit(
+                        "audio://recorder_waveform",
+                        json!({
+                            "nodeId": node_id,
+                            "channels": channels,
+                            "columns": columns,
+                        }),
+                    );
+                    wave_columns.clear();
+                    last_wave = std::time::Instant::now();
                 }
                 Ok(())
             });

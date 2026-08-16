@@ -1090,6 +1090,8 @@ impl ActivePipeline {
                     sample_rate,
                     format,
                     channels,
+                    append,
+                    base_frames,
                 } => {
                     og.set_out_channels(channels as usize);
                     if let Some(state) = self.recorders.get_mut(&out.id) {
@@ -1110,6 +1112,8 @@ impl ActivePipeline {
                         sample_rate,
                         format,
                         channels,
+                        append,
+                        base_frames,
                         og,
                         app.clone(),
                     )?;

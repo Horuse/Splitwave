@@ -256,6 +256,21 @@ impl RecordingFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RecordingMode {
+    New,
+    Overwrite,
+    Append,
+}
+
+impl Default for RecordingMode {
+    fn default() -> Self {
+        RecordingMode::New
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -264,9 +279,11 @@ pub struct FileRecordingData {
     #[serde(default)]
     pub format: RecordingFormat,
     #[serde(default)]
-    pub allow_overwrite: bool,
+    pub mode: RecordingMode,
     #[serde(default = "default_two")]
     pub channels: u16,
+    #[serde(default)]
+    pub waveform_hidden: bool,
 }
 
 fn default_two() -> u16 {
@@ -559,6 +576,7 @@ pub enum OutputSpec {
         file_path: String,
         format: RecordingFormat,
         channels: u16,
+        mode: RecordingMode,
     },
     NetSender {
         node_id: String,
@@ -980,8 +998,24 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                 if !parent.exists() {
                     return Err(choose_file_err(&n.id, "directory does not exist"));
                 }
-                if !data.allow_overwrite && path.exists() {
-                    return Err(choose_file_err(&n.id, "file already exists"));
+                match data.mode {
+                    RecordingMode::New => {
+                        if path.exists() {
+                            return Err(choose_file_err(&n.id, "file already exists"));
+                        }
+                    }
+                    RecordingMode::Overwrite => {}
+                    RecordingMode::Append => {
+                        if !matches!(
+                            data.format,
+                            RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. }
+                        ) {
+                            return Err(AppError::Validation(format!(
+                                "append recording is only supported for WAV/AIFF (node {})",
+                                n.id
+                            )));
+                        }
+                    }
                 }
                 let max = data.format.max_channels();
                 if data.channels == 0 || data.channels > max {
@@ -994,6 +1028,7 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                     file_path,
                     format: data.format,
                     channels: data.channels,
+                    mode: data.mode,
                 }
             }
             NodeKind::NetSender => {

@@ -6,6 +6,7 @@ use pw::spa;
 use pw::spa::param::audio::{AudioFormat, AudioInfoRaw};
 use pw::spa::pod::Pod;
 
+use crate::audio::pipeline::RtThread;
 use crate::error::{AppError, AppResult};
 
 struct Terminate;
@@ -68,6 +69,8 @@ fn spawn(
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
     let thread = std::thread::spawn(move || {
+        // Drain the PipeWire stream on a real-time thread so delivery keeps up.
+        let _rt = RtThread::promote("capture", 48_000);
         if let Err(e) = run(receiver, target, capture_sink, callback) {
             tracing::error!("pipewire capture: {e:?}");
         }

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -7,7 +7,6 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
 
 use crate::audio::clock::ClockSource;
-use crate::audio::health;
 use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
@@ -64,28 +63,6 @@ pub(super) fn dsp_worker(graph: OutputGraph) -> (DspWorker, WorkerCtrl) {
     )
 }
 
-/// How a worker decides when to produce the next block.
-///
-/// `Clock` ticks on a steady wall-clock cadence -- right for Speaker outputs
-/// where the device clock pulls audio in real time and a missed block becomes
-/// audible silence.
-///
-/// `OnAvailability` waits until every source has enough buffered input for a
-/// full output block (with a short timeout so a stalled source eventually
-/// proceeds with zero-fill rather than hanging the recording). Right for File
-/// outputs where bursty sources like ScreenCaptureKit drift against any
-/// wall-clock cadence -- waiting for data eliminates the mid-recording dropouts
-/// that come from draining a half-empty ring.
-pub(super) enum WorkerPacing {
-    Clock(Box<dyn ClockSource>),
-    OnAvailability,
-}
-
-/// Cap on how long an availability-paced worker waits for slow sources before
-/// proceeding with whatever it has (zero-fill for the missing samples).
-const AVAILABILITY_MAX_WAIT: Duration = Duration::from_millis(200);
-const AVAILABILITY_POLL: Duration = Duration::from_millis(2);
-
 impl DspWorker {
     /// Drain any graph swaps queued by main. RT-safe -- alloc-free pop +
     /// alloc-free push of the displaced graph back to main.
@@ -97,8 +74,16 @@ impl DspWorker {
         }
     }
 
-    pub(super) fn run<F>(mut self, stop: Arc<AtomicBool>, mut pacing: WorkerPacing, mut sink: F)
-    where
+    /// All workers ride the transport clock: produce a block each wall-clock
+    /// period. Speaker is device-paced; recording/monitoring share the same
+    /// cadence so a file source (which decodes faster than real time) can't
+    /// over-run a sink. A missed deadline becomes silence, never a rate error.
+    pub(super) fn run<F>(
+        mut self,
+        stop: Arc<AtomicBool>,
+        mut clock: Box<dyn ClockSource>,
+        mut sink: F,
+    ) where
         F: FnMut(&[f32]) -> AppResult<()>,
     {
         thread::sleep(DSP_PREROLL);
@@ -106,10 +91,7 @@ impl DspWorker {
 
         loop {
             self.drain_swaps();
-            let proceed = match &mut pacing {
-                WorkerPacing::Clock(clock) => clock.wait_for_tick(&stop),
-                WorkerPacing::OnAvailability => self.wait_until_ready(&stop),
-            };
+            let proceed = clock.wait_for_tick(&stop);
             if !proceed {
                 break;
             }
@@ -119,27 +101,6 @@ impl DspWorker {
                 warn!(error = %e, "DSP worker sink failed; stopping");
                 break;
             }
-        }
-    }
-
-    /// Poll the graph's source readiness with a brief sleep between checks.
-    /// Drains graph swaps inside the wait too -- a swap can change which
-    /// sources we need to wait on, so we can't ignore them while idle.
-    fn wait_until_ready(&mut self, stop: &AtomicBool) -> bool {
-        let started = std::time::Instant::now();
-        loop {
-            self.drain_swaps();
-            if stop.load(Ordering::SeqCst) {
-                return false;
-            }
-            if self.graph.all_sources_ready() {
-                return true;
-            }
-            if started.elapsed() >= AVAILABILITY_MAX_WAIT {
-                health::bump(&health::AVAILABILITY_TIMEOUTS, 1);
-                return true;
-            }
-            thread::sleep(AVAILABILITY_POLL);
         }
     }
 }

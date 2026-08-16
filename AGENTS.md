@@ -52,11 +52,11 @@ Without these, one chunk takes ~16 ms and the worker stalls.
 
 ## DspWorker pacing
 
-- `Clock` — speaker outputs. Sleeps to a per-block deadline; misses produce
-  audible silence.
-- `OnAvailability` — file output. Waits until all sources have one block
-  buffered (with a stall timeout). Avoids draining half-empty rings on
-  bursty SCK delivery.
+- `Clock` — the single transport cadence for every worker (speaker,
+  monitoring, wire sender, recording). Sleeps to a per-block deadline; a
+  missed deadline produces silence, never a rate error. Recording must follow
+  the wall clock, not the source — a file source decodes faster than real time
+  and would otherwise over-run the encoder.
 - Stall: per-source `last_pop_at`; >150 ms silence → zero-fill and proceed.
 
 ## Layout

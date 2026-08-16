@@ -20,7 +20,7 @@ use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
-use super::worker::{dsp_worker, WorkerCtrl, WorkerPacing};
+use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -40,15 +40,21 @@ pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
 
-// Ring length in frames; multiplied by the device channel count at open so the
-// buffered span stays ~340 ms @ 48 kHz at any channel count, absorbing cpal /
-// scheduler jitter and output-clock drift.
-pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 16_384;
+// Ring length in frames; multiplied by the device channel count at open. ~1 s
+// @ 48 kHz so the adaptive fill target (which follows the device's own buffer
+// size) has room to grow on setups that hand out large playback buffers
+// (~250 ms on some Linux/PipeWire sessions) while a healthy device still only
+// buffers a few blocks.
+pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 48_000;
 
-// Ring headroom the fill clock paces the worker towards: enough to absorb a
-// DSP-side spike without the device clock -- not the wall clock -- ever
-// seeing an empty ring. 3 blocks = 64 ms @ 48 kHz / DSP_BLOCK_FRAMES.
+// Floor for the adaptive fill target: enough to absorb a DSP-side spike
+// without the device clock -- not the wall clock -- ever seeing an empty ring.
+// 3 blocks = 64 ms @ 48 kHz / DSP_BLOCK_FRAMES.
 pub(super) const SPEAKER_TARGET_FILL_BLOCKS: usize = 3;
+
+// Extra frames held beyond the device's own callback buffer so the ring never
+// sits exactly empty when the next callback lands.
+const SPEAKER_TARGET_MARGIN_BLOCKS: usize = 2;
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
@@ -139,14 +145,23 @@ pub(super) struct SpeakerIo {
     pub read: Arc<AtomicU64>,
     /// Number of `fill` invocations.
     pub callbacks: Arc<AtomicU64>,
+    /// Adaptive fill target in frames, sized to the device's own buffer by the
+    /// callback. The worker's clock steers to it; the UI reads it back as the
+    /// current output latency.
+    pub target_frames: Arc<AtomicI64>,
+    /// Lookahead delay compensation has aligned the graph to (frames) -- the
+    /// deepest cumulative effect latency on the path to this output.
+    pub graph_latency_frames: usize,
 }
 
 impl SpeakerIo {
-    fn new() -> Self {
+    fn new(target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
         Self {
             requested: Arc::new(AtomicU64::new(0)),
             read: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
+            target_frames,
+            graph_latency_frames,
         }
     }
 }
@@ -174,13 +189,16 @@ impl Drop for StreamGuard {
     }
 }
 
-// Builds the speaker ring plus the cpal-side `fill` closure and a fill-level
-// handle shared with the worker's sink -- one ring shape for all platforms.
+// Builds the speaker ring plus the cpal-side `fill` closure, a fill-level
+// handle shared with the worker's sink, and the adaptive fill target the
+// worker's clock steers toward -- one ring shape for all platforms.
 pub(super) fn speaker_ring(
     out_channels: usize,
+    graph_latency_frames: usize,
 ) -> (
     Producer<f32>,
     impl FnMut(&mut [f32], usize) + Send + 'static,
+    Arc<AtomicI64>,
     Arc<AtomicI64>,
     SpeakerIo,
 ) {
@@ -188,25 +206,44 @@ pub(super) fn speaker_ring(
         RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
-    let io = SpeakerIo::new();
+    let target = Arc::new(AtomicI64::new(
+        (SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES) as i64,
+    ));
+    let target_cb = target.clone();
+    let io = SpeakerIo::new(target.clone(), graph_latency_frames);
     let io_cb = io.clone();
     let fill = move |out: &mut [f32], _frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);
         level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
+        // Size the fill target to the device's own callback buffer so the ring
+        // always bridges one full callback. A healthy device asks for a few
+        // blocks and the floor holds; a large-buffer device (PipeWire handing
+        // out ~250 ms buffers) grows the target and runs at that latency instead
+        // of underrunning at a fraction of real time.
+        let min = SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES;
+        let margin = SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES;
+        let dev_frames = out.len() / out_channels;
+        let max = SPEAKER_RING_CAPACITY_FRAMES
+            .saturating_sub(dev_frames + margin)
+            .max(min);
+        target_cb.store(
+            (dev_frames + margin).clamp(min, max) as i64,
+            Ordering::Relaxed,
+        );
         io_cb
             .requested
             .fetch_add(out.len() as u64, Ordering::Relaxed);
         io_cb.read.fetch_add(read as u64, Ordering::Relaxed);
         io_cb.callbacks.fetch_add(1, Ordering::Relaxed);
     };
-    (producer, fill, level, io)
+    (producer, fill, level, target, io)
 }
 
 // Held for the worker's lifetime: dropping the handle restores normal scheduling.
-struct RtThread(Option<RtPriorityHandle>);
+pub(crate) struct RtThread(Option<RtPriorityHandle>);
 
 impl RtThread {
-    fn promote(worker: &'static str, sample_rate: u32) -> Self {
+    pub(crate) fn promote(worker: &'static str, sample_rate: u32) -> Self {
         match promote_current_thread_to_real_time(DSP_BLOCK_FRAMES as u32, sample_rate) {
             Ok(handle) => {
                 info!(worker, "worker thread promoted to real-time");
@@ -236,6 +273,7 @@ impl Drop for RtThread {
 pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     level: Arc<AtomicI64>,
+    target: Arc<AtomicI64>,
     sample_rate: u32,
     channels: usize,
     graph: OutputGraph,
@@ -244,19 +282,17 @@ pub(super) fn spawn_speaker_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
-    let target_frames = SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES;
     let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
         sample_rate,
         DSP_BLOCK_FRAMES,
-        target_frames,
         level.clone(),
+        target,
     ));
-    let pacing = WorkerPacing::Clock(clock);
     let join = thread::Builder::new()
         .name(format!("speaker:{sample_rate}"))
         .spawn(move || {
             let _rt = RtThread::promote("speaker", sample_rate);
-            worker.run(stop_thread, pacing, |block| {
+            worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let written = streams::bulk_push_counted(
                     &mut producer,
@@ -288,12 +324,11 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     let sample_rate = graph.sample_rate();
     let ticker = SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES);
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("monitor".into())
         .spawn(move || {
             let _rt = RtThread::promote("monitor", sample_rate);
-            worker.run(stop_thread, pacing, |_block| Ok(()));
+            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn monitor worker: {e}")))?;
     Ok((
@@ -319,12 +354,11 @@ pub(super) fn start_wire_sender_worker(
     let sample_rate = graph.sample_rate();
     let ticker = SystemClockTicker::with_catchup(sample_rate, DSP_BLOCK_FRAMES, 8);
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::Clock(Box::new(ticker));
     let join = thread::Builder::new()
         .name("netsender".into())
         .spawn(move || {
             let _rt = RtThread::promote("netsender", sample_rate);
-            worker.run(stop_thread, pacing, |_block| Ok(()));
+            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
         })
         .map_err(|e| AppError::Stream(format!("spawn net sender worker: {e}")))?;
     Ok((
@@ -348,9 +382,13 @@ pub(super) fn start_recorder_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
-    let pacing = WorkerPacing::OnAvailability;
+    // Transport-paced: recording must follow the wall clock, not the source.
+    // A file source decodes faster than real time; availability pacing would
+    // drain it as fast as it arrives and over-run (a 1 s clip becomes 1:22).
+    let clock: Box<dyn ClockSource> =
+        Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
 
-    // No real-time promotion: this worker is availability-paced and blocks on encoder file I/O.
+    // No real-time promotion: this worker blocks on encoder file I/O.
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
@@ -383,7 +421,7 @@ pub(super) fn start_recorder_worker(
             let mut frames_written: u64 = 0;
             let mut encoder = encoder;
 
-            worker.run(stop_thread, pacing, |block| {
+            worker.run(stop_thread, clock, |block| {
                 encoder.write_interleaved(block)?;
                 frames_written += (block.len() / channels as usize) as u64;
 

@@ -101,8 +101,11 @@ const FILL_CLOCK_MAX_SLEEP: Duration = Duration::from_millis(5);
 pub struct DeviceFillClock {
     sample_rate: u32,
     block_frames: usize,
-    target_frames: usize,
     level: Arc<AtomicI64>,
+    /// Fill target, sized to the device's own buffer by the audio callback
+    /// (see `speaker_ring`). Read here every tick so the ring always bridges
+    /// one full callback whatever buffer the device negotiated.
+    target: Arc<AtomicI64>,
     /// The ring has reached its target at least once. Until then the empty
     /// ring is the startup prefill, not a worker that fell behind.
     primed: bool,
@@ -112,14 +115,14 @@ impl DeviceFillClock {
     pub fn new(
         sample_rate: u32,
         block_frames: usize,
-        target_frames: usize,
         level: Arc<AtomicI64>,
+        target: Arc<AtomicI64>,
     ) -> Self {
         Self {
             sample_rate,
             block_frames,
-            target_frames,
             level,
+            target,
             primed: false,
         }
     }
@@ -131,8 +134,9 @@ impl ClockSource for DeviceFillClock {
             if stop.load(Ordering::SeqCst) {
                 return false;
             }
+            let target_frames = self.target.load(Ordering::Relaxed).max(0) as usize;
             let queued = self.level.load(Ordering::Relaxed).max(0) as usize;
-            if queued + self.block_frames <= self.target_frames {
+            if queued + self.block_frames <= target_frames {
                 // Less than one block of headroom left in the ring -- the
                 // worker isn't staying ahead of the device.
                 if self.primed && queued < self.block_frames {
@@ -141,7 +145,7 @@ impl ClockSource for DeviceFillClock {
                 return true;
             }
             self.primed = true;
-            let overshoot = queued + self.block_frames - self.target_frames;
+            let overshoot = queued + self.block_frames - target_frames;
             let drain = Duration::from_nanos(
                 (overshoot as u64 * 1_000_000_000) / self.sample_rate.max(1) as u64,
             );

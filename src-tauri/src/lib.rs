@@ -237,6 +237,7 @@ pub fn run() {
             commands::check_capture_permission,
             commands::path_exists,
             commands::is_pipeline_running,
+            commands::output_latency_ms,
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::reconcile_pipeline,

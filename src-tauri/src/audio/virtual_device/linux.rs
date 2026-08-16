@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::process::Command;
 
+use pipewire as pw;
 use tauri::AppHandle;
 
 use crate::audio::pw_enum::nodes_by_class;
@@ -19,8 +19,8 @@ fn conf_path() -> Option<PathBuf> {
 }
 
 // node.name is the stable handle, node.description is the label shown in
-// system settings. Quotes would break both the .conf and the pw-cli props, so
-// drop them from the label.
+// system settings. Quotes would break both the .conf and the created node
+// props, so drop them from the label.
 fn clean_label(name: &str) -> String {
     name.replace(['"', '\''], "")
 }
@@ -37,13 +37,9 @@ fn positions(channels: u32) -> String {
 }
 
 pub fn status() -> VirtualDriverStatus {
-    // Native PipeWire (no PulseAudio/pactl dependency). Success means a session
-    // is reachable, which is all we need to create null-sinks.
-    let ok = Command::new("pw-cli")
-        .args(["info", "0"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    // Native PipeWire (no subprocess): a reachable session is all we need to
+    // create null-sinks.
+    let ok = nodes_by_class("Audio/Sink").is_ok();
     VirtualDriverStatus {
         installed: ok,
         installed_version: None,
@@ -112,25 +108,57 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
     out
 }
 
+// Connect a short-lived PipeWire session, apply `f`, and wait one round-trip so
+// the server-side change is registered before we disconnect.
+fn with_session(
+    f: impl FnOnce(&pw::core::CoreRc, &pw::main_loop::MainLoopRc) -> Result<(), String>,
+) -> Result<(), String> {
+    pw::init();
+    let mainloop =
+        pw::main_loop::MainLoopRc::new(None).map_err(|e| format!("pipewire mainloop: {e}"))?;
+    let context = pw::context::ContextRc::new(&mainloop, None)
+        .map_err(|e| format!("pipewire context: {e}"))?;
+    let core = context
+        .connect_rc(None)
+        .map_err(|e| format!("pipewire connect: {e}"))?;
+    let res = f(&core, &mainloop);
+    mainloop.quit();
+    res
+}
+
+fn roundtrip(core: &pw::core::CoreRc, mainloop: &pw::main_loop::MainLoopRc) -> Result<(), String> {
+    let pending = core.sync(0).map_err(|e| format!("pipewire sync: {e}"))?;
+    let ml = mainloop.clone();
+    let _l = core
+        .add_listener_local()
+        .done(move |id, seq| {
+            if id == 0 && seq == pending {
+                ml.quit();
+            }
+        })
+        .register();
+    mainloop.run();
+    Ok(())
+}
+
 // Create the sink in the running session so it shows up immediately. The .conf
 // only takes effect on the next PipeWire start; object.linger keeps the node
-// alive after pw-cli disconnects.
+// alive after we disconnect.
 fn create_runtime_sink(id: &str, label: &str, channels: u32) -> Result<(), String> {
-    let props = format!(
-        "{{ factory.name=support.null-audio-sink node.name={NODE_PREFIX}.{id} node.description=\"{label}\" media.class=Audio/Sink audio.position=[ {} ] object.linger=true }}",
-        positions(channels)
-    );
-    let out = Command::new("pw-cli")
-        .args(["create-node", "adapter", props.as_str()])
-        .output()
-        .map_err(|e| format!("pw-cli create-node: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "pw-cli create-node failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
+    with_session(|core, mainloop| {
+        let mut props = pw::properties::properties! {
+            *pw::keys::FACTORY_NAME => "support.null-audio-sink",
+            *pw::keys::MEDIA_CLASS => "Audio/Sink",
+            "object.linger" => "1",
+        };
+        props.insert(*pw::keys::NODE_NAME, format!("{NODE_PREFIX}.{id}"));
+        props.insert(*pw::keys::NODE_DESCRIPTION, label.to_string());
+        props.insert("audio.position", positions(channels));
+        let _node: pw::node::Node = core
+            .create_object("adapter", &props)
+            .map_err(|e| format!("create null sink: {e}"))?;
+        roundtrip(core, mainloop)
+    })
 }
 
 fn unload_runtime_sinks() {
@@ -138,12 +166,24 @@ fn unload_runtime_sinks() {
     let Ok(nodes) = nodes_by_class("Audio/Sink") else {
         return;
     };
-    for n in nodes {
-        if n.name.starts_with(&prefix) {
-            let id = n.id.to_string();
-            let _ = Command::new("pw-cli")
-                .args(["destroy", id.as_str()])
-                .status();
-        }
+    let mine: Vec<u32> = nodes
+        .iter()
+        .filter(|n| n.name.starts_with(&prefix))
+        .map(|n| n.id)
+        .collect();
+    if mine.is_empty() {
+        return;
     }
+    let _ = with_session(|core, mainloop| {
+        let registry = core
+            .get_registry()
+            .map_err(|e| format!("pipewire registry: {e}"))?;
+        for id in mine {
+            registry
+                .destroy_global(id)
+                .into_result()
+                .map_err(|e| format!("destroy sink {id}: {e:?}"))?;
+        }
+        roundtrip(core, mainloop)
+    });
 }

@@ -111,10 +111,12 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
     let mut level_holder: Option<Arc<AtomicI64>> = None;
+    let mut target_holder: Option<Arc<AtomicI64>> = None;
     let mut io_holder: Option<SpeakerIo> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, fill, level, io) = speaker_ring(spec.out_channels);
+        let (producer, fill, level, target, io) =
+            speaker_ring(spec.out_channels, graph.latency_frames());
         let app_err = app.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
@@ -135,6 +137,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             Ok(s) => {
                 producer_holder = Some(producer);
                 level_holder = Some(level);
+                target_holder = Some(target);
                 io_holder = Some(io);
                 stream_holder = Some(s);
                 break;
@@ -152,12 +155,14 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     }
     let producer = producer_holder.expect("loop sets producer on success or returns Err");
     let level = level_holder.expect("loop sets level on success or returns Err");
+    let target = target_holder.expect("loop sets target on success or returns Err");
     let io = io_holder.expect("loop sets io on success or returns Err");
     let stream = stream_holder.expect("loop sets stream on success or returns Err");
 
     let (worker_handle, ctrl) = spawn_speaker_worker(
         producer,
         level,
+        target,
         spec.sample_rate,
         spec.out_channels,
         graph,

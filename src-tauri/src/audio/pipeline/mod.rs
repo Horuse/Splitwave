@@ -36,6 +36,8 @@ mod meter;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native;
 mod output;
+#[cfg(target_os = "linux")]
+pub(crate) use output::RtThread;
 mod sig;
 mod worker;
 
@@ -270,6 +272,38 @@ impl ActivePipeline {
         if let Some(state) = self.inputs.get(node_id) {
             state.volume.store(scalar.to_bits(), Ordering::Relaxed);
         }
+    }
+
+    /// Deepest speaker output latency in milliseconds, end to end: the input
+    /// side's deepest source ring backlog, the graph's own lookahead (delay
+    /// compensation aligned every path to it), and the adaptive output ring
+    /// buffer. The ring tracks the device's buffer, so a large-buffer device
+    /// runs at a higher (reported) latency than a low-latency one. Zero when
+    /// idle.
+    pub fn output_latency_ms(&self) -> u32 {
+        self.speakers
+            .iter()
+            .map(|(id, s)| {
+                let sr = s.sample_rate.max(1) as u64;
+                let buffered = s.io.target_frames.load(Ordering::Relaxed).max(0) as u64;
+                let out_ms = (buffered + s.io.graph_latency_frames as u64) * 1000 / sr;
+                // Parallel inputs don't sum: the worst source is the path that
+                // dominates the delay to this output.
+                let in_ms = self
+                    .source_stats
+                    .iter()
+                    .filter(|m| m.output_id == *id)
+                    .map(|m| {
+                        let frames =
+                            m.stats.level.load(Ordering::Relaxed) / m.channels.max(1) as u64;
+                        frames * 1000 / m.native_sr.max(1) as u64
+                    })
+                    .max()
+                    .unwrap_or(0);
+                (out_ms + in_ms) as u32
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     fn teardown(&mut self) {

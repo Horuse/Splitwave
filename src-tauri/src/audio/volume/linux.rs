@@ -1,125 +1,168 @@
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use libpulse_binding::callbacks::ListResult;
+use libpulse_binding::context::introspect::Introspector;
+use libpulse_binding::context::subscribe::{Facility, InterestMaskSet};
+use libpulse_binding::context::{Context, FlagSet, State};
+use libpulse_binding::mainloop::threaded::Mainloop;
+use libpulse_binding::operation;
+use libpulse_binding::volume::{ChannelVolumes, Volume, VolumeDB, VolumeLinear};
+
 use super::{DeviceVolume, Notify, MUTED_DB};
 use crate::audio::device::DeviceKind;
-use crate::audio::pw_enum;
 
-// wpctl takes @DEFAULT_*@ or a numeric node id. Default routes use the alias;
-// named devices resolve through the registry to their current node id.
-fn target(kind: DeviceKind, name: &str) -> Option<String> {
-    match name {
-        "default" | "pipewire" | "sysdefault" => Some(
-            match kind {
-                DeviceKind::Input => "@DEFAULT_AUDIO_SOURCE@",
-                DeviceKind::Output => "@DEFAULT_AUDIO_SINK@",
-            }
-            .to_string(),
-        ),
-        _ => resolve_id(kind, name).map(|id| id.to_string()),
-    }
+const APP: &str = "splitwave";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Runs a one-shot PulseAudio operation on its own connection. Each call makes
+/// a fresh connection, which is cheap and keeps reads/ writes independent of the
+/// long-lived watch connection.
+fn with_connection<T>(f: impl FnOnce(&mut Context) -> T) -> Option<T> {
+    let mut mainloop = Mainloop::new()?;
+    let mut context = Context::new(&mainloop, APP)?;
+    context.connect(None, FlagSet::NOFLAGS, None).ok()?;
+    mainloop.start().ok()?;
+    let ready = wait_ready(&context);
+    let out = ready.then(|| f(&mut context));
+    context.disconnect();
+    mainloop.stop();
+    out
 }
 
-// pipewire-pulse mirrors a sink/source's node id as its pulse index, so a
-// resolved id addresses both `wpctl` and `pactl`. Cache it: every volume change
-// re-resolves, and a registry snapshot is a full pipewire round-trip.
-const ID_TTL: Duration = Duration::from_secs(2);
-
-fn resolve_id(kind: DeviceKind, name: &str) -> Option<u32> {
-    let mut cache = id_cache().lock().expect("volume id cache poisoned");
-    let key = (kind, name.to_string());
-    if let Some(&(id, at)) = cache.get(&key) {
-        if at.elapsed() < ID_TTL {
-            return Some(id);
+fn wait_ready(context: &Context) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < CONNECT_TIMEOUT {
+        match context.get_state() {
+            State::Ready => return true,
+            State::Failed | State::Terminated => return false,
+            _ => thread::sleep(Duration::from_millis(5)),
         }
     }
-    let class = match kind {
-        DeviceKind::Input => "Audio/Source",
-        DeviceKind::Output => "Audio/Sink",
-    };
-    let nodes = pw_enum::nodes_by_class(class).ok()?;
-    let id = nodes.into_iter().find(|n| n.name == name)?.id;
-    cache.insert(key, (id, Instant::now()));
-    Some(id)
+    false
 }
 
-fn id_cache() -> &'static Mutex<HashMap<(DeviceKind, String), (u32, Instant)>> {
-    static CACHE: OnceLock<Mutex<HashMap<(DeviceKind, String), (u32, Instant)>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn wait_done<C: ?Sized>(op: &operation::Operation<C>) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < CONNECT_TIMEOUT {
+        if op.get_state() == operation::State::Done {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    false
+}
+
+fn device_volume_from(volume: &ChannelVolumes, mute: bool) -> DeviceVolume {
+    let avg: Volume = volume.avg();
+    if mute {
+        return DeviceVolume {
+            scalar: 0.0,
+            db: Some(MUTED_DB),
+        };
+    }
+    let lin: VolumeLinear = avg.into();
+    let db: VolumeDB = avg.into();
+    DeviceVolume {
+        // PulseAudio's linear volume is the device volume cubed; undo that so
+        // the scalar matches what PipeWire reports (0..1 device volume).
+        scalar: lin.0.cbrt().clamp(0.0, 1.0) as f32,
+        db: Some(db.0 as f32).filter(|db| db.is_finite()),
+    }
+}
+
+// "default"/"pipewire"/"sysdefault" are route aliases, not PulseAudio sink
+// names; resolve them to the server's actual default sink/source name.
+fn resolve_device(intro: &Introspector, kind: DeviceKind, name: &str) -> Option<String> {
+    match name {
+        "default" | "pipewire" | "sysdefault" => {
+            let out = Arc::new(Mutex::new(None));
+            let out_cb = out.clone();
+            let op = intro.get_server_info(move |info| {
+                let n = match kind {
+                    DeviceKind::Output => info.default_sink_name.clone(),
+                    DeviceKind::Input => info.default_source_name.clone(),
+                };
+                *out_cb.lock().unwrap() = n.map(|c| c.into_owned());
+            });
+            let _ = wait_done(&op);
+            let result = out.lock().unwrap().take();
+            result
+        }
+        _ => Some(name.to_string()),
+    }
 }
 
 pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
-    let id = target(kind, name)?;
-    let out = Command::new("wpctl")
-        .args(["get-volume", &id])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    if s.contains("[MUTED]") {
-        return Some(DeviceVolume {
-            scalar: 0.0,
-            db: Some(MUTED_DB),
-        });
-    }
-    let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(DeviceVolume {
-        scalar: v.clamp(0.0, 1.0),
-        db: volume_db(kind, name),
-    })
-}
-
-// `pactl get-sink-volume` accepts a pulse index or a sink name; pipewire-pulse
-// mirrors the node id as the pulse index, but some setups only match by name.
-// Try the resolved id first, then fall back to the node name.
-fn volume_db(kind: DeviceKind, name: &str) -> Option<f32> {
-    let subcommand = match kind {
-        DeviceKind::Input => "get-source-volume",
-        DeviceKind::Output => "get-sink-volume",
-    };
-    let candidates: Vec<String> = match name {
-        "default" | "pipewire" | "sysdefault" => vec![match kind {
-            DeviceKind::Input => "@DEFAULT_SOURCE@",
-            DeviceKind::Output => "@DEFAULT_SINK@",
-        }
-        .to_string()],
-        _ => {
-            let mut v = Vec::new();
-            if let Some(id) = resolve_id(kind, name) {
-                v.push(id.to_string());
+    let out = Arc::new(Mutex::new(None));
+    let out_cb = out.clone();
+    with_connection(move |context| {
+        let intro = context.introspect();
+        let real = resolve_device(&intro, kind, name);
+        if let Some(real) = real {
+            match kind {
+                DeviceKind::Output => {
+                    let op = intro.get_sink_info_by_name(&real, move |res| {
+                        if let ListResult::Item(info) = res {
+                            *out_cb.lock().unwrap() =
+                                Some(device_volume_from(&info.volume, info.mute));
+                        }
+                    });
+                    let _ = wait_done(&op);
+                }
+                DeviceKind::Input => {
+                    let op = intro.get_source_info_by_name(&real, move |res| {
+                        if let ListResult::Item(info) = res {
+                            *out_cb.lock().unwrap() =
+                                Some(device_volume_from(&info.volume, info.mute));
+                        }
+                    });
+                    let _ = wait_done(&op);
+                }
             }
-            v.push(name.to_string());
-            v
         }
-    };
-    for arg in candidates {
-        let out = Command::new("pactl")
-            .args([subcommand, &arg])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            continue;
-        }
-        if let Some(db) = parse_db(&String::from_utf8_lossy(&out.stdout)) {
-            return Some(db);
-        }
-    }
-    None
+    })?;
+    let result = out.lock().unwrap().take();
+    result
 }
 
-// A single poller serves every watcher; it wakes the shared dispatcher, which
-// re-reads the device and drops unchanged values, so waking on every tick is
-// harmless. Polling (rather than `pactl subscribe`) keeps the watch working on
-// any PipeWire install — pulse compatibility is optional, and a subscribe that
-// spawns but never emits would otherwise leave the slider stale.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
+    let mute = scalar <= 0.0;
+    let mut volumes = ChannelVolumes::default();
+    if !mute {
+        let s = scalar.clamp(0.0, 1.0);
+        // Inverse of the read-side cbrt: request the device volume `s`.
+        let v: Volume = VolumeLinear((s * s * s) as f64).into();
+        volumes.set(ChannelVolumes::CHANNELS_MAX, v);
+    }
+    with_connection(move |context| {
+        let mut intro = context.introspect();
+        let Some(real) = resolve_device(&intro, kind, name) else {
+            return false;
+        };
+        let (set_vol, set_mute) = match kind {
+            DeviceKind::Output => (
+                intro.set_sink_volume_by_name(&real, &volumes, None),
+                intro.set_sink_mute_by_name(&real, mute, None),
+            ),
+            DeviceKind::Input => (
+                intro.set_source_volume_by_name(&real, &volumes, None),
+                intro.set_source_mute_by_name(&real, mute, None),
+            ),
+        };
+        let vol_ok = wait_done(&set_vol);
+        let mute_ok = wait_done(&set_mute);
+        vol_ok && mute_ok
+    })
+    .unwrap_or(false)
+}
 
+// A single PulseAudio connection serves every watcher. `subscribe` reports which
+// facility changed, so any sink change wakes all output watchers; the shared
+// dispatcher re-reads and drops unchanged values.
 struct Watchers {
     next_id: u64,
     list: HashMap<u64, (DeviceKind, Notify)>,
@@ -155,10 +198,11 @@ impl Drop for Watch {
 }
 
 pub fn watch_device(kind: DeviceKind, name: &str, notify: Notify) -> Option<Watch> {
-    target(kind, name)?;
+    // Validate the device resolves through PulseAudio before watching it.
+    device_volume(kind, name)?;
     let mut w = watchers().lock().expect("volume watch registry poisoned");
     if w.stop.is_none() {
-        w.stop = Some(spawn_poller()?);
+        w.stop = Some(spawn_watcher()?);
     }
     let id = w.next_id;
     w.next_id += 1;
@@ -166,77 +210,55 @@ pub fn watch_device(kind: DeviceKind, name: &str, notify: Notify) -> Option<Watc
     Some(Watch { id })
 }
 
-fn spawn_poller() -> Option<Arc<AtomicBool>> {
+fn spawn_watcher() -> Option<Arc<AtomicBool>> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     thread::Builder::new()
-        .name("volume-watch-poll".into())
+        .name("pulse-subscribe".into())
         .spawn(move || {
-            while !flag.load(Ordering::Relaxed) {
-                let notifies: Vec<Notify> = {
-                    let w = watchers().lock().expect("volume watch registry poisoned");
-                    w.list.values().map(|(_, notify)| notify.clone()).collect()
-                };
-                for notify in notifies {
-                    notify();
-                }
-                thread::sleep(POLL_INTERVAL);
+            let Some(mut mainloop) = Mainloop::new() else {
+                return;
+            };
+            let mut context = match Context::new(&mainloop, APP) {
+                Some(c) => c,
+                None => return,
+            };
+            if context.connect(None, FlagSet::NOFLAGS, None).is_err() {
+                return;
             }
+            if mainloop.start().is_err() {
+                return;
+            }
+            if !wait_ready(&context) {
+                context.disconnect();
+                mainloop.stop();
+                return;
+            }
+            context.set_subscribe_callback(Some(Box::new(|facility, _op, _index| {
+                let kind = match facility {
+                    Some(Facility::Sink) => Some(DeviceKind::Output),
+                    Some(Facility::Source) => Some(DeviceKind::Input),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    let w = watchers().lock().expect("volume watch registry poisoned");
+                    for (_, (watched, notify)) in w.list.iter() {
+                        if *watched == kind {
+                            notify();
+                        }
+                    }
+                }
+            })));
+            let _ = context.subscribe(
+                InterestMaskSet::SINK | InterestMaskSet::SOURCE,
+                |_ok: bool| {},
+            );
+            while !flag.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(50));
+            }
+            context.disconnect();
+            mainloop.stop();
         })
         .ok()?;
     Some(stop)
-}
-
-// "front-left: 32768 /  50% / -18.06 dB, front-right: ..." — first channel wins.
-fn parse_db(output: &str) -> Option<f32> {
-    let tokens: Vec<&str> = output.split_whitespace().collect();
-    let idx = tokens
-        .iter()
-        .position(|t| t.trim_end_matches(',') == "dB")?;
-    tokens.get(idx.checked_sub(1)?)?.parse().ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_db;
-
-    #[test]
-    fn reads_the_first_channel_decibels() {
-        let out = "Volume: front-left: 32768 /  50% / -18.06 dB,   front-right: 32768 /  50% / -18.06 dB\n        balance 0.00\n";
-        assert_eq!(parse_db(out), Some(-18.06));
-    }
-
-    #[test]
-    fn reads_mono_and_zero_decibels() {
-        assert_eq!(
-            parse_db("Volume: mono: 65536 / 100% / 0.00 dB\n"),
-            Some(0.0)
-        );
-    }
-
-    #[test]
-    fn rejects_output_without_decibels() {
-        assert_eq!(parse_db("Volume: mono: 65536 / 100%\n"), None);
-    }
-}
-
-pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
-    let Some(id) = target(kind, name) else {
-        return false;
-    };
-    if scalar <= 0.0 {
-        return run(&["set-mute", &id, "1"]);
-    }
-    if !run(&["set-mute", &id, "0"]) {
-        return false;
-    }
-    run(&["set-volume", &id, &format!("{scalar:.4}")])
-}
-
-fn run(args: &[&str]) -> bool {
-    Command::new("wpctl")
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }

@@ -1,10 +1,23 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import toast from 'svelte-french-toast';
+import { save } from '@tauri-apps/plugin-dialog';
 import { methods } from './methods';
 import type { AudioApplication, AudioDevice, StartPipelinePayload } from './types';
 import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
+import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 import { isFromFuture } from '$lib/modules/pipeline/migrations';
-import type { PipelineNode } from '$lib/modules/pipeline/types';
+import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '$lib/modules/pipeline/types';
+
+// Mirrors `extension()` in the File Recording node: the dialog filter must
+// match the encoder the node will actually write.
+function recordingExtension(fmt: RecordingFormat): string {
+	if (fmt.kind === 'flac') return 'flac';
+	if (fmt.kind === 'opus') return 'opus';
+	if (fmt.kind === 'mp3') return 'mp3';
+	if (fmt.kind === 'aac') return 'm4a';
+	if (fmt.kind === 'aiff') return 'aiff';
+	return 'wav';
+}
 
 function pruneDanglingEdgesPayload(payload: StartPipelinePayload): StartPipelinePayload {
 	const ids = new Set(payload.nodes.map((n) => n.id));
@@ -103,11 +116,56 @@ class AudioStore {
 		try {
 			await methods.startPipeline(graph);
 		} catch (e) {
-			if (this.routeStartError(e, pipelineId)) return;
+			if (await this.handleStartError(e, pipelineId, graph)) return;
 			throw e;
 		}
 		this.runningPipelineId = pipelineId;
 		await pipelineMethods.setActivePipelineId(pipelineId).catch(() => {});
+	}
+
+	/** Routes a `choose-file` error. With the editor open its File Recording
+	 * node owns the dialog (and writes the path back into the editor state);
+	 * elsewhere the store opens the dialog and persists the choice itself. */
+	private async handleStartError(e: unknown, pipelineId: string, graph: StartPipelinePayload): Promise<boolean> {
+		const nodeId = this.chooseFileNodeIdFrom(e);
+		if (!nodeId) return false;
+		if (pipelineStore.editorActions) {
+			this.chooseFileNodeId = nodeId;
+			this.pendingRetryPipelineId = pipelineId;
+			return true;
+		}
+		const next = await this.promptRecordingFile(pipelineId, graph, nodeId);
+		if (!next) return true;
+		await this.activatePipeline(pipelineId, next);
+		return true;
+	}
+
+	private chooseFileNodeIdFrom(e: unknown): string | null {
+		const msg = e instanceof Error ? e.message : String(e);
+		const m = /choose-file \(node ([^)]+)\)/.exec(msg);
+		return m ? m[1] : null;
+	}
+
+	/** Opens the save dialog for a recording node and returns the graph with the
+	 * chosen path applied, or `null` when the user cancels. Persists the path so
+	 * a later activation from the list won't prompt again. */
+	private async promptRecordingFile(pipelineId: string, graph: StartPipelinePayload, nodeId: string): Promise<StartPipelinePayload | null> {
+		const node = graph.nodes.find((n) => n.id === nodeId);
+		if (!node) return null;
+		const data = node.data as FileRecordingNodeData;
+		const ext = recordingExtension(data.format);
+		const path = await save({ title: 'Save recording', filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+		if (!path) return null;
+		const patchNode = (n: PipelineNode): PipelineNode => (n.id === nodeId ? { ...n, data: { ...n.data, filePath: path, allowOverwrite: true } } : n);
+		void pipelineMethods
+			.get(pipelineId)
+			.then((p) => {
+				if (!p) return;
+				const nodes = p.nodes.map(patchNode);
+				return pipelineMethods.save({ ...p, nodes, updatedAt: Date.now() });
+			})
+			.catch(() => {});
+		return { nodes: graph.nodes.map(patchNode), edges: graph.edges };
 	}
 
 	/** Explicit user stop: unlike an engine-reported `stopped`/`error` event
@@ -243,12 +301,11 @@ class AudioStore {
 		}
 	}
 
-	private routeStartError(e: unknown, pipelineId?: string): boolean {
-		const msg = e instanceof Error ? e.message : String(e);
-		const m = /choose-file \(node ([^)]+)\)/.exec(msg);
-		if (!m) return false;
-		this.chooseFileNodeId = m[1];
-		this.pendingRetryPipelineId = pipelineId ?? null;
+	private routeStartError(e: unknown): boolean {
+		const nodeId = this.chooseFileNodeIdFrom(e);
+		if (!nodeId) return false;
+		this.chooseFileNodeId = nodeId;
+		this.pendingRetryPipelineId = null;
 		return true;
 	}
 

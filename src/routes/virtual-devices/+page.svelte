@@ -17,42 +17,45 @@
 	const STORE_KEY = 'devices';
 
 	let devices = $state<VirtualDeviceConfig[]>([]);
+	let appliedDevices = $state<VirtualDeviceConfig[]>([]);
 	let status = $state<VirtualDriverStatus | null>(null);
 	let applying = $state(false);
 	let installing = $state(false);
 	let error = $state<string | null>(null);
-	let dirty = $state(false);
 
 	$effect(() => {
 		loadAll();
 	});
 
+	function sameDevices(a: VirtualDeviceConfig[], b: VirtualDeviceConfig[]): boolean {
+		if (a.length !== b.length) return false;
+		return a.every((d, i) => d.id === b[i].id && d.name === b[i].name && (d.channels ?? 2) === (b[i].channels ?? 2));
+	}
+
+	let dirty = $derived(!sameDevices(devices, appliedDevices));
+
 	async function loadAll() {
 		const [s, saved] = await Promise.all([methods.virtualDriverStatus(), store.get<VirtualDeviceConfig[]>(STORE_KEY)]);
 		status = s;
 		devices = saved ?? [];
-		dirty = false;
+		appliedDevices = saved ?? [];
 	}
 
 	function addDevice() {
 		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2 }];
-		dirty = true;
 	}
 
 	function removeDevice(id: string) {
 		devices = devices.filter((d) => d.id !== id);
-		dirty = true;
 	}
 
 	function rename(id: string, name: string) {
 		devices = devices.map((d) => (d.id === id ? { ...d, name } : d));
-		dirty = true;
 	}
 
 	function setChannels(id: string, channels: number) {
 		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 256);
 		devices = devices.map((d) => (d.id === id ? { ...d, channels: clamped } : d));
-		dirty = true;
 	}
 
 	async function apply() {
@@ -62,7 +65,7 @@
 			await store.set(STORE_KEY, devices);
 			await store.save();
 			await methods.applyVirtualDevices(devices);
-			dirty = false;
+			appliedDevices = devices;
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -77,7 +80,7 @@
 			await methods.installVirtualDriver();
 			status = await methods.virtualDriverStatus();
 			// a fresh install has no device config yet; Apply writes it
-			if (devices.length > 0) dirty = true;
+			if (devices.length > 0) appliedDevices = [];
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -114,7 +117,7 @@
 	<div class="mt-2 flex flex-col gap-1">
 		<h1 class="text-2xl font-semibold">Virtual Devices</h1>
 
-		<p class="max-w-2xl text-sm text-neutral-700">
+		<p class="max-w-3xl text-base text-neutral-700">
 			A virtual device is a system audio device that exists only in software — no hardware required. Apps can send audio to it or record from it just like
 			a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and route it to
 			another.
@@ -148,7 +151,7 @@
 		<DriverUpdateBanner
 			onUpdated={(s) => {
 				status = s;
-				if (devices.length > 0) dirty = true;
+				if (devices.length > 0) appliedDevices = [];
 			}} />
 	{/if}
 

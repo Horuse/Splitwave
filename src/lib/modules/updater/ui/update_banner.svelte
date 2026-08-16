@@ -16,6 +16,7 @@
 		if (s.phase === 'available') return 'Update available';
 		if (s.phase === 'downloading') return 'Downloading update';
 		if (s.phase === 'installing') return 'Installing update';
+		if (s.phase === 'unsupported') return 'No build available';
 		return 'Update failed';
 	});
 
@@ -40,7 +41,7 @@
 	}
 </script>
 
-{#if s.phase === 'up_to_date' || s.phase === 'available' || s.phase === 'downloading' || s.phase === 'installing' || s.phase === 'error'}
+{#if s.phase === 'up_to_date' || s.phase === 'available' || s.phase === 'downloading' || s.phase === 'installing' || s.phase === 'unsupported' || s.phase === 'error'}
 	<ModalShell {title} {titleClass} canClose={s.phase !== 'installing'} onClose={dismiss}>
 		{#snippet badge()}
 			{#if s.phase === 'available' || s.phase === 'downloading'}
@@ -95,6 +96,8 @@
 				</div>
 			{:else if s.phase === 'installing'}
 				<p class="text-xs text-neutral-900">Finalizing. The app will restart in a moment.</p>
+			{:else if s.phase === 'unsupported'}
+				<p class="text-xs text-neutral-900">{s.message}</p>
 			{:else if s.phase === 'error'}
 				<p class="mb-3 text-xs text-neutral-900">Couldn't check for updates.</p>
 				<pre
@@ -112,6 +115,8 @@
 			{:else if s.phase === 'error'}
 				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
 				<CopyButton text={s.message} label="Copy error" class="button-main red gap-3 rounded-lg" />
+			{:else if s.phase === 'unsupported'}
+				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> OK </button>
 			{/if}
 		{/snippet}
 	</ModalShell>

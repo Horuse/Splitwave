@@ -251,6 +251,7 @@ pub fn run() {
             commands::watch_device_volume,
             commands::unwatch_device_volume,
             commands::diagnose_update_error,
+            commands::check_for_updates,
             commands::webrtc_create_offer,
             commands::webrtc_accept_offer,
             commands::webrtc_complete_handshake,

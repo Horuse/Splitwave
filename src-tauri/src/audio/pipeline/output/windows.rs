@@ -73,7 +73,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, fill, level, io) = speaker_ring(spec.out_channels);
+    let (producer, fill, level, target, io) = speaker_ring(spec.out_channels);
     let app_err = app.clone();
     let dead_cb = dead.clone();
     let node_id_cb = node_id.to_string();
@@ -96,6 +96,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let (worker_handle, ctrl) = spawn_speaker_worker(
         producer,
         level,
+        target,
         spec.sample_rate,
         spec.out_channels,
         graph,

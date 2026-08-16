@@ -66,6 +66,10 @@ pub enum Command {
     IsRunning {
         reply: Sender<bool>,
     },
+    /// Current speaker output buffering latency in milliseconds (0 when idle).
+    OutputLatencyMs {
+        reply: Sender<u32>,
+    },
 }
 
 pub fn run(rx: Receiver<Command>) {
@@ -165,6 +169,10 @@ pub fn run(rx: Receiver<Command>) {
             }
             Command::IsRunning { reply } => {
                 let _ = reply.send(active.is_some());
+            }
+            Command::OutputLatencyMs { reply } => {
+                let ms = active.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0);
+                let _ = reply.send(ms);
             }
         }
     }

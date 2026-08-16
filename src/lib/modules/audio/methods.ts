@@ -37,6 +37,7 @@ export const methods = {
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
 	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
+	getOutputLatency: (): Promise<number> => invoke<number>('output_latency_ms'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> => invoke('start_pipeline', { graph }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),
 	/** Hot-reconfigure a running pipeline. Errors with `NotRunning` if no

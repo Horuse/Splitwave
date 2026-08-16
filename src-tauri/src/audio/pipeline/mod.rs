@@ -274,6 +274,20 @@ impl ActivePipeline {
         }
     }
 
+    /// Deepest speaker output buffering latency in milliseconds. The fill
+    /// target tracks the device's own buffer, so a large-buffer device runs at
+    /// a higher (reported) latency than a low-latency one. Zero when idle.
+    pub fn output_latency_ms(&self) -> u32 {
+        self.speakers
+            .values()
+            .map(|s| {
+                let frames = s.io.target_frames.load(Ordering::Relaxed).max(0) as u32;
+                frames * 1000 / s.sample_rate.max(1)
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     fn teardown(&mut self) {
         self.tear_down_outputs();
         self.stale_bridges.clear();

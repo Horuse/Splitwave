@@ -4,7 +4,7 @@
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { ActivationButton, RunningTimer } from '$lib/modules/audio/ui';
+	import { ActivationButton, LatencyBadge, RunningTimer } from '$lib/modules/audio/ui';
 	import Header from '$lib/components/layout/header.svelte';
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
@@ -70,6 +70,7 @@
 		<div class="flex items-center gap-3">
 			{#if audioStore.isRunning}
 				<RunningTimer />
+				<LatencyBadge />
 			{/if}
 			{#if pipeline}
 				<UndoRedo />

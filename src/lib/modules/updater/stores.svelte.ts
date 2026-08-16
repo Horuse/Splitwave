@@ -7,6 +7,7 @@ export type UpdateState =
 	| { phase: 'available'; update: Update; notes: string | null }
 	| { phase: 'downloading'; update: Update; downloaded: number; total: number | null }
 	| { phase: 'installing'; update: Update }
+	| { phase: 'unsupported'; message: string }
 	| { phase: 'error'; message: string };
 
 class UpdaterStore {

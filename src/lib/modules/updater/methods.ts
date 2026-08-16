@@ -1,8 +1,20 @@
-import { check } from '@tauri-apps/plugin-updater';
+import { Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { LazyStore } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
+import { arch, type as osType } from '@tauri-apps/plugin-os';
 import { updaterStore } from './stores.svelte';
+
+// Shape returned by the `check_for_updates` command; mirrors the plugin's
+// `check` metadata so `new Update(...)` can wrap it unchanged.
+type CheckMetadata = {
+	rid: number;
+	currentVersion: string;
+	version: string;
+	date?: string;
+	body?: string;
+	rawJson: Record<string, unknown>;
+};
 
 const PREFS_FILE = 'updater_prefs.json';
 const SKIPPED_KEY = 'skippedVersion';
@@ -24,10 +36,28 @@ export async function skipVersion(version: string): Promise<void> {
 	updaterStore.state = { phase: 'idle' };
 }
 
+// The release manifest has no entry for this OS/arch, so there's nothing to
+// download — surface it as a note rather than an error.
+function isNoBuildError(e: unknown): boolean {
+	const msg = e instanceof Error ? e.message : String(e);
+	return msg.includes('None of the fallback platforms');
+}
+
+function osLabel(os: string): string {
+	if (os === 'windows') return 'Windows';
+	if (os === 'macos') return 'macOS';
+	return os.charAt(0).toUpperCase() + os.slice(1);
+}
+
+function noBuildMessage(): string {
+	return `Unfortunately, the latest version has no build for ${arch()} on ${osLabel(osType())}. It looks like you built it yourself, or this platform is no longer supported.`;
+}
+
 export async function checkForUpdates(silent = false): Promise<void> {
 	updaterStore.state = { phase: 'checking' };
 	try {
-		const update = await check();
+		const metadata = await invoke<CheckMetadata | null>('check_for_updates');
+		const update = metadata ? new Update(metadata) : null;
 		if (!update) {
 			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'up_to_date' };
 			return;
@@ -43,6 +73,10 @@ export async function checkForUpdates(silent = false): Promise<void> {
 			notes: (await releaseNotes(update.version)) ?? update.body ?? null
 		};
 	} catch (e) {
+		if (isNoBuildError(e)) {
+			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'unsupported', message: noBuildMessage() };
+			return;
+		}
 		const message = await diagnoseError(e);
 		updaterStore.state = silent ? { phase: 'idle' } : { phase: 'error', message };
 	}

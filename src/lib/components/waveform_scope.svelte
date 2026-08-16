@@ -27,6 +27,11 @@
 	const SEG_FRAMES = 64;
 	const CAP_SEGS = (300 * 1024) / SEG_FRAMES;
 	const DEFAULT_SEGS = 20; // fixed "×1" reference, so max zoom (1 seg/px) reads ×20 at any sample rate
+	// Fixed zoom steps (label × values), snapped to so the readout never shows
+	// arbitrary fractions. Min 0.1 caps the per-column segment count, which also
+	// bounds the aggregation cost that made long files janky.
+	const ZOOM_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 7.5, 10, 15, 20];
+	const MAX_FILE_CACHE_SEGS = 200_000;
 	const TIME_H = 18;
 	const SCALE_W = 30;
 	const VERT_PAD = 10;
@@ -46,14 +51,20 @@
 		sampleRate?: number;
 	}
 
+	interface RecorderProgress {
+		nodeId: string;
+		frames: number;
+		sampleRate: number;
+		stopped?: boolean;
+	}
+
 	let channels = 1;
 	let sampleRate = 48_000;
 	let segsPerCol = DEFAULT_SEGS;
-	let zoomF = DEFAULT_SEGS; // fractional zoom accumulator; source of truth for segsPerCol
-	let defaultSegs = DEFAULT_SEGS;
+	let zoomLevelF = 1; // continuous zoom (×) accumulator
+	let zoomLevel = 1; // snapped × level shown in the readout
 	let viewEndSeg = 0;
-	let following = true;
-	let zoomInit = false;
+	let following = $state(true);
 
 	// Segment min/max rings (block-aligned, immutable once written).
 	let minRing = new Float32Array(CAP_SEGS);
@@ -63,7 +74,12 @@
 
 	// File mode (WAV/AIFF only): the whole recording is browsable by lazily
 	// loading min/max bins from disk for the visible range instead of holding
-	// every sample in RAM.
+	// every sample in RAM. While a recording is in flight, scope deltas for the
+	// same node are also binned into the ring below and drawn over the file's
+	// tail, so following the live edge is real-time instead of lagging disk
+	// flushes. `liveBaseSeg` is the file segment of session frame 0, captured
+	// once the header and the first delta are known; the real-time total is
+	// then `liveBaseSeg + liveTotalSegs`.
 	let fileMode = $derived(isPcm(filePath));
 	let fileCache = new Map<number, Float32Array>();
 	let fileTotalSegs = 0;
@@ -71,6 +87,10 @@
 	let fileLoaded = false;
 	let fetching = false;
 	let lastTailCheck = 0;
+	let liveTotalSegs = 0;
+	let liveWriteSeg = 0;
+	let liveBaseSeg = -1;
+	let liveActive = false;
 
 	function isPcm(p: string | null | undefined): boolean {
 		if (!p) return false;
@@ -80,10 +100,6 @@
 
 	function dataStart(): number {
 		return fileMode ? 0 : Math.max(0, totalSegs - CAP_SEGS);
-	}
-
-	function dataCap(): number {
-		return fileMode ? fileTotalSegs : CAP_SEGS;
 	}
 
 	let W = $state(0);
@@ -104,7 +120,7 @@
 	let dirty = true;
 	let dragging = $state(false);
 	let scrollbarDragging = false;
-	let zoomLabel = $state('×1.0');
+	let zoomLabel = $state('×1');
 	let lastX = 0;
 
 	function ensureRing(ch: number) {
@@ -126,6 +142,13 @@
 
 	function segEnvelope(seg: number, c: number): [number, number] | null {
 		if (fileMode) {
+			if (liveActive && liveBaseSeg >= 0 && liveTotalSegs > 0) {
+				const li = seg - (fileTotalSegs - liveTotalSegs);
+				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - CAP_SEGS) {
+					const slot = li % CAP_SEGS;
+					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
+				}
+			}
 			const e = fileCache.get(seg);
 			return e ? [e[c * 2], e[c * 2 + 1]] : null;
 		}
@@ -133,41 +156,41 @@
 		return [minRing[base], maxRing[base]];
 	}
 
-	function onScope(p: ScopeTick) {
-		if (p.nodeId !== nodeId) return;
-		if (fileMode) {
-			// Live signal that the recording file grew; refresh the tail (a
-			// no-op fetch unless new data has actually been flushed to disk).
-			if (following) markDirty();
-			return;
+	function ensureLiveRing(ch: number) {
+		if (ch === channels && minRing.length === CAP_SEGS * ch) return;
+		channels = ch;
+		minRing = new Float32Array(CAP_SEGS * ch);
+		maxRing = new Float32Array(CAP_SEGS * ch);
+		liveWriteSeg = 0;
+		liveTotalSegs = 0;
+		liveBaseSeg = -1;
+	}
+
+	function captureLiveBase() {
+		if (liveBaseSeg < 0 && fileLoaded && liveTotalSegs > 0 && fileTotalSegs > 0) {
+			liveBaseSeg = fileTotalSegs - liveTotalSegs;
 		}
-		ensureRing(p.channels);
-		if (p.sampleRate) {
-			if (!zoomInit) {
-				sampleRate = p.sampleRate;
-				zoomF = DEFAULT_SEGS;
-				defaultSegs = DEFAULT_SEGS;
-				segsPerCol = DEFAULT_SEGS;
-				updateZoomLabel();
-				zoomInit = true;
-			} else {
-				sampleRate = p.sampleRate;
-			}
-		}
-		const ch = p.channels;
-		const frames = p.data[0]?.length ?? 0;
-		if (frames === 0) return;
+	}
+
+	function liveCoverStart(): number {
+		return fileTotalSegs - Math.min(liveTotalSegs, CAP_SEGS);
+	}
+
+	// Bins one incoming block into the min/max ring, returning the number of
+	// segments written. `head` is the write head of whichever ring the caller
+	// owns (the scope ring or the live overlay); a segment lands at
+	// `index % CAP_SEGS`.
+	function binBlock(data: number[][], ch: number, frames: number, head: number): number {
 		const segsInBlock = Math.max(1, Math.ceil(frames / SEG_FRAMES));
 		for (let s = 0; s < segsInBlock; s++) {
 			const f0 = s * SEG_FRAMES;
 			const f1 = Math.min(f0 + SEG_FRAMES, frames);
-			const slot = (writeSeg + s) % CAP_SEGS;
-			const base = slot * ch;
+			const base = ((head + s) % CAP_SEGS) * ch;
 			for (let c = 0; c < ch; c++) {
 				let mn = Infinity;
 				let mx = -Infinity;
 				for (let f = f0; f < f1; f++) {
-					const v = p.data[c][f];
+					const v = data[c][f];
 					if (v < mn) mn = v;
 					if (v > mx) mx = v;
 				}
@@ -179,17 +202,57 @@
 				maxRing[base + c] = mx;
 			}
 		}
-		writeSeg = (writeSeg + segsInBlock) % CAP_SEGS;
-		totalSegs += segsInBlock;
+		return segsInBlock;
+	}
+
+	function onScope(p: ScopeTick) {
+		if (p.nodeId !== nodeId) return;
+		if (fileMode) {
+			if (p.sampleRate) sampleRate = p.sampleRate;
+			const frames = p.data[0]?.length ?? 0;
+			if (frames === 0) {
+				if (following) markDirty();
+				return;
+			}
+			ensureLiveRing(p.channels);
+			liveActive = true;
+			const segs = binBlock(p.data, p.channels, frames, liveWriteSeg);
+			liveWriteSeg = (liveWriteSeg + segs) % CAP_SEGS;
+			liveTotalSegs += segs;
+			captureLiveBase();
+			if (liveBaseSeg >= 0) {
+				const rt = liveBaseSeg + liveTotalSegs;
+				if (rt > fileTotalSegs) {
+					fileTotalSegs = rt;
+					totalSegs = rt;
+				}
+			}
+			if (following) viewEndSeg = totalSegs;
+			markDirty();
+			return;
+		}
+		ensureRing(p.channels);
+		if (p.sampleRate) sampleRate = p.sampleRate;
+		const frames = p.data[0]?.length ?? 0;
+		if (frames === 0) return;
+		const segs = binBlock(p.data, p.channels, frames, writeSeg);
+		writeSeg = (writeSeg + segs) % CAP_SEGS;
+		totalSegs += segs;
 		if (following) viewEndSeg = totalSegs;
 		markDirty();
 	}
 
 	function clampSegs() {
-		const plotW = Math.max(1, W - SCALE_W);
-		const maxSegs = Math.max(1, Math.floor(dataCap() / plotW));
-		zoomF = Math.min(Math.max(zoomF, 1), maxSegs);
-		segsPerCol = Math.max(1, Math.round(zoomF));
+		zoomLevelF = Math.min(Math.max(zoomLevelF, ZOOM_LEVELS[0]), ZOOM_LEVELS[ZOOM_LEVELS.length - 1]);
+		// Snap to the nearest fixed level; the 0.1 floor keeps the per-column
+		// aggregation cost bounded. No data-fitting cap: zooming out past the
+		// available content just leaves leading empty space, as in any editor.
+		let best = ZOOM_LEVELS[0];
+		for (const l of ZOOM_LEVELS) {
+			if (Math.abs(l - zoomLevelF) < Math.abs(best - zoomLevelF)) best = l;
+		}
+		zoomLevel = best;
+		segsPerCol = Math.max(1, Math.round(DEFAULT_SEGS / zoomLevel));
 		updateZoomLabel();
 	}
 
@@ -208,9 +271,10 @@
 	}
 
 	function zoomAt(px: number, factor: number) {
-		if (!pan) {
-			// Monitor mode: no panning, so zoom stays pinned to the live edge.
-			zoomF *= factor;
+		if (!pan || following) {
+			// Monitor mode, or following the live edge: zoom stays pinned to the
+			// edge so the timeline keeps advancing while you zoom.
+			zoomLevelF /= factor;
 			clampSegs();
 			viewEndSeg = totalSegs;
 			clampView();
@@ -220,7 +284,7 @@
 		const plotW = Math.max(1, W - SCALE_W);
 		const x = Math.min(Math.max(px - SCALE_W, 0), plotW);
 		const segAtCursor = viewEndSeg - (plotW - x) * segsPerCol;
-		zoomF *= factor;
+		zoomLevelF /= factor;
 		clampSegs();
 		viewEndSeg = segAtCursor + (plotW - x) * segsPerCol;
 		clampView();
@@ -230,7 +294,7 @@
 
 	function resetView() {
 		following = true;
-		zoomF = DEFAULT_SEGS;
+		zoomLevelF = 1;
 		clampSegs();
 		viewEndSeg = totalSegs;
 		clampView();
@@ -238,25 +302,34 @@
 	}
 
 	function updateZoomLabel() {
-		if (defaultSegs <= 0 || segsPerCol <= 0) {
-			zoomLabel = '';
-			return;
-		}
-		const level = defaultSegs / segsPerCol;
-		zoomLabel = `×${level < 10 ? level.toFixed(1) : level.toFixed(0)}`;
+		zoomLabel = `×${Number.isInteger(zoomLevel) ? zoomLevel : zoomLevel.toFixed(1)}`;
 	}
 
-	function zoomBy(factor: number) {
-		const plotW = Math.max(1, W - SCALE_W);
-		zoomAt(SCALE_W + plotW / 2, factor);
+	function stepLevel(dir: 1 | -1) {
+		let idx = ZOOM_LEVELS.indexOf(zoomLevel);
+		if (idx < 0) idx = ZOOM_LEVELS.length - 1;
+		idx = Math.min(Math.max(idx + dir, 0), ZOOM_LEVELS.length - 1);
+		zoomLevelF = ZOOM_LEVELS[idx];
+		clampSegs();
+		if (following) {
+			viewEndSeg = totalSegs;
+		} else {
+			const plotW = Math.max(1, W - SCALE_W);
+			const x = plotW / 2;
+			const segAt = viewEndSeg - (plotW - x) * segsPerCol;
+			viewEndSeg = segAt + (plotW - x) * segsPerCol;
+		}
+		clampView();
+		following = viewEndSeg >= totalSegs;
+		markDirty();
 	}
 
 	function zoomIn() {
-		zoomBy(1 / 2);
+		stepLevel(1);
 	}
 
 	function zoomOut() {
-		zoomBy(2);
+		stepLevel(-1);
 	}
 
 	function canScroll() {
@@ -332,7 +405,7 @@
 
 		const cols = plotW + 1;
 		colsCount = cols;
-		if (peaks.length !== channels) {
+		if (peaks.length !== channels || peaks[0]?.length !== cols) {
 			peaks = Array.from({ length: channels }, () => new Float32Array(cols));
 			troughs = Array.from({ length: channels }, () => new Float32Array(cols));
 		}
@@ -410,7 +483,9 @@
 
 	function draw() {
 		const c = ctx;
-		if (!c) return;
+		// `canvas`/`ctx` are nulled on unmount; a rAF or async fetch may still
+		// land after teardown, so bail instead of touching a removed element.
+		if (!c || !canvas) return;
 		const dpr = window.devicePixelRatio || 1;
 		const bw = Math.max(1, Math.round(W * dpr));
 		const bh = Math.max(1, Math.round(H * dpr));
@@ -510,19 +585,21 @@
 		}
 	}
 
-	async function fetchPeaks(startSeg: number) {
+	async function fetchPeaks(startSeg: number, count?: number) {
 		if (!filePath || fetching) return;
 		fetching = true;
 		try {
 			const plotW = Math.max(1, W - SCALE_W);
-			const count = fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64;
-			const res = await methods.readFilePeaks(filePath, startSeg * SEG_FRAMES, SEG_FRAMES, count);
+			const cnt = count ?? (fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64);
+			const res = await methods.readFilePeaks(filePath, startSeg * SEG_FRAMES, SEG_FRAMES, cnt);
 			if (res.channels > 0) {
 				fileChannels = res.channels;
 				channels = res.channels;
 				sampleRate = res.sampleRate;
 			}
-			fileTotalSegs = Math.ceil(res.totalFrames / SEG_FRAMES);
+			// Never regress: the live overlay / progress events may already know
+			// a larger total than the last disk flush.
+			fileTotalSegs = Math.max(fileTotalSegs, Math.ceil(res.totalFrames / SEG_FRAMES));
 			fileLoaded = true;
 			const firstSeg = Math.floor(res.startFrame / SEG_FRAMES);
 			const bins = res.mins[0]?.length ?? 0;
@@ -535,13 +612,8 @@
 				}
 				fileCache.set(seg, arr);
 			}
-			if (!zoomInit) {
-				zoomInit = true;
-				zoomF = DEFAULT_SEGS;
-				defaultSegs = DEFAULT_SEGS;
-				segsPerCol = DEFAULT_SEGS;
-				updateZoomLabel();
-			}
+			trimFileCache();
+			captureLiveBase();
 			totalSegs = fileTotalSegs;
 			if (following) viewEndSeg = fileTotalSegs;
 			clampSegs();
@@ -554,6 +626,16 @@
 		}
 	}
 
+	function trimFileCache() {
+		if (fileCache.size <= MAX_FILE_CACHE_SEGS) return;
+		const keys = [...fileCache.keys()].sort((a, b) => Math.abs(a - viewEndSeg) - Math.abs(b - viewEndSeg));
+		while (fileCache.size > MAX_FILE_CACHE_SEGS) {
+			const k = keys.pop();
+			if (k === undefined) break;
+			fileCache.delete(k);
+		}
+	}
+
 	function ensureVisibleLoaded() {
 		if (!fileMode || !filePath || fetching) return;
 		if (!fileLoaded) {
@@ -561,18 +643,26 @@
 			return;
 		}
 		const plotW = Math.max(1, W - SCALE_W);
+		const liveStart = liveCoverStart();
 		if (following) {
-			// Follow a recording's tail: refresh periodically to catch a growing
-			// file (scope events arrive every tick, so throttle the disk read).
+			const viewStart = Math.max(0, Math.ceil(viewEndSeg - plotW * segsPerCol));
+			// The live overlay already covers the newest ring segments; skip the
+			// disk read entirely when the view sits inside it.
+			if (liveActive && liveTotalSegs > 0 && viewStart >= liveStart) return;
 			const now = performance.now();
 			if (now - lastTailCheck < 500) return;
 			lastTailCheck = now;
-			fetchPeaks(Math.max(0, fileTotalSegs - Math.ceil(plotW * segsPerCol) - 32));
+			if (liveActive && liveTotalSegs > 0) {
+				fetchPeaks(Math.max(0, viewStart), Math.max(64, liveStart - viewStart));
+			} else {
+				fetchPeaks(Math.max(0, fileTotalSegs - Math.ceil(plotW * segsPerCol) - 32));
+			}
 			return;
 		}
 		const viewStart = Math.max(0, Math.floor(viewEndSeg - plotW * segsPerCol));
 		const viewEnd = Math.ceil(viewEndSeg);
 		for (let seg = viewStart; seg < viewEnd; seg++) {
+			if (liveActive && seg >= liveStart) continue;
 			if (!fileCache.has(seg)) {
 				fetchPeaks(seg);
 				return;
@@ -650,7 +740,15 @@
 		resetView();
 	}
 
+	function jumpToEnd() {
+		following = true;
+		viewEndSeg = totalSegs;
+		clampView();
+		markDirty();
+	}
+
 	let unlisten: UnlistenFn | undefined;
+	let progressUnlisten: UnlistenFn | undefined;
 	let ro: ResizeObserver | undefined;
 
 	// Reset and load from disk when a WAV/AIFF path is set or changes.
@@ -664,12 +762,42 @@
 		totalSegs = 0;
 		viewEndSeg = 0;
 		following = true;
+		liveTotalSegs = 0;
+		liveWriteSeg = 0;
+		liveBaseSeg = -1;
+		liveActive = false;
 		markDirty();
 	});
 
 	onMount(async () => {
 		ctx = canvas.getContext('2d');
 		unlisten = await listen<ScopeTick>('audio://scope', (e) => onScope(e.payload));
+		// File mode only: recorder progress carries the real-time total (base +
+		// session), which the live overlay uses to advance the tail between disk
+		// reads, and `stopped` hands the tail back to disk for the final state.
+		progressUnlisten = await listen<RecorderProgress>('audio://recorder_progress', (e) => {
+			const p = e.payload;
+			if (p.nodeId !== nodeId || !fileMode) return;
+			if (p.sampleRate) sampleRate = p.sampleRate;
+			if (p.frames > 0) {
+				const segs = Math.max(1, Math.ceil(p.frames / SEG_FRAMES));
+				if (segs > fileTotalSegs) {
+					fileTotalSegs = segs;
+					totalSegs = segs;
+					if (following) viewEndSeg = segs;
+					markDirty();
+				}
+			}
+			if (p.stopped) {
+				liveActive = false;
+				liveTotalSegs = 0;
+				liveWriteSeg = 0;
+				liveBaseSeg = -1;
+				lastTailCheck = 0;
+				ensureVisibleLoaded();
+				markDirty();
+			}
+		});
 		ro = new ResizeObserver((entries) => {
 			const rect = entries[0].contentRect;
 			const w = rect.width;
@@ -691,7 +819,9 @@
 
 	onDestroy(() => {
 		unlisten?.();
+		progressUnlisten?.();
 		ro?.disconnect();
+		ctx = null;
 		if (rafId) cancelAnimationFrame(rafId);
 	});
 </script>
@@ -728,4 +858,14 @@
 			onclick={zoomIn}
 			title="Zoom in">+</button>
 	</div>
+	{#if pan && !following}
+		<button
+			type="button"
+			class="nodrag nopan absolute top-7 right-1 flex size-5 items-center justify-center rounded-full bg-neutral-900/40 text-[11px] leading-none text-white/70 hover:bg-neutral-900/60 hover:text-white"
+			onmousedown={(e) => e.stopPropagation()}
+			onwheel={(e) => e.stopPropagation()}
+			ondblclick={(e) => e.stopPropagation()}
+			onclick={jumpToEnd}
+			title="Jump to live edge">»</button>
+	{/if}
 </div>

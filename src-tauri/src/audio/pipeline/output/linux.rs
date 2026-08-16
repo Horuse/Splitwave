@@ -41,7 +41,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut fill, level, target, io) = speaker_ring(spec.out_channels);
+    let (producer, mut fill, level, target, io) =
+        speaker_ring(spec.out_channels, graph.latency_frames());
     let fill_pw = move |out: &mut [f32]| {
         fill(out, 0);
         out.len()

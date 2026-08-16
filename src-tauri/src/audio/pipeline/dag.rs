@@ -825,6 +825,10 @@ pub(super) struct OutputGraph {
     out_channels: usize,
     nodes: Vec<DagNode>,
     terminals: Vec<TerminalEdge>,
+    /// Lookahead the graph's delay compensation has aligned every path to: the
+    /// deepest cumulative effect latency from any source to this output. The
+    /// whole mix is delayed by this, so it is the graph's own latency.
+    latency_frames: usize,
     /// Blocks produced by `process_block`. A clone lives in this build's
     /// `BuiltOutputGraph::output` so the non-RT tick thread can compare this
     /// worker's real block rate against `sample_rate / DSP_BLOCK_FRAMES`.
@@ -838,6 +842,10 @@ impl OutputGraph {
 
     pub(super) fn out_channels(&self) -> usize {
         self.out_channels
+    }
+
+    pub(super) fn latency_frames(&self) -> usize {
+        self.latency_frames
     }
 
     pub(super) fn set_out_channels(&mut self, channels: usize) {
@@ -1549,6 +1557,7 @@ pub(super) fn build_output_graph(
                 out_channels: 2,
                 nodes,
                 terminals: Vec::new(),
+                latency_frames: max_up,
                 blocks: blocks.clone(),
             },
             controls,
@@ -1615,6 +1624,7 @@ pub(super) fn build_output_graph(
             out_channels: 2,
             nodes,
             terminals,
+            latency_frames: node_latencies.iter().copied().max().unwrap_or(0),
             blocks: blocks.clone(),
         },
         controls,

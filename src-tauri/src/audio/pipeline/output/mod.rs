@@ -149,15 +149,19 @@ pub(super) struct SpeakerIo {
     /// callback. The worker's clock steers to it; the UI reads it back as the
     /// current output latency.
     pub target_frames: Arc<AtomicI64>,
+    /// Lookahead delay compensation has aligned the graph to (frames) -- the
+    /// deepest cumulative effect latency on the path to this output.
+    pub graph_latency_frames: usize,
 }
 
 impl SpeakerIo {
-    fn new(target_frames: Arc<AtomicI64>) -> Self {
+    fn new(target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
         Self {
             requested: Arc::new(AtomicU64::new(0)),
             read: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
             target_frames,
+            graph_latency_frames,
         }
     }
 }
@@ -190,6 +194,7 @@ impl Drop for StreamGuard {
 // worker's clock steers toward -- one ring shape for all platforms.
 pub(super) fn speaker_ring(
     out_channels: usize,
+    graph_latency_frames: usize,
 ) -> (
     Producer<f32>,
     impl FnMut(&mut [f32], usize) + Send + 'static,
@@ -205,7 +210,7 @@ pub(super) fn speaker_ring(
         (SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES) as i64,
     ));
     let target_cb = target.clone();
-    let io = SpeakerIo::new(target.clone());
+    let io = SpeakerIo::new(target.clone(), graph_latency_frames);
     let io_cb = io.clone();
     let fill = move |out: &mut [f32], _frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);

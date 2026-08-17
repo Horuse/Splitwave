@@ -352,7 +352,7 @@ fn finite(value: Complex32) -> bool {
 mod tests {
     use super::*;
     use std::hint::black_box;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn identical_channels_reconstruct_with_explicit_latency() {
@@ -445,6 +445,12 @@ mod tests {
         let interference = &interference[start..total_frames - HOP_SIZE];
         let target_gain = projection_gain(output, target);
         let interference_gain = projection_gain(output, interference);
+        let target_loss_db = 20.0 * target_gain.abs().log10();
+        let interference_reduction_db = -20.0 * interference_gain.abs().max(1.0e-12).log10();
+        let snr_improvement_db = target_loss_db + interference_reduction_db;
+        println!(
+            "MVDR N={channels}: target loss={target_loss_db:.2} dB, interference reduction={interference_reduction_db:.2} dB, SNR improvement={snr_improvement_db:.2} dB"
+        );
         assert!(target_gain > 0.8, "target gain={target_gain}");
         assert!(
             interference_gain.abs() < 0.35,
@@ -471,23 +477,38 @@ mod tests {
     #[ignore = "manual performance benchmark"]
     fn realtime_cost_by_channel_count() {
         let audio_blocks = 48_000 / HOP_SIZE * 5;
+        let block_budget = Duration::from_secs_f64(HOP_SIZE as f64 / 48_000.0);
         for channels in [2, 4, 8, 16] {
             let mut mvdr = Mvdr::new(channels, 1.0, 24.0, true).unwrap();
             let input = vec![0.01; channels * HOP_SIZE];
             let mut output = vec![0.0; HOP_SIZE];
+            let mut block_times = Vec::with_capacity(audio_blocks);
             for _ in 0..32 {
                 mvdr.process(&input, &mut output, true).unwrap();
             }
             let started = Instant::now();
             for _ in 0..audio_blocks {
+                let block_started = Instant::now();
                 mvdr.process(black_box(&input), black_box(&mut output), true)
                     .unwrap();
+                block_times.push(block_started.elapsed());
             }
             let realtime_percent = started.elapsed().as_secs_f64() / 5.0 * 100.0;
-            println!("MVDR N={channels}: {realtime_percent:.2}% of one worker core");
+            block_times.sort_unstable();
+            let p50 = block_times[block_times.len() * 50 / 100];
+            let p95 = block_times[block_times.len() * 95 / 100];
+            println!(
+                "MVDR N={channels}: {realtime_percent:.2}% of one worker core, p50={:.1} us, p95={:.1} us",
+                p50.as_secs_f64() * 1_000_000.0,
+                p95.as_secs_f64() * 1_000_000.0
+            );
             assert!(
                 realtime_percent < 100.0,
                 "MVDR N={channels} missed real time"
+            );
+            assert!(
+                p95 < block_budget / 2,
+                "MVDR N={channels} p95 exceeded half a block"
             );
         }
     }

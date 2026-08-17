@@ -746,6 +746,16 @@ mod tests {
             frames,
         )
         .unwrap();
+        let maximum_delay_error = result
+            .channels
+            .iter()
+            .zip(&delays)
+            .map(|(channel, delay)| (channel.delay_offset_samples - delay).abs())
+            .fold(0.0f32, f32::max);
+        println!(
+            "Calibration N=4: residual RMS={:.3} samples, maximum delay error={maximum_delay_error:.3} samples, quality={}",
+            result.residual_rms_samples, result.quality_score
+        );
         for (channel, &delay) in result.channels.iter().zip(&delays) {
             assert!((channel.delay_offset_samples - delay).abs() < 0.35);
         }

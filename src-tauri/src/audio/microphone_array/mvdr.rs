@@ -99,6 +99,17 @@ impl Mvdr {
         })
     }
 
+    pub(super) fn update_controls(
+        &mut self,
+        strength: f32,
+        max_attenuation_db: f32,
+        postfilter_enabled: bool,
+    ) {
+        self.strength = strength.clamp(0.0, 1.0);
+        self.minimum_gain = 10.0_f32.powf(-max_attenuation_db.clamp(0.0, 36.0) / 20.0);
+        self.postfilter_enabled = postfilter_enabled;
+    }
+
     pub(super) fn process(
         &mut self,
         aligned_planar: &[f32],

@@ -50,7 +50,7 @@ pub(super) fn compute_output_sig(graph: &ValidGraph, output_id: &str) -> OutputS
         .inputs
         .iter()
         .filter(|i| reachable.contains(&i.id))
-        .map(|i| (i.id.clone(), i.spec.clone()))
+        .map(|i| (i.id.clone(), structural_input(&i.spec)))
         .collect();
     inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -86,6 +86,22 @@ pub(super) fn compute_output_sig(graph: &ValidGraph, output_id: &str) -> OutputS
         effects,
         edges,
     }
+}
+
+/// Input spec with block-safe controls zeroed. The capture owns atomics for
+/// these fields; everything else keeps its exact value and forces re-prepare.
+pub(super) fn structural_input(spec: &InputSpec) -> InputSpec {
+    let mut structural = spec.clone();
+    if let InputSpec::MicrophoneArray { data } = &mut structural {
+        data.algorithm = crate::audio::graph::MicrophoneArrayAlgorithm::DelayAndSum;
+        data.strength = 0.0;
+        data.max_attenuation_db = 0.0;
+        data.gsc_adaptation_rate = 0.0;
+        data.postfilter_enabled = false;
+        data.limiter_enabled = false;
+        data.bypassed = false;
+    }
+    structural
 }
 
 /// Effect spec with live DSP params zeroed, leaving only fields that require a
@@ -194,5 +210,39 @@ fn edge_kind_ord(k: EdgeKind) -> u8 {
     match k {
         EdgeKind::Main => 0,
         EdgeKind::Sidechain => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::graph::{
+        MicrophoneArrayAlgorithm, MicrophoneArrayData, MicrophoneArrayGeometry,
+    };
+
+    #[test]
+    fn microphone_array_runtime_controls_do_not_change_structural_signature() {
+        let base = InputSpec::MicrophoneArray {
+            data: MicrophoneArrayData::default(),
+        };
+        let mut changed = base.clone();
+        if let InputSpec::MicrophoneArray { data } = &mut changed {
+            data.algorithm = MicrophoneArrayAlgorithm::Mvdr;
+            data.strength = 0.37;
+            data.max_attenuation_db = 31.0;
+            data.gsc_adaptation_rate = 0.2;
+            data.postfilter_enabled = true;
+            data.limiter_enabled = false;
+            data.bypassed = true;
+        }
+        assert!(structural_input(&base) == structural_input(&changed));
+
+        if let InputSpec::MicrophoneArray { data } = &mut changed {
+            data.geometry = MicrophoneArrayGeometry::Circular {
+                radius_m: 0.08,
+                rotation_degrees: 0.0,
+            };
+        }
+        assert!(structural_input(&base) != structural_input(&changed));
     }
 }

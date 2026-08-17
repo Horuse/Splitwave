@@ -51,7 +51,7 @@ use output::{
     resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
     start_wire_sender_worker, RecorderWorker, ResolvedOutput, SpeakerHandle, SpeakerIo,
 };
-use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
+use sig::{compute_output_sig, structural_input, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
 pub(crate) fn calibrate_microphone_array(
@@ -181,6 +181,7 @@ impl ActivePipeline {
         // Param-only resend: nothing structural changed, so leave every worker
         // (and the meter thread) running untouched.
         if self.is_structurally_current(graph) {
+            self.update_array_controls(graph);
             self.current = Some(graph.clone());
             return Ok(());
         }
@@ -279,6 +280,24 @@ impl ActivePipeline {
             state.volume.store(scalar.to_bits(), Ordering::Relaxed);
         }
     }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn update_array_controls(&self, graph: &ValidGraph) {
+        for input in &graph.inputs {
+            let InputSpec::MicrophoneArray { data } = &input.spec else {
+                continue;
+            };
+            let Some(state) = self.inputs.get(&input.id) else {
+                continue;
+            };
+            if let InputHandle::MicrophoneArray(capture) = &state._handle {
+                capture.update_runtime_controls(data);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn update_array_controls(&self, _graph: &ValidGraph) {}
 
     /// Deepest speaker output latency in milliseconds, end to end: the input
     /// side's deepest source ring backlog, the graph's own lookahead (delay
@@ -463,15 +482,20 @@ impl ActivePipeline {
         // listed them in `OutputSig.inputs`, so spec change => sig change
         // => consumer was already classified `Drop` above; no surviving
         // output references stale input ids by this point.
-        let new_input_specs: HashMap<&str, &InputSpec> = new_graph
+        let new_input_specs: HashMap<&str, InputSpec> = new_graph
             .inputs
             .iter()
-            .map(|i| (i.id.as_str(), &i.spec))
+            .map(|i| (i.id.as_str(), structural_input(&i.spec)))
             .collect();
-        let old_input_specs: HashMap<&str, &InputSpec> = self
+        let old_input_specs: HashMap<&str, InputSpec> = self
             .current
             .as_ref()
-            .map(|g| g.inputs.iter().map(|i| (i.id.as_str(), &i.spec)).collect())
+            .map(|g| {
+                g.inputs
+                    .iter()
+                    .map(|i| (i.id.as_str(), structural_input(&i.spec)))
+                    .collect()
+            })
             .unwrap_or_default();
         let to_drop: Vec<String> = self
             .inputs
@@ -503,15 +527,15 @@ impl ActivePipeline {
         let Some(current) = &self.current else {
             return false;
         };
-        let cur_inputs: HashMap<&str, &InputSpec> = current
+        let cur_inputs: HashMap<&str, InputSpec> = current
             .inputs
             .iter()
-            .map(|i| (i.id.as_str(), &i.spec))
+            .map(|i| (i.id.as_str(), structural_input(&i.spec)))
             .collect();
-        let new_inputs: HashMap<&str, &InputSpec> = graph
+        let new_inputs: HashMap<&str, InputSpec> = graph
             .inputs
             .iter()
-            .map(|i| (i.id.as_str(), &i.spec))
+            .map(|i| (i.id.as_str(), structural_input(&i.spec)))
             .collect();
         if cur_inputs != new_inputs {
             return false;
@@ -1180,6 +1204,7 @@ impl ActivePipeline {
                 state.volume.store(inp.volume.to_bits(), Ordering::Relaxed);
             }
         }
+        self.update_array_controls(graph);
 
         info!(
             inputs = self.inputs.len(),

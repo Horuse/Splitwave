@@ -11,7 +11,7 @@ use crate::error::{AppError, AppResult};
 use mvdr::Mvdr;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -43,6 +43,7 @@ use crate::audio::streams;
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const FRACTIONAL_DELAY_ORDER: usize = 3;
 const HISTORY_FRAMES: usize = 2048;
+const ALGORITHM_CROSSFADE_MS: u32 = 20;
 const MAX_CLOCK_CORRECTION_PPM: f64 = 1_000.0;
 const MAX_CLOCK_SLEW_PPM: f64 = 5.0;
 const SYNC_READY_UPDATES: u32 = 20;
@@ -207,6 +208,88 @@ pub enum ActiveAlgorithm {
     Mvdr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RealtimeControls {
+    pub algorithm: Algorithm,
+    pub strength: f32,
+    pub max_attenuation_db: f32,
+    pub gsc_adaptation_rate: f32,
+    pub postfilter_enabled: bool,
+    pub limiter_enabled: bool,
+    pub bypassed: bool,
+}
+
+impl RealtimeControls {
+    #[cfg(test)]
+    fn from_config(config: &ProcessorConfig<'_>) -> Self {
+        Self {
+            algorithm: config.algorithm,
+            strength: config.strength,
+            max_attenuation_db: config.max_attenuation_db,
+            gsc_adaptation_rate: config.gsc_adaptation_rate,
+            postfilter_enabled: config.postfilter_enabled,
+            limiter_enabled: config.limiter_enabled,
+            bypassed: false,
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct AtomicRuntimeControls {
+    algorithm: AtomicU32,
+    strength: AtomicU32,
+    max_attenuation_db: AtomicU32,
+    gsc_adaptation_rate: AtomicU32,
+    postfilter_enabled: AtomicBool,
+    limiter_enabled: AtomicBool,
+    bypassed: AtomicBool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl AtomicRuntimeControls {
+    fn new(data: &MicrophoneArrayData) -> Self {
+        let controls = Self {
+            algorithm: AtomicU32::new(0),
+            strength: AtomicU32::new(0),
+            max_attenuation_db: AtomicU32::new(0),
+            gsc_adaptation_rate: AtomicU32::new(0),
+            postfilter_enabled: AtomicBool::new(false),
+            limiter_enabled: AtomicBool::new(false),
+            bypassed: AtomicBool::new(false),
+        };
+        controls.update(data);
+        controls
+    }
+
+    fn update(&self, data: &MicrophoneArrayData) {
+        self.algorithm
+            .store(encode_algorithm(data.algorithm), Ordering::Relaxed);
+        self.strength
+            .store(data.strength.to_bits(), Ordering::Relaxed);
+        self.max_attenuation_db
+            .store(data.max_attenuation_db.to_bits(), Ordering::Relaxed);
+        self.gsc_adaptation_rate
+            .store(data.gsc_adaptation_rate.to_bits(), Ordering::Relaxed);
+        self.postfilter_enabled
+            .store(data.postfilter_enabled, Ordering::Relaxed);
+        self.limiter_enabled
+            .store(data.limiter_enabled, Ordering::Relaxed);
+        self.bypassed.store(data.bypassed, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> RealtimeControls {
+        RealtimeControls {
+            algorithm: decode_algorithm(self.algorithm.load(Ordering::Relaxed)),
+            strength: f32::from_bits(self.strength.load(Ordering::Relaxed)),
+            max_attenuation_db: f32::from_bits(self.max_attenuation_db.load(Ordering::Relaxed)),
+            gsc_adaptation_rate: f32::from_bits(self.gsc_adaptation_rate.load(Ordering::Relaxed)),
+            postfilter_enabled: self.postfilter_enabled.load(Ordering::Relaxed),
+            limiter_enabled: self.limiter_enabled.load(Ordering::Relaxed),
+            bypassed: self.bypassed.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// A bounded time-domain processor. The input is planar: `N` adjacent planes
 /// of `frames` samples. Its buffers are fixed at construction and `process`
 /// never allocates or blocks.
@@ -218,12 +301,20 @@ pub struct Processor {
     history: Vec<f32>,
     history_head: usize,
     active_algorithm: ActiveAlgorithm,
+    fade_from: ActiveAlgorithm,
+    fade_to: ActiveAlgorithm,
+    fade_remaining: usize,
+    fade_total: usize,
+    requested_algorithm: Algorithm,
+    calibration_ready: bool,
     strength: f32,
+    max_attenuation_db: f32,
     gsc: Option<Gsc>,
     mvdr: Option<Mvdr>,
     aligned: Vec<f32>,
+    algorithm_outputs: Vec<f32>,
+    time_domain_delay: Vec<f32>,
     limiter_enabled: bool,
-    auto_mode: bool,
 }
 
 struct Gsc {
@@ -279,11 +370,8 @@ impl Processor {
             *weight /= weight_sum;
         }
 
-        let auto_mode = matches!(config.algorithm, Algorithm::Auto);
-        let use_mvdr = (matches!(config.algorithm, Algorithm::Mvdr)
-            || (auto_mode && config.calibration_ready))
-            && active.len() >= 2;
-        let mvdr = use_mvdr
+        let supports_spatial_switching = active.len() >= 2;
+        let mvdr = supports_spatial_switching
             .then(|| {
                 Mvdr::new(
                     active.len(),
@@ -293,8 +381,7 @@ impl Processor {
                 )
             })
             .transpose()?;
-        let use_gsc = matches!(config.algorithm, Algorithm::Gsc) && active.len() >= 2;
-        let gsc = use_gsc.then(|| {
+        let gsc = supports_spatial_switching.then(|| {
             Gsc::new(
                 active.len() - 1,
                 config.gsc_filter_length.clamp(1, 64),
@@ -302,14 +389,19 @@ impl Processor {
                 db_to_linear(-config.max_attenuation_db.clamp(0.0, 36.0)),
             )
         });
-        let active_algorithm = if mvdr.is_some() {
-            ActiveAlgorithm::Mvdr
-        } else if gsc.is_some() {
-            ActiveAlgorithm::Gsc
-        } else {
-            ActiveAlgorithm::DelayAndSum
+        let active_algorithm = match config.algorithm {
+            Algorithm::Gsc if supports_spatial_switching => ActiveAlgorithm::Gsc,
+            Algorithm::Mvdr if supports_spatial_switching => ActiveAlgorithm::Mvdr,
+            Algorithm::Auto | Algorithm::DelayAndSum | Algorithm::Gsc | Algorithm::Mvdr => {
+                ActiveAlgorithm::DelayAndSum
+            }
         };
         let active_len = active.len();
+        let block_frames = if supports_spatial_switching {
+            mvdr::HOP_SIZE
+        } else {
+            0
+        };
 
         Ok(Self {
             history: vec![0.0; active_len * HISTORY_FRAMES],
@@ -319,12 +411,21 @@ impl Processor {
             delays,
             weights,
             active_algorithm,
+            fade_from: active_algorithm,
+            fade_to: active_algorithm,
+            fade_remaining: 0,
+            fade_total: (config.sample_rate as usize * ALGORITHM_CROSSFADE_MS as usize / 1_000)
+                .max(1),
+            requested_algorithm: config.algorithm,
+            calibration_ready: config.calibration_ready,
             strength: config.strength.clamp(0.0, 1.0),
+            max_attenuation_db: config.max_attenuation_db.clamp(0.0, 36.0),
             gsc,
             mvdr,
             aligned: vec![0.0; active_len * mvdr::HOP_SIZE],
+            algorithm_outputs: vec![0.0; 3 * block_frames],
+            time_domain_delay: vec![0.0; 2 * block_frames],
             limiter_enabled: config.limiter_enabled,
-            auto_mode,
         })
     }
 
@@ -352,6 +453,8 @@ impl Processor {
         self.history.fill(0.0);
         self.history_head = 0;
         self.aligned.fill(0.0);
+        self.algorithm_outputs.fill(0.0);
+        self.time_domain_delay.fill(0.0);
         if let Some(gsc) = &mut self.gsc {
             gsc.coeffs.fill(0.0);
             gsc.history.fill(0.0);
@@ -359,11 +462,30 @@ impl Processor {
         }
         if let Some(mvdr) = &mut self.mvdr {
             mvdr.reset();
-            self.active_algorithm = if self.auto_mode {
-                ActiveAlgorithm::DelayAndSum
-            } else {
-                ActiveAlgorithm::Mvdr
-            };
+        }
+        self.active_algorithm = self.resolve_algorithm(false);
+        self.fade_from = self.active_algorithm;
+        self.fade_to = self.active_algorithm;
+        self.fade_remaining = 0;
+    }
+
+    pub fn update_realtime_controls(&mut self, controls: RealtimeControls) {
+        self.requested_algorithm = controls.algorithm;
+        self.strength = controls.strength.clamp(0.0, 1.0);
+        self.max_attenuation_db = controls.max_attenuation_db.clamp(0.0, 36.0);
+        self.limiter_enabled = controls.limiter_enabled;
+        if let Some(gsc) = &mut self.gsc {
+            gsc.update_controls(
+                controls.gsc_adaptation_rate,
+                db_to_linear(-self.max_attenuation_db),
+            );
+        }
+        if let Some(mvdr) = &mut self.mvdr {
+            mvdr.update_controls(
+                self.strength,
+                self.max_attenuation_db,
+                controls.postfilter_enabled,
+            );
         }
     }
 
@@ -400,45 +522,98 @@ impl Processor {
             ));
         }
 
-        let use_mvdr = self.mvdr.is_some();
+        if self.mvdr.is_none() {
+            for frame in 0..frames {
+                let mut fixed = 0.0;
+                for (slot, &configured_index) in self.active.iter().enumerate() {
+                    let sample = input[configured_index * frames + frame] * self.gains[slot];
+                    self.history[slot * HISTORY_FRAMES + self.history_head] = sample;
+                    fixed += self.delayed(slot, self.delays[slot]) * self.weights[slot];
+                }
+                output[frame] = if fixed.is_finite() { fixed } else { 0.0 };
+                self.history_head = (self.history_head + 1) % HISTORY_FRAMES;
+            }
+            self.active_algorithm = ActiveAlgorithm::DelayAndSum;
+            if self.limiter_enabled {
+                for sample in &mut output[..frames] {
+                    *sample = soft_limit(*sample);
+                }
+            }
+            return Ok(());
+        }
+
+        let desired = self.resolve_algorithm(adapt);
+        self.begin_algorithm_switch(desired);
+        let needs_gsc =
+            self.fade_from == ActiveAlgorithm::Gsc || self.fade_to == ActiveAlgorithm::Gsc;
+        let needs_mvdr =
+            self.fade_from == ActiveAlgorithm::Mvdr || self.fade_to == ActiveAlgorithm::Mvdr;
         for frame in 0..frames {
             let mut fixed = 0.0;
             for (slot, &configured_index) in self.active.iter().enumerate() {
                 let sample = input[configured_index * frames + frame] * self.gains[slot];
                 self.history[slot * HISTORY_FRAMES + self.history_head] = sample;
                 let aligned = self.delayed(slot, self.delays[slot]);
-                if use_mvdr {
-                    self.aligned[slot * frames + frame] = aligned;
-                }
+                self.aligned[slot * frames + frame] = aligned;
                 fixed += aligned * self.weights[slot];
             }
-            let output_sample = match &mut self.gsc {
-                Some(gsc) => {
-                    let cancelled = gsc.process(
-                        fixed,
-                        &self.active,
-                        &self.history,
-                        self.history_head,
-                        &self.delays,
-                        adapt,
-                    );
-                    fixed + (cancelled - fixed) * self.strength
+            let gsc_output = if needs_gsc {
+                match &mut self.gsc {
+                    Some(gsc) => {
+                        let cancelled = gsc.process(
+                            fixed,
+                            &self.active,
+                            &self.history,
+                            self.history_head,
+                            &self.delays,
+                            adapt,
+                        );
+                        fixed + (cancelled - fixed) * self.strength
+                    }
+                    None => fixed,
                 }
-                None => fixed,
-            };
-            output[frame] = if output_sample.is_finite() {
-                output_sample
             } else {
-                0.0
+                fixed
             };
+            self.algorithm_outputs[frame] = finite_sample(fixed);
+            self.algorithm_outputs[frames + frame] = finite_sample(gsc_output);
             self.history_head = (self.history_head + 1) % HISTORY_FRAMES;
         }
-        if let Some(mvdr) = &mut self.mvdr {
-            if !self.auto_mode || adapt {
-                mvdr.process(&self.aligned, output, adapt)?;
-                self.active_algorithm = ActiveAlgorithm::Mvdr;
+
+        for algorithm in 0..2 {
+            let offset = algorithm * frames;
+            for frame in 0..frames {
+                std::mem::swap(
+                    &mut self.algorithm_outputs[offset + frame],
+                    &mut self.time_domain_delay[offset + frame],
+                );
+            }
+        }
+
+        let mvdr_output = &mut self.algorithm_outputs[2 * frames..3 * frames];
+        if needs_mvdr {
+            if let Some(mvdr) = &mut self.mvdr {
+                mvdr.process(&self.aligned, mvdr_output, adapt)?;
+            }
+        } else {
+            mvdr_output.fill(0.0);
+        }
+
+        for frame in 0..frames {
+            let from = self.algorithm_outputs[algorithm_slot(self.fade_from) * frames + frame];
+            let to = self.algorithm_outputs[algorithm_slot(self.fade_to) * frames + frame];
+            let mix = if self.fade_remaining == 0 {
+                1.0
             } else {
-                self.active_algorithm = ActiveAlgorithm::DelayAndSum;
+                1.0 - self.fade_remaining as f32 / self.fade_total as f32
+            };
+            output[frame] = finite_sample(from + (to - from) * mix);
+            if self.fade_remaining > 0 {
+                self.fade_remaining -= 1;
+                if self.fade_remaining == 0 {
+                    self.active_algorithm = self.fade_to;
+                    self.fade_from = self.fade_to;
+                }
             }
         }
         if self.limiter_enabled {
@@ -447,6 +622,37 @@ impl Processor {
             }
         }
         Ok(())
+    }
+
+    fn resolve_algorithm(&self, adapt: bool) -> ActiveAlgorithm {
+        if self.mvdr.is_none() {
+            return ActiveAlgorithm::DelayAndSum;
+        }
+        match self.requested_algorithm {
+            Algorithm::Auto if self.calibration_ready && adapt => ActiveAlgorithm::Mvdr,
+            Algorithm::Auto | Algorithm::DelayAndSum => ActiveAlgorithm::DelayAndSum,
+            Algorithm::Gsc => ActiveAlgorithm::Gsc,
+            Algorithm::Mvdr => ActiveAlgorithm::Mvdr,
+        }
+    }
+
+    fn begin_algorithm_switch(&mut self, desired: ActiveAlgorithm) {
+        if desired == self.fade_to {
+            return;
+        }
+        let effective = if self.fade_remaining == 0 || self.fade_remaining * 2 > self.fade_total {
+            self.fade_from
+        } else {
+            self.fade_to
+        };
+        self.active_algorithm = effective;
+        self.fade_from = effective;
+        self.fade_to = desired;
+        self.fade_remaining = if effective == desired {
+            0
+        } else {
+            self.fade_total
+        };
     }
 
     fn delayed(&self, slot: usize, delay: f32) -> f32 {
@@ -483,6 +689,11 @@ impl Gsc {
             history: vec![0.0; blocking_channels * filter_len],
             head: 0,
         }
+    }
+
+    fn update_controls(&mut self, adaptation_rate: f32, max_correction: f32) {
+        self.adaptation_rate = adaptation_rate.clamp(0.0, 1.0);
+        self.max_correction = max_correction.clamp(0.0, 1.0);
     }
 
     fn process(
@@ -534,6 +745,22 @@ impl Gsc {
         }
         self.head = (self.head + 1) % self.filter_len;
         output
+    }
+}
+
+fn algorithm_slot(algorithm: ActiveAlgorithm) -> usize {
+    match algorithm {
+        ActiveAlgorithm::DelayAndSum => 0,
+        ActiveAlgorithm::Gsc => 1,
+        ActiveAlgorithm::Mvdr => 2,
+    }
+}
+
+fn finite_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample
+    } else {
+        0.0
     }
 }
 
@@ -619,8 +846,16 @@ pub struct DeviceSource {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub struct Capture {
     streams: Vec<cpal::Stream>,
+    controls: Arc<AtomicRuntimeControls>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Capture {
+    pub fn update_runtime_controls(&self, data: &MicrophoneArrayData) {
+        self.controls.update(data);
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -775,6 +1010,26 @@ fn member_config(member: &MicrophoneArrayMember) -> MemberConfig {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+fn encode_algorithm(algorithm: MicrophoneArrayAlgorithm) -> u32 {
+    match algorithm {
+        MicrophoneArrayAlgorithm::Auto => 0,
+        MicrophoneArrayAlgorithm::DelayAndSum => 1,
+        MicrophoneArrayAlgorithm::Gsc => 2,
+        MicrophoneArrayAlgorithm::Mvdr => 3,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn decode_algorithm(encoded: u32) -> Algorithm {
+    match encoded {
+        0 => Algorithm::Auto,
+        2 => Algorithm::Gsc,
+        3 => Algorithm::Mvdr,
+        _ => Algorithm::DelayAndSum,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
     let target = match data.target {
         MicrophoneArrayTarget::Direction {
@@ -849,6 +1104,7 @@ pub fn start_capture(
     let mut config = processor_config(&data);
     config.members = &members;
     let processor = Processor::new(config)?;
+    let controls = Arc::new(AtomicRuntimeControls::new(&data));
 
     let mut domains = Vec::with_capacity(sources.len());
     let mut streams = Vec::with_capacity(sources.len());
@@ -875,6 +1131,7 @@ pub fn start_capture(
 
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
+    let worker_controls = controls.clone();
     let join = thread::Builder::new()
         .name("microphone-array".into())
         .spawn(move || {
@@ -884,8 +1141,8 @@ pub fn start_capture(
                 member_domains,
                 data.members,
                 data.processing_sample_rate,
-                data.bypassed,
                 processor,
+                worker_controls,
                 bridge,
                 meter,
                 worker_stop,
@@ -894,6 +1151,7 @@ pub fn start_capture(
         .map_err(|error| AppError::Stream(format!("Microphone Array worker: {error}")))?;
     Ok(Capture {
         streams,
+        controls,
         stop,
         join: Some(join),
     })
@@ -1066,8 +1324,8 @@ fn run_capture_worker(
     member_domains: Vec<usize>,
     members: Vec<MicrophoneArrayMember>,
     sample_rate: u32,
-    bypassed: bool,
     mut processor: Processor,
+    controls: Arc<AtomicRuntimeControls>,
     mut bridge: BroadcastRx,
     meter: Option<MeterHandle>,
     stop: Arc<AtomicBool>,
@@ -1075,6 +1333,7 @@ fn run_capture_worker(
     let mut planar = vec![0.0; members.len() * ARRAY_BLOCK_FRAMES];
     let mut spatial = vec![0.0; ARRAY_BLOCK_FRAMES];
     let mut mono = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut fallback_delay = vec![0.0; processor.processing_latency_frames()];
     let mut startup_aligned = domains.len() == 1;
     let startup_started = Instant::now();
     let fade_step = 1.0 / (sample_rate.max(1) as f32 * 0.02);
@@ -1109,6 +1368,7 @@ fn run_capture_worker(
         }
         if domains.iter_mut().any(Domain::take_discontinuity) {
             processor.reset();
+            fallback_delay.fill(0.0);
             spatial_mix = 0.0;
         }
         for (member_index, member) in members.iter().enumerate() {
@@ -1119,7 +1379,10 @@ fn run_capture_worker(
                     domain.output[frame * domain.channels + channel];
             }
         }
-        let spatial_ready = !bypassed && domains.iter().all(Domain::is_locked);
+        let runtime = controls.snapshot();
+        processor.update_realtime_controls(runtime);
+        let synchronized = domains.iter().all(Domain::is_locked);
+        let spatial_ready = !runtime.bypassed && synchronized;
         if processor
             .process_with_adaptation(&planar, ARRAY_BLOCK_FRAMES, &mut spatial, spatial_ready)
             .is_err()
@@ -1149,7 +1412,14 @@ fn run_capture_worker(
             } else if spatial_mix > target_mix {
                 spatial_mix = (spatial_mix - fade_step).max(target_mix);
             }
-            let dry = fallback[frame] * gain;
+            let dry_input = fallback[frame] * gain;
+            let dry = if fallback_delay.is_empty() {
+                dry_input
+            } else {
+                let delayed = fallback_delay[frame];
+                fallback_delay[frame] = dry_input;
+                delayed
+            };
             mono[frame] = dry + (spatial[frame] - dry) * spatial_mix;
         }
         bridge.apply_commands();
@@ -1213,12 +1483,12 @@ mod tests {
                 members: &members,
             })
             .unwrap();
-            let frames = 512;
+            let frames = mvdr::HOP_SIZE;
             let input = vec![0.5; channels * frames];
             let mut out = vec![0.0; frames];
             processor.process(&input, frames, &mut out).unwrap();
-            let settled = &out[Processor::latency_frames() + 4..];
-            let mean = settled.iter().sum::<f32>() / settled.len() as f32;
+            processor.process(&input, frames, &mut out).unwrap();
+            let mean = out.iter().sum::<f32>() / out.len() as f32;
             assert!((mean - 0.5).abs() < 0.001, "N={channels}, mean={mean}");
         }
     }
@@ -1335,10 +1605,66 @@ mod tests {
             .process_with_adaptation(&input, mvdr::HOP_SIZE, &mut output, false)
             .unwrap();
         assert_eq!(calibrated.active_algorithm(), ActiveAlgorithm::DelayAndSum);
-        calibrated
-            .process_with_adaptation(&input, mvdr::HOP_SIZE, &mut output, true)
-            .unwrap();
+        for _ in 0..4 {
+            calibrated
+                .process_with_adaptation(&input, mvdr::HOP_SIZE, &mut output, true)
+                .unwrap();
+        }
         assert_eq!(calibrated.active_algorithm(), ActiveAlgorithm::Mvdr);
+    }
+
+    #[test]
+    fn runtime_algorithm_controls_crossfade_without_reprepare() {
+        let members = [member(0.0), member(0.04), member(0.08), member(0.12)];
+        let config = ProcessorConfig {
+            sample_rate: 48_000,
+            target: SteeringTarget::Direction {
+                azimuth_degrees: 90.0,
+                elevation_degrees: 0.0,
+            },
+            algorithm: Algorithm::DelayAndSum,
+            strength: 1.0,
+            max_attenuation_db: 18.0,
+            gsc_filter_length: 8,
+            gsc_adaptation_rate: 0.02,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready: true,
+            members: &members,
+        };
+        let mut processor = Processor::new(config).unwrap();
+        assert_eq!(processor.processing_latency_frames(), mvdr::HOP_SIZE);
+        let input = vec![0.1; members.len() * mvdr::HOP_SIZE];
+        let mut output = vec![0.0; mvdr::HOP_SIZE];
+        processor
+            .process(&input, mvdr::HOP_SIZE, &mut output)
+            .unwrap();
+
+        let mut controls = RealtimeControls::from_config(&config);
+        controls.algorithm = Algorithm::Gsc;
+        controls.strength = 0.4;
+        controls.max_attenuation_db = 30.0;
+        controls.gsc_adaptation_rate = 0.1;
+        controls.limiter_enabled = true;
+        processor.update_realtime_controls(controls);
+        for _ in 0..4 {
+            processor
+                .process(&input, mvdr::HOP_SIZE, &mut output)
+                .unwrap();
+            assert!(output.iter().all(|sample| sample.is_finite()));
+        }
+        assert_eq!(processor.active_algorithm(), ActiveAlgorithm::Gsc);
+
+        controls.algorithm = Algorithm::Mvdr;
+        controls.postfilter_enabled = true;
+        processor.update_realtime_controls(controls);
+        for _ in 0..4 {
+            processor
+                .process(&input, mvdr::HOP_SIZE, &mut output)
+                .unwrap();
+            assert!(output.iter().all(|sample| sample.is_finite()));
+        }
+        assert_eq!(processor.active_algorithm(), ActiveAlgorithm::Mvdr);
     }
 
     #[test]

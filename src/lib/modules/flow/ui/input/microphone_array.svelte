@@ -29,6 +29,9 @@
 					? 'Review calibration'
 					: 'Calibration required'
 	);
+	let algorithmLabel = $derived(
+		data.algorithm === 'delayAndSum' ? 'Delay-and-sum' : data.algorithm === 'gsc' ? 'GSC' : data.algorithm === 'mvdr' ? 'MVDR' : 'Auto'
+	);
 
 	async function openSetup() {
 		const result = await modalManager.open<MicrophoneArrayNodeData, SetupParams>('Microphone Array', Setup, {
@@ -42,6 +45,10 @@
 
 	function toggleBypass() {
 		flow.updateNodeData(id, { bypassed: !data.bypassed });
+	}
+
+	function setStrength(value: number) {
+		if (Number.isFinite(value)) flow.updateNodeData(id, { strength: value });
 	}
 </script>
 
@@ -67,6 +74,21 @@
 		<div class="flex items-center justify-between gap-3">
 			<span class={['text-[10px]', configured && data.calibration.state === 'ready' ? 'text-emerald-700' : 'text-amber-800']}>{status}</span>
 			<button type="button" class="nodrag nopan button-main primary h-7 rounded-lg px-3 text-[10px] font-semibold" onclick={openSetup}> Setup </button>
+		</div>
+
+		<div class="space-y-1.5 border-t border-neutral-300 pt-2.5">
+			<div class="flex items-center justify-between text-[9px] text-neutral-800">
+				<span>{algorithmLabel}</span><span class="font-mono tabular-nums">{Math.round(data.strength * 100)}%</span>
+			</div>
+			<input
+				class="nodrag nopan nowheel w-full accent-emerald-600"
+				type="range"
+				aria-label="Array strength"
+				min="0"
+				max="1"
+				step="0.01"
+				value={data.strength}
+				oninput={(event) => setStrength(event.currentTarget.valueAsNumber)} />
 		</div>
 	</div>
 </Wrapper>

@@ -5,8 +5,10 @@
 //! a synchronizer from treating acoustic time-of-flight as clock drift.
 
 pub mod calibration;
+mod mvdr;
 
 use crate::error::{AppError, AppResult};
+use mvdr::Mvdr;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +28,8 @@ use rtrb::{Consumer, RingBuffer};
 use crate::audio::effects::{update_meter, MeterHandle};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::graph::{
-    MicrophoneArrayAlgorithm, MicrophoneArrayData, MicrophoneArrayMember, MicrophoneArrayTarget,
+    MicrophoneArrayAlgorithm, MicrophoneArrayCalibrationState, MicrophoneArrayData,
+    MicrophoneArrayMember, MicrophoneArrayTarget,
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::health;
@@ -191,6 +194,9 @@ pub struct ProcessorConfig<'a> {
     pub max_attenuation_db: f32,
     pub gsc_filter_length: usize,
     pub gsc_adaptation_rate: f32,
+    pub postfilter_enabled: bool,
+    pub limiter_enabled: bool,
+    pub calibration_ready: bool,
     pub members: &'a [MemberConfig],
 }
 
@@ -198,6 +204,7 @@ pub struct ProcessorConfig<'a> {
 pub enum ActiveAlgorithm {
     DelayAndSum,
     Gsc,
+    Mvdr,
 }
 
 /// A bounded time-domain processor. The input is planar: `N` adjacent planes
@@ -213,6 +220,10 @@ pub struct Processor {
     active_algorithm: ActiveAlgorithm,
     strength: f32,
     gsc: Option<Gsc>,
+    mvdr: Option<Mvdr>,
+    aligned: Vec<f32>,
+    limiter_enabled: bool,
+    auto_mode: bool,
 }
 
 struct Gsc {
@@ -229,11 +240,6 @@ impl Processor {
         if config.sample_rate == 0 {
             return Err(AppError::Validation(
                 "Microphone Array processing rate must be positive".into(),
-            ));
-        }
-        if matches!(config.algorithm, Algorithm::Mvdr) {
-            return Err(AppError::Validation(
-                "Microphone Array MVDR is not available in the time-domain processor".into(),
             ));
         }
         let active: Vec<usize> = config
@@ -273,8 +279,21 @@ impl Processor {
             *weight /= weight_sum;
         }
 
-        let use_gsc =
-            matches!(config.algorithm, Algorithm::Gsc | Algorithm::Auto) && active.len() >= 2;
+        let auto_mode = matches!(config.algorithm, Algorithm::Auto);
+        let use_mvdr = (matches!(config.algorithm, Algorithm::Mvdr)
+            || (auto_mode && config.calibration_ready))
+            && active.len() >= 2;
+        let mvdr = use_mvdr
+            .then(|| {
+                Mvdr::new(
+                    active.len(),
+                    config.strength,
+                    config.max_attenuation_db,
+                    config.postfilter_enabled,
+                )
+            })
+            .transpose()?;
+        let use_gsc = matches!(config.algorithm, Algorithm::Gsc) && active.len() >= 2;
         let gsc = use_gsc.then(|| {
             Gsc::new(
                 active.len() - 1,
@@ -283,14 +302,17 @@ impl Processor {
                 db_to_linear(-config.max_attenuation_db.clamp(0.0, 36.0)),
             )
         });
-        let active_algorithm = if gsc.is_some() {
+        let active_algorithm = if mvdr.is_some() {
+            ActiveAlgorithm::Mvdr
+        } else if gsc.is_some() {
             ActiveAlgorithm::Gsc
         } else {
             ActiveAlgorithm::DelayAndSum
         };
+        let active_len = active.len();
 
         Ok(Self {
-            history: vec![0.0; active.len() * HISTORY_FRAMES],
+            history: vec![0.0; active_len * HISTORY_FRAMES],
             history_head: 0,
             active,
             gains,
@@ -299,6 +321,10 @@ impl Processor {
             active_algorithm,
             strength: config.strength.clamp(0.0, 1.0),
             gsc,
+            mvdr,
+            aligned: vec![0.0; active_len * mvdr::HOP_SIZE],
+            limiter_enabled: config.limiter_enabled,
+            auto_mode,
         })
     }
 
@@ -312,6 +338,33 @@ impl Processor {
 
     pub const fn latency_frames() -> usize {
         0
+    }
+
+    pub fn processing_latency_frames(&self) -> usize {
+        if self.mvdr.is_some() {
+            mvdr::HOP_SIZE
+        } else {
+            Self::latency_frames()
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.history.fill(0.0);
+        self.history_head = 0;
+        self.aligned.fill(0.0);
+        if let Some(gsc) = &mut self.gsc {
+            gsc.coeffs.fill(0.0);
+            gsc.history.fill(0.0);
+            gsc.head = 0;
+        }
+        if let Some(mvdr) = &mut self.mvdr {
+            mvdr.reset();
+            self.active_algorithm = if self.auto_mode {
+                ActiveAlgorithm::DelayAndSum
+            } else {
+                ActiveAlgorithm::Mvdr
+            };
+        }
     }
 
     /// Processes `frames` planar samples into one mono block. `input` must have
@@ -332,6 +385,12 @@ impl Processor {
                 "Microphone Array output block is too small".into(),
             ));
         }
+        if self.mvdr.is_some() && frames != mvdr::HOP_SIZE {
+            return Err(AppError::Validation(format!(
+                "Microphone Array MVDR requires {}-frame blocks",
+                mvdr::HOP_SIZE
+            )));
+        }
         let configured = input.len() / frames.max(1);
         if input.len() != configured * frames
             || self.active.iter().any(|&index| index >= configured)
@@ -341,12 +400,17 @@ impl Processor {
             ));
         }
 
+        let use_mvdr = self.mvdr.is_some();
         for frame in 0..frames {
             let mut fixed = 0.0;
             for (slot, &configured_index) in self.active.iter().enumerate() {
                 let sample = input[configured_index * frames + frame] * self.gains[slot];
                 self.history[slot * HISTORY_FRAMES + self.history_head] = sample;
-                fixed += self.delayed(slot, self.delays[slot]) * self.weights[slot];
+                let aligned = self.delayed(slot, self.delays[slot]);
+                if use_mvdr {
+                    self.aligned[slot * frames + frame] = aligned;
+                }
+                fixed += aligned * self.weights[slot];
             }
             let output_sample = match &mut self.gsc {
                 Some(gsc) => {
@@ -368,6 +432,19 @@ impl Processor {
                 0.0
             };
             self.history_head = (self.history_head + 1) % HISTORY_FRAMES;
+        }
+        if let Some(mvdr) = &mut self.mvdr {
+            if !self.auto_mode || adapt {
+                mvdr.process(&self.aligned, output, adapt)?;
+                self.active_algorithm = ActiveAlgorithm::Mvdr;
+            } else {
+                self.active_algorithm = ActiveAlgorithm::DelayAndSum;
+            }
+        }
+        if self.limiter_enabled {
+            for sample in &mut output[..frames] {
+                *sample = soft_limit(*sample);
+            }
         }
         Ok(())
     }
@@ -517,6 +594,15 @@ fn db_to_linear(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
 }
 
+fn soft_limit(sample: f32) -> f32 {
+    let magnitude = sample.abs();
+    if magnitude <= 0.95 {
+        sample
+    } else {
+        sample.signum() * (0.95 + 0.05 * ((magnitude - 0.95) / 0.05).tanh())
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub struct DeviceSource {
     pub id: String,
@@ -559,6 +645,7 @@ struct Domain {
     input: Vec<f32>,
     output: Vec<f32>,
     healthy: bool,
+    discontinuity: bool,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -589,6 +676,7 @@ impl Domain {
             input: Vec::with_capacity(input_capacity),
             output: Vec::with_capacity(ARRAY_BLOCK_FRAMES * source.channels),
             healthy: false,
+            discontinuity: false,
         })
     }
 
@@ -624,6 +712,7 @@ impl Domain {
         let input_frames = self.resampler.input_frames_next();
         if require_full_input && self.available_frames() < input_frames {
             self.healthy = false;
+            self.discontinuity = true;
             return false;
         }
         let want = input_frames * self.channels;
@@ -643,6 +732,7 @@ impl Domain {
         }
         if have < want {
             health::bump(&health::ARRAY_SOURCE_UNDERRUN_SAMPLES, (want - have) as u64);
+            self.discontinuity = true;
             if let Some(synchronizer) = &mut self.synchronizer {
                 synchronizer.reset();
             }
@@ -654,7 +744,16 @@ impl Domain {
             .is_ok();
         self.healthy =
             have == want && processed && self.output.len() == ARRAY_BLOCK_FRAMES * self.channels;
+        if !processed {
+            self.discontinuity = true;
+        }
         processed
+    }
+
+    fn take_discontinuity(&mut self) -> bool {
+        let value = self.discontinuity;
+        self.discontinuity = false;
+        value
     }
 }
 
@@ -703,6 +802,11 @@ fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
         max_attenuation_db: data.max_attenuation_db,
         gsc_filter_length: data.gsc_filter_length as usize,
         gsc_adaptation_rate: data.gsc_adaptation_rate,
+        postfilter_enabled: data.postfilter_enabled,
+        limiter_enabled: data.limiter_enabled,
+        calibration_ready: data.calibration.state == MicrophoneArrayCalibrationState::Ready
+            && data.calibration.fingerprint.is_some()
+            && data.calibration.quality_score.unwrap_or(0) >= 60,
         members: &[],
     }
 }
@@ -843,6 +947,10 @@ fn run_capture_worker(
                 let _ = domain.fill(false);
             }
         }
+        if domains.iter_mut().any(Domain::take_discontinuity) {
+            processor.reset();
+            spatial_mix = 0.0;
+        }
         for (member_index, member) in members.iter().enumerate() {
             let domain = &domains[member_domains[member_index]];
             let channel = member.channel_index as usize;
@@ -939,6 +1047,9 @@ mod tests {
                 max_attenuation_db: 24.0,
                 gsc_filter_length: 8,
                 gsc_adaptation_rate: 0.05,
+                postfilter_enabled: false,
+                limiter_enabled: false,
+                calibration_ready: false,
                 members: &members,
             })
             .unwrap();
@@ -967,6 +1078,9 @@ mod tests {
             max_attenuation_db: 24.0,
             gsc_filter_length: 8,
             gsc_adaptation_rate: 0.05,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready: false,
             members: &members,
         })
         .unwrap();
@@ -996,6 +1110,9 @@ mod tests {
                 max_attenuation_db: 18.0,
                 gsc_filter_length: 8,
                 gsc_adaptation_rate: 0.02,
+                postfilter_enabled: false,
+                limiter_enabled: false,
+                calibration_ready: false,
                 members: &members,
             })
             .unwrap();
@@ -1004,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn mvdr_never_silently_falls_back_to_delay_and_sum() {
+    fn mvdr_selects_frequency_domain_processor() {
         let members = [member(0.0), member(0.04)];
         let result = Processor::new(ProcessorConfig {
             sample_rate: 48_000,
@@ -1017,9 +1134,51 @@ mod tests {
             max_attenuation_db: 18.0,
             gsc_filter_length: 8,
             gsc_adaptation_rate: 0.02,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready: false,
             members: &members,
         });
-        assert!(result.is_err());
+        assert_eq!(result.unwrap().active_algorithm(), ActiveAlgorithm::Mvdr);
+    }
+
+    #[test]
+    fn auto_requires_calibration_and_tracks_sync_state() {
+        let members = [member(0.0), member(0.04)];
+        let config = |calibration_ready| ProcessorConfig {
+            sample_rate: 48_000,
+            target: SteeringTarget::Direction {
+                azimuth_degrees: 90.0,
+                elevation_degrees: 0.0,
+            },
+            algorithm: Algorithm::Auto,
+            strength: 1.0,
+            max_attenuation_db: 18.0,
+            gsc_filter_length: 8,
+            gsc_adaptation_rate: 0.02,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready,
+            members: &members,
+        };
+        let uncalibrated = Processor::new(config(false)).unwrap();
+        assert_eq!(
+            uncalibrated.active_algorithm(),
+            ActiveAlgorithm::DelayAndSum
+        );
+
+        let mut calibrated = Processor::new(config(true)).unwrap();
+        assert_eq!(calibrated.processing_latency_frames(), mvdr::HOP_SIZE);
+        let input = vec![0.1; members.len() * mvdr::HOP_SIZE];
+        let mut output = vec![0.0; mvdr::HOP_SIZE];
+        calibrated
+            .process_with_adaptation(&input, mvdr::HOP_SIZE, &mut output, false)
+            .unwrap();
+        assert_eq!(calibrated.active_algorithm(), ActiveAlgorithm::DelayAndSum);
+        calibrated
+            .process_with_adaptation(&input, mvdr::HOP_SIZE, &mut output, true)
+            .unwrap();
+        assert_eq!(calibrated.active_algorithm(), ActiveAlgorithm::Mvdr);
     }
 
     #[test]

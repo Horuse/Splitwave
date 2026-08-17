@@ -27,6 +27,9 @@ counters! {
     /// Samples zero-filled while an independent Microphone Array clock-domain
     /// did not have enough input for the next shared-timeline block.
     ARRAY_SOURCE_UNDERRUN_SAMPLES,
+    /// Frequency bins whose loaded Hermitian solve failed and used calibrated
+    /// delay-and-sum weights for that update.
+    ARRAY_MVDR_FALLBACK_BINS,
     /// Samples dropped pushing into a network receiver ring (stream_recv.rs).
     NET_RING_OVERRUN_SAMPLES,
     /// Samples dropped by a DAG fan-out tap or wire-sender push (dag.rs) --

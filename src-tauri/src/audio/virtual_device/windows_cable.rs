@@ -381,6 +381,27 @@ fn newly_installed_package<'a>(
     packages.next().is_none().then_some(package)
 }
 
+fn verified_package_after_setup<'a>(
+    before: &DetectedCable,
+    after: &'a DetectedCable,
+    setup_exit_code: Option<i32>,
+) -> Result<&'a CablePackage, WindowsVirtualCableError> {
+    newly_installed_package(before, after).ok_or_else(|| match setup_exit_code {
+        Some(0) => WindowsVirtualCableError::new(
+            "driverPackageNotFound",
+            "VB-CABLE setup completed, but Splitwave could not identify one new exact driver package",
+        ),
+        Some(code) => WindowsVirtualCableError::new(
+            "installerFailed",
+            format!("VB-CABLE setup did not install the driver (exit code {code})"),
+        ),
+        None => WindowsVirtualCableError::new(
+            "installerFailed",
+            "VB-CABLE setup ended before Splitwave could verify the driver installation",
+        ),
+    })
+}
+
 #[cfg(target_os = "windows")]
 mod platform;
 
@@ -733,6 +754,26 @@ mod tests {
         };
 
         assert!(newly_installed_package(&before, &before).is_none());
+    }
+
+    #[test]
+    fn nonzero_setup_exit_is_accepted_after_exact_package_installation() {
+        let before = DetectedCable::default();
+        let after = detected();
+        assert_eq!(
+            verified_package_after_setup(&before, &after, Some(1))
+                .expect("the exact new package proves installation")
+                .published_name,
+            "oem42.inf"
+        );
+    }
+
+    #[test]
+    fn nonzero_setup_exit_without_new_package_is_an_installer_failure() {
+        let before = DetectedCable::default();
+        let error = verified_package_after_setup(&before, &DetectedCable::default(), Some(1))
+            .expect_err("no package was installed");
+        assert_eq!(error.code, "installerFailed");
     }
 
     #[test]

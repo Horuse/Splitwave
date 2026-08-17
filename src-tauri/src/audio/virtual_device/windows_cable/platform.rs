@@ -18,8 +18,8 @@ use windows::Win32::Devices::DeviceAndDriverInstallation::{
 };
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Devices::Properties::{
-    DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion,
-    DEVPKEY_Device_FriendlyName, DEVPKEY_Device_Parent,
+    DEVPKEY_Device_DeviceDesc, DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider,
+    DEVPKEY_Device_DriverVersion, DEVPKEY_Device_FriendlyName, DEVPKEY_Device_Parent,
 };
 use windows::Win32::Foundation::{
     CloseHandle, LocalFree, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE, HLOCAL,
@@ -44,9 +44,9 @@ use winreg::RegKey;
 use zip::ZipArchive;
 
 use super::{
-    detect_cable_from_inventory, determine_state, newly_installed_package, removal_decision,
-    status_from, CableEndpoint, CableEndpointFlow, CablePackage, DetectedCable, ManifestState,
-    OwnershipManifest, RemovalAction, UninstallReason, WindowsVirtualCableError,
+    detect_cable_from_inventory, determine_state, removal_decision, status_from,
+    verified_package_after_setup, CableEndpoint, CableEndpointFlow, CablePackage, DetectedCable,
+    ManifestState, OwnershipManifest, RemovalAction, UninstallReason, WindowsVirtualCableError,
     WindowsVirtualCableOwnership, WindowsVirtualCableStatus, MANIFEST_SCHEMA_VERSION,
     PROVIDER_NAME,
 };
@@ -250,22 +250,15 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCa
             format!("Could not launch VB-CABLE setup: {e}"),
         )
     })?;
-    if !result.success() {
-        return Err(WindowsVirtualCableError::new(
-            "installerFailed",
-            format!("VB-CABLE setup exited with {}", result.code().unwrap_or(-1)),
-        ));
-    }
-
     let after = detect_cable()?;
-    let package = newly_installed_package(&before, &after)
-        .ok_or_else(|| {
-            WindowsVirtualCableError::new(
-                "driverPackageNotFound",
-                "VB-CABLE setup completed, but Splitwave could not identify one new exact driver package",
-            )
-        })?
-        .clone();
+    let package = verified_package_after_setup(&before, &after, result.code())?.clone();
+    if !result.success() {
+        warn!(
+            exit_code = result.code().unwrap_or(-1),
+            package = %package.published_name,
+            "VB-CABLE setup returned a nonzero code after installing the verified package"
+        );
+    }
     if !is_exact_package_name(&package.published_name) {
         return Err(WindowsVirtualCableError::new(
             "driverPackageNotFound",
@@ -634,14 +627,19 @@ fn enumerate_vb_cable_packages() -> Result<Vec<CablePackage>, WindowsVirtualCabl
         }
         let provider = property_string(set, &data, &DEVPKEY_Device_DriverProvider);
         let published_name = property_string(set, &data, &DEVPKEY_Device_DriverInfPath);
-        let friendly_name = property_string(set, &data, &DEVPKEY_Device_FriendlyName);
-        let (Some(provider), Some(published_name), Some(friendly_name)) =
-            (provider, published_name, friendly_name)
+        // Root media devices do not consistently expose FriendlyName through
+        // SetupAPI. DeviceDesc carries the same signed-driver identity on those
+        // systems, so use it only as a fallback and retain the provider/package
+        // checks below. This still excludes VB-Audio's Voicemeeter packages.
+        let device_name = property_string(set, &data, &DEVPKEY_Device_FriendlyName)
+            .or_else(|| property_string(set, &data, &DEVPKEY_Device_DeviceDesc));
+        let (Some(provider), Some(published_name), Some(device_name)) =
+            (provider, published_name, device_name)
         else {
             continue;
         };
         if !is_vb_audio_provider(&provider)
-            || !is_vb_cable_friendly_name(&friendly_name)
+            || !is_vb_cable_friendly_name(&device_name)
             || !is_exact_package_name(&published_name)
         {
             continue;
@@ -902,6 +900,13 @@ fn finalize_temporary_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cable_device_name_excludes_voicemeeter() {
+        assert!(is_vb_cable_friendly_name("VB-Audio Virtual Cable"));
+        assert!(is_vb_cable_friendly_name("CABLE Input"));
+        assert!(!is_vb_cable_friendly_name("VB-Audio VoiceMeeter VAIO"));
+    }
 
     #[test]
     fn temporary_archive_is_published_only_after_rename() -> Result<(), WindowsVirtualCableError> {
@@ -1344,9 +1349,16 @@ fn helper_error(action: &str, exit_code: u32) -> WindowsVirtualCableError {
     if exit_code == ERROR_CANCELLED.0 as u32 {
         WindowsVirtualCableError::new("elevationCancelled", "Administrator approval was cancelled")
     } else {
+        warn!(action, exit_code, "VB-CABLE elevated helper failed");
         WindowsVirtualCableError::new(
             "installerFailed",
-            format!("VB-CABLE {action} helper exited with {exit_code}"),
+            match action {
+                "install" => {
+                    "VB-CABLE could not be installed. No usable virtual microphone was detected."
+                }
+                "remove" => "VB-CABLE could not be removed. The existing driver was preserved.",
+                _ => "The VB-CABLE operation could not be completed.",
+            },
         )
     }
 }

@@ -9,6 +9,52 @@ use crate::error::{AppError, AppResult};
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const FRACTIONAL_DELAY_ORDER: usize = 3;
 const HISTORY_FRAMES: usize = 2048;
+const MAX_CLOCK_CORRECTION_PPM: f64 = 500.0;
+
+/// Bounded occupancy PLL for one slave clock-domain. Its ratio is shared by
+/// every channel of that physical stream, so resampling cannot change their
+/// relative phase or erase acoustic TDOA.
+pub struct DomainSynchronizer {
+    base_ratio: f64,
+    ratio: f64,
+    target_frames: f64,
+    integral: f64,
+}
+
+impl DomainSynchronizer {
+    pub fn new(source_rate: u32, master_rate: u32, target_frames: usize) -> AppResult<Self> {
+        if source_rate == 0 || master_rate == 0 || target_frames == 0 {
+            return Err(AppError::Validation(
+                "Microphone Array synchronizer needs positive rates and ring target".into(),
+            ));
+        }
+        let base_ratio = master_rate as f64 / source_rate as f64;
+        Ok(Self {
+            base_ratio,
+            ratio: base_ratio,
+            target_frames: target_frames as f64,
+            integral: 0.0,
+        })
+    }
+
+    /// Updates from ring occupancy only. `ratio` is output/input for rubato's
+    /// fixed-output resampler: a growing source ring lowers it and consumes
+    /// slightly more slave frames on the next output block.
+    pub fn update(&mut self, available_frames: usize) -> f64 {
+        let error = (available_frames as f64 - self.target_frames) / self.target_frames;
+        self.integral = (self.integral + error * 0.000_02).clamp(-0.0005, 0.0005);
+        let correction = (-error * 0.000_5 - self.integral).clamp(
+            -MAX_CLOCK_CORRECTION_PPM / 1_000_000.0,
+            MAX_CLOCK_CORRECTION_PPM / 1_000_000.0,
+        );
+        self.ratio = self.base_ratio * (1.0 + correction);
+        self.ratio
+    }
+
+    pub fn ratio(&self) -> f64 {
+        self.ratio
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point3 {
@@ -489,5 +535,14 @@ mod tests {
             .unwrap();
             assert_eq!(processor.active_algorithm(), ActiveAlgorithm::Gsc);
         }
+    }
+
+    #[test]
+    fn synchronizer_bounded_correction_handles_positive_sro() {
+        let mut sync = DomainSynchronizer::new(48_000, 48_000, 4_800).unwrap();
+        let initial = sync.ratio();
+        let corrected = sync.update(5_040);
+        assert!(corrected < initial);
+        assert!(corrected > initial * (1.0 - MAX_CLOCK_CORRECTION_PPM / 1_000_000.0));
     }
 }

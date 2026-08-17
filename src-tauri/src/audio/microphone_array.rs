@@ -4,6 +4,8 @@
 //! already placed on a common timeline. Keeping that boundary explicit prevents
 //! a synchronizer from treating acoustic time-of-flight as clock drift.
 
+pub mod calibration;
+
 use crate::error::{AppError, AppResult};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]

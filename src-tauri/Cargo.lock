@@ -6119,6 +6119,7 @@ dependencies = [
  "resvg",
  "rtrb",
  "rubato 0.16.2",
+ "rustfft",
  "rustls",
  "serde",
  "serde_json",

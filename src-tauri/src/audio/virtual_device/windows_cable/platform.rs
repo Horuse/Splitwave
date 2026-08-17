@@ -801,19 +801,24 @@ struct TemporaryPath(PathBuf);
 
 impl TemporaryPath {
     fn create_dir(prefix: &str) -> Result<Self, WindowsVirtualCableError> {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("splitwave-{prefix}-{}-{nonce}", std::process::id()));
-        fs::create_dir(&path).map_err(|e| {
-            WindowsVirtualCableError::new(
-                "temporaryStorageFailed",
-                format!("Create temporary directory: {e}"),
-            )
-        })?;
-        Ok(Self(path))
+        for _ in 0..10 {
+            let path =
+                std::env::temp_dir().join(format!("splitwave-{prefix}-{}", cuid2::create_id()));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(WindowsVirtualCableError::new(
+                        "temporaryStorageFailed",
+                        format!("Create temporary directory: {error}"),
+                    ));
+                }
+            }
+        }
+        Err(WindowsVirtualCableError::new(
+            "temporaryStorageFailed",
+            "Could not allocate a unique temporary directory",
+        ))
     }
 
     fn path(&self) -> &Path {
@@ -835,6 +840,62 @@ struct TemporaryArchive {
 impl TemporaryArchive {
     fn path(&self) -> &Path {
         &self.file
+    }
+}
+
+fn create_temporary_archive(
+    dir: TemporaryPath,
+) -> Result<(TemporaryArchive, PathBuf, File), WindowsVirtualCableError> {
+    let archive = TemporaryArchive {
+        file: dir.path().join("VBCABLE_Driver_Pack45.zip"),
+        _dir: dir,
+    };
+    let part = archive.file.with_extension("zip.part");
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part)
+        .map_err(|e| {
+            WindowsVirtualCableError::new(
+                "temporaryStorageFailed",
+                format!("Create downloaded archive: {e}"),
+            )
+        })?;
+    Ok((archive, part, file))
+}
+
+fn finalize_temporary_archive(
+    archive: TemporaryArchive,
+    part: &Path,
+) -> Result<TemporaryArchive, WindowsVirtualCableError> {
+    fs::rename(part, &archive.file).map_err(|e| {
+        WindowsVirtualCableError::new(
+            "temporaryStorageFailed",
+            format!("Finalize downloaded archive: {e}"),
+        )
+    })?;
+    Ok(archive)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_archive_is_published_only_after_rename() -> Result<(), WindowsVirtualCableError> {
+        let (archive, part, mut file) =
+            create_temporary_archive(TemporaryPath::create_dir("vb-cable-test")?)?;
+        assert!(!archive.path().exists());
+        assert!(part.is_file());
+
+        file.write_all(b"archive").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let archive = finalize_temporary_archive(archive, &part)?;
+        assert!(archive.path().is_file());
+        assert!(!part.exists());
+        Ok(())
     }
 }
 
@@ -878,18 +939,8 @@ fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
             "VB-CABLE archive exceeds the allowed download size",
         ));
     }
-    let dir = TemporaryPath::create_dir("vb-cable-download")?;
-    let file = dir.path().join("VBCABLE_Driver_Pack45.zip");
-    let mut out = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&file)
-        .map_err(|e| {
-            WindowsVirtualCableError::new(
-                "temporaryStorageFailed",
-                format!("Create downloaded archive: {e}"),
-            )
-        })?;
+    let (archive, part, mut out) =
+        create_temporary_archive(TemporaryPath::create_dir("vb-cable-download")?)?;
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
     let mut buf = [0_u8; 32 * 1024];
@@ -921,26 +972,17 @@ fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
             format!("Finalize downloaded archive: {e}"),
         )
     })?;
+    drop(out);
     verify_hash(&hasher.finalize())?;
-    Ok(TemporaryArchive { _dir: dir, file })
+    finalize_temporary_archive(archive, &part)
 }
 
 fn copy_verified_archive(source: &Path) -> Result<TemporaryArchive, WindowsVirtualCableError> {
     let mut input = File::open(source).map_err(|e| {
         WindowsVirtualCableError::new("archiveInvalid", format!("Open VB-CABLE archive: {e}"))
     })?;
-    let dir = TemporaryPath::create_dir("vb-cable-helper")?;
-    let file = dir.path().join("VBCABLE_Driver_Pack45.zip");
-    let mut out = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&file)
-        .map_err(|e| {
-            WindowsVirtualCableError::new(
-                "temporaryStorageFailed",
-                format!("Create helper archive: {e}"),
-            )
-        })?;
+    let (archive, part, mut out) =
+        create_temporary_archive(TemporaryPath::create_dir("vb-cable-helper")?)?;
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
     let mut buf = [0_u8; 32 * 1024];
@@ -972,8 +1014,9 @@ fn copy_verified_archive(source: &Path) -> Result<TemporaryArchive, WindowsVirtu
             format!("Finalize helper archive: {e}"),
         )
     })?;
+    drop(out);
     verify_hash(&hasher.finalize())?;
-    Ok(TemporaryArchive { _dir: dir, file })
+    finalize_temporary_archive(archive, &part)
 }
 
 fn verify_hash(digest: &[u8]) -> Result<(), WindowsVirtualCableError> {

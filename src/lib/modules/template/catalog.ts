@@ -6,6 +6,7 @@ const ROW = 280;
 export const TEMPLATES: Template[] = [
 	{
 		id: 'blank',
+		version: 1,
 		accent: 'neutral',
 		name: 'Blank',
 		description: 'An empty canvas.',
@@ -14,6 +15,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'push-to-talk',
+		version: 1,
 		accent: 'emerald',
 		name: 'Push to talk',
 		description: 'Mic straight to your virtual mic, muted by default so you decide when to speak.',
@@ -29,6 +31,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'voice-ducking',
+		version: 1,
 		accent: 'sky',
 		name: 'Voice ducking',
 		description: 'Talking automatically lowers app audio, so game or music volume drops while you speak.',
@@ -67,6 +70,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'safe-game-audio',
+		version: 1,
 		accent: 'violet',
 		name: 'Safe game audio',
 		description: 'App audio capped by a limiter so sudden loud sounds never blast your speakers.',
@@ -82,6 +86,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'clean-mic',
+		version: 1,
 		accent: 'amber',
 		name: 'Clean mic',
 		description: 'Mic with clicks and background noise stripped before it reaches your virtual mic.',
@@ -99,6 +104,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'spatial_voice_multimic',
+		version: 1,
 		accent: 'emerald',
 		name: 'Spatial Voice — Multi-Mic',
 		description: 'A setup-ready microphone array with spatial focus, denoise, compression and voice EQ.',
@@ -123,6 +129,7 @@ export const TEMPLATES: Template[] = [
 	},
 	{
 		id: 'full-voice-and-ducking',
+		version: 1,
 		accent: 'rose',
 		name: 'Full voice + ducking',
 		description: 'Mic denoised and ducking app audio when you speak, app audio limited so it never overloads.',

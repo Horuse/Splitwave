@@ -161,4 +161,7 @@ export interface Pipeline {
 	updatedAt: number;
 	/** Schema version; absent means pre-versioning, see `pipeline/migrations`. */
 	version?: number;
+	/** Immutable catalog origin; later template edits never rewrite this pipeline. */
+	sourceTemplateId?: string;
+	sourceTemplateVersion?: number;
 }

@@ -38,6 +38,8 @@ export function instantiate(template: Template, name: string): Pipeline {
 		edges,
 		createdAt: now,
 		updatedAt: now,
-		version: PIPELINE_VERSION
+		version: PIPELINE_VERSION,
+		sourceTemplateId: template.id,
+		sourceTemplateVersion: template.version
 	};
 }

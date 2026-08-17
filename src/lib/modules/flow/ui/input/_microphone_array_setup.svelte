@@ -6,6 +6,7 @@
 	import type { MicrophoneArrayMetrics, NativeDeviceInfo } from '$lib/modules/audio/types';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import type { MicrophoneArrayGeometry, MicrophoneArrayMember, MicrophoneArrayNodeData, MicrophoneArraySource } from '$lib/modules/pipeline/types';
+	import { createMicrophoneArrayMember } from '$lib/modules/pipeline/microphone_array';
 
 	type Props = ModalBaseProps & {
 		nodeId: string;
@@ -162,19 +163,7 @@
 	}
 
 	function createMember(source: MicrophoneArraySource, channelIndex: number, offset = 0): MicrophoneArrayMember {
-		return {
-			sourceId: source.id,
-			channelIndex,
-			label: `Mic ${draft.members.length + offset + 1}`,
-			position: { x: 0, y: 0, z: 0 },
-			enabled: true,
-			weight: 1,
-			gainDb: 0,
-			polarityInverted: false,
-			fixedDelaySamples: 0,
-			quality: 'good',
-			exclusionReason: null
-		};
+		return createMicrophoneArrayMember(source, channelIndex, draft.members.length + offset);
 	}
 
 	function toggleChannel(source: MicrophoneArraySource, channelIndex: number) {

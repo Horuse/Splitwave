@@ -22,6 +22,7 @@ export type TemplateAccent = 'neutral' | 'emerald' | 'sky' | 'violet' | 'amber' 
 
 export interface Template {
 	id: string;
+	version: number;
 	accent: TemplateAccent;
 	name: string;
 	description: string;

@@ -129,6 +129,7 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",

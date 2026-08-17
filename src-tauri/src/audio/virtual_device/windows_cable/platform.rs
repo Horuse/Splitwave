@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
     SetupDiGetDeviceInstanceIdW, SetupDiGetDevicePropertyW, DIGCF_ALLCLASSES, SP_DEVINFO_DATA,
@@ -21,11 +21,16 @@ use windows::Win32::Devices::Properties::{
     DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion,
     DEVPKEY_Device_FriendlyName, DEVPKEY_Device_Parent,
 };
-use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE};
+use windows::Win32::Foundation::{
+    CloseHandle, LocalFree, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE, HLOCAL,
+};
 use windows::Win32::Media::Audio::{
     eCapture, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
 };
-use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows::Win32::Security::{
+    GetTokenInformation, TokenElevation, TokenUser, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+};
 use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
@@ -89,7 +94,7 @@ pub fn status() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
     Ok(status_from(
         &detected,
         &manifest,
-        &consumer_id(&current_install_root()?),
+        &consumer_id(&current_install_root()?)?,
     ))
 }
 
@@ -195,7 +200,7 @@ fn ensure_elevated_or_rerun(
 fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
     let manifest = read_manifest();
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     let state = determine_state(&detected, &manifest, &consumer);
     // Treat the uninstaller's pending response as "keep" so a sole consumer
     // receives the explicit NSIS prompt instead of silently dropping ownership.
@@ -274,7 +279,7 @@ fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
         package_original_names: package.original_name.clone().into_iter().collect(),
         package_fingerprint: package.fingerprint(),
         device_instance_ids: package.device_instance_ids.clone(),
-        consumer_installation_ids: vec![consumer_id(&root)],
+        consumer_installation_ids: vec![consumer_id(&root)?],
         // VB-Audio's current reference manual requires a restart after installation.
         pending_reboot: !after.usable(),
         removal_pending_reboot: false,
@@ -297,7 +302,7 @@ fn register_consumer(root: &Path) -> Result<(), WindowsVirtualCableError> {
     if !manifest.matches(package) {
         return Ok(());
     }
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     if !manifest
         .consumer_installation_ids
         .iter()
@@ -320,7 +325,7 @@ fn register_consumer_with_elevation(
     let Some(package) = detected.package() else {
         return Ok(());
     };
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     if !manifest.matches(package)
         || manifest
             .consumer_installation_ids
@@ -336,7 +341,7 @@ fn release_consumer(root: &Path) -> Result<(), WindowsVirtualCableError> {
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
     };
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     manifest
         .consumer_installation_ids
         .retain(|id| id != &consumer);
@@ -348,7 +353,7 @@ fn retain_as_external(root: &Path) -> Result<(), WindowsVirtualCableError> {
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
     };
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     let state = determine_state(
         &detected,
         &ManifestState::Valid(manifest.clone()),
@@ -381,7 +386,7 @@ fn remove_exact_package(root: &Path) -> Result<(), WindowsVirtualCableError> {
             "No managed VB-CABLE ownership record exists",
         ));
     };
-    let consumer = consumer_id(root);
+    let consumer = consumer_id(root)?;
     let state = determine_state(
         &detected,
         &ManifestState::Valid(manifest.clone()),
@@ -1171,21 +1176,80 @@ fn current_install_root() -> Result<PathBuf, WindowsVirtualCableError> {
         })
 }
 
-fn consumer_id(root: &Path) -> String {
+fn consumer_id(root: &Path) -> Result<String, WindowsVirtualCableError> {
     let normalized = root
         .canonicalize()
         .unwrap_or_else(|_| root.to_path_buf())
         .to_string_lossy()
         .replace('/', "\\")
         .to_ascii_lowercase();
-    let hash = Sha256::digest(normalized.as_bytes());
-    format!(
+    let identity = format!("{}|{normalized}", current_user_sid()?);
+    let hash = Sha256::digest(identity.as_bytes());
+    Ok(format!(
         "splitwave-{}",
         hash.iter()
             .take(12)
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
-    )
+    ))
+}
+
+fn current_user_sid() -> Result<String, WindowsVirtualCableError> {
+    let mut token = HANDLE::default();
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.map_err(|e| {
+        WindowsVirtualCableError::new("consumerIdentityFailed", format!("Open process token: {e}"))
+    })?;
+    let result = (|| {
+        let mut required = 0;
+        unsafe {
+            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut required);
+        }
+        if required == 0 {
+            return Err(WindowsVirtualCableError::new(
+                "consumerIdentityFailed",
+                "Windows did not report the size of the current user token",
+            ));
+        }
+        let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
+        let mut buffer = vec![0_usize; words];
+        let user = buffer.as_mut_ptr().cast::<TOKEN_USER>();
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                Some(user.cast::<c_void>()),
+                required,
+                &mut required,
+            )
+        }
+        .map_err(|e| {
+            WindowsVirtualCableError::new(
+                "consumerIdentityFailed",
+                format!("Read process user token: {e}"),
+            )
+        })?;
+        let mut sid = PWSTR::null();
+        unsafe { ConvertSidToStringSidW((*user).User.Sid, &mut sid) }.map_err(|e| {
+            WindowsVirtualCableError::new(
+                "consumerIdentityFailed",
+                format!("Format process user SID: {e}"),
+            )
+        })?;
+        let value = unsafe { sid.to_string() }.map_err(|e| {
+            WindowsVirtualCableError::new(
+                "consumerIdentityFailed",
+                format!("Read process user SID: {e}"),
+            )
+        });
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(sid.0.cast())));
+        }
+        value
+    })();
+    unsafe {
+        let _ = CloseHandle(token);
+    }
+    result
 }
 
 fn now_unix_seconds() -> String {

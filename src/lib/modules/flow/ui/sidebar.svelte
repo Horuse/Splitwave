@@ -1,9 +1,13 @@
 <script lang="ts">
 	import type { NodeCategory, NodeKind } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { chooseWindowsVirtualMicrophoneOutput } from '$lib/modules/audio/windows_virtual_microphone';
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
 	import { Add, DataBar, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
 	import { CATEGORY_TEXT } from '../utils/accents';
+	import { platform } from '@tauri-apps/plugin-os';
+
+	const isWindows = platform() === 'windows';
 
 	const CATEGORY_ICON = {
 		input: Mic,
@@ -14,6 +18,7 @@
 	};
 
 	let sections: Partial<Record<NodeCategory, HTMLElement>> = {};
+	let addingVirtualMicrophone = $state(false);
 
 	function jumpTo(category: NodeCategory) {
 		sections[category]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -27,6 +32,17 @@
 
 	function onClickAdd(kind: NodeKind) {
 		pipelineStore.editorActions?.addNode(kind);
+	}
+
+	async function addVirtualMicrophone() {
+		if (addingVirtualMicrophone) return;
+		addingVirtualMicrophone = true;
+		try {
+			const deviceId = await chooseWindowsVirtualMicrophoneOutput();
+			if (deviceId) pipelineStore.editorActions?.addNodeWithData('speaker', { deviceId });
+		} finally {
+			addingVirtualMicrophone = false;
+		}
 	}
 </script>
 
@@ -77,6 +93,28 @@
 								<Add class="h-4 w-4" />
 							</button>
 						</li>
+						{#if isWindows && kind === 'speaker'}
+							<li class="group flex items-start justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 hover:bg-neutral-200">
+								<div class="flex min-w-0 items-start gap-2">
+									<Mic class="mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400" />
+									<div class="flex min-w-0 flex-col">
+										<span class="text-sm font-medium text-theme">Virtual microphone</span>
+										<span class="text-[11px] leading-tight text-neutral-900">Send your mix to calls and recordings.</span>
+									</div>
+								</div>
+								<button
+									class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300 disabled:cursor-wait disabled:opacity-50"
+									onclick={addVirtualMicrophone}
+									disabled={addingVirtualMicrophone}
+									aria-label="Add Virtual microphone">
+									{#if addingVirtualMicrophone}
+										<span class="text-xs">…</span>
+									{:else}
+										<Add class="h-4 w-4" />
+									{/if}
+								</button>
+							</li>
+						{/if}
 					{/each}
 				</ul>
 			</section>

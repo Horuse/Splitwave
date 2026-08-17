@@ -14,8 +14,10 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { chooseWindowsVirtualMicrophoneOutput } from '$lib/modules/audio/windows_virtual_microphone';
 
-	const virtualDevicesLabel = platform() === 'windows' ? 'Set up virtual microphone' : 'Add virtual device';
+	const isWindows = platform() === 'windows';
+	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
 
 	type SpeakerNodeType = Node<SpeakerNodeData, 'speaker'>;
 	let { id, data }: NodeProps<SpeakerNodeType> = $props();
@@ -33,6 +35,15 @@
 
 	async function refresh() {
 		await audioStore.refreshOutputDevices();
+	}
+
+	async function openVirtualDevice() {
+		if (!isWindows) {
+			await goto('/virtual-devices');
+			return;
+		}
+		const deviceId = await chooseWindowsVirtualMicrophoneOutput();
+		if (deviceId) setDevice(deviceId);
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -94,7 +105,7 @@
 					icon={Add}
 					onclick={() => {
 						close();
-						goto('/virtual-devices');
+						void openVirtualDevice();
 					}} />
 			{/snippet}
 		</Combobox>

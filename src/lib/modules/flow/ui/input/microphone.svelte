@@ -15,7 +15,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	const virtualDevicesLabel = platform() === 'windows' ? 'Set up virtual microphone' : 'Add virtual device';
+	const isWindows = platform() === 'windows';
 
 	type MicrophoneNodeType = Node<MicrophoneNodeData, 'microphone'>;
 	let { id, data }: NodeProps<MicrophoneNodeType> = $props();
@@ -87,13 +87,15 @@
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
-				<ComboboxAction
-					label={virtualDevicesLabel}
-					icon={Add}
-					onclick={() => {
-						close();
-						goto('/virtual-devices');
-					}} />
+				{#if !isWindows}
+					<ComboboxAction
+						label="Add virtual device"
+						icon={Add}
+						onclick={() => {
+							close();
+							goto('/virtual-devices');
+						}} />
+				{/if}
 			{/snippet}
 		</Combobox>
 		{#if missing}

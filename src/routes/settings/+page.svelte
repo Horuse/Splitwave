@@ -1,15 +1,14 @@
 <script lang="ts">
-	import { page } from '$app/state';
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';
 	import Header from '$lib/components/layout/header.svelte';
+	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
 	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS } from '$lib/modules/settings/stores.svelte';
 	import PresetsSection from './_presets_section.svelte';
-
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
 		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },
@@ -66,12 +65,7 @@
 
 <Header>
 	{#snippet left()}
-		<div class="flex items-center gap-2">
-			<a class:active={page.route.id === '/'} href="/" class="button-header px-4 text-sm">Pipelines</a>
-			<a class:active={page.route.id === '/virtual-devices'} href="/virtual-devices" class="button-header px-4 text-sm">Virtual devices</a>
-			<a class:active={page.route.id === '/wiki'} href="/wiki" class="button-header px-4 text-sm">Wiki</a>
-			<a class:active={page.route.id === '/settings'} href="/settings" class="button-header px-4 text-sm">Settings</a>
-		</div>
+		<HeaderNav />
 	{/snippet}
 </Header>
 

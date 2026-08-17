@@ -63,6 +63,11 @@ pub enum Command {
         scalar: f32,
         reply: Sender<AppResult<()>>,
     },
+    SetMicrophoneArrayAudition {
+        node_id: String,
+        mode: String,
+        reply: Sender<AppResult<()>>,
+    },
     IsRunning {
         reply: Sender<bool>,
     },
@@ -166,6 +171,16 @@ pub fn run(rx: Receiver<Command>) {
                     p.set_input_volume(&node_id, scalar);
                 }
                 let _ = reply.send(Ok(()));
+            }
+            Command::SetMicrophoneArrayAudition {
+                node_id,
+                mode,
+                reply,
+            } => {
+                let result = active.as_ref().map_or(Ok(()), |pipeline| {
+                    pipeline.set_microphone_array_audition(&node_id, &mode)
+                });
+                let _ = reply.send(result);
             }
             Command::IsRunning { reply } => {
                 let _ = reply.send(active.is_some());

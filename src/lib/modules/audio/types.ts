@@ -79,7 +79,7 @@ export interface MicrophoneArrayMemberMetrics {
 export interface MicrophoneArrayMetrics {
 	nodeId: string;
 	state: 'starting' | 'syncing' | 'ready' | 'fallback' | 'bypassed' | 'error';
-	fallbackReason: 'syncing' | 'bypassed' | 'domainUnlocked' | 'noHealthyChannel' | 'sourceError' | 'processorError' | null;
+	fallbackReason: 'syncing' | 'bypassed' | 'domainUnlocked' | 'noHealthyChannel' | 'sourceError' | 'processorError' | 'cpuOverload' | null;
 	configuredChannels: number;
 	activeChannels: number;
 	clockDomains: number;
@@ -91,6 +91,9 @@ export interface MicrophoneArrayMetrics {
 	outputFrames: number;
 	streamErrors: number;
 	mvdrFallbackBins: number;
+	auditionMode: 'bestSingle' | 'rawCalibrated' | 'delayAndSum' | 'spatial';
+	workerLoadPercent: number;
+	overloadEvents: number;
 	algorithmicLatencyFrames: number;
 	syncTargetFrames: number;
 	calibration: {

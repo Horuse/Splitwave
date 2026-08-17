@@ -20,17 +20,31 @@
 	// svelte-ignore state_referenced_locally -- each modal owns one isolated draft
 	let draft = $state<MicrophoneArrayNodeData>(cloneData(data));
 	let deviceInfo = $state<Record<string, NativeDeviceInfo>>({});
-	let loadingDevices = $state(false);
+	let loadingDevices = $state(true);
 	let calibrating = $state(false);
 	let calibrationError = $state<string | null>(null);
 	let metrics = $state<MicrophoneArrayMetrics | null>(null);
+	let auditionMode = $state<'bestSingle' | 'rawCalibrated' | 'delayAndSum' | 'spatial'>('spatial');
+	let auditionError = $state<string | null>(null);
 	let unlistenMetrics: (() => void) | undefined;
 	$effect(() => {
 		if (!audioStore.isRunning) metrics = null;
 	});
+	$effect(() => {
+		if (metrics) auditionMode = metrics.auditionMode;
+	});
 
 	let enabledMembers = $derived(draft.members.filter((member) => member.enabled && member.quality !== 'excluded').length);
 	let independentClocks = $derived(draft.sources.length > 1);
+	let missingSources = $derived(
+		loadingDevices ? [] : draft.sources.filter((source) => source.deviceId && !audioStore.inputDevices.some((device) => device.id === source.deviceId))
+	);
+	let bluetoothSources = $derived(
+		draft.sources.filter((source) => {
+			const name = audioStore.inputDevices.find((device) => device.id === source.deviceId)?.name ?? '';
+			return /bluetooth|airpods|hands[- ]?free/i.test(name);
+		})
+	);
 	let estimatedCpu = $derived.by(() => {
 		if (draft.algorithm === 'delayAndSum') return Math.max(0.1, enabledMembers * 0.025);
 		if (draft.algorithm === 'gsc') return Math.max(0.2, enabledMembers * 0.06);
@@ -282,7 +296,7 @@
 	}
 
 	async function calibrate() {
-		if (validation || calibrating) return;
+		if (validation || calibrating || missingSources.length > 0) return;
 		calibrating = true;
 		calibrationError = null;
 		try {
@@ -292,6 +306,17 @@
 			calibrationError = error instanceof Error ? error.message : String(error);
 		} finally {
 			calibrating = false;
+		}
+	}
+
+	async function setAudition(mode: typeof auditionMode) {
+		if (!audioStore.isRunning || mode === auditionMode) return;
+		auditionError = null;
+		try {
+			await audioMethods.setMicrophoneArrayAudition(nodeId, mode);
+			auditionMode = mode;
+		} catch (error) {
+			auditionError = error instanceof Error ? error.message : String(error);
 		}
 	}
 
@@ -312,6 +337,7 @@
 		if (reason === 'noHealthyChannel') return 'No healthy channel';
 		if (reason === 'sourceError') return 'Source stream error';
 		if (reason === 'processorError') return 'Processor error';
+		if (reason === 'cpuOverload') return 'CPU overload';
 		if (reason === 'bypassed') return 'Bypassed to healthy mic';
 		return reason === 'syncing' ? 'Synchronizing' : 'None';
 	}
@@ -391,6 +417,9 @@
 							value={source.deviceId ?? ''}
 							onchange={(event) => setDevice(source.id, event.currentTarget.value || null)}>
 							<option value="">Select an input device…</option>
+							{#if source.deviceId && !audioStore.inputDevices.some((device) => device.id === source.deviceId)}
+								<option value={source.deviceId}>Missing device — {source.deviceId}</option>
+							{/if}
 							{#each audioStore.inputDevices as device (device.id)}
 								<option value={device.id} disabled={draft.sources.some((other) => other.id !== source.id && other.deviceId === device.id)}
 									>{device.name}</option>
@@ -433,6 +462,20 @@
 					{/if}
 				</div>
 			{/each}
+			{#if missingSources.length > 0}
+				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-900">
+					{missingSources.length === 1 ? 'A saved input device is missing.' : `${missingSources.length} saved input devices are missing.`} Channel mapping
+					is preserved; reconnect or replace the device before calibration or Run.
+				</div>
+			{/if}
+			{#if bluetoothSources.length > 0}
+				<div class="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-700">
+					Bluetooth microphone profiles are unsupported for phase-coherent array processing. Use a wired or shared-clock interface.
+				</div>
+			{/if}
+			{#if draft.sources.length > 0}
+				<p class="text-[9px] text-neutral-700">Disable per-device AGC, noise suppression and audio enhancements where possible.</p>
+			{/if}
 		</section>
 
 		<section id="array-geometry" class="scroll-mt-4 space-y-3 border-t border-neutral-300 pt-5">
@@ -639,7 +682,7 @@
 				<button
 					type="button"
 					class="button-main green h-8 rounded-lg px-4 text-[10px] font-semibold"
-					disabled={!!validation || calibrating}
+					disabled={!!validation || calibrating || missingSources.length > 0}
 					onclick={calibrate}>{calibrating ? 'Listening…' : 'Calibrate 3 s'}</button>
 			</div>
 			{#if calibrationError}<div class="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-700">
@@ -716,6 +759,26 @@
 					Use the graph Run control for a live test. Bypass crossfades to the best healthy microphone without changing the graph.
 				</p>
 			</div>
+			<div class="rounded-xl border border-neutral-300 bg-neutral-200/40 p-3">
+				<div class="flex items-center justify-between gap-3">
+					<div>
+						<div class="text-[10px] font-medium text-theme">Live A/B monitor</div>
+						<div class="mt-0.5 text-[9px] text-neutral-700">Transient only; the graph keeps one mono output and the selection is not saved.</div>
+					</div>
+					{#if metrics}<span class="font-mono text-[9px] text-neutral-700">WORKER {metrics.workerLoadPercent.toFixed(1)}%</span>{/if}
+				</div>
+				<div class="mt-3 grid grid-cols-4 gap-1.5">
+					{#each [['bestSingle', 'Best single'], ['rawCalibrated', 'Raw calibrated'], ['delayAndSum', 'Delay-and-sum'], ['spatial', 'Spatial output']] as option}
+						<button
+							type="button"
+							class={['button-main h-8 rounded-lg px-2 text-[9px]', auditionMode === option[0] ? 'green' : 'secondary']}
+							disabled={!audioStore.isRunning}
+							onclick={() => setAudition(option[0] as typeof auditionMode)}>{option[1]}</button>
+					{/each}
+				</div>
+				{#if !audioStore.isRunning}<p class="mt-2 text-[9px] text-neutral-700">Run the graph to enable monitored comparison.</p>{/if}
+				{#if auditionError}<p class="mt-2 text-[9px] text-red-700">{auditionError}</p>{/if}
+			</div>
 			<div class="grid grid-cols-4 gap-2">
 				{#each [['State', metrics?.state ?? 'Stopped'], ['Channels', metrics ? `${metrics.activeChannels}/${metrics.configuredChannels} active` : `${enabledMembers} configured`], ['Algorithm', metrics ? formatAlgorithm(metrics.activeAlgorithm) : draft.algorithm === 'auto' ? 'Auto' : draft.algorithm], ['Fallback', metrics ? formatFallback(metrics.fallbackReason) : 'Best healthy mic']] as diagnostic}
 					<div class="rounded-lg border border-neutral-300 bg-neutral-200/40 px-2.5 py-2">
@@ -750,7 +813,8 @@
 						class="flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-300 bg-neutral-200/30 px-3 py-2 font-mono text-[9px] text-neutral-800 tabular-nums">
 						<span>IN {metrics.capturedSamples}</span><span>OUT {metrics.outputFrames}</span><span>DROPPED {metrics.droppedSamples}</span><span
 							>UNDERRUN {metrics.domains.reduce((sum, domain) => sum + domain.underrunSamples, 0)}</span
-						><span>MVDR FALLBACK {metrics.mvdrFallbackBins}</span><span>SYNC TARGET {metrics.syncTargetFrames} fr</span>
+						><span>MVDR FALLBACK {metrics.mvdrFallbackBins}</span><span>OVERLOAD {metrics.overloadEvents}</span><span
+							>SYNC TARGET {metrics.syncTargetFrames} fr</span>
 					</div>
 				</details>
 			{:else}

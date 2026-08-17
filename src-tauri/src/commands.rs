@@ -380,6 +380,21 @@ pub async fn set_input_volume(
 }
 
 #[tauri::command]
+pub async fn set_microphone_array_audition(
+    node_id: String,
+    mode: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let tx = state.audio_tx.clone();
+    audio_request(tx, move |reply| Command::SetMicrophoneArrayAudition {
+        node_id,
+        mode,
+        reply,
+    })
+    .await?
+}
+
+#[tauri::command]
 pub async fn is_pipeline_running(state: State<'_, AppState>) -> AppResult<bool> {
     let tx = state.audio_tx.clone();
     audio_request(tx, |reply| Command::IsRunning { reply }).await

@@ -281,6 +281,30 @@ impl ActivePipeline {
         }
     }
 
+    pub fn set_microphone_array_audition(&self, node_id: &str, mode: &str) -> AppResult<()> {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let mode = crate::audio::microphone_array::AuditionMode::parse(mode)?;
+            let state = self.inputs.get(node_id).ok_or_else(|| {
+                AppError::Validation(format!("Microphone Array node {node_id:?} is not running"))
+            })?;
+            let InputHandle::MicrophoneArray(capture) = &state._handle else {
+                return Err(AppError::Validation(format!(
+                    "input node {node_id:?} is not a Microphone Array"
+                )));
+            };
+            capture.set_audition(mode);
+            Ok(())
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = (node_id, mode);
+            Err(AppError::Stream(
+                "Microphone Array audition is unavailable on the PipeWire backend".into(),
+            ))
+        }
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn update_array_controls(&self, graph: &ValidGraph) {
         for input in &graph.inputs {

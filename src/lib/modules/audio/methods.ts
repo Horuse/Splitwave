@@ -38,6 +38,8 @@ export const methods = {
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
 	calibrateMicrophoneArray: (data: MicrophoneArrayNodeData): Promise<MicrophoneArrayNodeData> =>
 		invoke<MicrophoneArrayNodeData>('calibrate_microphone_array', { data }),
+	setMicrophoneArrayAudition: (nodeId: string, mode: 'bestSingle' | 'rawCalibrated' | 'delayAndSum' | 'spatial'): Promise<void> =>
+		invoke('set_microphone_array_audition', { nodeId, mode }),
 	onMicrophoneArrayMetrics: (cb: (metrics: MicrophoneArrayMetrics) => void): Promise<UnlistenFn> =>
 		listen<MicrophoneArrayMetrics>('audio://microphone-array-metrics', (event) => cb(event.payload)),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),

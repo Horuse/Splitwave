@@ -247,6 +247,7 @@ pub fn run() {
             commands::set_audio_file_loop,
             commands::set_audio_file_paused,
             commands::set_input_volume,
+            commands::set_microphone_array_audition,
             commands::get_device_volume,
             commands::set_device_volume,
             commands::watch_device_volume,

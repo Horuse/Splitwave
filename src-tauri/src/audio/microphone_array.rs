@@ -88,6 +88,44 @@ const ARRAY_FALLBACK_NO_HEALTHY_CHANNEL: u32 = 4;
 const ARRAY_FALLBACK_SOURCE_ERROR: u32 = 5;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_PROCESSOR_ERROR: u32 = 6;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_CPU_OVERLOAD: u32 = 7;
+
+const AUDITION_SPATIAL: u32 = 0;
+const AUDITION_BEST_SINGLE: u32 = 1;
+const AUDITION_RAW_CALIBRATED: u32 = 2;
+const AUDITION_DELAY_AND_SUM: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditionMode {
+    Spatial,
+    BestSingle,
+    RawCalibrated,
+    DelayAndSum,
+}
+
+impl AuditionMode {
+    pub fn parse(value: &str) -> AppResult<Self> {
+        match value {
+            "spatial" => Ok(Self::Spatial),
+            "bestSingle" => Ok(Self::BestSingle),
+            "rawCalibrated" => Ok(Self::RawCalibrated),
+            "delayAndSum" => Ok(Self::DelayAndSum),
+            _ => Err(AppError::Validation(format!(
+                "unknown Microphone Array audition mode {value:?}"
+            ))),
+        }
+    }
+
+    fn encode(self) -> u32 {
+        match self {
+            Self::Spatial => AUDITION_SPATIAL,
+            Self::BestSingle => AUDITION_BEST_SINGLE,
+            Self::RawCalibrated => AUDITION_RAW_CALIBRATED,
+            Self::DelayAndSum => AUDITION_DELAY_AND_SUM,
+        }
+    }
+}
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Serialize)]
@@ -107,6 +145,9 @@ pub struct MicrophoneArrayMetricsSnapshot {
     output_frames: u64,
     stream_errors: u64,
     mvdr_fallback_bins: u64,
+    audition_mode: &'static str,
+    worker_load_percent: f32,
+    overload_events: u64,
     algorithmic_latency_frames: usize,
     sync_target_frames: usize,
     calibration: MicrophoneArrayCalibrationMetrics,
@@ -233,6 +274,9 @@ struct ArrayMetrics {
     active_algorithm: AtomicU32,
     output_frames: AtomicU64,
     mvdr_fallback_bins: AtomicU64,
+    audition_mode: AtomicU32,
+    worker_load_percent: AtomicU32,
+    overload_events: AtomicU64,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -304,6 +348,9 @@ impl MicrophoneArrayMetricsHandle {
             active_algorithm: AtomicU32::new(1),
             output_frames: AtomicU64::new(0),
             mvdr_fallback_bins: AtomicU64::new(0),
+            audition_mode: AtomicU32::new(AUDITION_SPATIAL),
+            worker_load_percent: AtomicU32::new(0.0f32.to_bits()),
+            overload_events: AtomicU64::new(0),
         }))
     }
 
@@ -337,6 +384,7 @@ impl MicrophoneArrayMetricsHandle {
                 ARRAY_FALLBACK_NO_HEALTHY_CHANNEL => Some("noHealthyChannel"),
                 ARRAY_FALLBACK_SOURCE_ERROR => Some("sourceError"),
                 ARRAY_FALLBACK_PROCESSOR_ERROR => Some("processorError"),
+                ARRAY_FALLBACK_CPU_OVERLOAD => Some("cpuOverload"),
                 _ => None,
             },
             configured_channels: self.0.configured_channels,
@@ -352,6 +400,9 @@ impl MicrophoneArrayMetricsHandle {
             output_frames: self.0.output_frames.load(Ordering::Relaxed),
             stream_errors: domains.iter().map(|domain| domain.stream_errors).sum(),
             mvdr_fallback_bins: self.0.mvdr_fallback_bins.load(Ordering::Relaxed),
+            audition_mode: audition_name(self.0.audition_mode.load(Ordering::Relaxed)),
+            worker_load_percent: f32::from_bits(self.0.worker_load_percent.load(Ordering::Relaxed)),
+            overload_events: self.0.overload_events.load(Ordering::Relaxed),
             algorithmic_latency_frames: self.0.algorithmic_latency_frames,
             sync_target_frames: SYNC_TARGET_FRAMES,
             calibration: MicrophoneArrayCalibrationMetrics {
@@ -394,6 +445,16 @@ fn active_algorithm_name(encoded: u32) -> &'static str {
         2 => "gsc",
         3 => "mvdr",
         _ => "delayAndSum",
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn audition_name(encoded: u32) -> &'static str {
+    match encoded {
+        AUDITION_BEST_SINGLE => "bestSingle",
+        AUDITION_RAW_CALIBRATED => "rawCalibrated",
+        AUDITION_DELAY_AND_SUM => "delayAndSum",
+        _ => "spatial",
     }
 }
 
@@ -561,6 +622,7 @@ pub struct RealtimeControls {
     pub postfilter_enabled: bool,
     pub limiter_enabled: bool,
     pub bypassed: bool,
+    pub audition: AuditionMode,
 }
 
 impl RealtimeControls {
@@ -574,6 +636,7 @@ impl RealtimeControls {
             postfilter_enabled: config.postfilter_enabled,
             limiter_enabled: config.limiter_enabled,
             bypassed: false,
+            audition: AuditionMode::Spatial,
         }
     }
 }
@@ -587,6 +650,7 @@ struct AtomicRuntimeControls {
     postfilter_enabled: AtomicBool,
     limiter_enabled: AtomicBool,
     bypassed: AtomicBool,
+    audition: AtomicU32,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -600,6 +664,7 @@ impl AtomicRuntimeControls {
             postfilter_enabled: AtomicBool::new(false),
             limiter_enabled: AtomicBool::new(false),
             bypassed: AtomicBool::new(false),
+            audition: AtomicU32::new(AUDITION_SPATIAL),
         };
         controls.update(data);
         controls
@@ -630,7 +695,12 @@ impl AtomicRuntimeControls {
             postfilter_enabled: self.postfilter_enabled.load(Ordering::Relaxed),
             limiter_enabled: self.limiter_enabled.load(Ordering::Relaxed),
             bypassed: self.bypassed.load(Ordering::Relaxed),
+            audition: decode_audition(self.audition.load(Ordering::Relaxed)),
         }
+    }
+
+    fn set_audition(&self, mode: AuditionMode) {
+        self.audition.store(mode.encode(), Ordering::Relaxed);
     }
 }
 
@@ -641,9 +711,14 @@ pub struct Processor {
     active: Vec<usize>,
     gains: Vec<f32>,
     delays: Vec<f32>,
+    calibration_delays: Vec<f32>,
     weights: Vec<f32>,
     history: Vec<f32>,
     history_head: usize,
+    calibrated_history: Vec<f32>,
+    calibrated_history_head: usize,
+    stable_history: Vec<f32>,
+    stable_history_head: usize,
     active_algorithm: ActiveAlgorithm,
     fade_from: ActiveAlgorithm,
     fade_to: ActiveAlgorithm,
@@ -658,6 +733,7 @@ pub struct Processor {
     aligned: Vec<f32>,
     algorithm_outputs: Vec<f32>,
     time_domain_delay: Vec<f32>,
+    delay_and_sum_output: Vec<f32>,
     limiter_enabled: bool,
 }
 
@@ -692,6 +768,7 @@ impl Processor {
         let steering = steering_delays(config.sample_rate, config.target, config.members)?;
         let mut gains = Vec::with_capacity(active.len());
         let mut delays = Vec::with_capacity(active.len());
+        let mut calibration_delays = Vec::with_capacity(active.len());
         let mut weights = Vec::with_capacity(active.len());
         for &index in &active {
             let member = config.members[index];
@@ -702,6 +779,7 @@ impl Processor {
                 gain
             });
             delays.push((steering[index] + member.fixed_delay_samples).clamp(0.0, 1024.0));
+            calibration_delays.push(member.fixed_delay_samples.clamp(0.0, 1024.0));
             weights.push(member.weight.clamp(0.0, 4.0));
         }
         let weight_sum: f32 = weights.iter().sum();
@@ -750,9 +828,14 @@ impl Processor {
         Ok(Self {
             history: vec![0.0; active_len * HISTORY_FRAMES],
             history_head: 0,
+            calibrated_history: vec![0.0; active_len * HISTORY_FRAMES],
+            calibrated_history_head: 0,
+            stable_history: vec![0.0; active_len * HISTORY_FRAMES],
+            stable_history_head: 0,
             active,
             gains,
             delays,
+            calibration_delays,
             weights,
             active_algorithm,
             fade_from: active_algorithm,
@@ -769,6 +852,7 @@ impl Processor {
             aligned: vec![0.0; active_len * mvdr::HOP_SIZE],
             algorithm_outputs: vec![0.0; 3 * block_frames],
             time_domain_delay: vec![0.0; 2 * block_frames],
+            delay_and_sum_output: vec![0.0; mvdr::HOP_SIZE],
             limiter_enabled: config.limiter_enabled,
         })
     }
@@ -800,9 +884,14 @@ impl Processor {
     pub fn reset(&mut self) {
         self.history.fill(0.0);
         self.history_head = 0;
+        self.calibrated_history.fill(0.0);
+        self.calibrated_history_head = 0;
+        self.stable_history.fill(0.0);
+        self.stable_history_head = 0;
         self.aligned.fill(0.0);
         self.algorithm_outputs.fill(0.0);
         self.time_domain_delay.fill(0.0);
+        self.delay_and_sum_output.fill(0.0);
         if let Some(gsc) = &mut self.gsc {
             gsc.coeffs.fill(0.0);
             gsc.history.fill(0.0);
@@ -835,6 +924,99 @@ impl Processor {
                 controls.postfilter_enabled,
             );
         }
+    }
+
+    fn process_calibrated_sum(
+        &mut self,
+        input: &[f32],
+        frames: usize,
+        output: &mut [f32],
+    ) -> AppResult<()> {
+        self.validate_planar_shape(input, frames, output)?;
+        for frame in 0..frames {
+            let mut sum = 0.0;
+            for (slot, &configured_index) in self.active.iter().enumerate() {
+                let sample = input[configured_index * frames + frame] * self.gains[slot];
+                self.calibrated_history[slot * HISTORY_FRAMES + self.calibrated_history_head] =
+                    sample;
+                sum += delayed_from_history(
+                    &self.calibrated_history,
+                    slot,
+                    self.calibrated_history_head,
+                    self.calibration_delays[slot],
+                ) * self.weights[slot];
+            }
+            output[frame] = finite_sample(sum);
+            self.calibrated_history_head = (self.calibrated_history_head + 1) % HISTORY_FRAMES;
+        }
+        Ok(())
+    }
+
+    fn process_stable_delay_and_sum(
+        &mut self,
+        input: &[f32],
+        frames: usize,
+        enabled: &[bool],
+        output: &mut [f32],
+    ) -> AppResult<()> {
+        self.validate_planar_shape(input, frames, output)?;
+        let weight_sum: f32 = self
+            .active
+            .iter()
+            .enumerate()
+            .filter(|(_, configured_index)| {
+                enabled.get(**configured_index).copied().unwrap_or(false)
+            })
+            .map(|(slot, _)| self.weights[slot])
+            .sum();
+        for frame in 0..frames {
+            let mut sum = 0.0;
+            for (slot, &configured_index) in self.active.iter().enumerate() {
+                let sample = input[configured_index * frames + frame] * self.gains[slot];
+                self.stable_history[slot * HISTORY_FRAMES + self.stable_history_head] = sample;
+                if enabled.get(configured_index).copied().unwrap_or(false)
+                    && weight_sum > f32::EPSILON
+                {
+                    sum += delayed_from_history(
+                        &self.stable_history,
+                        slot,
+                        self.stable_history_head,
+                        self.delays[slot],
+                    ) * self.weights[slot]
+                        / weight_sum;
+                }
+            }
+            output[frame] = finite_sample(sum);
+            self.stable_history_head = (self.stable_history_head + 1) % HISTORY_FRAMES;
+        }
+        Ok(())
+    }
+
+    fn copy_delay_and_sum(&self, frames: usize, output: &mut [f32]) -> AppResult<()> {
+        if frames > self.delay_and_sum_output.len() || output.len() < frames {
+            return Err(AppError::Validation(
+                "Microphone Array Delay-and-Sum audition block is too large".into(),
+            ));
+        }
+        output[..frames].copy_from_slice(&self.delay_and_sum_output[..frames]);
+        Ok(())
+    }
+
+    fn validate_planar_shape(&self, input: &[f32], frames: usize, output: &[f32]) -> AppResult<()> {
+        if frames == 0 || output.len() < frames {
+            return Err(AppError::Validation(
+                "Microphone Array output block is too small".into(),
+            ));
+        }
+        let configured = input.len() / frames;
+        if input.len() != configured * frames
+            || self.active.iter().any(|&index| index >= configured)
+        {
+            return Err(AppError::Validation(
+                "Microphone Array planar input shape is invalid".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Processes `frames` planar samples into one mono block. `input` must have
@@ -882,6 +1064,9 @@ impl Processor {
                 self.history_head = (self.history_head + 1) % HISTORY_FRAMES;
             }
             self.active_algorithm = ActiveAlgorithm::DelayAndSum;
+            if frames <= self.delay_and_sum_output.len() {
+                self.delay_and_sum_output[..frames].copy_from_slice(&output[..frames]);
+            }
             if self.limiter_enabled {
                 for sample in &mut output[..frames] {
                     *sample = soft_limit(*sample);
@@ -937,6 +1122,7 @@ impl Processor {
                 );
             }
         }
+        self.delay_and_sum_output[..frames].copy_from_slice(&self.algorithm_outputs[..frames]);
 
         let mvdr_output = &mut self.algorithm_outputs[2 * frames..3 * frames];
         if needs_mvdr {
@@ -1209,6 +1395,14 @@ impl Capture {
     pub fn metrics(&self) -> MicrophoneArrayMetricsHandle {
         self.metrics.clone()
     }
+
+    pub fn set_audition(&self, mode: AuditionMode) {
+        self.controls.set_audition(mode);
+        self.metrics
+            .0
+            .audition_mode
+            .store(mode.encode(), Ordering::Relaxed);
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1420,6 +1614,16 @@ fn decode_algorithm(encoded: u32) -> Algorithm {
         2 => Algorithm::Gsc,
         3 => Algorithm::Mvdr,
         _ => Algorithm::DelayAndSum,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn decode_audition(encoded: u32) -> AuditionMode {
+    match encoded {
+        AUDITION_BEST_SINGLE => AuditionMode::BestSingle,
+        AUDITION_RAW_CALIBRATED => AuditionMode::RawCalibrated,
+        AUDITION_DELAY_AND_SUM => AuditionMode::DelayAndSum,
+        _ => AuditionMode::Spatial,
     }
 }
 
@@ -1763,12 +1967,26 @@ fn run_capture_worker(
 ) {
     let mut planar = vec![0.0; members.len() * ARRAY_BLOCK_FRAMES];
     let mut spatial = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut delay_and_sum = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut raw_calibrated = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut stable_delay_and_sum = vec![0.0; ARRAY_BLOCK_FRAMES];
     let mut mono = vec![0.0; ARRAY_BLOCK_FRAMES];
     let mut fallback_delay = vec![0.0; processor.processing_latency_frames()];
+    let mut raw_delay = vec![0.0; processor.processing_latency_frames()];
+    let mut stable_delay = vec![0.0; processor.processing_latency_frames()];
+    let mut stable_members = vec![false; members.len()];
     let mut startup_aligned = domains.len() == 1;
     let startup_started = Instant::now();
-    let fade_step = 1.0 / (sample_rate.max(1) as f32 * 0.02);
-    let mut spatial_mix = 0.0f32;
+    let fade_total = (sample_rate.max(1) as usize * ALGORITHM_CROSSFADE_MS as usize / 1_000).max(1);
+    let mut output_from = ArrayOutput::BestSingle;
+    let mut output_to = ArrayOutput::BestSingle;
+    let mut output_fade_remaining = 0usize;
+    let block_budget =
+        Duration::from_secs_f64(ARRAY_BLOCK_FRAMES as f64 / sample_rate.max(1) as f64);
+    let mut worker_load_ewma = 0.0f32;
+    let mut overload_strikes = 0u32;
+    let mut overload_recovery_blocks = 0u32;
+    let mut overloaded = false;
     metrics
         .0
         .state
@@ -1803,9 +2021,8 @@ fn run_capture_worker(
         }
         if domains.iter_mut().any(Domain::take_discontinuity) {
             processor.reset();
-            fallback_delay.fill(0.0);
-            spatial_mix = 0.0;
         }
+        let processing_started = Instant::now();
         for (member_index, member) in members.iter().enumerate() {
             let domain = &domains[member_domains[member_index]];
             let channel = member.channel_index as usize;
@@ -1815,33 +2032,44 @@ fn run_capture_worker(
             }
         }
         let runtime = controls.snapshot();
-        processor.update_realtime_controls(runtime);
+        let mut effective_runtime = runtime;
+        if overloaded {
+            effective_runtime.algorithm = Algorithm::DelayAndSum;
+            effective_runtime.postfilter_enabled = false;
+            effective_runtime.gsc_adaptation_rate = 0.0;
+        }
+        processor.update_realtime_controls(effective_runtime);
         metrics.0.requested_algorithm.store(
             encode_runtime_algorithm(runtime.algorithm),
             Ordering::Relaxed,
         );
-        let active_channels = members
-            .iter()
-            .enumerate()
-            .filter(|(index, member)| {
-                member.enabled
-                    && member.quality
-                        != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded
-                    && domains[member_domains[*index]].healthy
-            })
-            .count();
+        for (index, member) in members.iter().enumerate() {
+            stable_members[index] = member.enabled
+                && member.quality != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded
+                && domains[member_domains[index]].is_locked();
+        }
+        let active_channels = stable_members.iter().filter(|enabled| **enabled).count();
         metrics
             .0
             .active_channels
             .store(active_channels as u32, Ordering::Relaxed);
         let synchronized = domains.iter().all(Domain::is_locked);
-        let source_error = domains
-            .iter()
-            .any(|domain| domain.metrics.stream_errors.load(Ordering::Relaxed) > 0);
+        let source_error = domains.iter().any(|domain| {
+            domain.metrics.stream_errors.load(Ordering::Relaxed) > 0 && !domain.healthy
+        });
         let spatial_ready =
-            !runtime.bypassed && synchronized && active_channels > 0 && !source_error;
-        let (state, fallback_reason) = if source_error {
-            (ARRAY_STATE_ERROR, ARRAY_FALLBACK_SOURCE_ERROR)
+            !runtime.bypassed && synchronized && active_channels >= 2 && !source_error;
+        let (state, fallback_reason) = if overloaded {
+            (ARRAY_STATE_FALLBACK, ARRAY_FALLBACK_CPU_OVERLOAD)
+        } else if source_error {
+            (
+                if active_channels > 0 {
+                    ARRAY_STATE_FALLBACK
+                } else {
+                    ARRAY_STATE_ERROR
+                },
+                ARRAY_FALLBACK_SOURCE_ERROR,
+            )
         } else if runtime.bypassed {
             (ARRAY_STATE_BYPASSED, ARRAY_FALLBACK_BYPASSED)
         } else if active_channels == 0 {
@@ -1856,10 +2084,26 @@ fn run_capture_worker(
             .0
             .fallback_reason
             .store(fallback_reason, Ordering::Relaxed);
-        if processor
-            .process_with_adaptation(&planar, ARRAY_BLOCK_FRAMES, &mut spatial, spatial_ready)
-            .is_err()
-        {
+        let processed = processor
+            .process_with_adaptation(
+                &planar,
+                ARRAY_BLOCK_FRAMES,
+                &mut spatial,
+                spatial_ready && !overloaded,
+            )
+            .and_then(|_| {
+                processor.process_calibrated_sum(&planar, ARRAY_BLOCK_FRAMES, &mut raw_calibrated)
+            })
+            .and_then(|_| {
+                processor.process_stable_delay_and_sum(
+                    &planar,
+                    ARRAY_BLOCK_FRAMES,
+                    &stable_members,
+                    &mut stable_delay_and_sum,
+                )
+            })
+            .and_then(|_| processor.copy_delay_and_sum(ARRAY_BLOCK_FRAMES, &mut delay_and_sum));
+        if processed.is_err() {
             metrics.0.state.store(ARRAY_STATE_ERROR, Ordering::Relaxed);
             metrics
                 .0
@@ -1895,13 +2139,44 @@ fn run_capture_worker(
         let member = &members[fallback_member];
         let gain = 10.0_f32.powf(member.gain_db.clamp(-24.0, 24.0) / 20.0)
             * if member.polarity_inverted { -1.0 } else { 1.0 };
-        let target_mix = if spatial_ready { 1.0 } else { 0.0 };
-        for frame in 0..ARRAY_BLOCK_FRAMES {
-            if spatial_mix < target_mix {
-                spatial_mix = (spatial_mix + fade_step).min(target_mix);
-            } else if spatial_mix > target_mix {
-                spatial_mix = (spatial_mix - fade_step).max(target_mix);
+        let requested_output = if runtime.bypassed {
+            ArrayOutput::BestSingle
+        } else if overloaded {
+            if active_channels >= 2 {
+                ArrayOutput::StableDelayAndSum
+            } else {
+                ArrayOutput::BestSingle
             }
+        } else {
+            match runtime.audition {
+                AuditionMode::BestSingle => ArrayOutput::BestSingle,
+                AuditionMode::RawCalibrated if spatial_ready => ArrayOutput::RawCalibrated,
+                AuditionMode::DelayAndSum if spatial_ready => ArrayOutput::DelayAndSum,
+                AuditionMode::Spatial if spatial_ready => ArrayOutput::Spatial,
+                AuditionMode::RawCalibrated | AuditionMode::DelayAndSum | AuditionMode::Spatial
+                    if active_channels >= 2 =>
+                {
+                    ArrayOutput::StableDelayAndSum
+                }
+                _ => ArrayOutput::BestSingle,
+            }
+        };
+        if requested_output != output_to {
+            let effective = if output_fade_remaining == 0 || output_fade_remaining * 2 > fade_total
+            {
+                output_from
+            } else {
+                output_to
+            };
+            output_from = effective;
+            output_to = requested_output;
+            output_fade_remaining = if effective == requested_output {
+                0
+            } else {
+                fade_total
+            };
+        }
+        for frame in 0..ARRAY_BLOCK_FRAMES {
             let dry_input = fallback[frame] * gain;
             let dry = if fallback_delay.is_empty() {
                 dry_input
@@ -1910,7 +2185,36 @@ fn run_capture_worker(
                 fallback_delay[frame] = dry_input;
                 delayed
             };
-            mono[frame] = dry + (spatial[frame] - dry) * spatial_mix;
+            let raw = delay_sample(&mut raw_delay, frame, raw_calibrated[frame]);
+            let stable = delay_sample(&mut stable_delay, frame, stable_delay_and_sum[frame]);
+            let from = array_output_sample(
+                output_from,
+                dry,
+                raw,
+                delay_and_sum[frame],
+                stable,
+                spatial[frame],
+            );
+            let to = array_output_sample(
+                output_to,
+                dry,
+                raw,
+                delay_and_sum[frame],
+                stable,
+                spatial[frame],
+            );
+            let mix = if output_fade_remaining == 0 {
+                1.0
+            } else {
+                1.0 - output_fade_remaining as f32 / fade_total as f32
+            };
+            mono[frame] = finite_sample(from + (to - from) * mix);
+            if output_fade_remaining > 0 {
+                output_fade_remaining -= 1;
+                if output_fade_remaining == 0 {
+                    output_from = output_to;
+                }
+            }
         }
         bridge.apply_commands();
         if let Some(meter) = &meter {
@@ -1921,6 +2225,71 @@ fn run_capture_worker(
             .0
             .output_frames
             .fetch_add(ARRAY_BLOCK_FRAMES as u64, Ordering::Relaxed);
+        let load_percent = (processing_started.elapsed().as_secs_f64() / block_budget.as_secs_f64()
+            * 100.0) as f32;
+        worker_load_ewma = worker_load_ewma * 0.9 + load_percent * 0.1;
+        metrics
+            .0
+            .worker_load_percent
+            .store(worker_load_ewma.to_bits(), Ordering::Relaxed);
+        if load_percent >= 90.0 {
+            overload_strikes = overload_strikes.saturating_add(1);
+            overload_recovery_blocks = 0;
+        } else {
+            overload_strikes = overload_strikes.saturating_sub(1);
+            if overloaded && load_percent < 60.0 {
+                overload_recovery_blocks = overload_recovery_blocks.saturating_add(1);
+            } else {
+                overload_recovery_blocks = 0;
+            }
+        }
+        if !overloaded && overload_strikes >= 3 {
+            overloaded = true;
+            metrics.0.overload_events.fetch_add(1, Ordering::Relaxed);
+        } else if overloaded && overload_recovery_blocks >= 200 {
+            overloaded = false;
+            overload_strikes = 0;
+            overload_recovery_blocks = 0;
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrayOutput {
+    BestSingle,
+    RawCalibrated,
+    DelayAndSum,
+    StableDelayAndSum,
+    Spatial,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn delay_sample(delay: &mut [f32], frame: usize, input: f32) -> f32 {
+    if delay.is_empty() {
+        input
+    } else {
+        let output = delay[frame];
+        delay[frame] = input;
+        output
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn array_output_sample(
+    mode: ArrayOutput,
+    best_single: f32,
+    raw_calibrated: f32,
+    delay_and_sum: f32,
+    stable_delay_and_sum: f32,
+    spatial: f32,
+) -> f32 {
+    match mode {
+        ArrayOutput::BestSingle => best_single,
+        ArrayOutput::RawCalibrated => raw_calibrated,
+        ArrayOutput::DelayAndSum => delay_and_sum,
+        ArrayOutput::StableDelayAndSum => stable_delay_and_sum,
+        ArrayOutput::Spatial => spatial,
     }
 }
 
@@ -2159,6 +2528,80 @@ mod tests {
             assert!(output.iter().all(|sample| sample.is_finite()));
         }
         assert_eq!(processor.active_algorithm(), ActiveAlgorithm::Mvdr);
+    }
+
+    #[test]
+    fn stable_subarray_delay_and_sum_excludes_and_renormalizes_members() {
+        let members = [member(0.0), member(0.0), member(0.0)];
+        let mut processor = Processor::new(ProcessorConfig {
+            sample_rate: 48_000,
+            target: SteeringTarget::Direction {
+                azimuth_degrees: 90.0,
+                elevation_degrees: 0.0,
+            },
+            algorithm: Algorithm::DelayAndSum,
+            strength: 1.0,
+            max_attenuation_db: 18.0,
+            gsc_filter_length: 8,
+            gsc_adaptation_rate: 0.02,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready: false,
+            members: &members,
+        })
+        .unwrap();
+        let frames = mvdr::HOP_SIZE;
+        let mut input = vec![1.0; members.len() * frames];
+        input[2 * frames..].fill(100.0);
+        let mut output = vec![0.0; frames];
+        processor
+            .process_stable_delay_and_sum(&input, frames, &[true, true, false], &mut output)
+            .unwrap();
+        assert!(output.iter().all(|sample| (*sample - 1.0).abs() < 1.0e-5));
+    }
+
+    #[test]
+    fn delay_and_sum_audition_matches_the_aligned_processor_path() {
+        let members = [member(0.0), member(0.04)];
+        let mut processor = Processor::new(ProcessorConfig {
+            sample_rate: 48_000,
+            target: SteeringTarget::Direction {
+                azimuth_degrees: 90.0,
+                elevation_degrees: 0.0,
+            },
+            algorithm: Algorithm::DelayAndSum,
+            strength: 1.0,
+            max_attenuation_db: 18.0,
+            gsc_filter_length: 8,
+            gsc_adaptation_rate: 0.02,
+            postfilter_enabled: false,
+            limiter_enabled: false,
+            calibration_ready: false,
+            members: &members,
+        })
+        .unwrap();
+        let frames = mvdr::HOP_SIZE;
+        let input = vec![0.25; members.len() * frames];
+        let mut output = vec![0.0; frames];
+        let mut audition = vec![0.0; frames];
+        for _ in 0..2 {
+            processor.process(&input, frames, &mut output).unwrap();
+        }
+        processor.copy_delay_and_sum(frames, &mut audition).unwrap();
+        assert_eq!(output, audition);
+    }
+
+    #[test]
+    fn audition_mode_parser_is_explicit() {
+        assert_eq!(
+            AuditionMode::parse("bestSingle").unwrap(),
+            AuditionMode::BestSingle
+        );
+        assert_eq!(
+            AuditionMode::parse("spatial").unwrap(),
+            AuditionMode::Spatial
+        );
+        assert!(AuditionMode::parse("unknown").is_err());
     }
 
     #[test]

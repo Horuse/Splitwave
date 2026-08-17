@@ -390,7 +390,11 @@ pub async fn windows_virtual_cable_status(
 ) -> Result<virtual_device::WindowsVirtualCableStatus, virtual_device::WindowsVirtualCableError> {
     tauri::async_runtime::spawn_blocking(virtual_device::windows_virtual_cable_status)
         .await
-        .map_err(|_| virtual_device::WindowsVirtualCableError::operation_failed("Status query stopped unexpectedly"))?
+        .map_err(|_| {
+            virtual_device::WindowsVirtualCableError::operation_failed(
+                "Status query stopped unexpectedly",
+            )
+        })?
 }
 
 #[tauri::command]
@@ -398,7 +402,11 @@ pub async fn install_windows_virtual_cable(
 ) -> Result<virtual_device::WindowsVirtualCableStatus, virtual_device::WindowsVirtualCableError> {
     tauri::async_runtime::spawn_blocking(virtual_device::install_windows_virtual_cable)
         .await
-        .map_err(|_| virtual_device::WindowsVirtualCableError::operation_failed("Installation task stopped unexpectedly"))?
+        .map_err(|_| {
+            virtual_device::WindowsVirtualCableError::operation_failed(
+                "Installation task stopped unexpectedly",
+            )
+        })?
 }
 
 #[tauri::command]
@@ -415,13 +423,17 @@ pub async fn uninstall_windows_virtual_cable(
     let stopped = audio_request(tx, |reply| Command::Stop { reply })
         .await
         .map_err(|e| virtual_device::WindowsVirtualCableError::operation_failed(e.to_string()))?;
-    if stopped.is_ok() {
-        let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
-    }
+    stopped
+        .map_err(|e| virtual_device::WindowsVirtualCableError::operation_failed(e.to_string()))?;
+    let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
 
     tauri::async_runtime::spawn_blocking(virtual_device::uninstall_windows_virtual_cable)
         .await
-        .map_err(|_| virtual_device::WindowsVirtualCableError::operation_failed("Uninstallation task stopped unexpectedly"))?
+        .map_err(|_| {
+            virtual_device::WindowsVirtualCableError::operation_failed(
+                "Uninstallation task stopped unexpectedly",
+            )
+        })?
 }
 
 #[tauri::command]

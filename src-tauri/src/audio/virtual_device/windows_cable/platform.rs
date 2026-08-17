@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::{c_void, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -15,12 +16,20 @@ use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
     SetupDiGetDeviceInstanceIdW, SetupDiGetDevicePropertyW, DIGCF_ALLCLASSES, SP_DEVINFO_DATA,
 };
+use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Devices::Properties::{
     DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion,
-    DEVPKEY_Device_FriendlyName,
+    DEVPKEY_Device_FriendlyName, DEVPKEY_Device_Parent,
 };
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE};
+use windows::Win32::Media::Audio::{
+    eCapture, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
+};
 use windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, WaitForSingleObject, INFINITE,
 };
@@ -30,10 +39,11 @@ use winreg::RegKey;
 use zip::ZipArchive;
 
 use super::{
-    determine_state, newly_installed_package, removal_decision, status_from, CablePackage,
-    DetectedCable, ManifestState, OwnershipManifest, RemovalAction, UninstallReason,
-    WindowsVirtualCableError, WindowsVirtualCableOwnership, WindowsVirtualCableStatus,
-    MANIFEST_SCHEMA_VERSION, PROVIDER_NAME,
+    detect_cable_from_inventory, determine_state, newly_installed_package, removal_decision,
+    status_from, CableEndpoint, CableEndpointFlow, CablePackage, DetectedCable, ManifestState,
+    OwnershipManifest, RemovalAction, UninstallReason, WindowsVirtualCableError,
+    WindowsVirtualCableOwnership, WindowsVirtualCableStatus, MANIFEST_SCHEMA_VERSION,
+    PROVIDER_NAME,
 };
 
 const VBCABLE_URL: &str = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
@@ -447,31 +457,133 @@ fn remove_exact_package(root: &Path) -> Result<(), WindowsVirtualCableError> {
 }
 
 fn detect_cable() -> Result<DetectedCable, WindowsVirtualCableError> {
-    let outputs = crate::audio::device::list_outputs()
-        .map_err(|e| WindowsVirtualCableError::new("deviceEnumerationFailed", e.to_string()))?;
-    let inputs = crate::audio::device::list_inputs()
-        .map_err(|e| WindowsVirtualCableError::new("deviceEnumerationFailed", e.to_string()))?;
-    let render_endpoint_name = outputs
-        .into_iter()
-        .find_map(|d| is_render_name(&d.name).then_some(d.name));
-    let capture_endpoint_name = inputs
-        .into_iter()
-        .find_map(|d| is_capture_name(&d.name).then_some(d.name));
-    Ok(DetectedCable {
-        render_endpoint_name,
-        capture_endpoint_name,
-        packages: enumerate_vb_cable_packages()?,
-    })
+    let packages = enumerate_vb_cable_packages()?;
+    let endpoint_parents = enumerate_audio_endpoint_parents()?;
+    let endpoints = enumerate_active_audio_endpoints(&endpoint_parents)?;
+    Ok(detect_cable_from_inventory(packages, endpoints))
 }
 
-fn is_render_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.contains("cable") && name.contains("input") && !name.contains("voicemeeter")
+fn ensure_com() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
 }
 
-fn is_capture_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.contains("cable") && name.contains("output") && !name.contains("voicemeeter")
+fn enumerate_audio_endpoint_parents() -> Result<HashMap<String, String>, WindowsVirtualCableError> {
+    let set = unsafe { SetupDiGetClassDevsW(None, PCWSTR::null(), None, DIGCF_ALLCLASSES) }
+        .map_err(|e| {
+            WindowsVirtualCableError::new(
+                "deviceEnumerationFailed",
+                format!("SetupAPI device list: {e}"),
+            )
+        })?;
+    let _set = DeviceSet(set);
+    let mut parents = HashMap::new();
+    for index in 0.. {
+        let mut data = SP_DEVINFO_DATA {
+            cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
+            ..Default::default()
+        };
+        if let Err(error) = unsafe { SetupDiEnumDeviceInfo(set, index, &mut data) } {
+            if (error.code().0 as u32 & 0xffff) == ERROR_NO_MORE_ITEMS.0 {
+                break;
+            }
+            return Err(WindowsVirtualCableError::new(
+                "deviceEnumerationFailed",
+                format!("SetupAPI enumerate: {error}"),
+            ));
+        }
+        let Some(instance_id) = device_instance_id(set, &data) else {
+            continue;
+        };
+        if !instance_id
+            .to_ascii_lowercase()
+            .starts_with("swd\\mmdevapi\\")
+        {
+            continue;
+        }
+        let Some(parent) = property_string(set, &data, &DEVPKEY_Device_Parent) else {
+            continue;
+        };
+        parents.insert(instance_id.to_ascii_lowercase(), parent);
+    }
+    Ok(parents)
+}
+
+fn enumerate_active_audio_endpoints(
+    endpoint_parents: &HashMap<String, String>,
+) -> Result<Vec<CableEndpoint>, WindowsVirtualCableError> {
+    ensure_com();
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.map_err(|e| {
+            WindowsVirtualCableError::new(
+                "deviceEnumerationFailed",
+                format!("MMDevice enumerator: {e}"),
+            )
+        })?;
+    let mut endpoints = Vec::new();
+    for (flow, endpoint_flow) in [
+        (eRender, CableEndpointFlow::Render),
+        (eCapture, CableEndpointFlow::Capture),
+    ] {
+        let collection = unsafe { enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) }
+            .map_err(|e| {
+                WindowsVirtualCableError::new(
+                    "deviceEnumerationFailed",
+                    format!("MMDevice endpoint collection: {e}"),
+                )
+            })?;
+        let count = unsafe { collection.GetCount() }.map_err(|e| {
+            WindowsVirtualCableError::new(
+                "deviceEnumerationFailed",
+                format!("MMDevice endpoint count: {e}"),
+            )
+        })?;
+        for index in 0..count {
+            let device = unsafe { collection.Item(index) }.map_err(|e| {
+                WindowsVirtualCableError::new(
+                    "deviceEnumerationFailed",
+                    format!("MMDevice endpoint: {e}"),
+                )
+            })?;
+            let Some(endpoint_id) = endpoint_id(&device) else {
+                continue;
+            };
+            let pnp_id = format!("SWD\\MMDEVAPI\\{endpoint_id}").to_ascii_lowercase();
+            let Some(parent_instance_id) = endpoint_parents.get(&pnp_id) else {
+                continue;
+            };
+            let Some(name) = endpoint_name(&device) else {
+                continue;
+            };
+            endpoints.push(CableEndpoint {
+                flow: endpoint_flow,
+                name,
+                parent_instance_id: parent_instance_id.clone(),
+            });
+        }
+    }
+    Ok(endpoints)
+}
+
+fn endpoint_id(device: &IMMDevice) -> Option<String> {
+    let id = unsafe { device.GetId().ok()? };
+    let value = unsafe { id.to_string().ok() };
+    unsafe {
+        CoTaskMemFree(Some(id.0.cast()));
+    }
+    value
+}
+
+fn endpoint_name(device: &IMMDevice) -> Option<String> {
+    let store = unsafe { device.OpenPropertyStore(STGM_READ).ok()? };
+    let mut prop = unsafe { store.GetValue(&PKEY_Device_FriendlyName).ok()? };
+    let name = unsafe { prop.Anonymous.Anonymous.Anonymous.pwszVal.to_string().ok() }
+        .filter(|name| !name.is_empty());
+    unsafe {
+        let _ = PropVariantClear(&mut prop);
+    }
+    name
 }
 
 fn enumerate_vb_cable_packages() -> Result<Vec<CablePackage>, WindowsVirtualCableError> {
@@ -482,14 +594,6 @@ fn enumerate_vb_cable_packages() -> Result<Vec<CablePackage>, WindowsVirtualCabl
                 format!("SetupAPI device list: {e}"),
             )
         })?;
-    struct DeviceSet(windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO);
-    impl Drop for DeviceSet {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = SetupDiDestroyDeviceInfoList(self.0);
-            }
-        }
-    }
     let _set = DeviceSet(set);
     let mut packages: Vec<CablePackage> = Vec::new();
     for index in 0.. {
@@ -543,6 +647,16 @@ fn enumerate_vb_cable_packages() -> Result<Vec<CablePackage>, WindowsVirtualCabl
         }
     }
     Ok(packages)
+}
+
+struct DeviceSet(windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO);
+
+impl Drop for DeviceSet {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = SetupDiDestroyDeviceInfoList(self.0);
+        }
+    }
 }
 
 fn property_string(

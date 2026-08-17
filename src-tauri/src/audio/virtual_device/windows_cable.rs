@@ -101,6 +101,19 @@ impl CablePackage {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CableEndpointFlow {
+    Render,
+    Capture,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CableEndpoint {
+    flow: CableEndpointFlow,
+    name: String,
+    parent_instance_id: String,
+}
+
 #[derive(Debug, Clone, Default)]
 struct DetectedCable {
     render_endpoint_name: Option<String>,
@@ -116,6 +129,37 @@ impl DetectedCable {
     fn package(&self) -> Option<&CablePackage> {
         (self.packages.len() == 1).then(|| &self.packages[0])
     }
+}
+
+fn detect_cable_from_inventory(
+    packages: Vec<CablePackage>,
+    endpoints: impl IntoIterator<Item = CableEndpoint>,
+) -> DetectedCable {
+    let mut detected = DetectedCable {
+        packages,
+        ..Default::default()
+    };
+    for endpoint in endpoints {
+        let belongs_to_cable = detected.packages.iter().any(|package| {
+            package
+                .device_instance_ids
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&endpoint.parent_instance_id))
+        });
+        if !belongs_to_cable {
+            continue;
+        }
+        match endpoint.flow {
+            CableEndpointFlow::Render if detected.render_endpoint_name.is_none() => {
+                detected.render_endpoint_name = Some(endpoint.name);
+            }
+            CableEndpointFlow::Capture if detected.capture_endpoint_name.is_none() => {
+                detected.capture_endpoint_name = Some(endpoint.name);
+            }
+            _ => {}
+        }
+    }
+    detected
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +452,14 @@ mod tests {
         }
     }
 
+    fn endpoint(flow: CableEndpointFlow, name: &str, parent_instance_id: &str) -> CableEndpoint {
+        CableEndpoint {
+            flow,
+            name: name.into(),
+            parent_instance_id: parent_instance_id.into(),
+        }
+    }
+
     fn managed(consumers: &[&str]) -> ManifestState {
         let package = package();
         ManifestState::Valid(OwnershipManifest {
@@ -495,6 +547,60 @@ mod tests {
         assert_eq!(
             determine_state(&only_render, &ManifestState::Missing, "A"),
             WindowsVirtualCableState::Partial
+        );
+    }
+
+    #[test]
+    fn endpoint_name_without_matching_pnp_parent_is_not_a_cable() {
+        let cable = detect_cable_from_inventory(
+            vec![package()],
+            [
+                endpoint(
+                    CableEndpointFlow::Render,
+                    "CABLE Input (VB-Audio Virtual Cable)",
+                    "ROOT\\OTHER\\0000",
+                ),
+                endpoint(
+                    CableEndpointFlow::Capture,
+                    "CABLE Output (VB-Audio Virtual Cable)",
+                    "ROOT\\OTHER\\0000",
+                ),
+            ],
+        );
+
+        assert_eq!(
+            determine_state(&cable, &ManifestState::Missing, "A"),
+            WindowsVirtualCableState::Partial
+        );
+        assert!(!cable.usable());
+    }
+
+    #[test]
+    fn matched_pnp_parent_identifies_both_cable_endpoints() {
+        let cable = detect_cable_from_inventory(
+            vec![package()],
+            [
+                endpoint(
+                    CableEndpointFlow::Render,
+                    "CABLE Input (VB-Audio Virtual Cable)",
+                    "root\\vbcable\\0000",
+                ),
+                endpoint(
+                    CableEndpointFlow::Capture,
+                    "CABLE Output (VB-Audio Virtual Cable)",
+                    "ROOT\\VBCABLE\\0000",
+                ),
+            ],
+        );
+
+        assert!(cable.usable());
+        assert_eq!(
+            cable.render_endpoint_name.as_deref(),
+            Some("CABLE Input (VB-Audio Virtual Cable)")
+        );
+        assert_eq!(
+            cable.capture_endpoint_name.as_deref(),
+            Some("CABLE Output (VB-Audio Virtual Cable)")
         );
     }
 

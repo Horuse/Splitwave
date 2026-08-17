@@ -25,7 +25,11 @@
 	}: { nodeId: string; height?: number; fill?: boolean; pan?: boolean; filePath?: string | null } = $props();
 
 	const SEG_FRAMES = 64;
-	const CAP_SEGS = (300 * 1024) / SEG_FRAMES;
+	// Ring capacity floor (~6.4 s of history at 48 kHz); the live ring grows on
+	// demand to cover the visible span so a wide node zoomed out stays filled.
+	const BASE_CAP_SEGS = (300 * 1024) / SEG_FRAMES;
+	// Time-label fade zone near the right edge (px).
+	const FADE_PX = 40;
 	const DEFAULT_SEGS = 20; // fixed "×1" reference, so max zoom (1 seg/px) reads ×20 at any sample rate
 	// Fixed zoom steps (label × values), snapped to so the readout never shows
 	// arbitrary fractions. Min 0.1 caps the per-column segment count, which also
@@ -67,8 +71,9 @@
 	let following = $state(true);
 
 	// Segment min/max rings (block-aligned, immutable once written).
-	let minRing = new Float32Array(CAP_SEGS);
-	let maxRing = new Float32Array(CAP_SEGS);
+	let capSegs = BASE_CAP_SEGS;
+	let minRing = new Float32Array(capSegs);
+	let maxRing = new Float32Array(capSegs);
 	let writeSeg = 0;
 	let totalSegs = 0;
 
@@ -99,7 +104,39 @@
 	}
 
 	function dataStart(): number {
-		return fileMode ? 0 : Math.max(0, totalSegs - CAP_SEGS);
+		return fileMode ? 0 : Math.max(0, totalSegs - capSegs);
+	}
+
+	// Grows/shrinks the ring to the visible span so zooming out on a wide node
+	// keeps the whole width fed with data. The newest `min(old,new)` segments
+	// are preserved at their `index % newCap` slots, so live reads stay correct.
+	function ensureCap() {
+		const plotW = Math.max(1, W - SCALE_W);
+		const needed = Math.max(BASE_CAP_SEGS, Math.ceil(plotW * segsPerCol));
+		if (needed > capSegs || needed < capSegs / 2) {
+			resizeRings(needed);
+		}
+	}
+
+	function resizeRings(newCap: number) {
+		const oldCap = capSegs;
+		const count = fileMode ? liveTotalSegs : totalSegs;
+		const head = fileMode ? liveWriteSeg : writeSeg;
+		const keep = Math.min(oldCap, newCap, count);
+		const newMin = new Float32Array(newCap * channels);
+		const newMax = new Float32Array(newCap * channels);
+		for (let i = 0; i < keep; i++) {
+			const idx = count - 1 - i;
+			const src = (((head - 1 - i) % oldCap) + oldCap) % oldCap;
+			const dst = ((idx % newCap) + newCap) % newCap;
+			newMin.set(minRing.subarray(src * channels, (src + 1) * channels), dst * channels);
+			newMax.set(maxRing.subarray(src * channels, (src + 1) * channels), dst * channels);
+		}
+		capSegs = newCap;
+		minRing = newMin;
+		maxRing = newMax;
+		writeSeg = totalSegs % newCap;
+		liveWriteSeg = liveTotalSegs % newCap;
 	}
 
 	let W = $state(0);
@@ -124,10 +161,10 @@
 	let lastX = 0;
 
 	function ensureRing(ch: number) {
-		if (ch === channels && minRing.length === CAP_SEGS * ch) return;
+		if (ch === channels && minRing.length === capSegs * ch) return;
 		channels = ch;
-		minRing = new Float32Array(CAP_SEGS * ch);
-		maxRing = new Float32Array(CAP_SEGS * ch);
+		minRing = new Float32Array(capSegs * ch);
+		maxRing = new Float32Array(capSegs * ch);
 		writeSeg = 0;
 		totalSegs = 0;
 		viewEndSeg = 0;
@@ -135,8 +172,8 @@
 	}
 
 	function segSlot(d: number): number {
-		let slot = (writeSeg - 1 - d) % CAP_SEGS;
-		if (slot < 0) slot += CAP_SEGS;
+		let slot = (writeSeg - 1 - d) % capSegs;
+		if (slot < 0) slot += capSegs;
 		return slot;
 	}
 
@@ -144,8 +181,8 @@
 		if (fileMode) {
 			if (liveActive && liveBaseSeg >= 0 && liveTotalSegs > 0) {
 				const li = seg - (fileTotalSegs - liveTotalSegs);
-				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - CAP_SEGS) {
-					const slot = li % CAP_SEGS;
+				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
+					const slot = li % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
 			}
@@ -157,10 +194,10 @@
 	}
 
 	function ensureLiveRing(ch: number) {
-		if (ch === channels && minRing.length === CAP_SEGS * ch) return;
+		if (ch === channels && minRing.length === capSegs * ch) return;
 		channels = ch;
-		minRing = new Float32Array(CAP_SEGS * ch);
-		maxRing = new Float32Array(CAP_SEGS * ch);
+		minRing = new Float32Array(capSegs * ch);
+		maxRing = new Float32Array(capSegs * ch);
 		liveWriteSeg = 0;
 		liveTotalSegs = 0;
 		liveBaseSeg = -1;
@@ -173,19 +210,19 @@
 	}
 
 	function liveCoverStart(): number {
-		return fileTotalSegs - Math.min(liveTotalSegs, CAP_SEGS);
+		return fileTotalSegs - Math.min(liveTotalSegs, capSegs);
 	}
 
 	// Bins one incoming block into the min/max ring, returning the number of
 	// segments written. `head` is the write head of whichever ring the caller
 	// owns (the scope ring or the live overlay); a segment lands at
-	// `index % CAP_SEGS`.
+	// `index % capSegs`.
 	function binBlock(data: number[][], ch: number, frames: number, head: number): number {
 		const segsInBlock = Math.max(1, Math.ceil(frames / SEG_FRAMES));
 		for (let s = 0; s < segsInBlock; s++) {
 			const f0 = s * SEG_FRAMES;
 			const f1 = Math.min(f0 + SEG_FRAMES, frames);
-			const base = ((head + s) % CAP_SEGS) * ch;
+			const base = ((head + s) % capSegs) * ch;
 			for (let c = 0; c < ch; c++) {
 				let mn = Infinity;
 				let mx = -Infinity;
@@ -217,7 +254,7 @@
 			ensureLiveRing(p.channels);
 			liveActive = true;
 			const segs = binBlock(p.data, p.channels, frames, liveWriteSeg);
-			liveWriteSeg = (liveWriteSeg + segs) % CAP_SEGS;
+			liveWriteSeg = (liveWriteSeg + segs) % capSegs;
 			liveTotalSegs += segs;
 			captureLiveBase();
 			if (liveBaseSeg >= 0) {
@@ -236,7 +273,7 @@
 		const frames = p.data[0]?.length ?? 0;
 		if (frames === 0) return;
 		const segs = binBlock(p.data, p.channels, frames, writeSeg);
-		writeSeg = (writeSeg + segs) % CAP_SEGS;
+		writeSeg = (writeSeg + segs) % capSegs;
 		totalSegs += segs;
 		if (following) viewEndSeg = totalSegs;
 		markDirty();
@@ -253,13 +290,17 @@
 		}
 		zoomLevel = best;
 		segsPerCol = Math.max(1, Math.round(DEFAULT_SEGS / zoomLevel));
+		ensureCap();
 		updateZoomLabel();
 	}
 
 	function clampView() {
 		const availStart = dataStart();
 		const plotW = Math.max(1, W - SCALE_W);
-		const minViewEnd = availStart + plotW * segsPerCol;
+		// Capped at `totalSegs`: a view wider than the available data must keep
+		// the live edge, leaving leading empty space, rather than pushing past
+		// the end (which would flicker against `following`).
+		const minViewEnd = Math.min(availStart + plotW * segsPerCol, totalSegs);
 		viewEndSeg = Math.max(minViewEnd, Math.min(totalSegs, viewEndSeg));
 	}
 
@@ -397,11 +438,14 @@
 		}
 		const availStart = dataStart();
 		const viewStartSeg = viewEndSeg - plotW * segsPerCol;
-		// Stable grid anchor: leftmost column's start segment, kept a whole
-		// multiple of the column width; `off` absorbs the sub-column remainder
-		// so columns only re-bin on a full-column advance.
-		const anchor = Math.floor(viewStartSeg / segsPerCol) * segsPerCol;
-		off = (viewStartSeg - anchor) / segsPerCol;
+		// Right-anchored stable grid: column boundaries are multiples of
+		// `segsPerCol` counted from the view *end*, so the rightmost column
+		// always covers the newest audio. A left-anchored grid leaves that
+		// column empty whenever the left edge aligns to a boundary (`off === 0`,
+		// which is permanent at ×20 where segsPerCol === 1) — a flat notch at
+		// the live edge that visibly fills in as the view scrolls.
+		const rightAnchor = Math.ceil(viewEndSeg / segsPerCol) * segsPerCol;
+		off = (rightAnchor - viewEndSeg) / segsPerCol;
 
 		const cols = plotW + 1;
 		colsCount = cols;
@@ -414,8 +458,8 @@
 			const pk = peaks[c];
 			const tr = troughs[c];
 			for (let k = 0; k < cols; k++) {
-				let seg0 = anchor + k * segsPerCol;
-				let seg1 = seg0 + segsPerCol;
+				let seg1 = rightAnchor - k * segsPerCol;
+				let seg0 = seg1 - segsPerCol;
 				let mn = 0;
 				let mx = 0;
 				if (seg1 > availStart && seg0 < totalSegs) {
@@ -453,7 +497,9 @@
 		const outTicks: { x: number; label: string }[] = [];
 		for (let s = firstSample; s < (viewStartSeg + plotW * segsPerCol) * SEG_FRAMES; s += stepSamples) {
 			outTicks.push({
-				x: Math.round(SCALE_W + (s / SEG_FRAMES - viewStartSeg) / segsPerCol),
+				// Fractional x so ticks glide with the stream instead of
+				// integer-snapping (which read as micro-stutter).
+				x: SCALE_W + (s / SEG_FRAMES - viewStartSeg) / segsPerCol,
 				label: formatTime(s / sampleRate)
 			});
 		}
@@ -517,19 +563,40 @@
 				c.stroke();
 
 				if (pk) {
+					c.save();
+					// Clip to the plot area so the envelope never bleeds into the
+					// scale gutter behind the amp labels.
 					c.beginPath();
-					c.moveTo(SCALE_W - off, mid - pk[0] * halfH);
-					for (let k = 1; k < colsCount; k++) c.lineTo(SCALE_W + k - off, mid - pk[k] * halfH);
-					for (let k = colsCount - 1; k >= 0; k--) c.lineTo(SCALE_W + k - off, mid - tr[k] * halfH);
+					c.rect(SCALE_W, TIME_H, W - SCALE_W, H - TIME_H);
+					c.clip();
+					c.beginPath();
+					// Right-anchored: x0 is the newest column's centre, at the
+					// right edge; index k runs right-to-left. The +0.5 tile keeps
+					// the columns covering the full plot at every sub-pixel off.
+					const x0 = W - 0.5 + off;
+					c.moveTo(x0, mid - pk[0] * halfH);
+					for (let k = 1; k < colsCount; k++) c.lineTo(x0 - k, mid - pk[k] * halfH);
+					for (let k = colsCount - 1; k >= 0; k--) c.lineTo(x0 - k, mid - tr[k] * halfH);
 					c.closePath();
-					c.fillStyle = color;
-					c.globalAlpha = 0.7;
-					c.fill();
-					c.globalAlpha = 1;
-					c.strokeStyle = color;
-					c.lineWidth = 0.75;
-					c.lineJoin = 'round';
-					c.stroke();
+					if (zoomLevel >= 10) {
+						// Deep zoom: the envelope is a thin trace; stroking keeps a
+						// uniform line width, where a fill fades to nothing at the
+						// signal peaks.
+						c.strokeStyle = color;
+						c.lineWidth = 0.75;
+						c.lineJoin = 'round';
+						c.stroke();
+					} else {
+						c.fillStyle = color;
+						c.globalAlpha = 0.7;
+						c.fill();
+						c.globalAlpha = 1;
+						c.strokeStyle = color;
+						c.lineWidth = 0.75;
+						c.lineJoin = 'round';
+						c.stroke();
+					}
+					c.restore();
 				}
 
 				for (const [amp, label] of SCALE_LEVELS) {
@@ -562,10 +629,15 @@
 			c.stroke();
 
 			for (const t of ticks) {
-				c.fillStyle = 'rgba(255,255,255,0.07)';
-				c.fillRect(t.x, TIME_H, 1, H - TIME_H);
-				c.fillStyle = 'rgba(255,255,255,0.6)';
+				// Fade tick + label as the label nears the right edge so it glides
+				// out instead of being clipped mid-glyph.
 				c.font = '7.5px monospace';
+				const labelW = c.measureText(t.label).width;
+				const fade = Math.max(0, Math.min(1, (W - (t.x + 3 + labelW)) / FADE_PX));
+				if (fade <= 0) continue;
+				c.fillStyle = `rgba(255,255,255,${0.07 * fade})`;
+				c.fillRect(t.x, TIME_H, 1, H - TIME_H);
+				c.fillStyle = `rgba(255,255,255,${0.6 * fade})`;
 				c.textAlign = 'left';
 				c.textBaseline = 'middle';
 				c.fillText(t.label, t.x + 3, TIME_H / 2);

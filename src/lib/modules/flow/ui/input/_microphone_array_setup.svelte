@@ -86,10 +86,8 @@
 
 	function staleCalibration() {
 		draft.calibration = {
-			state: 'missing',
-			fingerprint: null,
-			residualDelaySamples: null,
-			qualityScore: null
+			...draft.calibration,
+			state: draft.calibration.fingerprint ? 'needsReview' : 'missing'
 		};
 		calibrationError = null;
 	}
@@ -149,26 +147,45 @@
 		return draft.members.some((member) => member.sourceId === sourceId && member.channelIndex === channelIndex);
 	}
 
+	function createMember(source: MicrophoneArraySource, channelIndex: number, offset = 0): MicrophoneArrayMember {
+		return {
+			sourceId: source.id,
+			channelIndex,
+			label: `Mic ${draft.members.length + offset + 1}`,
+			position: { x: 0, y: 0, z: 0 },
+			enabled: true,
+			weight: 1,
+			gainDb: 0,
+			polarityInverted: false,
+			fixedDelaySamples: 0,
+			quality: 'good',
+			exclusionReason: null
+		};
+	}
+
 	function toggleChannel(source: MicrophoneArraySource, channelIndex: number) {
 		const existing = draft.members.findIndex((member) => member.sourceId === source.id && member.channelIndex === channelIndex);
 		if (existing >= 0) {
 			draft.members = draft.members.filter((_, index) => index !== existing);
 		} else {
-			const member: MicrophoneArrayMember = {
-				sourceId: source.id,
-				channelIndex,
-				label: `Mic ${draft.members.length + 1}`,
-				position: { x: 0, y: 0, z: 0 },
-				enabled: true,
-				weight: 1,
-				gainDb: 0,
-				polarityInverted: false,
-				fixedDelaySamples: 0,
-				quality: 'good',
-				exclusionReason: null
-			};
-			draft.members = [...draft.members, member];
+			draft.members = [...draft.members, createMember(source, channelIndex)];
 		}
+		applyGeometry();
+		staleCalibration();
+	}
+
+	function selectAllChannels(source: MicrophoneArraySource) {
+		const channels = deviceInfo[source.id]?.channels ?? 0;
+		const missing = Array.from({ length: channels }, (_, channelIndex) => channelIndex).filter((channelIndex) => !selected(source.id, channelIndex));
+		if (missing.length === 0) return;
+		draft.members = [...draft.members, ...missing.map((channelIndex, offset) => createMember(source, channelIndex, offset))];
+		applyGeometry();
+		staleCalibration();
+	}
+
+	function clearSourceChannels(sourceId: string) {
+		if (!draft.members.some((member) => member.sourceId === sourceId)) return;
+		draft.members = draft.members.filter((member) => member.sourceId !== sourceId);
 		applyGeometry();
 		staleCalibration();
 	}
@@ -176,6 +193,16 @@
 	function updateMember(index: number, patch: Partial<MicrophoneArrayMember>, structural = false) {
 		draft.members = draft.members.map((member, memberIndex) => (memberIndex === index ? { ...member, ...patch } : member));
 		if (structural) staleCalibration();
+	}
+
+	function moveMember(index: number, offset: -1 | 1) {
+		const target = index + offset;
+		if (target < 0 || target >= draft.members.length) return;
+		const reordered = [...draft.members];
+		[reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+		draft.members = reordered;
+		applyGeometry();
+		staleCalibration();
 	}
 
 	function setGeometry(kind: MicrophoneArrayGeometry['kind']) {
@@ -232,6 +259,18 @@
 
 	function setTargetField(field: 'azimuth_degrees' | 'elevation_degrees', value: number) {
 		if (draft.target.kind !== 'direction' || !Number.isFinite(value)) return;
+		draft.target = { ...draft.target, [field]: value };
+		staleCalibration();
+	}
+
+	function setTargetKind(kind: MicrophoneArrayNodeData['target']['kind']) {
+		if (kind === draft.target.kind) return;
+		draft.target = kind === 'direction' ? { kind, azimuth_degrees: 90, elevation_degrees: 0 } : { kind, x: 0, y: 0, z: 0 };
+		staleCalibration();
+	}
+
+	function setTargetPointField(field: 'x' | 'y' | 'z', value: number) {
+		if (draft.target.kind !== 'point' || !Number.isFinite(value)) return;
 		draft.target = { ...draft.target, [field]: value };
 		staleCalibration();
 	}
@@ -363,7 +402,7 @@
 					{#if source.deviceId && deviceInfo[source.id]}
 						{@const info = deviceInfo[source.id]}
 						<div class="mt-3 flex items-center justify-between gap-3">
-							<div class="flex flex-wrap gap-1.5">
+							<div class="flex flex-wrap items-center gap-1.5">
 								{#each Array(info.channels) as _, channelIndex}
 									<button
 										type="button"
@@ -375,6 +414,12 @@
 										]}
 										onclick={() => toggleChannel(source, channelIndex)}>CH {channelIndex + 1}</button>
 								{/each}
+								<button type="button" class="button-main secondary h-7 rounded-lg px-2.5 text-[9px]" onclick={() => selectAllChannels(source)}
+									>Add all</button>
+								<button
+									type="button"
+									class="button-main secondary h-7 rounded-lg px-2.5 text-[9px]"
+									onclick={() => clearSourceChannels(source.id)}>Clear</button>
 							</div>
 							<span class="shrink-0 font-mono text-[9px] text-neutral-700"
 								>{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}</span>
@@ -468,11 +513,11 @@
 			</div>
 
 			<div class="overflow-hidden rounded-xl border border-neutral-300">
-				<div class="grid grid-cols-[2rem_1fr_5rem_5rem_5rem_4rem] gap-2 bg-neutral-200/80 px-3 py-2 font-mono text-[9px] text-neutral-700">
-					<span></span><span>MEMBER</span><span>X</span><span>Y</span><span>Z</span><span>GAIN</span>
+				<div class="grid grid-cols-[2rem_1fr_5rem_5rem_5rem_4rem_3.5rem] gap-2 bg-neutral-200/80 px-3 py-2 font-mono text-[9px] text-neutral-700">
+					<span></span><span>MEMBER</span><span>X</span><span>Y</span><span>Z</span><span>GAIN</span><span>ORDER</span>
 				</div>
 				{#each draft.members as member, index (`${member.sourceId}:${member.channelIndex}`)}
-					<div class="grid grid-cols-[2rem_1fr_5rem_5rem_5rem_4rem] items-center gap-2 border-t border-neutral-300 px-3 py-2">
+					<div class="grid grid-cols-[2rem_1fr_5rem_5rem_5rem_4rem_3.5rem] items-center gap-2 border-t border-neutral-300 px-3 py-2">
 						<input
 							type="checkbox"
 							checked={member.enabled}
@@ -497,19 +542,35 @@
 								aria-label={`${axis} position`} />
 						{/each}
 						<span class="font-mono text-[9px] text-neutral-900 tabular-nums">{member.gainDb.toFixed(1)} dB</span>
+						<div class="flex gap-1">
+							<button
+								type="button"
+								class="button-main secondary size-6 rounded text-[9px]"
+								disabled={index === 0}
+								aria-label={`Move ${member.label} up`}
+								onclick={() => moveMember(index, -1)}>↑</button
+							><button
+								type="button"
+								class="button-main secondary size-6 rounded text-[9px]"
+								disabled={index === draft.members.length - 1}
+								aria-label={`Move ${member.label} down`}
+								onclick={() => moveMember(index, 1)}>↓</button>
+						</div>
 					</div>
 				{/each}
 			</div>
 
-			<div class="grid grid-cols-3 gap-2 rounded-xl border border-neutral-300 bg-neutral-200/40 p-3">
+			<div
+				class={[
+					'grid gap-2 rounded-xl border border-neutral-300 bg-neutral-200/40 p-3',
+					draft.target.kind === 'point' ? 'grid-cols-4' : 'grid-cols-3'
+				]}>
 				<label class="field-label"
 					>Target<select
 						class="input-base h-8 text-xs"
 						value={draft.target.kind}
-						onchange={() => {
-							draft.target = { kind: 'direction', azimuth_degrees: 90, elevation_degrees: 0 };
-							staleCalibration();
-						}}><option value="direction">Fixed direction</option></select
+						onchange={(event) => setTargetKind(event.currentTarget.value as MicrophoneArrayNodeData['target']['kind'])}
+						><option value="direction">Fixed direction</option><option value="point">Fixed point</option></select
 					></label>
 				{#if draft.target.kind === 'direction'}
 					<label class="field-label"
@@ -530,6 +591,17 @@
 							step="1"
 							value={draft.target.elevation_degrees}
 							oninput={(event) => setTargetField('elevation_degrees', event.currentTarget.valueAsNumber)} /></label>
+				{/if}
+				{#if draft.target.kind === 'point'}
+					{#each ['x', 'y', 'z'] as axis}
+						<label class="field-label"
+							>{axis.toUpperCase()}, m<input
+								class="input-base h-8 font-mono text-xs"
+								type="number"
+								step="0.01"
+								value={draft.target[axis as keyof typeof draft.target]}
+								oninput={(event) => setTargetPointField(axis as 'x' | 'y' | 'z', event.currentTarget.valueAsNumber)} /></label>
+					{/each}
 				{/if}
 			</div>
 		</section>
@@ -573,6 +645,12 @@
 			{#if calibrationError}<div class="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-700">
 					{calibrationError}
 				</div>{/if}
+			{#if metrics?.calibration.state === 'needsReview' && draft.calibration.state === 'ready'}
+				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-900">
+					The saved calibration does not match the active device stream format. The profile is preserved, but Auto will use the safe fallback until
+					recalibration.
+				</div>
+			{/if}
 		</section>
 
 		<section id="array-processing" class="scroll-mt-4 space-y-3 border-t border-neutral-300 pt-5">
@@ -608,6 +686,27 @@
 						class="flex items-center gap-2"><input type="checkbox" bind:checked={draft.limiterEnabled} /> Safety limiter</label>
 				</div>
 			</div>
+			<details class="rounded-xl border border-neutral-300 bg-neutral-200/30 px-3 py-2">
+				<summary class="cursor-pointer text-[10px] font-medium text-theme">Advanced processing</summary>
+				<div class="mt-3 grid grid-cols-2 gap-3">
+					<label class="field-label"
+						>GSC filter length<input
+							class="input-base h-8 font-mono text-xs"
+							type="number"
+							min="1"
+							max="64"
+							step="1"
+							bind:value={draft.gscFilterLength} /></label>
+					<label class="field-label"
+						>GSC adaptation <span class="font-mono tabular-nums">{draft.gscAdaptationRate.toFixed(3)}</span><input
+							class="mt-2 w-full accent-emerald-600"
+							type="range"
+							min="0"
+							max="1"
+							step="0.001"
+							bind:value={draft.gscAdaptationRate} /></label>
+				</div>
+			</details>
 		</section>
 
 		<section id="array-diagnostics" class="scroll-mt-4 space-y-3 border-t border-neutral-300 pt-5">
@@ -627,30 +726,33 @@
 			</div>
 
 			{#if metrics}
-				<div class="overflow-hidden rounded-xl border border-neutral-300">
-					<div
-						class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] gap-2 bg-neutral-200/80 px-3 py-2 font-mono text-[9px] text-neutral-700">
-						<span>DOMAIN</span><span>RING</span><span>DRIFT</span><span>RATIO</span><span>SYNC</span><span>XRUNS</span>
-					</div>
-					{#each metrics.domains as domain (domain.sourceId)}
+				<details class="overflow-hidden rounded-xl border border-neutral-300 bg-neutral-200/20">
+					<summary class="cursor-pointer px-3 py-2 text-[10px] font-medium text-theme">Low-level clock and xrun metrics</summary>
+					<div class="overflow-hidden border-t border-neutral-300">
 						<div
-							class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] items-center gap-2 border-t border-neutral-300 px-3 py-2 font-mono text-[9px] tabular-nums">
-							<div class="min-w-0">
-								<span class="block truncate text-theme">{domain.label}</span><span class="text-[8px] text-neutral-700"
-									>{formatRate(domain.nativeSampleRate)} · {domain.channels} ch</span>
-							</div>
-							<span>{domain.ringFillFrames}</span><span>{domain.driftPpm.toFixed(1)} ppm</span><span>{domain.asrcRatio.toFixed(6)}</span><span
-								class={domain.locked ? 'text-emerald-700' : 'text-amber-800'}>{Math.round(domain.syncConfidence * 100)}%</span
-							><span>{domain.discontinuities + domain.streamErrors}</span>
+							class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] gap-2 bg-neutral-200/80 px-3 py-2 font-mono text-[9px] text-neutral-700">
+							<span>DOMAIN</span><span>RING</span><span>DRIFT</span><span>RATIO</span><span>SYNC</span><span>XRUNS</span>
 						</div>
-					{/each}
-				</div>
-				<div
-					class="flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-neutral-300 bg-neutral-200/30 px-3 py-2 font-mono text-[9px] text-neutral-800 tabular-nums">
-					<span>IN {metrics.capturedSamples}</span><span>OUT {metrics.outputFrames}</span><span>DROPPED {metrics.droppedSamples}</span><span
-						>UNDERRUN {metrics.domains.reduce((sum, domain) => sum + domain.underrunSamples, 0)}</span
-					><span>MVDR FALLBACK {metrics.mvdrFallbackBins}</span><span>SYNC TARGET {metrics.syncTargetFrames} fr</span>
-				</div>
+						{#each metrics.domains as domain (domain.sourceId)}
+							<div
+								class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] items-center gap-2 border-t border-neutral-300 px-3 py-2 font-mono text-[9px] tabular-nums">
+								<div class="min-w-0">
+									<span class="block truncate text-theme">{domain.label}</span><span class="text-[8px] text-neutral-700"
+										>{formatRate(domain.nativeSampleRate)} · {domain.channels} ch</span>
+								</div>
+								<span>{domain.ringFillFrames}</span><span>{domain.driftPpm.toFixed(1)} ppm</span><span>{domain.asrcRatio.toFixed(6)}</span><span
+									class={domain.locked ? 'text-emerald-700' : 'text-amber-800'}>{Math.round(domain.syncConfidence * 100)}%</span
+								><span>{domain.discontinuities + domain.streamErrors}</span>
+							</div>
+						{/each}
+					</div>
+					<div
+						class="flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-300 bg-neutral-200/30 px-3 py-2 font-mono text-[9px] text-neutral-800 tabular-nums">
+						<span>IN {metrics.capturedSamples}</span><span>OUT {metrics.outputFrames}</span><span>DROPPED {metrics.droppedSamples}</span><span
+							>UNDERRUN {metrics.domains.reduce((sum, domain) => sum + domain.underrunSamples, 0)}</span
+						><span>MVDR FALLBACK {metrics.mvdrFallbackBins}</span><span>SYNC TARGET {metrics.syncTargetFrames} fr</span>
+					</div>
+				</details>
 			{:else}
 				<div class="rounded-lg border border-dashed border-neutral-400 px-3 py-3 text-[10px] text-neutral-800">
 					Run the graph to inspect measured ring fill, ASRC ratio, drift, lock confidence and xrun counters. No diagnostic values are simulated while

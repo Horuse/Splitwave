@@ -306,6 +306,17 @@ pub fn fingerprint(data: &MicrophoneArrayData, stream_formats: &[(String, u32, u
     format!("array-v1-{:016x}", hash.finish())
 }
 
+pub fn fingerprint_matches(
+    data: &MicrophoneArrayData,
+    stream_formats: &[(String, u32, u16)],
+) -> bool {
+    let current = fingerprint(data, stream_formats);
+    data.calibration
+        .fingerprint
+        .as_deref()
+        .is_some_and(|saved| saved == current)
+}
+
 struct CorrelationPeak {
     delay_samples: f32,
     confidence: f32,
@@ -753,6 +764,16 @@ mod tests {
         data.members[1].position.x = 0.04;
         let third = fingerprint(&data, &[("source".into(), 44_100, 2)]);
         assert_ne!(first, third);
+    }
+
+    #[test]
+    fn fingerprint_match_rejects_changed_stream_format_without_deleting_profile() {
+        let mut data = sample_data();
+        let formats = [("source".into(), 48_000, 2)];
+        data.calibration.fingerprint = Some(fingerprint(&data, &formats));
+        assert!(fingerprint_matches(&data, &formats));
+        assert!(!fingerprint_matches(&data, &[("source".into(), 44_100, 2)]));
+        assert!(data.calibration.fingerprint.is_some());
     }
 
     fn sample_data() -> MicrophoneArrayData {

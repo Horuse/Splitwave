@@ -1115,6 +1115,7 @@ impl GraphSpec {
         }
 
         let inputs = resolve_inputs(&nodes, &keep, &routed)?;
+        validate_capture_conflicts(&inputs)?;
         let outputs = resolve_outputs(&nodes, &keep)?;
         let effects = resolve_effects(&nodes, &keep)?;
 
@@ -1140,6 +1141,35 @@ impl GraphSpec {
             edges,
         })
     }
+}
+
+fn validate_capture_conflicts(inputs: &[ValidInput]) -> AppResult<()> {
+    let mut owners: HashMap<&str, (&str, &'static str)> = HashMap::new();
+    for input in inputs {
+        let devices: Vec<(&str, &'static str)> = match &input.spec {
+            InputSpec::Microphone { device_id } => vec![(device_id.as_str(), "Microphone")],
+            InputSpec::MicrophoneArray { data } => data
+                .sources
+                .iter()
+                .filter_map(|source| {
+                    source
+                        .device_id
+                        .as_deref()
+                        .map(|device_id| (device_id, "Microphone Array"))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for (device_id, kind) in devices {
+            if let Some((owner_id, owner_kind)) = owners.insert(device_id, (&input.id, kind)) {
+                return Err(AppError::Validation(format!(
+                    "input device {device_id:?} is already opened by {owner_kind} node {owner_id:?}; {kind} node {:?} cannot open it again until shared capture is available",
+                    input.id
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `routed` are inputs on a real path to a terminal — they must resolve or
@@ -1748,5 +1778,45 @@ mod tests {
             edges: vec![edge("array-speaker", "array", None, "speaker", None)],
         };
         assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn microphone_array_rejects_a_device_already_used_by_microphone() {
+        let mut microphone = mic("microphone");
+        microphone.data["deviceId"] = serde_json::json!("device-0");
+        let g = GraphSpec {
+            nodes: vec![
+                microphone,
+                microphone_array("array", 1, 2),
+                speaker("speaker"),
+            ],
+            edges: vec![
+                edge("microphone-speaker", "microphone", None, "speaker", None),
+                edge("array-speaker", "array", None, "speaker", None),
+            ],
+        };
+        let error = g.validate().unwrap_err().to_string();
+        assert!(error.contains("already opened"));
+        assert!(error.contains("shared capture"));
+    }
+
+    #[test]
+    fn microphone_arrays_reject_the_same_device() {
+        let g = GraphSpec {
+            nodes: vec![
+                microphone_array("array-a", 1, 2),
+                microphone_array("array-b", 1, 2),
+                speaker("speaker"),
+            ],
+            edges: vec![
+                edge("array-a-speaker", "array-a", None, "speaker", None),
+                edge("array-b-speaker", "array-b", None, "speaker", None),
+            ],
+        };
+        assert!(g
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("already opened"));
     }
 }

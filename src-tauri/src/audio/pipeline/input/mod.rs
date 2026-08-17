@@ -169,10 +169,23 @@ pub(super) fn resolve_microphone_array(data: &MicrophoneArrayData) -> AppResult<
             sample_rate: native.sample_rate,
         });
     }
-    Ok(ResolvedInput::MicrophoneArray {
-        data: data.clone(),
-        sources,
-    })
+    let stream_formats: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            (
+                source.id.clone(),
+                source.sample_rate,
+                source.channels.min(u16::MAX as usize) as u16,
+            )
+        })
+        .collect();
+    let mut data = data.clone();
+    if data.calibration.state != crate::audio::graph::MicrophoneArrayCalibrationState::Missing
+        && !crate::audio::microphone_array::calibration::fingerprint_matches(&data, &stream_formats)
+    {
+        data.calibration.state = crate::audio::graph::MicrophoneArrayCalibrationState::NeedsReview;
+    }
+    Ok(ResolvedInput::MicrophoneArray { data, sources })
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]

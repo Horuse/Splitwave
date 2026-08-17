@@ -56,3 +56,41 @@ jobs:
 
       - name: Svelte / TypeScript check
         run: bun run check
+
+  windows:
+    runs-on: windows-latest
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build Windows application
+        working-directory: src-tauri
+        run: cargo build --bin splitwave
+
+      - name: Svelte / TypeScript check
+        run: bun run check
+
+      - name: Build unsigned NSIS installer
+        run: bun run tauri build --bundles nsis --no-sign

@@ -3,11 +3,12 @@
 	import { onMount } from 'svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
+	import type { MicrophoneArrayMetrics, NativeDeviceInfo } from '$lib/modules/audio/types';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import type { MicrophoneArrayGeometry, MicrophoneArrayMember, MicrophoneArrayNodeData, MicrophoneArraySource } from '$lib/modules/pipeline/types';
 
 	type Props = ModalBaseProps & {
+		nodeId: string;
 		data: MicrophoneArrayNodeData;
 		onCalibrate: (data: MicrophoneArrayNodeData) => Promise<MicrophoneArrayNodeData>;
 	};
@@ -15,13 +16,18 @@
 		return structuredClone($state.snapshot(value));
 	}
 
-	let { modalId, data, onCalibrate }: Props = $props();
+	let { modalId, nodeId, data, onCalibrate }: Props = $props();
 	// svelte-ignore state_referenced_locally -- each modal owns one isolated draft
 	let draft = $state<MicrophoneArrayNodeData>(cloneData(data));
 	let deviceInfo = $state<Record<string, NativeDeviceInfo>>({});
 	let loadingDevices = $state(false);
 	let calibrating = $state(false);
 	let calibrationError = $state<string | null>(null);
+	let metrics = $state<MicrophoneArrayMetrics | null>(null);
+	let unlistenMetrics: (() => void) | undefined;
+	$effect(() => {
+		if (!audioStore.isRunning) metrics = null;
+	});
 
 	let enabledMembers = $derived(draft.members.filter((member) => member.enabled && member.quality !== 'excluded').length);
 	let independentClocks = $derived(draft.sources.length > 1);
@@ -60,6 +66,22 @@
 		} finally {
 			loadingDevices = false;
 		}
+	});
+
+	onMount(() => {
+		let disposed = false;
+		void audioMethods
+			.onMicrophoneArrayMetrics((snapshot) => {
+				if (snapshot.nodeId === nodeId) metrics = snapshot;
+			})
+			.then((unlisten) => {
+				if (disposed) unlisten();
+				else unlistenMetrics = unlisten;
+			});
+		return () => {
+			disposed = true;
+			unlistenMetrics?.();
+		};
 	});
 
 	function staleCalibration() {
@@ -241,6 +263,19 @@
 	function formatRate(rate: number): string {
 		return `${rate / 1000} kHz`;
 	}
+
+	function formatAlgorithm(algorithm: MicrophoneArrayMetrics['activeAlgorithm']): string {
+		return algorithm === 'delayAndSum' ? 'Delay-and-sum' : algorithm.toUpperCase();
+	}
+
+	function formatFallback(reason: MicrophoneArrayMetrics['fallbackReason']): string {
+		if (reason === 'domainUnlocked') return 'Clock domain unlocked';
+		if (reason === 'noHealthyChannel') return 'No healthy channel';
+		if (reason === 'sourceError') return 'Source stream error';
+		if (reason === 'processorError') return 'Processor error';
+		if (reason === 'bypassed') return 'Bypassed to healthy mic';
+		return reason === 'syncing' ? 'Synchronizing' : 'None';
+	}
 </script>
 
 <div class="grid min-h-0 grid-cols-[15rem_minmax(0,1fr)] gap-0 pt-3">
@@ -257,7 +292,7 @@
 					<div><span class="block text-neutral-700">CLOCKS</span><span class="text-sm text-theme">{draft.sources.length}</span></div>
 					<div>
 						<span class="block text-neutral-700">LATENCY</span><span class="text-sm text-theme"
-							>{draft.algorithm === 'delayAndSum' ? '0' : '5.3'} ms</span>
+							>{(((metrics?.algorithmicLatencyFrames ?? 256) / (metrics?.processingSampleRate ?? draft.processingSampleRate)) * 1000).toFixed(1)} ms</span>
 					</div>
 					<div><span class="block text-neutral-700">EST. CPU</span><span class="text-sm text-theme">{estimatedCpu.toFixed(1)}%</span></div>
 				</div>
@@ -583,13 +618,45 @@
 				</p>
 			</div>
 			<div class="grid grid-cols-4 gap-2">
-				{#each [['Topology', independentClocks ? `${draft.sources.length} clocks` : 'shared clock'], ['Rate', formatRate(draft.processingSampleRate)], ['Output', 'mono'], ['Fallback', 'best healthy mic']] as diagnostic}
+				{#each [['State', metrics?.state ?? 'Stopped'], ['Channels', metrics ? `${metrics.activeChannels}/${metrics.configuredChannels} active` : `${enabledMembers} configured`], ['Algorithm', metrics ? formatAlgorithm(metrics.activeAlgorithm) : draft.algorithm === 'auto' ? 'Auto' : draft.algorithm], ['Fallback', metrics ? formatFallback(metrics.fallbackReason) : 'Best healthy mic']] as diagnostic}
 					<div class="rounded-lg border border-neutral-300 bg-neutral-200/40 px-2.5 py-2">
-						<span class="block text-[9px] text-neutral-700">{diagnostic[0]}</span><span class="mt-0.5 block font-mono text-[10px] text-theme"
-							>{diagnostic[1]}</span>
+						<span class="block text-[9px] text-neutral-700">{diagnostic[0]}</span><span
+							class="mt-0.5 block truncate font-mono text-[10px] text-theme capitalize">{diagnostic[1]}</span>
 					</div>
 				{/each}
 			</div>
+
+			{#if metrics}
+				<div class="overflow-hidden rounded-xl border border-neutral-300">
+					<div
+						class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] gap-2 bg-neutral-200/80 px-3 py-2 font-mono text-[9px] text-neutral-700">
+						<span>DOMAIN</span><span>RING</span><span>DRIFT</span><span>RATIO</span><span>SYNC</span><span>XRUNS</span>
+					</div>
+					{#each metrics.domains as domain (domain.sourceId)}
+						<div
+							class="grid grid-cols-[minmax(8rem,1fr)_4.5rem_5rem_5rem_5rem_4rem] items-center gap-2 border-t border-neutral-300 px-3 py-2 font-mono text-[9px] tabular-nums">
+							<div class="min-w-0">
+								<span class="block truncate text-theme">{domain.label}</span><span class="text-[8px] text-neutral-700"
+									>{formatRate(domain.nativeSampleRate)} · {domain.channels} ch</span>
+							</div>
+							<span>{domain.ringFillFrames}</span><span>{domain.driftPpm.toFixed(1)} ppm</span><span>{domain.asrcRatio.toFixed(6)}</span><span
+								class={domain.locked ? 'text-emerald-700' : 'text-amber-800'}>{Math.round(domain.syncConfidence * 100)}%</span
+							><span>{domain.discontinuities + domain.streamErrors}</span>
+						</div>
+					{/each}
+				</div>
+				<div
+					class="flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-neutral-300 bg-neutral-200/30 px-3 py-2 font-mono text-[9px] text-neutral-800 tabular-nums">
+					<span>IN {metrics.capturedSamples}</span><span>OUT {metrics.outputFrames}</span><span>DROPPED {metrics.droppedSamples}</span><span
+						>UNDERRUN {metrics.domains.reduce((sum, domain) => sum + domain.underrunSamples, 0)}</span
+					><span>MVDR FALLBACK {metrics.mvdrFallbackBins}</span><span>SYNC TARGET {metrics.syncTargetFrames} fr</span>
+				</div>
+			{:else}
+				<div class="rounded-lg border border-dashed border-neutral-400 px-3 py-3 text-[10px] text-neutral-800">
+					Run the graph to inspect measured ring fill, ASRC ratio, drift, lock confidence and xrun counters. No diagnostic values are simulated while
+					stopped.
+				</div>
+			{/if}
 		</section>
 	</main>
 </div>

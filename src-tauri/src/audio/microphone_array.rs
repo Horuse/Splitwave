@@ -11,7 +11,7 @@ use crate::error::{AppError, AppResult};
 use mvdr::Mvdr;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 use cpal::traits::StreamTrait;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use rtrb::{Consumer, RingBuffer};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use serde::Serialize;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::effects::{update_meter, MeterHandle};
@@ -39,6 +41,8 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::resample::MultiResamplerOut;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::streams;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::streams::RawCaptureStats;
 
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const FRACTIONAL_DELAY_ORDER: usize = 3;
@@ -56,6 +60,342 @@ const ARRAY_WAIT: Duration = Duration::from_millis(1);
 const ARRAY_BLOCK_FRAMES: usize = 256;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const SYNC_TARGET_FRAMES: usize = 3_072;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_STARTING: u32 = 0;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_SYNCING: u32 = 1;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_READY: u32 = 2;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_FALLBACK: u32 = 3;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_BYPASSED: u32 = 4;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_STATE_ERROR: u32 = 5;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_NONE: u32 = 0;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_SYNCING: u32 = 1;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_BYPASSED: u32 = 2;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_DOMAIN_UNLOCKED: u32 = 3;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_NO_HEALTHY_CHANNEL: u32 = 4;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_SOURCE_ERROR: u32 = 5;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_FALLBACK_PROCESSOR_ERROR: u32 = 6;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicrophoneArrayMetricsSnapshot {
+    node_id: String,
+    state: &'static str,
+    fallback_reason: Option<&'static str>,
+    configured_channels: usize,
+    active_channels: u32,
+    clock_domains: usize,
+    processing_sample_rate: u32,
+    requested_algorithm: &'static str,
+    active_algorithm: &'static str,
+    captured_samples: u64,
+    dropped_samples: u64,
+    output_frames: u64,
+    stream_errors: u64,
+    mvdr_fallback_bins: u64,
+    algorithmic_latency_frames: usize,
+    sync_target_frames: usize,
+    calibration: MicrophoneArrayCalibrationMetrics,
+    members: Vec<MicrophoneArrayMemberMetrics>,
+    domains: Vec<MicrophoneArrayDomainMetrics>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicrophoneArrayCalibrationMetrics {
+    state: &'static str,
+    quality_score: Option<u8>,
+    residual_delay_samples: Option<f32>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicrophoneArrayMemberMetrics {
+    label: String,
+    source_id: String,
+    channel_index: u32,
+    enabled: bool,
+    quality: &'static str,
+    exclusion_reason: Option<String>,
+    residual_delay_samples: f32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicrophoneArrayDomainMetrics {
+    source_id: String,
+    label: String,
+    channels: usize,
+    native_sample_rate: u32,
+    captured_samples: u64,
+    dropped_samples: u64,
+    ring_fill_frames: u64,
+    underrun_samples: u64,
+    discontinuities: u64,
+    stream_errors: u64,
+    asrc_ratio: f64,
+    drift_ppm: f64,
+    locked: bool,
+    sync_confidence: f32,
+    estimator: &'static str,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct DomainMetrics {
+    source_id: String,
+    label: String,
+    channels: usize,
+    native_sample_rate: u32,
+    capture: RawCaptureStats,
+    ring_fill_frames: AtomicU64,
+    underrun_samples: AtomicU64,
+    discontinuities: AtomicU64,
+    stream_errors: AtomicU64,
+    asrc_ratio: AtomicU64,
+    drift_ppm: AtomicU64,
+    locked: AtomicBool,
+    sync_confidence: AtomicU32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl DomainMetrics {
+    fn new(source: &DeviceSource, label: String, processing_rate: u32) -> Self {
+        Self {
+            source_id: source.id.clone(),
+            label,
+            channels: source.channels,
+            native_sample_rate: source.sample_rate,
+            capture: RawCaptureStats::new(),
+            ring_fill_frames: AtomicU64::new(0),
+            underrun_samples: AtomicU64::new(0),
+            discontinuities: AtomicU64::new(0),
+            stream_errors: AtomicU64::new(0),
+            asrc_ratio: AtomicU64::new(
+                (processing_rate as f64 / source.sample_rate.max(1) as f64).to_bits(),
+            ),
+            drift_ppm: AtomicU64::new(0.0f64.to_bits()),
+            locked: AtomicBool::new(false),
+            sync_confidence: AtomicU32::new(0.0f32.to_bits()),
+        }
+    }
+
+    fn snapshot(&self) -> MicrophoneArrayDomainMetrics {
+        MicrophoneArrayDomainMetrics {
+            source_id: self.source_id.clone(),
+            label: self.label.clone(),
+            channels: self.channels,
+            native_sample_rate: self.native_sample_rate,
+            captured_samples: self.capture.captured_samples.load(Ordering::Relaxed),
+            dropped_samples: self.capture.dropped_samples.load(Ordering::Relaxed),
+            ring_fill_frames: self.ring_fill_frames.load(Ordering::Relaxed),
+            underrun_samples: self.underrun_samples.load(Ordering::Relaxed),
+            discontinuities: self.discontinuities.load(Ordering::Relaxed),
+            stream_errors: self.stream_errors.load(Ordering::Relaxed),
+            asrc_ratio: f64::from_bits(self.asrc_ratio.load(Ordering::Relaxed)),
+            drift_ppm: f64::from_bits(self.drift_ppm.load(Ordering::Relaxed)),
+            locked: self.locked.load(Ordering::Relaxed),
+            sync_confidence: f32::from_bits(self.sync_confidence.load(Ordering::Relaxed)),
+            estimator: "ringOccupancy",
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct ArrayMetrics {
+    node_id: String,
+    configured_channels: usize,
+    processing_sample_rate: u32,
+    algorithmic_latency_frames: usize,
+    calibration: MicrophoneArrayCalibrationMetrics,
+    members: Vec<MicrophoneArrayMemberMetrics>,
+    domains: Vec<Arc<DomainMetrics>>,
+    state: AtomicU32,
+    fallback_reason: AtomicU32,
+    active_channels: AtomicU32,
+    requested_algorithm: AtomicU32,
+    active_algorithm: AtomicU32,
+    output_frames: AtomicU64,
+    mvdr_fallback_bins: AtomicU64,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone)]
+pub struct MicrophoneArrayMetricsHandle(Arc<ArrayMetrics>);
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl MicrophoneArrayMetricsHandle {
+    fn new(
+        node_id: &str,
+        data: &MicrophoneArrayData,
+        sources: &[DeviceSource],
+        algorithmic_latency_frames: usize,
+    ) -> Self {
+        let domains = sources
+            .iter()
+            .map(|source| {
+                let label = data
+                    .sources
+                    .iter()
+                    .find(|candidate| candidate.id == source.id)
+                    .map(|candidate| candidate.label.clone())
+                    .unwrap_or_else(|| source.id.clone());
+                Arc::new(DomainMetrics::new(
+                    source,
+                    label,
+                    data.processing_sample_rate,
+                ))
+            })
+            .collect();
+        let calibration_state = match data.calibration.state {
+            MicrophoneArrayCalibrationState::Missing => "missing",
+            MicrophoneArrayCalibrationState::Ready => "ready",
+            MicrophoneArrayCalibrationState::NeedsReview => "needsReview",
+        };
+        let members = data
+            .members
+            .iter()
+            .map(|member| MicrophoneArrayMemberMetrics {
+                label: member.label.clone(),
+                source_id: member.source_id.clone(),
+                channel_index: member.channel_index,
+                enabled: member.enabled,
+                quality: match member.quality {
+                    crate::audio::graph::MicrophoneArrayChannelQuality::Good => "good",
+                    crate::audio::graph::MicrophoneArrayChannelQuality::Marginal => "marginal",
+                    crate::audio::graph::MicrophoneArrayChannelQuality::Excluded => "excluded",
+                },
+                exclusion_reason: member.exclusion_reason.clone(),
+                residual_delay_samples: member.fixed_delay_samples,
+            })
+            .collect();
+        Self(Arc::new(ArrayMetrics {
+            node_id: node_id.to_string(),
+            configured_channels: data.members.len(),
+            processing_sample_rate: data.processing_sample_rate,
+            algorithmic_latency_frames,
+            calibration: MicrophoneArrayCalibrationMetrics {
+                state: calibration_state,
+                quality_score: data.calibration.quality_score,
+                residual_delay_samples: data.calibration.residual_delay_samples,
+            },
+            members,
+            domains,
+            state: AtomicU32::new(ARRAY_STATE_STARTING),
+            fallback_reason: AtomicU32::new(ARRAY_FALLBACK_SYNCING),
+            active_channels: AtomicU32::new(0),
+            requested_algorithm: AtomicU32::new(encode_algorithm(data.algorithm)),
+            active_algorithm: AtomicU32::new(1),
+            output_frames: AtomicU64::new(0),
+            mvdr_fallback_bins: AtomicU64::new(0),
+        }))
+    }
+
+    fn domain(&self, index: usize) -> Arc<DomainMetrics> {
+        self.0.domains[index].clone()
+    }
+
+    pub fn snapshot(&self) -> MicrophoneArrayMetricsSnapshot {
+        let state = self.0.state.load(Ordering::Relaxed);
+        let fallback = self.0.fallback_reason.load(Ordering::Relaxed);
+        let domains: Vec<_> = self
+            .0
+            .domains
+            .iter()
+            .map(|domain| domain.snapshot())
+            .collect();
+        MicrophoneArrayMetricsSnapshot {
+            node_id: self.0.node_id.clone(),
+            state: match state {
+                ARRAY_STATE_SYNCING => "syncing",
+                ARRAY_STATE_READY => "ready",
+                ARRAY_STATE_FALLBACK => "fallback",
+                ARRAY_STATE_BYPASSED => "bypassed",
+                ARRAY_STATE_ERROR => "error",
+                _ => "starting",
+            },
+            fallback_reason: match fallback {
+                ARRAY_FALLBACK_SYNCING => Some("syncing"),
+                ARRAY_FALLBACK_BYPASSED => Some("bypassed"),
+                ARRAY_FALLBACK_DOMAIN_UNLOCKED => Some("domainUnlocked"),
+                ARRAY_FALLBACK_NO_HEALTHY_CHANNEL => Some("noHealthyChannel"),
+                ARRAY_FALLBACK_SOURCE_ERROR => Some("sourceError"),
+                ARRAY_FALLBACK_PROCESSOR_ERROR => Some("processorError"),
+                _ => None,
+            },
+            configured_channels: self.0.configured_channels,
+            active_channels: self.0.active_channels.load(Ordering::Relaxed),
+            clock_domains: domains.len(),
+            processing_sample_rate: self.0.processing_sample_rate,
+            requested_algorithm: algorithm_name(self.0.requested_algorithm.load(Ordering::Relaxed)),
+            active_algorithm: active_algorithm_name(
+                self.0.active_algorithm.load(Ordering::Relaxed),
+            ),
+            captured_samples: domains.iter().map(|domain| domain.captured_samples).sum(),
+            dropped_samples: domains.iter().map(|domain| domain.dropped_samples).sum(),
+            output_frames: self.0.output_frames.load(Ordering::Relaxed),
+            stream_errors: domains.iter().map(|domain| domain.stream_errors).sum(),
+            mvdr_fallback_bins: self.0.mvdr_fallback_bins.load(Ordering::Relaxed),
+            algorithmic_latency_frames: self.0.algorithmic_latency_frames,
+            sync_target_frames: SYNC_TARGET_FRAMES,
+            calibration: MicrophoneArrayCalibrationMetrics {
+                state: self.0.calibration.state,
+                quality_score: self.0.calibration.quality_score,
+                residual_delay_samples: self.0.calibration.residual_delay_samples,
+            },
+            members: self
+                .0
+                .members
+                .iter()
+                .map(|member| MicrophoneArrayMemberMetrics {
+                    label: member.label.clone(),
+                    source_id: member.source_id.clone(),
+                    channel_index: member.channel_index,
+                    enabled: member.enabled,
+                    quality: member.quality,
+                    exclusion_reason: member.exclusion_reason.clone(),
+                    residual_delay_samples: member.residual_delay_samples,
+                })
+                .collect(),
+            domains,
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn algorithm_name(encoded: u32) -> &'static str {
+    match encoded {
+        0 => "auto",
+        2 => "gsc",
+        3 => "mvdr",
+        _ => "delayAndSum",
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn active_algorithm_name(encoded: u32) -> &'static str {
+    match encoded {
+        2 => "gsc",
+        3 => "mvdr",
+        _ => "delayAndSum",
+    }
+}
 
 /// Bounded occupancy PLL for one slave clock-domain. Its ratio is shared by
 /// every channel of that physical stream, so resampling cannot change their
@@ -118,6 +458,10 @@ impl DomainSynchronizer {
 
     pub fn is_ready(&self) -> bool {
         self.stable_updates >= SYNC_READY_UPDATES
+    }
+
+    pub fn confidence(&self) -> f32 {
+        (self.stable_updates as f32 / SYNC_READY_UPDATES as f32).clamp(0.0, 1.0)
     }
 
     pub fn reset(&mut self) {
@@ -447,6 +791,10 @@ impl Processor {
         } else {
             Self::latency_frames()
         }
+    }
+
+    fn mvdr_fallback_bins(&self) -> u64 {
+        self.mvdr.as_ref().map_or(0, Mvdr::fallback_bins)
     }
 
     pub fn reset(&mut self) {
@@ -847,6 +1195,7 @@ pub struct DeviceSource {
 pub struct Capture {
     streams: Vec<cpal::Stream>,
     controls: Arc<AtomicRuntimeControls>,
+    metrics: MicrophoneArrayMetricsHandle,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
@@ -855,6 +1204,10 @@ pub struct Capture {
 impl Capture {
     pub fn update_runtime_controls(&self, data: &MicrophoneArrayData) {
         self.controls.update(data);
+    }
+
+    pub fn metrics(&self) -> MicrophoneArrayMetricsHandle {
+        self.metrics.clone()
     }
 }
 
@@ -881,6 +1234,7 @@ struct Domain {
     output: Vec<f32>,
     healthy: bool,
     discontinuity: bool,
+    metrics: Arc<DomainMetrics>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -890,6 +1244,7 @@ impl Domain {
         consumer: Consumer<f32>,
         processing_rate: u32,
         is_master: bool,
+        metrics: Arc<DomainMetrics>,
     ) -> AppResult<Self> {
         let resampler = MultiResamplerOut::new(
             source.sample_rate,
@@ -912,6 +1267,7 @@ impl Domain {
             output: Vec::with_capacity(ARRAY_BLOCK_FRAMES * source.channels),
             healthy: false,
             discontinuity: false,
+            metrics,
         })
     }
 
@@ -940,14 +1296,26 @@ impl Domain {
     /// transient device stall cannot change channel-to-channel alignment.
     fn fill(&mut self, require_full_input: bool) -> bool {
         let available_frames = self.available_frames();
+        self.metrics
+            .ring_fill_frames
+            .store(available_frames as u64, Ordering::Relaxed);
         if let Some(synchronizer) = &mut self.synchronizer {
             let ratio = synchronizer.update(available_frames);
             self.resampler.set_ratio(ratio);
+            self.metrics
+                .asrc_ratio
+                .store(ratio.to_bits(), Ordering::Relaxed);
+            self.metrics
+                .drift_ppm
+                .store(synchronizer.correction_ppm().to_bits(), Ordering::Relaxed);
+            self.metrics
+                .sync_confidence
+                .store(synchronizer.confidence().to_bits(), Ordering::Relaxed);
         }
         let input_frames = self.resampler.input_frames_next();
         if require_full_input && self.available_frames() < input_frames {
             self.healthy = false;
-            self.discontinuity = true;
+            self.metrics.locked.store(false, Ordering::Relaxed);
             return false;
         }
         let want = input_frames * self.channels;
@@ -967,6 +1335,10 @@ impl Domain {
         }
         if have < want {
             health::bump(&health::ARRAY_SOURCE_UNDERRUN_SAMPLES, (want - have) as u64);
+            self.metrics
+                .underrun_samples
+                .fetch_add((want - have) as u64, Ordering::Relaxed);
+            self.metrics.discontinuities.fetch_add(1, Ordering::Relaxed);
             self.discontinuity = true;
             if let Some(synchronizer) = &mut self.synchronizer {
                 synchronizer.reset();
@@ -980,7 +1352,19 @@ impl Domain {
         self.healthy =
             have == want && processed && self.output.len() == ARRAY_BLOCK_FRAMES * self.channels;
         if !processed {
+            self.metrics.discontinuities.fetch_add(1, Ordering::Relaxed);
             self.discontinuity = true;
+        }
+        self.metrics
+            .ring_fill_frames
+            .store(self.available_frames() as u64, Ordering::Relaxed);
+        self.metrics
+            .locked
+            .store(self.is_locked(), Ordering::Relaxed);
+        if self.synchronizer.is_none() {
+            self.metrics
+                .sync_confidence
+                .store((self.healthy as u32 as f32).to_bits(), Ordering::Relaxed);
         }
         processed
     }
@@ -1016,6 +1400,16 @@ fn encode_algorithm(algorithm: MicrophoneArrayAlgorithm) -> u32 {
         MicrophoneArrayAlgorithm::DelayAndSum => 1,
         MicrophoneArrayAlgorithm::Gsc => 2,
         MicrophoneArrayAlgorithm::Mvdr => 3,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn encode_runtime_algorithm(algorithm: Algorithm) -> u32 {
+    match algorithm {
+        Algorithm::Auto => 0,
+        Algorithm::DelayAndSum => 1,
+        Algorithm::Gsc => 2,
+        Algorithm::Mvdr => 3,
     }
 }
 
@@ -1068,6 +1462,7 @@ fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn start_capture(
+    node_id: &str,
     data: MicrophoneArrayData,
     sources: Vec<DeviceSource>,
     bridge: BroadcastRx,
@@ -1105,6 +1500,12 @@ pub fn start_capture(
     config.members = &members;
     let processor = Processor::new(config)?;
     let controls = Arc::new(AtomicRuntimeControls::new(&data));
+    let metrics = MicrophoneArrayMetricsHandle::new(
+        node_id,
+        &data,
+        &sources,
+        processor.processing_latency_frames(),
+    );
 
     let mut domains = Vec::with_capacity(sources.len());
     let mut streams = Vec::with_capacity(sources.len());
@@ -1112,19 +1513,38 @@ pub fn start_capture(
         let (producer, consumer) =
             RingBuffer::<f32>::new(ARRAY_RING_CAPACITY_FRAMES * source.channels);
         let reporter = report_error.clone();
+        let domain_metrics = metrics.domain(index);
+        let callback_metrics = domain_metrics.clone();
+        let array_metrics = metrics.clone();
         let stream = streams::build_raw_input_stream(
             &source.device,
             &source.config,
             source.sample_format,
             source.channels,
             producer,
-            move |error| reporter(error),
+            Some(domain_metrics.capture.clone()),
+            move |error| {
+                callback_metrics
+                    .stream_errors
+                    .fetch_add(1, Ordering::Relaxed);
+                callback_metrics.locked.store(false, Ordering::Relaxed);
+                array_metrics
+                    .0
+                    .state
+                    .store(ARRAY_STATE_ERROR, Ordering::Relaxed);
+                array_metrics
+                    .0
+                    .fallback_reason
+                    .store(ARRAY_FALLBACK_SOURCE_ERROR, Ordering::Relaxed);
+                reporter(error);
+            },
         )?;
         domains.push(Domain::new(
             source,
             consumer,
             data.processing_sample_rate,
             index == master_index,
+            domain_metrics,
         )?);
         streams.push(stream);
     }
@@ -1132,6 +1552,7 @@ pub fn start_capture(
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
     let worker_controls = controls.clone();
+    let worker_metrics = metrics.clone();
     let join = thread::Builder::new()
         .name("microphone-array".into())
         .spawn(move || {
@@ -1145,6 +1566,7 @@ pub fn start_capture(
                 worker_controls,
                 bridge,
                 meter,
+                worker_metrics,
                 worker_stop,
             )
         })
@@ -1152,6 +1574,7 @@ pub fn start_capture(
     Ok(Capture {
         streams,
         controls,
+        metrics,
         stop,
         join: Some(join),
     })
@@ -1206,12 +1629,18 @@ pub fn calibrate(
         let (producer, consumer) =
             RingBuffer::<f32>::new(ARRAY_RING_CAPACITY_FRAMES * source.channels);
         let failed = stream_error.clone();
+        let domain_metrics = Arc::new(DomainMetrics::new(
+            &source,
+            source.id.clone(),
+            data.processing_sample_rate,
+        ));
         let stream = streams::build_raw_input_stream(
             &source.device,
             &source.config,
             source.sample_format,
             source.channels,
             producer,
+            None,
             move |_| failed.store(true, Ordering::Relaxed),
         )?;
         domains.push(Domain::new(
@@ -1219,6 +1648,7 @@ pub fn calibrate(
             consumer,
             data.processing_sample_rate,
             index == master_index,
+            domain_metrics,
         )?);
         streams.push(stream);
     }
@@ -1328,6 +1758,7 @@ fn run_capture_worker(
     controls: Arc<AtomicRuntimeControls>,
     mut bridge: BroadcastRx,
     meter: Option<MeterHandle>,
+    metrics: MicrophoneArrayMetricsHandle,
     stop: Arc<AtomicBool>,
 ) {
     let mut planar = vec![0.0; members.len() * ARRAY_BLOCK_FRAMES];
@@ -1338,6 +1769,10 @@ fn run_capture_worker(
     let startup_started = Instant::now();
     let fade_step = 1.0 / (sample_rate.max(1) as f32 * 0.02);
     let mut spatial_mix = 0.0f32;
+    metrics
+        .0
+        .state
+        .store(ARRAY_STATE_SYNCING, Ordering::Relaxed);
     while !stop.load(Ordering::SeqCst) {
         if !startup_aligned {
             startup_aligned = domains
@@ -1381,14 +1816,69 @@ fn run_capture_worker(
         }
         let runtime = controls.snapshot();
         processor.update_realtime_controls(runtime);
+        metrics.0.requested_algorithm.store(
+            encode_runtime_algorithm(runtime.algorithm),
+            Ordering::Relaxed,
+        );
+        let active_channels = members
+            .iter()
+            .enumerate()
+            .filter(|(index, member)| {
+                member.enabled
+                    && member.quality
+                        != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded
+                    && domains[member_domains[*index]].healthy
+            })
+            .count();
+        metrics
+            .0
+            .active_channels
+            .store(active_channels as u32, Ordering::Relaxed);
         let synchronized = domains.iter().all(Domain::is_locked);
-        let spatial_ready = !runtime.bypassed && synchronized;
+        let source_error = domains
+            .iter()
+            .any(|domain| domain.metrics.stream_errors.load(Ordering::Relaxed) > 0);
+        let spatial_ready =
+            !runtime.bypassed && synchronized && active_channels > 0 && !source_error;
+        let (state, fallback_reason) = if source_error {
+            (ARRAY_STATE_ERROR, ARRAY_FALLBACK_SOURCE_ERROR)
+        } else if runtime.bypassed {
+            (ARRAY_STATE_BYPASSED, ARRAY_FALLBACK_BYPASSED)
+        } else if active_channels == 0 {
+            (ARRAY_STATE_FALLBACK, ARRAY_FALLBACK_NO_HEALTHY_CHANNEL)
+        } else if !synchronized {
+            (ARRAY_STATE_FALLBACK, ARRAY_FALLBACK_DOMAIN_UNLOCKED)
+        } else {
+            (ARRAY_STATE_READY, ARRAY_FALLBACK_NONE)
+        };
+        metrics.0.state.store(state, Ordering::Relaxed);
+        metrics
+            .0
+            .fallback_reason
+            .store(fallback_reason, Ordering::Relaxed);
         if processor
             .process_with_adaptation(&planar, ARRAY_BLOCK_FRAMES, &mut spatial, spatial_ready)
             .is_err()
         {
+            metrics.0.state.store(ARRAY_STATE_ERROR, Ordering::Relaxed);
+            metrics
+                .0
+                .fallback_reason
+                .store(ARRAY_FALLBACK_PROCESSOR_ERROR, Ordering::Relaxed);
             break;
         }
+        metrics.0.active_algorithm.store(
+            match processor.active_algorithm() {
+                ActiveAlgorithm::DelayAndSum => 1,
+                ActiveAlgorithm::Gsc => 2,
+                ActiveAlgorithm::Mvdr => 3,
+            },
+            Ordering::Relaxed,
+        );
+        metrics
+            .0
+            .mvdr_fallback_bins
+            .store(processor.mvdr_fallback_bins(), Ordering::Relaxed);
         let fallback_member = members
             .iter()
             .enumerate()
@@ -1427,6 +1917,10 @@ fn run_capture_worker(
             update_meter(meter, &mono, 1);
         }
         bridge.broadcast(&mono);
+        metrics
+            .0
+            .output_frames
+            .fetch_add(ARRAY_BLOCK_FRAMES as u64, Ordering::Relaxed);
     }
 }
 

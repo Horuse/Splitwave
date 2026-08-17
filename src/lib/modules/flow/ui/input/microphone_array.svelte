@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { Mic } from '$lib/components/icons';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import type { MicrophoneArrayMetrics } from '$lib/modules/audio/types';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import type { MicrophoneArrayNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
@@ -14,29 +17,62 @@
 	type SetupParams = {
 		size: 'xl';
 		description: string;
+		nodeId: string;
 		data: MicrophoneArrayNodeData;
 		onCalibrate: (value: MicrophoneArrayNodeData) => Promise<MicrophoneArrayNodeData>;
 	};
+	let metrics = $state<MicrophoneArrayMetrics | null>(null);
+	let unlistenMetrics: (() => void) | undefined;
+	$effect(() => {
+		if (!audioStore.isRunning) metrics = null;
+	});
 
 	let enabledMembers = $derived(data.members.filter((member) => member.enabled && member.quality !== 'excluded').length);
 	let configured = $derived(data.sources.length > 0 && enabledMembers >= 2);
 	let status = $derived(
-		!configured
-			? 'Setup required'
-			: data.calibration.state === 'ready'
-				? `Calibrated ${data.calibration.qualityScore ?? 0}%`
-				: data.calibration.state === 'needsReview'
-					? 'Review calibration'
-					: 'Calibration required'
+		metrics
+			? metrics.state === 'ready'
+				? `Live · ${metrics.activeAlgorithm === 'delayAndSum' ? 'Delay-and-sum' : metrics.activeAlgorithm.toUpperCase()}`
+				: metrics.state === 'fallback'
+					? `Fallback · ${metrics.fallbackReason === 'domainUnlocked' ? 'Clock sync' : metrics.fallbackReason === 'noHealthyChannel' ? 'No healthy channel' : 'Safe input'}`
+					: metrics.state === 'bypassed'
+						? 'Bypassed · best healthy mic'
+						: metrics.state === 'error'
+							? 'Array source error'
+							: 'Synchronizing clocks'
+			: !configured
+				? 'Setup required'
+				: data.calibration.state === 'ready'
+					? `Calibrated ${data.calibration.qualityScore ?? 0}%`
+					: data.calibration.state === 'needsReview'
+						? 'Review calibration'
+						: 'Calibration required'
 	);
 	let algorithmLabel = $derived(
-		data.algorithm === 'delayAndSum' ? 'Delay-and-sum' : data.algorithm === 'gsc' ? 'GSC' : data.algorithm === 'mvdr' ? 'MVDR' : 'Auto'
+		metrics
+			? `${data.algorithm === 'auto' ? 'Auto → ' : ''}${metrics.activeAlgorithm === 'delayAndSum' ? 'Delay-and-sum' : metrics.activeAlgorithm.toUpperCase()}`
+			: data.algorithm === 'delayAndSum'
+				? 'Delay-and-sum'
+				: data.algorithm === 'gsc'
+					? 'GSC'
+					: data.algorithm === 'mvdr'
+						? 'MVDR'
+						: 'Auto'
 	);
+
+	onMount(async () => {
+		unlistenMetrics = await audioMethods.onMicrophoneArrayMetrics((snapshot) => {
+			if (snapshot.nodeId === id) metrics = snapshot;
+		});
+	});
+
+	onDestroy(() => unlistenMetrics?.());
 
 	async function openSetup() {
 		const result = await modalManager.open<MicrophoneArrayNodeData, SetupParams>('Microphone Array', Setup, {
 			size: 'xl',
 			description: 'Combine physical input channels into one spatially focused microphone.',
+			nodeId: id,
 			data: structuredClone($state.snapshot(data)),
 			onCalibrate: audioMethods.calibrateMicrophoneArray
 		});
@@ -63,7 +99,9 @@
 		<div class="grid grid-cols-2 gap-2">
 			<div class="rounded-lg border border-neutral-300 bg-neutral-100/70 px-2.5 py-2">
 				<div class="font-mono text-[9px] text-neutral-700">MICROPHONES</div>
-				<div class="mt-0.5 font-mono text-sm text-theme tabular-nums">{enabledMembers}</div>
+				<div class="mt-0.5 font-mono text-sm text-theme tabular-nums">
+					{#if metrics}{metrics.activeChannels}<span class="text-[9px] text-neutral-700">/{enabledMembers}</span>{:else}{enabledMembers}{/if}
+				</div>
 			</div>
 			<div class="rounded-lg border border-neutral-300 bg-neutral-100/70 px-2.5 py-2">
 				<div class="font-mono text-[9px] text-neutral-700">CLOCKS</div>
@@ -72,7 +110,15 @@
 		</div>
 
 		<div class="flex items-center justify-between gap-3">
-			<span class={['text-[10px]', configured && data.calibration.state === 'ready' ? 'text-emerald-700' : 'text-amber-800']}>{status}</span>
+			<span
+				class={[
+					'text-[10px]',
+					metrics?.state === 'ready' || (!metrics && configured && data.calibration.state === 'ready')
+						? 'text-emerald-700'
+						: metrics?.state === 'error'
+							? 'text-red-700'
+							: 'text-amber-800'
+				]}>{status}</span>
 			<button type="button" class="nodrag nopan button-main primary h-7 rounded-lg px-3 text-[10px] font-semibold" onclick={openSetup}> Setup </button>
 		</div>
 

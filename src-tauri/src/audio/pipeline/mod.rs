@@ -1229,19 +1229,36 @@ impl ActivePipeline {
             && self.lufs.is_empty()
             && self.gr_handles.is_empty()
             && self.scopes.is_empty()
-        {
+            && !self.inputs.values().any(|input| {
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                {
+                    input._handle.microphone_array_metrics().is_some()
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                {
+                    false
+                }
+            }) {
             None
         } else {
             let meters_snapshot: Vec<MeterHandle> = self.meters.values().cloned().collect();
             let lufs_snapshot: Vec<LufsHandle> = self.lufs.values().cloned().collect();
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            let array_metrics_snapshot = self
+                .inputs
+                .values()
+                .filter_map(|input| input._handle.microphone_array_metrics())
+                .collect();
             Some(spawn_meter_thread(
                 app,
                 meters_snapshot,
                 lufs_snapshot,
                 gr_snapshot,
                 scopes_snapshot,
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                array_metrics_snapshot,
             ))
         };
 

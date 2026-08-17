@@ -6,6 +6,7 @@
 //! `capture/linux.rs` and its speaker via `playback.rs`, so it skips them.
 
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
 use rtrb::Producer;
 
@@ -15,6 +16,21 @@ use crate::audio::health;
 mod cpal_stream;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use cpal_stream::{build_input_stream, build_output_stream, build_raw_input_stream};
+
+#[derive(Clone)]
+pub struct RawCaptureStats {
+    pub captured_samples: Arc<AtomicU64>,
+    pub dropped_samples: Arc<AtomicU64>,
+}
+
+impl RawCaptureStats {
+    pub fn new() -> Self {
+        Self {
+            captured_samples: Arc::new(AtomicU64::new(0)),
+            dropped_samples: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
 
 /// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
 /// read (consumer faster than producer) is zero-filled -- that's the device

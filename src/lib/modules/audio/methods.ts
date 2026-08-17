@@ -7,6 +7,7 @@ import type {
 	CapturePermission,
 	DeviceVolume,
 	NativeDeviceInfo,
+	MicrophoneArrayMetrics,
 	PluginDescriptor,
 	PluginParam,
 	PluginStatus,
@@ -37,6 +38,8 @@ export const methods = {
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
 	calibrateMicrophoneArray: (data: MicrophoneArrayNodeData): Promise<MicrophoneArrayNodeData> =>
 		invoke<MicrophoneArrayNodeData>('calibrate_microphone_array', { data }),
+	onMicrophoneArrayMetrics: (cb: (metrics: MicrophoneArrayMetrics) => void): Promise<UnlistenFn> =>
+		listen<MicrophoneArrayMetrics>('audio://microphone-array-metrics', (event) => cb(event.payload)),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
 	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),

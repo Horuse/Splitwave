@@ -54,6 +54,18 @@ pub(super) enum InputHandle {
     AudioFile(AudioFileReader),
 }
 
+impl InputHandle {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(super) fn microphone_array_metrics(
+        &self,
+    ) -> Option<crate::audio::microphone_array::MicrophoneArrayMetricsHandle> {
+        match self {
+            Self::MicrophoneArray(capture) => Some(capture.metrics()),
+            _ => None,
+        }
+    }
+}
+
 // cpal's coreaudio backend never stops a non-default device's AudioUnit just
 // because the `Stream` handle went out of scope -- a device-alive listener it
 // registers internally holds another strong reference to the same stream (see

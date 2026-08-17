@@ -17,7 +17,7 @@ use tracing::error;
 use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::health;
 use crate::audio::input_bridge::BroadcastRx;
-use crate::audio::streams::bulk_push_frames_counted;
+use crate::audio::streams::{bulk_push_frames_counted, RawCaptureStats};
 use crate::error::{AppError, AppResult};
 
 const RAW_CAPTURE_CALLBACK_FRAMES: usize = 4_096;
@@ -75,32 +75,33 @@ pub fn build_raw_input_stream(
     sample_format: SampleFormat,
     src_channels: usize,
     producer: rtrb::Producer<f32>,
+    stats: Option<RawCaptureStats>,
     err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> AppResult<cpal::Stream> {
     match sample_format {
         SampleFormat::F32 => {
-            build_raw_input_typed::<f32>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<f32>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::I16 => {
-            build_raw_input_typed::<i16>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<i16>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::I32 => {
-            build_raw_input_typed::<i32>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<i32>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::I8 => {
-            build_raw_input_typed::<i8>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<i8>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::U8 => {
-            build_raw_input_typed::<u8>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<u8>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::U16 => {
-            build_raw_input_typed::<u16>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<u16>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::U32 => {
-            build_raw_input_typed::<u32>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<u32>(device, config, src_channels, producer, stats, err_cb)
         }
         SampleFormat::F64 => {
-            build_raw_input_typed::<f64>(device, config, src_channels, producer, err_cb)
+            build_raw_input_typed::<f64>(device, config, src_channels, producer, stats, err_cb)
         }
         fmt => Err(AppError::Validation(format!(
             "unsupported input sample format: {fmt:?}"
@@ -113,6 +114,7 @@ fn build_raw_input_typed<T>(
     config: &StreamConfig,
     src_channels: usize,
     mut producer: rtrb::Producer<f32>,
+    stats: Option<RawCaptureStats>,
     err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> AppResult<cpal::Stream>
 where
@@ -135,12 +137,21 @@ where
                     for (out, &sample) in staging[..raw.len()].iter_mut().zip(raw) {
                         *out = sample.to_sample::<f32>();
                     }
-                    bulk_push_frames_counted(
+                    let written = bulk_push_frames_counted(
                         &mut producer,
                         &staging[..raw.len()],
                         src_channels,
                         &health::CAPTURE_RING_OVERRUN_SAMPLES,
                     );
+                    if let Some(stats) = &stats {
+                        stats
+                            .captured_samples
+                            .fetch_add(written as u64, std::sync::atomic::Ordering::Relaxed);
+                        stats.dropped_samples.fetch_add(
+                            (raw.len() - written) as u64,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                 }
             },
             err_cb,

@@ -116,6 +116,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 );
             });
             let capture = crate::audio::microphone_array::start_capture(
+                node_id,
                 data,
                 sources,
                 bridge,

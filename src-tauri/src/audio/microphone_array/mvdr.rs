@@ -21,6 +21,7 @@ pub(super) struct Mvdr {
     postfilter_enabled: bool,
     update_interval: u64,
     frame_index: u64,
+    fallback_bins: u64,
     window: Vec<f32>,
     analysis: Vec<f32>,
     spectra: Vec<Complex32>,
@@ -81,6 +82,7 @@ impl Mvdr {
                 _ => 16,
             },
             frame_index: 0,
+            fallback_bins: 0,
             window,
             analysis: vec![0.0; channels * FFT_SIZE],
             spectra: vec![Complex32::new(0.0, 0.0); channels * FFT_SIZE],
@@ -207,6 +209,10 @@ impl Mvdr {
         }
     }
 
+    pub(super) fn fallback_bins(&self) -> u64 {
+        self.fallback_bins
+    }
+
     fn update_covariance(&mut self, bin: usize, alpha: f32) {
         let base = bin * self.channels * self.channels;
         for row in 0..self.channels {
@@ -237,6 +243,7 @@ impl Mvdr {
         let weights = &mut self.weights[bin * self.channels..(bin + 1) * self.channels];
         if !solved {
             health::bump(&health::ARRAY_MVDR_FALLBACK_BINS, 1);
+            self.fallback_bins = self.fallback_bins.saturating_add(1);
             let equal = 1.0 / self.channels as f32;
             for weight in weights {
                 *weight = Complex32::new(equal, 0.0);
@@ -246,6 +253,7 @@ impl Mvdr {
         let denominator: Complex32 = self.solution.iter().copied().sum();
         if !finite(denominator) || denominator.norm_sqr() < 1.0e-12 {
             health::bump(&health::ARRAY_MVDR_FALLBACK_BINS, 1);
+            self.fallback_bins = self.fallback_bins.saturating_add(1);
             return;
         }
         let mut norm = 0.0f32;

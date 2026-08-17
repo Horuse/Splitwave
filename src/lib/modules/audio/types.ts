@@ -48,6 +48,60 @@ export interface NativeDeviceInfo {
 	sampleFormat: string;
 }
 
+export interface MicrophoneArrayDomainMetrics {
+	sourceId: string;
+	label: string;
+	channels: number;
+	nativeSampleRate: number;
+	capturedSamples: number;
+	droppedSamples: number;
+	ringFillFrames: number;
+	underrunSamples: number;
+	discontinuities: number;
+	streamErrors: number;
+	asrcRatio: number;
+	driftPpm: number;
+	locked: boolean;
+	syncConfidence: number;
+	estimator: 'ringOccupancy';
+}
+
+export interface MicrophoneArrayMemberMetrics {
+	label: string;
+	sourceId: string;
+	channelIndex: number;
+	enabled: boolean;
+	quality: 'good' | 'marginal' | 'excluded';
+	exclusionReason: string | null;
+	residualDelaySamples: number;
+}
+
+export interface MicrophoneArrayMetrics {
+	nodeId: string;
+	state: 'starting' | 'syncing' | 'ready' | 'fallback' | 'bypassed' | 'error';
+	fallbackReason: 'syncing' | 'bypassed' | 'domainUnlocked' | 'noHealthyChannel' | 'sourceError' | 'processorError' | null;
+	configuredChannels: number;
+	activeChannels: number;
+	clockDomains: number;
+	processingSampleRate: number;
+	requestedAlgorithm: 'auto' | 'delayAndSum' | 'gsc' | 'mvdr';
+	activeAlgorithm: 'delayAndSum' | 'gsc' | 'mvdr';
+	capturedSamples: number;
+	droppedSamples: number;
+	outputFrames: number;
+	streamErrors: number;
+	mvdrFallbackBins: number;
+	algorithmicLatencyFrames: number;
+	syncTargetFrames: number;
+	calibration: {
+		state: 'missing' | 'ready' | 'needsReview';
+		qualityScore: number | null;
+		residualDelaySamples: number | null;
+	};
+	members: MicrophoneArrayMemberMetrics[];
+	domains: MicrophoneArrayDomainMetrics[];
+}
+
 /** `db` is the device's own attenuation; `null` when the backend can't report it. */
 export interface DeviceVolume {
 	scalar: number;

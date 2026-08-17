@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { methods } from '../methods';
 	import { audioStore } from '../stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 
@@ -12,7 +11,7 @@
 		busy = true;
 		try {
 			if (audioStore.isRunning) {
-				await methods.stopPipeline();
+				await audioStore.deactivatePipeline();
 			} else {
 				const snapshot = pipelineStore.editorActions?.getSnapshot();
 				if (!snapshot) {

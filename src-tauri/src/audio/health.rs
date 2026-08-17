@@ -24,6 +24,9 @@ counters! {
     /// Samples dropped by the capture broadcast into a per-output input ring
     /// (input_bridge.rs) -- a DSP source fell behind the capture callback.
     CAPTURE_RING_OVERRUN_SAMPLES,
+    /// Samples zero-filled while an independent Microphone Array clock-domain
+    /// did not have enough input for the next shared-timeline block.
+    ARRAY_SOURCE_UNDERRUN_SAMPLES,
     /// Samples dropped pushing into a network receiver ring (stream_recv.rs).
     NET_RING_OVERRUN_SAMPLES,
     /// Samples dropped by a DAG fan-out tap or wire-sender push (dag.rs) --

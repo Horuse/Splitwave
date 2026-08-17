@@ -6,10 +6,46 @@
 
 use crate::error::{AppError, AppResult};
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::sync::Arc;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::thread::{self, JoinHandle};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::time::Duration;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use cpal::traits::StreamTrait;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use rtrb::{Consumer, RingBuffer};
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::effects::{update_meter, MeterHandle};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::graph::{
+    MicrophoneArrayAlgorithm, MicrophoneArrayData, MicrophoneArrayMember, MicrophoneArrayTarget,
+};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::health;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::input_bridge::BroadcastRx;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::resample::MultiResamplerOut;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::audio::streams;
+
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const FRACTIONAL_DELAY_ORDER: usize = 3;
 const HISTORY_FRAMES: usize = 2048;
 const MAX_CLOCK_CORRECTION_PPM: f64 = 500.0;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_RING_CAPACITY_FRAMES: usize = 48_000;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_WAIT: Duration = Duration::from_millis(1);
 
 /// Bounded occupancy PLL for one slave clock-domain. Its ratio is shared by
 /// every channel of that physical stream, so resampling cannot change their
@@ -159,6 +195,11 @@ impl Processor {
                 "Microphone Array processing rate must be positive".into(),
             ));
         }
+        if matches!(config.algorithm, Algorithm::Mvdr) {
+            return Err(AppError::Validation(
+                "Microphone Array MVDR is not available in the time-domain processor".into(),
+            ));
+        }
         let active: Vec<usize> = config
             .members
             .iter()
@@ -292,8 +333,8 @@ impl Processor {
             let index = (self.history_head + HISTORY_FRAMES - offset) % HISTORY_FRAMES;
             self.history[slot * HISTORY_FRAMES + index]
         };
-        // Third-order Lagrange interpolation, evaluated on samples at
-        // n-whole through n-whole-3. It has a fixed three-frame latency.
+        // Third-order Lagrange interpolation evaluated against the causal
+        // history at n-whole through n-whole-3.
         let f = fraction;
         let c0 = -((f - 1.0) * (f - 2.0) * (f - 3.0)) / 6.0;
         let c1 = (f * (f - 2.0) * (f - 3.0)) / 2.0;
@@ -426,6 +467,312 @@ fn db_to_linear(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub struct DeviceSource {
+    pub id: String,
+    pub device: cpal::Device,
+    pub config: cpal::StreamConfig,
+    pub sample_format: cpal::SampleFormat,
+    pub channels: usize,
+    pub sample_rate: u32,
+}
+
+/// Owns every physical device stream and the array worker that consumes them.
+/// Dropping it pauses producers before joining the worker, so a device callback
+/// cannot write into a ring after its consumer is gone.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub struct Capture {
+    streams: Vec<cpal::Stream>,
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Drop for Capture {
+    fn drop(&mut self) {
+        for stream in &self.streams {
+            let _ = stream.pause();
+        }
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct Domain {
+    channels: usize,
+    consumer: Consumer<f32>,
+    resampler: MultiResamplerOut,
+    synchronizer: Option<DomainSynchronizer>,
+    input: Vec<f32>,
+    output: Vec<f32>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Domain {
+    fn new(
+        source: DeviceSource,
+        consumer: Consumer<f32>,
+        processing_rate: u32,
+        is_master: bool,
+    ) -> AppResult<Self> {
+        let resampler = MultiResamplerOut::new(
+            source.sample_rate,
+            processing_rate,
+            DSP_BLOCK_FRAMES,
+            source.channels,
+        )?;
+        let input_capacity = resampler.input_frames_max() * source.channels;
+        let synchronizer = (!is_master)
+            .then(|| {
+                DomainSynchronizer::new(
+                    source.sample_rate,
+                    processing_rate,
+                    ARRAY_RING_CAPACITY_FRAMES / 4,
+                )
+            })
+            .transpose()?;
+        Ok(Self {
+            channels: source.channels,
+            consumer,
+            resampler,
+            synchronizer,
+            input: Vec::with_capacity(input_capacity),
+            output: Vec::with_capacity(DSP_BLOCK_FRAMES * source.channels),
+        })
+    }
+
+    fn available_frames(&self) -> usize {
+        self.consumer.slots() / self.channels
+    }
+
+    fn next_input_frames(&self) -> usize {
+        self.resampler.input_frames_next()
+    }
+
+    /// Produces one common-rate block. The master domain is allowed to gate the
+    /// worker; independent domains zero-fill only their missing tail so a
+    /// transient device stall cannot change channel-to-channel alignment.
+    fn fill(&mut self, require_full_input: bool) -> bool {
+        let available_frames = self.available_frames();
+        if let Some(synchronizer) = &mut self.synchronizer {
+            let ratio = synchronizer.update(available_frames);
+            self.resampler.set_ratio(ratio);
+        }
+        let input_frames = self.resampler.input_frames_next();
+        if require_full_input && self.available_frames() < input_frames {
+            return false;
+        }
+        let want = input_frames * self.channels;
+        self.input.clear();
+        self.input.resize(want, 0.0);
+        let have = self.consumer.slots().min(want) / self.channels * self.channels;
+        if have > 0 {
+            if let Ok(chunk) = self.consumer.read_chunk(have) {
+                let (first, second) = chunk.as_slices();
+                let first_len = first.len();
+                self.input[..first_len].copy_from_slice(first);
+                if !second.is_empty() {
+                    self.input[first_len..first_len + second.len()].copy_from_slice(second);
+                }
+                chunk.commit_all();
+            }
+        }
+        if have < want {
+            health::bump(&health::ARRAY_SOURCE_UNDERRUN_SAMPLES, (want - have) as u64);
+        }
+        self.output.clear();
+        self.resampler
+            .process(&self.input, &mut self.output)
+            .is_ok()
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn member_config(member: &MicrophoneArrayMember) -> MemberConfig {
+    MemberConfig {
+        position: Point3 {
+            x: member.position.x,
+            y: member.position.y,
+            z: member.position.z,
+        },
+        enabled: member.enabled
+            && member.quality != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded,
+        weight: member.weight,
+        gain_db: member.gain_db,
+        polarity_inverted: member.polarity_inverted,
+        fixed_delay_samples: member.fixed_delay_samples,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
+    let target = match data.target {
+        MicrophoneArrayTarget::Direction {
+            azimuth_degrees,
+            elevation_degrees,
+        } => SteeringTarget::Direction {
+            azimuth_degrees,
+            elevation_degrees,
+        },
+        MicrophoneArrayTarget::Point { x, y, z } => SteeringTarget::Point(Point3 { x, y, z }),
+    };
+    let algorithm = match data.algorithm {
+        MicrophoneArrayAlgorithm::DelayAndSum => Algorithm::DelayAndSum,
+        MicrophoneArrayAlgorithm::Gsc => Algorithm::Gsc,
+        MicrophoneArrayAlgorithm::Mvdr => Algorithm::Mvdr,
+        MicrophoneArrayAlgorithm::Auto => Algorithm::Auto,
+    };
+    // The caller owns the member conversion so this helper only exists to
+    // keep target/algorithm mapping together.
+    ProcessorConfig {
+        sample_rate: data.processing_sample_rate,
+        target,
+        algorithm,
+        strength: data.strength,
+        max_attenuation_db: data.max_attenuation_db,
+        gsc_filter_length: data.gsc_filter_length as usize,
+        gsc_adaptation_rate: data.gsc_adaptation_rate,
+        members: &[],
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn start_capture(
+    data: MicrophoneArrayData,
+    sources: Vec<DeviceSource>,
+    bridge: BroadcastRx,
+    meter: Option<MeterHandle>,
+    report_error: Arc<dyn Fn(cpal::StreamError) + Send + Sync>,
+) -> AppResult<Capture> {
+    if sources.len() != data.sources.len() {
+        return Err(AppError::Validation(
+            "Microphone Array source resolution did not preserve every source".into(),
+        ));
+    }
+    let master_index = data
+        .master_source_id
+        .as_deref()
+        .and_then(|id| data.sources.iter().position(|source| source.id == id))
+        .unwrap_or(0);
+    let mut member_domains = Vec::with_capacity(data.members.len());
+    for member in &data.members {
+        let domain = sources
+            .iter()
+            .position(|source| source.id == member.source_id)
+            .ok_or_else(|| {
+                AppError::Validation("Microphone Array member source disappeared".into())
+            })?;
+        if member.channel_index as usize >= sources[domain].channels {
+            return Err(AppError::Validation(format!(
+                "Microphone Array channel {} is unavailable on source {}",
+                member.channel_index, sources[domain].id
+            )));
+        }
+        member_domains.push(domain);
+    }
+    let members: Vec<MemberConfig> = data.members.iter().map(member_config).collect();
+    let mut config = processor_config(&data);
+    config.members = &members;
+    let processor = Processor::new(config)?;
+
+    let mut domains = Vec::with_capacity(sources.len());
+    let mut streams = Vec::with_capacity(sources.len());
+    for (index, source) in sources.into_iter().enumerate() {
+        let (producer, consumer) =
+            RingBuffer::<f32>::new(ARRAY_RING_CAPACITY_FRAMES * source.channels);
+        let reporter = report_error.clone();
+        let stream = streams::build_raw_input_stream(
+            &source.device,
+            &source.config,
+            source.sample_format,
+            source.channels,
+            producer,
+            move |error| reporter(error),
+        )?;
+        domains.push(Domain::new(
+            source,
+            consumer,
+            data.processing_sample_rate,
+            index == master_index,
+        )?);
+        streams.push(stream);
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = stop.clone();
+    let join = thread::Builder::new()
+        .name("microphone-array".into())
+        .spawn(move || {
+            run_capture_worker(
+                domains,
+                master_index,
+                member_domains,
+                data.members,
+                processor,
+                bridge,
+                meter,
+                worker_stop,
+            )
+        })
+        .map_err(|error| AppError::Stream(format!("Microphone Array worker: {error}")))?;
+    Ok(Capture {
+        streams,
+        stop,
+        join: Some(join),
+    })
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn run_capture_worker(
+    mut domains: Vec<Domain>,
+    master_index: usize,
+    member_domains: Vec<usize>,
+    members: Vec<MicrophoneArrayMember>,
+    mut processor: Processor,
+    mut bridge: BroadcastRx,
+    meter: Option<MeterHandle>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut planar = vec![0.0; members.len() * DSP_BLOCK_FRAMES];
+    let mut mono = vec![0.0; DSP_BLOCK_FRAMES];
+    while !stop.load(Ordering::SeqCst) {
+        if domains[master_index].available_frames() < domains[master_index].next_input_frames() {
+            thread::sleep(ARRAY_WAIT);
+            continue;
+        }
+        if !domains[master_index].fill(true) {
+            continue;
+        }
+        for (index, domain) in domains.iter_mut().enumerate() {
+            if index != master_index {
+                let _ = domain.fill(false);
+            }
+        }
+        for (member_index, member) in members.iter().enumerate() {
+            let domain = &domains[member_domains[member_index]];
+            let channel = member.channel_index as usize;
+            for frame in 0..DSP_BLOCK_FRAMES {
+                planar[member_index * DSP_BLOCK_FRAMES + frame] =
+                    domain.output[frame * domain.channels + channel];
+            }
+        }
+        if processor
+            .process(&planar, DSP_BLOCK_FRAMES, &mut mono)
+            .is_err()
+        {
+            break;
+        }
+        bridge.apply_commands();
+        if let Some(meter) = &meter {
+            update_meter(meter, &mono, 1);
+        }
+        bridge.broadcast(&mono);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +882,25 @@ mod tests {
             .unwrap();
             assert_eq!(processor.active_algorithm(), ActiveAlgorithm::Gsc);
         }
+    }
+
+    #[test]
+    fn mvdr_never_silently_falls_back_to_delay_and_sum() {
+        let members = [member(0.0), member(0.04)];
+        let result = Processor::new(ProcessorConfig {
+            sample_rate: 48_000,
+            target: SteeringTarget::Direction {
+                azimuth_degrees: 90.0,
+                elevation_degrees: 0.0,
+            },
+            algorithm: Algorithm::Mvdr,
+            strength: 1.0,
+            max_attenuation_db: 18.0,
+            gsc_filter_length: 8,
+            gsc_adaptation_rate: 0.02,
+            members: &members,
+        });
+        assert!(result.is_err());
     }
 
     #[test]

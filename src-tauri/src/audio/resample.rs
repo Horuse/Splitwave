@@ -51,6 +51,12 @@ impl MultiResamplerOut {
         self.inner.input_frames_next()
     }
 
+    /// Largest input block this resampler can request at its configured ratio
+    /// bounds. Capture workers reserve this once before entering their loop.
+    pub fn input_frames_max(&self) -> usize {
+        self.inner.input_frames_max()
+    }
+
     /// Nudge the output/input ratio for clock-drift tracking (ramped, within the
     /// 1.05 relative bound set at construction).
     pub fn set_ratio(&mut self, ratio: f64) {

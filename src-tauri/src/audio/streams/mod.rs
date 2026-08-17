@@ -14,7 +14,7 @@ use crate::audio::health;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod cpal_stream;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub use cpal_stream::{build_input_stream, build_output_stream};
+pub use cpal_stream::{build_input_stream, build_output_stream, build_raw_input_stream};
 
 /// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
 /// read (consumer faster than producer) is zero-filled -- that's the device
@@ -55,14 +55,24 @@ pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) -> usize {
 /// `counter` names which ring this call site is feeding, so overruns can be
 /// told apart by call site instead of summing into one global total.
 pub fn bulk_push_counted(prod: &mut Producer<f32>, samples: &[f32], counter: &AtomicU64) -> usize {
+    bulk_push_frames_counted(prod, samples, 2, counter)
+}
+
+/// Bulk push complete interleaved frames. Array capture uses this instead of
+/// the stereo helper so an overrun never separates channels from one physical
+/// device stream.
+pub fn bulk_push_frames_counted(
+    prod: &mut Producer<f32>,
+    samples: &[f32],
+    channels: usize,
+    counter: &AtomicU64,
+) -> usize {
     let want = samples.len();
-    if want == 0 {
+    if want == 0 || channels == 0 {
         return 0;
     }
     let avail = prod.slots();
-    // Even count only: a partial (odd) write on overflow would shift every
-    // later frame's L/R by one sample, permanently desyncing the stereo pair.
-    let to_write = want.min(avail) & !1;
+    let to_write = want.min(avail) / channels * channels;
     health::bump(counter, (want - to_write) as u64);
     if to_write == 0 {
         return 0;

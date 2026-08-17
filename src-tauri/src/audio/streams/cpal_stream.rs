@@ -15,8 +15,12 @@ use cpal::{Sample, SampleFormat, StreamConfig};
 use tracing::error;
 
 use crate::audio::effects::{update_meter, MeterHandle};
+use crate::audio::health;
 use crate::audio::input_bridge::BroadcastRx;
+use crate::audio::streams::bulk_push_frames_counted;
 use crate::error::{AppError, AppResult};
+
+const RAW_CAPTURE_CALLBACK_FRAMES: usize = 4_096;
 
 /// Build and start an input stream. `bridge` carries broadcast subscribers
 /// at runtime; the callback drains pending add/remove commands at the top
@@ -59,6 +63,94 @@ pub fn build_input_stream(
             "unsupported input sample format: {fmt:?}"
         ))),
     }
+}
+
+/// Build one physical device stream that forwards its complete native frames
+/// into a private SPSC ring. This is used by Microphone Array before channels
+/// are selected, so every member of one device keeps the exact same clock and
+/// sample boundary.
+pub fn build_raw_input_stream(
+    device: &cpal::Device,
+    config: &StreamConfig,
+    sample_format: SampleFormat,
+    src_channels: usize,
+    producer: rtrb::Producer<f32>,
+    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+) -> AppResult<cpal::Stream> {
+    match sample_format {
+        SampleFormat::F32 => {
+            build_raw_input_typed::<f32>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::I16 => {
+            build_raw_input_typed::<i16>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::I32 => {
+            build_raw_input_typed::<i32>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::I8 => {
+            build_raw_input_typed::<i8>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::U8 => {
+            build_raw_input_typed::<u8>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::U16 => {
+            build_raw_input_typed::<u16>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::U32 => {
+            build_raw_input_typed::<u32>(device, config, src_channels, producer, err_cb)
+        }
+        SampleFormat::F64 => {
+            build_raw_input_typed::<f64>(device, config, src_channels, producer, err_cb)
+        }
+        fmt => Err(AppError::Validation(format!(
+            "unsupported input sample format: {fmt:?}"
+        ))),
+    }
+}
+
+fn build_raw_input_typed<T>(
+    device: &cpal::Device,
+    config: &StreamConfig,
+    src_channels: usize,
+    mut producer: rtrb::Producer<f32>,
+    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+) -> AppResult<cpal::Stream>
+where
+    T: Sample + cpal::SizedSample + Send + 'static,
+    f32: cpal::FromSample<T>,
+{
+    if src_channels == 0 {
+        return Err(AppError::Validation(
+            "Microphone Array source has no input channels".into(),
+        ));
+    }
+    let mut staging = vec![0.0; RAW_CAPTURE_CALLBACK_FRAMES * src_channels];
+    let stream = device
+        .build_input_stream::<T, _, _>(
+            config,
+            move |data, _| {
+                // `staging` is allocated before the stream starts. Splitting
+                // a large callback preserves whole frames and never grows it.
+                for raw in data.chunks(staging.len()) {
+                    for (out, &sample) in staging[..raw.len()].iter_mut().zip(raw) {
+                        *out = sample.to_sample::<f32>();
+                    }
+                    bulk_push_frames_counted(
+                        &mut producer,
+                        &staging[..raw.len()],
+                        src_channels,
+                        &health::CAPTURE_RING_OVERRUN_SAMPLES,
+                    );
+                }
+            },
+            err_cb,
+            None,
+        )
+        .map_err(|e| AppError::Stream(format!("input build: {e}")))?;
+    stream
+        .play()
+        .map_err(|e| AppError::Stream(format!("input play: {e}")))?;
+    Ok(stream)
 }
 
 fn build_input_typed<T>(

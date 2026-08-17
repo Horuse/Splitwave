@@ -50,9 +50,7 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
                 sample_rate: native.sample_rate,
             })
         }
-        InputSpec::MicrophoneArray { .. } => Err(crate::error::AppError::Stream(
-            "Microphone Array capture has not been started for this platform".into(),
-        )),
+        InputSpec::MicrophoneArray { data } => super::resolve_microphone_array(data),
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {
@@ -106,6 +104,25 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 err_cb,
             )?;
             Ok(InputHandle::Cpal(stream))
+        }
+        ResolvedInput::MicrophoneArray { data, sources } => {
+            let app_err = app.clone();
+            let report_error: Arc<dyn Fn(cpal::StreamError) + Send + Sync> = Arc::new(move |e| {
+                health::bump(&health::STREAM_ERRORS, 1);
+                error!(error = %e, "Microphone Array source stream error");
+                let _ = app_err.emit(
+                    STATE_EVENT,
+                    json!({ "kind": "error", "message": format!("microphone array: {e}") }),
+                );
+            });
+            let capture = crate::audio::microphone_array::start_capture(
+                data,
+                sources,
+                bridge,
+                meter,
+                report_error,
+            )?;
+            Ok(InputHandle::MicrophoneArray(capture))
         }
         ResolvedInput::SystemAudio {
             sample_rate,

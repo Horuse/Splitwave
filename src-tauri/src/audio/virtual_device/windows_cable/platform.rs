@@ -100,11 +100,13 @@ pub fn status() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
 
 pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
     let _guard = OperationGuard::acquire()?;
+    let consumer = consumer_id(&current_install_root()?)?;
     let archive = download_archive()?;
     let exit_code = elevate_current(&[
         OsString::from(HELPER_FLAG),
         OsString::from("install"),
         archive.path().as_os_str().to_owned(),
+        OsString::from(consumer),
     ])?;
     match exit_code {
         0 | EXIT_REBOOT_REQUIRED => status(),
@@ -115,10 +117,12 @@ pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> 
 pub fn uninstall() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
     let _guard = OperationGuard::acquire()?;
     let root = current_install_root()?;
+    let consumer = consumer_id(&root)?;
     let exit_code = elevate_current(&[
         OsString::from(HELPER_FLAG),
         OsString::from("remove"),
         root.into_os_string(),
+        OsString::from(consumer),
     ])?;
     match exit_code {
         0 | EXIT_REBOOT_REQUIRED => status(),
@@ -140,31 +144,31 @@ pub fn run_helper() -> Option<i32> {
             )
         })
     };
-    let result =
-        match action {
-            Some("install") => args
-                .get(3)
-                .map(PathBuf::from)
-                .ok_or_else(|| {
-                    WindowsVirtualCableError::new(
-                        "invalidHelperArguments",
-                        "Missing VB-CABLE archive path",
-                    )
-                })
-                .and_then(|archive| ensure_elevated_or_rerun(&args, || helper_install(&archive))),
-            Some("register-consumer") => {
-                root().and_then(|root| register_consumer_with_elevation(&args, &root))
-            }
-            Some("unregister") => root().and_then(|root| unregister_consumer(&args, &root)),
-            Some("retain") => root()
-                .and_then(|root| ensure_elevated_or_rerun(&args, || retain_as_external(&root))),
-            Some("remove") => root()
-                .and_then(|root| ensure_elevated_or_rerun(&args, || remove_exact_package(&root))),
-            _ => Err(WindowsVirtualCableError::new(
-                "invalidHelperArguments",
-                "Unknown VB-CABLE helper action",
-            )),
-        };
+    let result = match action {
+        Some("install") => args
+            .get(3)
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                WindowsVirtualCableError::new(
+                    "invalidHelperArguments",
+                    "Missing VB-CABLE archive path",
+                )
+            })
+            .and_then(|archive| {
+                let consumer = supplied_consumer_id(&args)?;
+                ensure_elevated_or_rerun(&args, || helper_install(&archive, &consumer))
+            }),
+        Some("register-consumer") => {
+            root().and_then(|root| register_consumer_with_elevation(&args, &root))
+        }
+        Some("unregister") => root().and_then(|root| unregister_consumer(&args, &root)),
+        Some("retain") => root().and_then(|root| retain_as_external_with_elevation(&args, &root)),
+        Some("remove") => root().and_then(|root| remove_exact_package_with_elevation(&args, &root)),
+        _ => Err(WindowsVirtualCableError::new(
+            "invalidHelperArguments",
+            "Unknown VB-CABLE helper action",
+        )),
+    };
     let exit_code = match result {
         Ok(()) => 0,
         Err(error) if error.code == "rebootRequired" => EXIT_REBOOT_REQUIRED,
@@ -200,7 +204,7 @@ fn ensure_elevated_or_rerun(
 fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
     let manifest = read_manifest();
-    let consumer = consumer_id(root)?;
+    let consumer = helper_consumer_id(args, root)?;
     let state = determine_state(&detected, &manifest, &consumer);
     // Treat the uninstaller's pending response as "keep" so a sole consumer
     // receives the explicit NSIS prompt instead of silently dropping ownership.
@@ -213,7 +217,11 @@ fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirt
     );
     match action {
         RemovalAction::Preserve => Ok(()),
-        RemovalAction::ReleaseConsumer => ensure_elevated_or_rerun(args, || release_consumer(root)),
+        RemovalAction::ReleaseConsumer => {
+            ensure_elevated_or_rerun(&args_with_consumer(args, &consumer), || {
+                release_consumer(&consumer)
+            })
+        }
         RemovalAction::RetainAsExternal => Err(WindowsVirtualCableError::confirmation_required()),
         RemovalAction::RemoveExactPackage => Err(WindowsVirtualCableError::new(
             "ownershipConflict",
@@ -222,7 +230,7 @@ fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirt
     }
 }
 
-fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
+fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let before = detect_cable()?;
     if before.usable() || !before.packages.is_empty() {
         return Err(WindowsVirtualCableError::new(
@@ -265,7 +273,6 @@ fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
         ));
     }
 
-    let root = current_install_root()?;
     let manifest = OwnershipManifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         provider: PROVIDER_NAME.into(),
@@ -279,7 +286,7 @@ fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
         package_original_names: package.original_name.clone().into_iter().collect(),
         package_fingerprint: package.fingerprint(),
         device_instance_ids: package.device_instance_ids.clone(),
-        consumer_installation_ids: vec![consumer_id(&root)?],
+        consumer_installation_ids: vec![consumer.into()],
         // VB-Audio's current reference manual requires a restart after installation.
         pending_reboot: !after.usable(),
         removal_pending_reboot: false,
@@ -291,7 +298,7 @@ fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
     Ok(())
 }
 
-fn register_consumer(root: &Path) -> Result<(), WindowsVirtualCableError> {
+fn register_consumer(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
@@ -302,13 +309,12 @@ fn register_consumer(root: &Path) -> Result<(), WindowsVirtualCableError> {
     if !manifest.matches(package) {
         return Ok(());
     }
-    let consumer = consumer_id(root)?;
     if !manifest
         .consumer_installation_ids
         .iter()
-        .any(|id| id == &consumer)
+        .any(|id| id == consumer)
     {
-        manifest.consumer_installation_ids.push(consumer);
+        manifest.consumer_installation_ids.push(consumer.into());
         write_manifest(&manifest)?;
     }
     Ok(())
@@ -325,7 +331,7 @@ fn register_consumer_with_elevation(
     let Some(package) = detected.package() else {
         return Ok(());
     };
-    let consumer = consumer_id(root)?;
+    let consumer = helper_consumer_id(args, root)?;
     if !manifest.matches(package)
         || manifest
             .consumer_installation_ids
@@ -334,35 +340,31 @@ fn register_consumer_with_elevation(
     {
         return Ok(());
     }
-    ensure_elevated_or_rerun(args, || register_consumer(root))
+    ensure_elevated_or_rerun(&args_with_consumer(args, &consumer), || {
+        register_consumer(&consumer)
+    })
 }
 
-fn release_consumer(root: &Path) -> Result<(), WindowsVirtualCableError> {
+fn release_consumer(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
     };
-    let consumer = consumer_id(root)?;
     manifest
         .consumer_installation_ids
-        .retain(|id| id != &consumer);
+        .retain(|id| id != consumer);
     write_manifest(&manifest)
 }
 
-fn retain_as_external(root: &Path) -> Result<(), WindowsVirtualCableError> {
+fn retain_as_external(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
     };
-    let consumer = consumer_id(root)?;
-    let state = determine_state(
-        &detected,
-        &ManifestState::Valid(manifest.clone()),
-        &consumer,
-    );
+    let state = determine_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
     if removal_decision(
         state,
         &ManifestState::Valid(manifest.clone()),
-        &consumer,
+        consumer,
         UninstallReason::UserRemoval,
         Some(false),
     ) != RemovalAction::RetainAsExternal
@@ -378,7 +380,27 @@ fn retain_as_external(root: &Path) -> Result<(), WindowsVirtualCableError> {
     write_manifest(&manifest)
 }
 
-fn remove_exact_package(root: &Path) -> Result<(), WindowsVirtualCableError> {
+fn retain_as_external_with_elevation(
+    args: &[OsString],
+    root: &Path,
+) -> Result<(), WindowsVirtualCableError> {
+    let consumer = helper_consumer_id(args, root)?;
+    ensure_elevated_or_rerun(&args_with_consumer(args, &consumer), || {
+        retain_as_external(&consumer)
+    })
+}
+
+fn remove_exact_package_with_elevation(
+    args: &[OsString],
+    root: &Path,
+) -> Result<(), WindowsVirtualCableError> {
+    let consumer = helper_consumer_id(args, root)?;
+    ensure_elevated_or_rerun(&args_with_consumer(args, &consumer), || {
+        remove_exact_package(&consumer)
+    })
+}
+
+fn remove_exact_package(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Err(WindowsVirtualCableError::new(
@@ -386,16 +408,11 @@ fn remove_exact_package(root: &Path) -> Result<(), WindowsVirtualCableError> {
             "No managed VB-CABLE ownership record exists",
         ));
     };
-    let consumer = consumer_id(root)?;
-    let state = determine_state(
-        &detected,
-        &ManifestState::Valid(manifest.clone()),
-        &consumer,
-    );
+    let state = determine_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
     if removal_decision(
         state,
         &ManifestState::Valid(manifest.clone()),
-        &consumer,
+        consumer,
         UninstallReason::UserRemoval,
         Some(true),
     ) != RemovalAction::RemoveExactPackage
@@ -902,6 +919,30 @@ mod tests {
         assert!(!part.exists());
         Ok(())
     }
+
+    #[test]
+    fn supplied_consumer_id_requires_exact_hash_format() {
+        let valid = OsString::from("splitwave-0123456789abcdef01234567");
+        let args = [
+            OsString::from("splitwave.exe"),
+            OsString::from(HELPER_FLAG),
+            OsString::from("remove"),
+            OsString::from("C:\\Splitwave"),
+            valid.clone(),
+        ];
+        assert_eq!(
+            supplied_consumer_id(&args).unwrap(),
+            valid.to_string_lossy()
+        );
+
+        let invalid = OsString::from("splitwave-not-a-valid-consumer");
+        let mut args = args;
+        args[4] = invalid;
+        assert_eq!(
+            supplied_consumer_id(&args).unwrap_err().code,
+            "invalidHelperArguments"
+        );
+    }
 }
 
 fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
@@ -1192,6 +1233,45 @@ fn consumer_id(root: &Path) -> Result<String, WindowsVirtualCableError> {
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     ))
+}
+
+fn supplied_consumer_id(args: &[OsString]) -> Result<String, WindowsVirtualCableError> {
+    let consumer = args
+        .get(4)
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            WindowsVirtualCableError::new(
+                "invalidHelperArguments",
+                "Missing VB-CABLE consumer identity",
+            )
+        })?;
+    let valid = consumer.strip_prefix("splitwave-").is_some_and(|hash| {
+        hash.len() == 24 && hash.chars().all(|character| character.is_ascii_hexdigit())
+    });
+    if !valid {
+        return Err(WindowsVirtualCableError::new(
+            "invalidHelperArguments",
+            "Invalid VB-CABLE consumer identity",
+        ));
+    }
+    Ok(consumer.into())
+}
+
+fn helper_consumer_id(args: &[OsString], root: &Path) -> Result<String, WindowsVirtualCableError> {
+    if args.get(4).is_some() {
+        supplied_consumer_id(args)
+    } else {
+        consumer_id(root)
+    }
+}
+
+fn args_with_consumer(args: &[OsString], consumer: &str) -> Vec<OsString> {
+    if args.get(4).is_some() {
+        return args.to_vec();
+    }
+    let mut rerun_args = args.to_vec();
+    rerun_args.push(OsString::from(consumer));
+    rerun_args
 }
 
 fn current_user_sid() -> Result<String, WindowsVirtualCableError> {

@@ -319,11 +319,34 @@ fn manifest_ownership(manifest: &ManifestState) -> WindowsVirtualCableOwnership 
     }
 }
 
+fn newly_installed_package<'a>(
+    before: &DetectedCable,
+    after: &'a DetectedCable,
+) -> Option<&'a CablePackage> {
+    if before.usable() || !before.packages.is_empty() {
+        return None;
+    }
+
+    let mut packages = after.packages.iter().filter(|candidate| {
+        !before.packages.iter().any(|old| {
+            old.published_name
+                .eq_ignore_ascii_case(&candidate.published_name)
+        })
+    });
+    let package = packages.next()?;
+    packages.next().is_none().then_some(package)
+}
+
 #[cfg(target_os = "windows")]
 mod platform;
 
 #[cfg(target_os = "windows")]
-pub use platform::{install, run_helper, status, uninstall};
+pub use platform::{install, status, uninstall};
+
+#[cfg(target_os = "windows")]
+pub fn run_helper() -> Option<i32> {
+    platform::run_helper()
+}
 
 #[cfg(not(target_os = "windows"))]
 pub fn status() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
@@ -592,6 +615,18 @@ mod tests {
             ),
             RemovalAction::Preserve
         );
+    }
+
+    #[test]
+    fn existing_cable_is_never_considered_a_new_managed_package() {
+        let package = package();
+        let before = DetectedCable {
+            render_endpoint_name: Some("CABLE Input".into()),
+            capture_endpoint_name: Some("CABLE Output".into()),
+            packages: vec![package],
+        };
+
+        assert!(newly_installed_package(&before, &before).is_none());
     }
 
     #[test]

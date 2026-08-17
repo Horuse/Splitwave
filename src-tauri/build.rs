@@ -10,7 +10,16 @@ fn main() {
         compile_swift_static_lib();
         build_virtual_driver();
     }
+    if target_os == "windows" {
+        enable_common_controls_manifest();
+    }
     tauri_build::build()
+}
+
+fn enable_common_controls_manifest() {
+    println!(
+        "cargo:rustc-link-arg=/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+    );
 }
 
 fn compile_swift_static_lib() {

@@ -30,10 +30,10 @@ use winreg::RegKey;
 use zip::ZipArchive;
 
 use super::{
-    determine_state, removal_decision, status_from, CablePackage, DetectedCable, ManifestState,
-    OwnershipManifest, RemovalAction, UninstallReason, WindowsVirtualCableError,
-    WindowsVirtualCableOwnership, WindowsVirtualCableStatus, MANIFEST_SCHEMA_VERSION,
-    PROVIDER_NAME,
+    determine_state, newly_installed_package, removal_decision, status_from, CablePackage,
+    DetectedCable, ManifestState, OwnershipManifest, RemovalAction, UninstallReason,
+    WindowsVirtualCableError, WindowsVirtualCableOwnership, WindowsVirtualCableStatus,
+    MANIFEST_SCHEMA_VERSION, PROVIDER_NAME,
 };
 
 const VBCABLE_URL: &str = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
@@ -46,8 +46,8 @@ const VBCABLE_MAX_EXTRACTED_BYTES: u64 = 16 * 1024 * 1024;
 const REGISTRY_PATH: &str = r"SOFTWARE\Horuse\Splitwave\Dependencies\VBCable";
 const REGISTRY_VALUE: &str = "Manifest";
 const HELPER_FLAG: &str = "--vb-cable-helper";
-const EXIT_REQUIRES_CONFIRMATION: i32 = 20;
-const EXIT_REBOOT_REQUIRED: i32 = 21;
+const EXIT_REQUIRES_CONFIRMATION: u32 = 20;
+const EXIT_REBOOT_REQUIRED: u32 = 21;
 
 static OPERATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -150,7 +150,7 @@ pub fn run_helper() -> Option<i32> {
                 "Unknown VB-CABLE helper action",
             )),
         };
-    Some(match result {
+    let exit_code = match result {
         Ok(()) => 0,
         Err(error) if error.code == "rebootRequired" => EXIT_REBOOT_REQUIRED,
         Err(error) if error.code == "confirmationRequired" => EXIT_REQUIRES_CONFIRMATION,
@@ -158,7 +158,12 @@ pub fn run_helper() -> Option<i32> {
             warn!(code = error.code, message = %error.message, "VB-CABLE helper failed");
             1
         }
-    })
+    };
+    Some(
+        exit_code
+            .try_into()
+            .expect("fixed helper exit codes fit in i32"),
+    )
 }
 
 fn ensure_elevated_or_rerun(
@@ -204,6 +209,12 @@ fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirt
 
 fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
     let before = detect_cable()?;
+    if before.usable() || !before.packages.is_empty() {
+        return Err(WindowsVirtualCableError::new(
+            "ownershipConflict",
+            "VB-CABLE is already present and will not be claimed by Splitwave",
+        ));
+    }
     let copied = copy_verified_archive(archive)?;
     let extracted = extract_verified_archive(copied.path())?;
     let installer = extracted.path().join(setup_program_name());
@@ -224,12 +235,13 @@ fn helper_install(archive: &Path) -> Result<(), WindowsVirtualCableError> {
     }
 
     let after = detect_cable()?;
-    let package = after
-        .packages
-        .iter()
-        .find(|candidate| !before.packages.iter().any(|old| old.published_name.eq_ignore_ascii_case(&candidate.published_name)))
-        .or_else(|| after.package())
-        .ok_or_else(|| WindowsVirtualCableError::new("driverPackageNotFound", "VB-CABLE setup completed, but Splitwave could not identify its exact driver package"))?
+    let package = newly_installed_package(&before, &after)
+        .ok_or_else(|| {
+            WindowsVirtualCableError::new(
+                "driverPackageNotFound",
+                "VB-CABLE setup completed, but Splitwave could not identify one new exact driver package",
+            )
+        })?
         .clone();
     if !is_exact_package_name(&package.published_name) {
         return Err(WindowsVirtualCableError::new(
@@ -463,7 +475,7 @@ fn is_capture_name(name: &str) -> bool {
 }
 
 fn enumerate_vb_cable_packages() -> Result<Vec<CablePackage>, WindowsVirtualCableError> {
-    let set = unsafe { SetupDiGetClassDevsW(None, None::<PCWSTR>, None, DIGCF_ALLCLASSES) }
+    let set = unsafe { SetupDiGetClassDevsW(None, PCWSTR::null(), None, DIGCF_ALLCLASSES) }
         .map_err(|e| {
             WindowsVirtualCableError::new(
                 "deviceEnumerationFailed",

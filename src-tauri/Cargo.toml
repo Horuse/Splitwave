@@ -27,6 +27,13 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 
+# audiopus_sys uses CMake. At opt-level 0 CMake selects the debug MSVC runtime,
+# while Rust uses the release runtime even in dev/test profiles on Windows.
+[profile.dev.package.audiopus_sys]
+opt-level = 3
+[profile.test.package.audiopus_sys]
+opt-level = 3
+
 # DeepFilterNet inference (tract) is far heavier than the FFT crates above. At
 # -O0 a single block's inference blows the DSP block deadline, the worker
 # stalls, and the voice gets glitchy. Optimise the tract stack + deep_filter in

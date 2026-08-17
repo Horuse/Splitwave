@@ -1,5 +1,11 @@
 # Development
 
+The Microphone Array capture, synchronization, calibration, DSP, fallback, and
+provenance design is documented in
+[docs/microphone-array-architecture.md](docs/microphone-array-architecture.md).
+Its repeatable physical-device acceptance procedure is in
+[docs/microphone-array-hardware-test.md](docs/microphone-array-hardware-test.md).
+
 Setting up a build. For what a reviewable pull request looks like — diff
 scope, formatting, per-OS testing — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

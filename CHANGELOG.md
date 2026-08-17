@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **N-channel Microphone Array input** - combine arbitrary selected channels
+  from one multichannel interface, multiple wired USB devices, or a mixed
+  topology into one calibrated mono spatial stream. Includes shared-clock and
+  experimental independent-clock capture, Delay-and-Sum/GSC/MVDR processing,
+  graph persistence, live controls and diagnostics, safe fallback, calibration,
+  A/B monitoring, and the `Spatial Voice — Multi-Mic` factory pipeline.
+- User, architecture, provenance, limitations, and manual hardware-testing
+  documentation for Microphone Array.
+
 ## [1.1.0] - 2026-08-17
 
 ### Added
@@ -187,6 +200,7 @@ Initial release.
   virtual audio driver.
 
 [1.1.0]: https://github.com/Horuse/Splitwave/compare/v1.0.0...v1.1.0
+[Unreleased]: https://github.com/Horuse/Splitwave/compare/v1.1.0...HEAD
 [1.0.0]: https://github.com/Horuse/Splitwave/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/Horuse/Splitwave/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Horuse/Splitwave/compare/v0.3.0...v0.4.0

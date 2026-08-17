@@ -10,6 +10,8 @@ pub struct PwNode {
     pub id: u32,
     pub name: String,
     pub description: String,
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
 pub fn nodes_by_class(media_class: &'static str) -> AppResult<Vec<PwNode>> {
@@ -46,10 +48,21 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                 .filter(|d| !d.is_empty())
                 .unwrap_or(name)
                 .to_string();
+            let sample_rate = props
+                .get("audio.rate")
+                .and_then(parse_sample_rate)
+                .unwrap_or(48_000);
+            let channels = props
+                .get("audio.channels")
+                .and_then(|value| value.parse().ok())
+                .or_else(|| props.get("audio.position").and_then(channel_count))
+                .unwrap_or(2);
             nodes_cb.borrow_mut().push(PwNode {
                 id: global.id,
                 name: name.to_string(),
                 description,
+                sample_rate,
+                channels,
             });
         })
         .register();
@@ -68,6 +81,31 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
     mainloop.run();
     let out = std::mem::take(&mut *nodes.borrow_mut());
     Ok(out)
+}
+
+fn parse_sample_rate(value: &str) -> Option<u32> {
+    value.split('/').next()?.trim().parse().ok()
+}
+
+fn channel_count(value: &str) -> Option<u16> {
+    let count = value
+        .trim_matches(|character| matches!(character, '[' | ']'))
+        .split_whitespace()
+        .filter(|position| !position.is_empty())
+        .count();
+    u16::try_from(count).ok().filter(|count| *count > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_pipewire_format_properties() {
+        assert_eq!(parse_sample_rate("48000"), Some(48_000));
+        assert_eq!(parse_sample_rate("48000/1"), Some(48_000));
+        assert_eq!(channel_count("[ FL FR AUX0 AUX1 ]"), Some(4));
+    }
 }
 
 fn pw_err(e: impl std::fmt::Display) -> AppError {

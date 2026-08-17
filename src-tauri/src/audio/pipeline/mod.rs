@@ -60,7 +60,6 @@ pub(crate) fn calibrate_microphone_array(
     input::calibrate_microphone_array(data)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) const STATE_EVENT: &str = "audio://state";
 
 /// Overlap between a hot-swapped output's old and new bridges: one DSP block at
@@ -282,30 +281,19 @@ impl ActivePipeline {
     }
 
     pub fn set_microphone_array_audition(&self, node_id: &str, mode: &str) -> AppResult<()> {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        {
-            let mode = crate::audio::microphone_array::AuditionMode::parse(mode)?;
-            let state = self.inputs.get(node_id).ok_or_else(|| {
-                AppError::Validation(format!("Microphone Array node {node_id:?} is not running"))
-            })?;
-            let InputHandle::MicrophoneArray(capture) = &state._handle else {
-                return Err(AppError::Validation(format!(
-                    "input node {node_id:?} is not a Microphone Array"
-                )));
-            };
-            capture.set_audition(mode);
-            Ok(())
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let _ = (node_id, mode);
-            Err(AppError::Stream(
-                "Microphone Array audition is unavailable on the PipeWire backend".into(),
-            ))
-        }
+        let mode = crate::audio::microphone_array::AuditionMode::parse(mode)?;
+        let state = self.inputs.get(node_id).ok_or_else(|| {
+            AppError::Validation(format!("Microphone Array node {node_id:?} is not running"))
+        })?;
+        let InputHandle::MicrophoneArray(capture) = &state._handle else {
+            return Err(AppError::Validation(format!(
+                "input node {node_id:?} is not a Microphone Array"
+            )));
+        };
+        capture.set_audition(mode);
+        Ok(())
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn update_array_controls(&self, graph: &ValidGraph) {
         for input in &graph.inputs {
             let InputSpec::MicrophoneArray { data } = &input.spec else {
@@ -319,9 +307,6 @@ impl ActivePipeline {
             }
         }
     }
-
-    #[cfg(target_os = "linux")]
-    fn update_array_controls(&self, _graph: &ValidGraph) {}
 
     /// Deepest speaker output latency in milliseconds, end to end: the input
     /// side's deepest source ring backlog, the graph's own lookahead (delay
@@ -1253,23 +1238,17 @@ impl ActivePipeline {
             && self.lufs.is_empty()
             && self.gr_handles.is_empty()
             && self.scopes.is_empty()
-            && !self.inputs.values().any(|input| {
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                {
-                    input._handle.microphone_array_metrics().is_some()
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                {
-                    false
-                }
-            }) {
+            && !self
+                .inputs
+                .values()
+                .any(|input| input._handle.microphone_array_metrics().is_some())
+        {
             None
         } else {
             let meters_snapshot: Vec<MeterHandle> = self.meters.values().cloned().collect();
             let lufs_snapshot: Vec<LufsHandle> = self.lufs.values().cloned().collect();
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             let array_metrics_snapshot = self
                 .inputs
                 .values()
@@ -1281,7 +1260,6 @@ impl ActivePipeline {
                 lufs_snapshot,
                 gr_snapshot,
                 scopes_snapshot,
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 array_metrics_snapshot,
             ))
         };

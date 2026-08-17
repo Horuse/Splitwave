@@ -87,7 +87,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         }
         ResolvedInput::MicrophoneArray { data, sources } => {
             let app_err = app.clone();
-            let report_error: Arc<dyn Fn(cpal::StreamError) + Send + Sync> = Arc::new(move |e| {
+            let report_error: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |e| {
                 health::bump(&health::STREAM_ERRORS, 1);
                 error!(error = %e, "Microphone Array source stream error");
                 let _ = app_err.emit(

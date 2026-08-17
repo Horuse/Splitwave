@@ -10,38 +10,38 @@ mod mvdr;
 use crate::error::{AppError, AppResult};
 use mvdr::Mvdr;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::thread::{self, JoinHandle};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use rtrb::{Consumer, RingBuffer};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use serde::Serialize;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::effects::{update_meter, MeterHandle};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::graph::{
     MicrophoneArrayAlgorithm, MicrophoneArrayCalibrationState, MicrophoneArrayData,
     MicrophoneArrayMember, MicrophoneArrayTarget,
 };
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::health;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::input_bridge::BroadcastRx;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::resample::MultiResamplerOut;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::streams;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::audio::streams::RawCaptureStats;
 
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
@@ -52,43 +52,43 @@ const MAX_CLOCK_CORRECTION_PPM: f64 = 1_000.0;
 const MAX_CLOCK_SLEW_PPM: f64 = 5.0;
 const SYNC_READY_UPDATES: u32 = 20;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_RING_CAPACITY_FRAMES: usize = 48_000;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_WAIT: Duration = Duration::from_millis(1);
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_BLOCK_FRAMES: usize = 256;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const SYNC_TARGET_FRAMES: usize = 3_072;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_STARTING: u32 = 0;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_SYNCING: u32 = 1;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_READY: u32 = 2;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_FALLBACK: u32 = 3;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_BYPASSED: u32 = 4;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_STATE_ERROR: u32 = 5;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_NONE: u32 = 0;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_SYNCING: u32 = 1;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_BYPASSED: u32 = 2;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_DOMAIN_UNLOCKED: u32 = 3;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_NO_HEALTHY_CHANNEL: u32 = 4;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_SOURCE_ERROR: u32 = 5;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_PROCESSOR_ERROR: u32 = 6;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const ARRAY_FALLBACK_CPU_OVERLOAD: u32 = 7;
 
 const AUDITION_SPATIAL: u32 = 0;
@@ -127,7 +127,7 @@ impl AuditionMode {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MicrophoneArrayMetricsSnapshot {
@@ -155,7 +155,7 @@ pub struct MicrophoneArrayMetricsSnapshot {
     domains: Vec<MicrophoneArrayDomainMetrics>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MicrophoneArrayCalibrationMetrics {
@@ -164,7 +164,7 @@ struct MicrophoneArrayCalibrationMetrics {
     residual_delay_samples: Option<f32>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MicrophoneArrayMemberMetrics {
@@ -177,7 +177,7 @@ struct MicrophoneArrayMemberMetrics {
     residual_delay_samples: f32,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MicrophoneArrayDomainMetrics {
@@ -198,7 +198,7 @@ struct MicrophoneArrayDomainMetrics {
     estimator: &'static str,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct DomainMetrics {
     source_id: String,
     label: String,
@@ -215,7 +215,7 @@ struct DomainMetrics {
     sync_confidence: AtomicU32,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl DomainMetrics {
     fn new(source: &DeviceSource, label: String, processing_rate: u32) -> Self {
         Self {
@@ -258,7 +258,7 @@ impl DomainMetrics {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct ArrayMetrics {
     node_id: String,
     configured_channels: usize,
@@ -279,11 +279,11 @@ struct ArrayMetrics {
     overload_events: AtomicU64,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone)]
 pub struct MicrophoneArrayMetricsHandle(Arc<ArrayMetrics>);
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl MicrophoneArrayMetricsHandle {
     fn new(
         node_id: &str,
@@ -429,7 +429,7 @@ impl MicrophoneArrayMetricsHandle {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn algorithm_name(encoded: u32) -> &'static str {
     match encoded {
         0 => "auto",
@@ -439,7 +439,7 @@ fn algorithm_name(encoded: u32) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn active_algorithm_name(encoded: u32) -> &'static str {
     match encoded {
         2 => "gsc",
@@ -448,7 +448,7 @@ fn active_algorithm_name(encoded: u32) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn audition_name(encoded: u32) -> &'static str {
     match encoded {
         AUDITION_BEST_SINGLE => "bestSingle",
@@ -641,7 +641,7 @@ impl RealtimeControls {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct AtomicRuntimeControls {
     algorithm: AtomicU32,
     strength: AtomicU32,
@@ -653,7 +653,7 @@ struct AtomicRuntimeControls {
     audition: AtomicU32,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl AtomicRuntimeControls {
     fn new(data: &MicrophoneArrayData) -> Self {
         let controls = Self {
@@ -1364,29 +1364,109 @@ fn soft_limit(sample: f32) -> f32 {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub struct DeviceSource {
     pub id: String,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub device: cpal::Device,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub config: cpal::StreamConfig,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub sample_format: cpal::SampleFormat,
+    #[cfg(target_os = "linux")]
+    pub node_name: String,
     pub channels: usize,
     pub sample_rate: u32,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+enum PhysicalStream {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    Cpal(cpal::Stream),
+    #[cfg(target_os = "linux")]
+    PipeWire(crate::audio::capture::Capture),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl PhysicalStream {
+    fn stop(&mut self) {
+        match self {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Self::Cpal(stream) => {
+                let _ = stream.pause();
+            }
+            #[cfg(target_os = "linux")]
+            Self::PipeWire(stream) => stream.stop(),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn start_source_stream(
+    source: &DeviceSource,
+    producer: rtrb::Producer<f32>,
+    stats: Option<RawCaptureStats>,
+    report_error: Arc<dyn Fn(String) + Send + Sync>,
+) -> AppResult<PhysicalStream> {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let report = report_error.clone();
+        let stream = streams::build_raw_input_stream(
+            &source.device,
+            &source.config,
+            source.sample_format,
+            source.channels,
+            producer,
+            stats,
+            move |error| report(error.to_string()),
+        )?;
+        Ok(PhysicalStream::Cpal(stream))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let channels = source.channels;
+        let capture_stats = stats.clone();
+        let mut producer = producer;
+        let report = report_error.clone();
+        let stream = crate::audio::capture::Capture::start_source_configured(
+            &source.node_name,
+            source.sample_rate,
+            source.channels as u32,
+            move |samples| {
+                let written = streams::bulk_push_frames_counted(
+                    &mut producer,
+                    samples,
+                    channels,
+                    &health::CAPTURE_RING_OVERRUN_SAMPLES,
+                );
+                if let Some(stats) = &capture_stats {
+                    stats
+                        .captured_samples
+                        .fetch_add(written as u64, Ordering::Relaxed);
+                    stats
+                        .dropped_samples
+                        .fetch_add((samples.len() - written) as u64, Ordering::Relaxed);
+                }
+            },
+            move |error| report(error),
+        )?;
+        Ok(PhysicalStream::PipeWire(stream))
+    }
 }
 
 /// Owns every physical device stream and the array worker that consumes them.
 /// Dropping it pauses producers before joining the worker, so a device callback
 /// cannot write into a ring after its consumer is gone.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub struct Capture {
-    streams: Vec<cpal::Stream>,
+    streams: Vec<PhysicalStream>,
     controls: Arc<AtomicRuntimeControls>,
     metrics: MicrophoneArrayMetricsHandle,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Capture {
     pub fn update_runtime_controls(&self, data: &MicrophoneArrayData) {
         self.controls.update(data);
@@ -1405,11 +1485,11 @@ impl Capture {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Drop for Capture {
     fn drop(&mut self) {
-        for stream in &self.streams {
-            let _ = stream.pause();
+        for stream in &mut self.streams {
+            stream.stop();
         }
         self.stop.store(true, Ordering::SeqCst);
         if let Some(join) = self.join.take() {
@@ -1418,7 +1498,7 @@ impl Drop for Capture {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct Domain {
     channels: usize,
     consumer: Consumer<f32>,
@@ -1431,7 +1511,7 @@ struct Domain {
     metrics: Arc<DomainMetrics>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Domain {
     fn new(
         source: DeviceSource,
@@ -1570,7 +1650,7 @@ impl Domain {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn member_config(member: &MicrophoneArrayMember) -> MemberConfig {
     MemberConfig {
         position: Point3 {
@@ -1587,7 +1667,7 @@ fn member_config(member: &MicrophoneArrayMember) -> MemberConfig {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn encode_algorithm(algorithm: MicrophoneArrayAlgorithm) -> u32 {
     match algorithm {
         MicrophoneArrayAlgorithm::Auto => 0,
@@ -1597,7 +1677,7 @@ fn encode_algorithm(algorithm: MicrophoneArrayAlgorithm) -> u32 {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn encode_runtime_algorithm(algorithm: Algorithm) -> u32 {
     match algorithm {
         Algorithm::Auto => 0,
@@ -1607,7 +1687,7 @@ fn encode_runtime_algorithm(algorithm: Algorithm) -> u32 {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn decode_algorithm(encoded: u32) -> Algorithm {
     match encoded {
         0 => Algorithm::Auto,
@@ -1617,7 +1697,7 @@ fn decode_algorithm(encoded: u32) -> Algorithm {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn decode_audition(encoded: u32) -> AuditionMode {
     match encoded {
         AUDITION_BEST_SINGLE => AuditionMode::BestSingle,
@@ -1627,7 +1707,7 @@ fn decode_audition(encoded: u32) -> AuditionMode {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
     let target = match data.target {
         MicrophoneArrayTarget::Direction {
@@ -1664,14 +1744,14 @@ fn processor_config(data: &MicrophoneArrayData) -> ProcessorConfig<'_> {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub fn start_capture(
     node_id: &str,
     data: MicrophoneArrayData,
     sources: Vec<DeviceSource>,
     bridge: BroadcastRx,
     meter: Option<MeterHandle>,
-    report_error: Arc<dyn Fn(cpal::StreamError) + Send + Sync>,
+    report_error: Arc<dyn Fn(String) + Send + Sync>,
 ) -> AppResult<Capture> {
     if sources.len() != data.sources.len() {
         return Err(AppError::Validation(
@@ -1720,14 +1800,11 @@ pub fn start_capture(
         let domain_metrics = metrics.domain(index);
         let callback_metrics = domain_metrics.clone();
         let array_metrics = metrics.clone();
-        let stream = streams::build_raw_input_stream(
-            &source.device,
-            &source.config,
-            source.sample_format,
-            source.channels,
+        let stream = start_source_stream(
+            &source,
             producer,
             Some(domain_metrics.capture.clone()),
-            move |error| {
+            Arc::new(move |error| {
                 callback_metrics
                     .stream_errors
                     .fetch_add(1, Ordering::Relaxed);
@@ -1741,7 +1818,7 @@ pub fn start_capture(
                     .fallback_reason
                     .store(ARRAY_FALLBACK_SOURCE_ERROR, Ordering::Relaxed);
                 reporter(error);
-            },
+            }),
         )?;
         domains.push(Domain::new(
             source,
@@ -1784,7 +1861,7 @@ pub fn start_capture(
     })
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub fn calibrate(
     data: MicrophoneArrayData,
     sources: Vec<DeviceSource>,
@@ -1838,14 +1915,11 @@ pub fn calibrate(
             source.id.clone(),
             data.processing_sample_rate,
         ));
-        let stream = streams::build_raw_input_stream(
-            &source.device,
-            &source.config,
-            source.sample_format,
-            source.channels,
+        let stream = start_source_stream(
+            &source,
             producer,
             None,
-            move |_| failed.store(true, Ordering::Relaxed),
+            Arc::new(move |_| failed.store(true, Ordering::Relaxed)),
         )?;
         domains.push(Domain::new(
             source,
@@ -1915,8 +1989,8 @@ pub fn calibrate(
         }
         captured += block_frames;
     }
-    for stream in &streams {
-        let _ = stream.pause();
+    for stream in &mut streams {
+        stream.stop();
     }
     if captured < total_frames {
         return Err(AppError::Stream(format!(
@@ -1951,7 +2025,7 @@ pub fn calibrate(
     calibration::apply_result(&data, &result, &stream_formats)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn run_capture_worker(
     mut domains: Vec<Domain>,
     master_index: usize,
@@ -2254,7 +2328,7 @@ fn run_capture_worker(
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrayOutput {
     BestSingle,
@@ -2264,7 +2338,7 @@ enum ArrayOutput {
     Spatial,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn delay_sample(delay: &mut [f32], frame: usize, input: f32) -> f32 {
     if delay.is_empty() {
         input
@@ -2275,7 +2349,7 @@ fn delay_sample(delay: &mut [f32], frame: usize, input: f32) -> f32 {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn array_output_sample(
     mode: ArrayOutput,
     best_single: f32,
@@ -2637,7 +2711,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn one_domain_asrc_preserves_five_sample_acoustic_tdoa() {
         let (sync, _) = simulate_sro(100.0);
@@ -2680,7 +2754,7 @@ mod tests {
         assert_eq!(best_lag, 5);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn correlation_at_lag(left: &[f32], right: &[f32], lag: isize) -> f64 {
         let mut sum = 0.0f64;
         for (index, &sample) in left.iter().enumerate() {

@@ -22,17 +22,21 @@ pub struct Capture {
 
 impl Drop for Capture {
     fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl Capture {
+    pub fn stop(&mut self) {
         let _ = self.sender.send(Terminate);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
     }
-}
 
-impl Capture {
     // Monitor of the default sink (whole-system audio).
     pub fn start_system(callback: impl FnMut(&[f32]) + Send + 'static) -> AppResult<Self> {
-        spawn(None, true, Box::new(callback))
+        spawn(None, true, 48_000, 2, Box::new(callback), None)
     }
 
     // Tap a specific app's output stream, found by binary/name.
@@ -42,7 +46,14 @@ impl Capture {
     ) -> AppResult<Self> {
         let serial = resolve_serial(binary)?
             .ok_or_else(|| AppError::Stream(format!("no audio stream found for {binary:?}")))?;
-        spawn(Some(serial.to_string()), false, Box::new(callback))
+        spawn(
+            Some(serial.to_string()),
+            false,
+            48_000,
+            2,
+            Box::new(callback),
+            None,
+        )
     }
 
     // Capture a real source node (microphone) by node.name.
@@ -50,7 +61,36 @@ impl Capture {
         node_name: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(node_name.to_string()), false, Box::new(callback))
+        spawn(
+            Some(node_name.to_string()),
+            false,
+            48_000,
+            2,
+            Box::new(callback),
+            None,
+        )
+    }
+
+    pub fn start_source_configured(
+        node_name: &str,
+        sample_rate: u32,
+        channels: u32,
+        callback: impl FnMut(&[f32]) + Send + 'static,
+        error_callback: impl Fn(String) + Send + 'static,
+    ) -> AppResult<Self> {
+        if sample_rate == 0 || channels == 0 {
+            return Err(AppError::Validation(
+                "PipeWire capture requires a non-zero sample rate and channel count".into(),
+            ));
+        }
+        spawn(
+            Some(node_name.to_string()),
+            false,
+            sample_rate,
+            channels,
+            Box::new(callback),
+            Some(Box::new(error_callback)),
+        )
     }
 
     // Capture the monitor of a specific sink by its node.name.
@@ -58,21 +98,41 @@ impl Capture {
         sink_node_name: &str,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(sink_node_name.to_string()), true, Box::new(callback))
+        spawn(
+            Some(sink_node_name.to_string()),
+            true,
+            48_000,
+            2,
+            Box::new(callback),
+            None,
+        )
     }
 }
 
 fn spawn(
     target: Option<String>,
     capture_sink: bool,
+    sample_rate: u32,
+    channels: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
+    error_callback: Option<Box<dyn Fn(String) + Send>>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
     let thread = std::thread::spawn(move || {
         // Drain the PipeWire stream on a real-time thread so delivery keeps up.
-        let _rt = RtThread::promote("capture", 48_000);
-        if let Err(e) = run(receiver, target, capture_sink, callback) {
+        let _rt = RtThread::promote("capture", sample_rate);
+        if let Err(e) = run(
+            receiver,
+            target,
+            capture_sink,
+            sample_rate,
+            channels,
+            callback,
+        ) {
             tracing::error!("pipewire capture: {e:?}");
+            if let Some(report) = error_callback {
+                report(e.to_string());
+            }
         }
     });
     Ok(Capture {
@@ -85,6 +145,8 @@ fn run(
     receiver: pw::channel::Receiver<Terminate>,
     target: Option<String>,
     capture_sink: bool,
+    sample_rate: u32,
+    channels: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
@@ -138,8 +200,8 @@ fn run(
 
     let mut audio_info = AudioInfoRaw::new();
     audio_info.set_format(AudioFormat::F32LE);
-    audio_info.set_rate(48_000);
-    audio_info.set_channels(2);
+    audio_info.set_rate(sample_rate);
+    audio_info.set_channels(channels);
 
     let obj = spa::pod::Object {
         type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),

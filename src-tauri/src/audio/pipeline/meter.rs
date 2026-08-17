@@ -17,7 +17,6 @@ const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
 const GR_EVENT: &str = "audio://gr";
 const SCOPE_EVENT: &str = "audio://scope";
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 const MICROPHONE_ARRAY_METRICS_EVENT: &str = "audio://microphone-array-metrics";
 const METER_TICK: Duration = Duration::from_millis(33);
 
@@ -340,16 +339,13 @@ pub(super) fn spawn_meter_thread(
     lufs: Vec<LufsHandle>,
     gr_handles: Vec<GrHandle>,
     scopes: Vec<WaveformHandle>,
-    #[cfg(any(target_os = "macos", target_os = "windows"))] array_metrics: Vec<
-        crate::audio::microphone_array::MicrophoneArrayMetricsHandle,
-    >,
+    array_metrics: Vec<crate::audio::microphone_array::MicrophoneArrayMetricsHandle>,
 ) -> MeterTickThread {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let join = thread::Builder::new()
         .name("meter-tick".into())
         .spawn(move || {
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
             let mut array_tick = 0u8;
             while !stop_thread.load(Ordering::SeqCst) {
                 thread::sleep(METER_TICK);
@@ -410,13 +406,10 @@ pub(super) fn spawn_meter_thread(
                         }),
                     );
                 }
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                {
-                    array_tick = array_tick.wrapping_add(1);
-                    if array_tick.is_multiple_of(4) {
-                        for metrics in &array_metrics {
-                            let _ = app.emit(MICROPHONE_ARRAY_METRICS_EVENT, metrics.snapshot());
-                        }
+                array_tick = array_tick.wrapping_add(1);
+                if array_tick.is_multiple_of(4) {
+                    for metrics in &array_metrics {
+                        let _ = app.emit(MICROPHONE_ARRAY_METRICS_EVENT, metrics.snapshot());
                     }
                 }
             }

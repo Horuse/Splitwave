@@ -1,13 +1,16 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tauri::AppHandle;
-use tracing::info;
+use serde_json::json;
+use tauri::{AppHandle, Emitter};
+use tracing::{error, info};
 
 use crate::audio::graph::{InputSpec, ValidInput};
+use crate::audio::health;
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
 
+use super::super::STATE_EVENT;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
 
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
@@ -16,9 +19,7 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             node_id: device_id.clone(),
             sample_rate: 48_000,
         }),
-        InputSpec::MicrophoneArray { .. } => Err(crate::error::AppError::Stream(
-            "Microphone Array capture has not been started for this platform".into(),
-        )),
+        InputSpec::MicrophoneArray { data } => super::resolve_microphone_array(data),
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {
@@ -63,6 +64,26 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 crate::audio::capture::Capture::start_source(&node_id, cb)?
             };
             Ok(InputHandle::Capture(capture))
+        }
+        ResolvedInput::MicrophoneArray { data, sources } => {
+            let app_err = app.clone();
+            let report_error: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |error| {
+                health::bump(&health::STREAM_ERRORS, 1);
+                error!(%error, "Microphone Array PipeWire source stream error");
+                let _ = app_err.emit(
+                    STATE_EVENT,
+                    json!({ "kind": "error", "message": format!("microphone array: {error}") }),
+                );
+            });
+            let capture = crate::audio::microphone_array::start_capture(
+                node_id,
+                data,
+                sources,
+                bridge,
+                meter,
+                report_error,
+            )?;
+            Ok(InputHandle::MicrophoneArray(capture))
         }
         ResolvedInput::SystemAudio { .. } => {
             info!("starting system-audio capture (PipeWire sink monitor)");

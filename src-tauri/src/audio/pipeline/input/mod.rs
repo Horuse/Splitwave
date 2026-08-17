@@ -2,11 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::device::{self, DeviceKind};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::graph::MicrophoneArrayData;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::microphone_array::DeviceSource;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
@@ -48,14 +45,13 @@ pub(super) const SCK_SR: u32 = 48_000;
 pub(super) enum InputHandle {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     Cpal(cpal::Stream),
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     MicrophoneArray(crate::audio::microphone_array::Capture),
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
 }
 
 impl InputHandle {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) fn microphone_array_metrics(
         &self,
     ) -> Option<crate::audio::microphone_array::MicrophoneArrayMetricsHandle> {
@@ -92,7 +88,7 @@ pub(super) enum ResolvedInput {
         src_channels: usize,
         sample_rate: u32,
     },
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     MicrophoneArray {
         data: MicrophoneArrayData,
         sources: Vec<DeviceSource>,
@@ -124,7 +120,7 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { sample_rate, .. } => *sample_rate,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             ResolvedInput::MicrophoneArray { data, .. } => data.processing_sample_rate,
             #[cfg(target_os = "linux")]
             ResolvedInput::PwSource { sample_rate, .. } => *sample_rate,
@@ -140,7 +136,7 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             ResolvedInput::MicrophoneArray { .. } => 1,
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
             _ => 2,
@@ -148,7 +144,6 @@ impl ResolvedInput {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) fn resolve_microphone_array(data: &MicrophoneArrayData) -> AppResult<ResolvedInput> {
     let mut sources = Vec::with_capacity(data.sources.len());
     for source in &data.sources {
@@ -158,16 +153,35 @@ pub(super) fn resolve_microphone_array(data: &MicrophoneArrayData) -> AppResult<
                 source.id
             ))
         })?;
-        let device = device::find(DeviceKind::Input, device_id)?;
-        let native = native_config(DeviceKind::Input, &device, device_id)?;
-        sources.push(DeviceSource {
-            id: source.id.clone(),
-            device,
-            config: native.config,
-            sample_format: native.sample_format,
-            channels: native.channels as usize,
-            sample_rate: native.sample_rate,
-        });
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let device = device::find(DeviceKind::Input, device_id)?;
+            let native = native_config(DeviceKind::Input, &device, device_id)?;
+            sources.push(DeviceSource {
+                id: source.id.clone(),
+                device,
+                config: native.config,
+                sample_format: native.sample_format,
+                channels: native.channels as usize,
+                sample_rate: native.sample_rate,
+            });
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if device_id.starts_with("monitor:") {
+                return Err(crate::error::AppError::Validation(
+                    "Microphone Array requires physical PipeWire source nodes, not sink monitors"
+                        .into(),
+                ));
+            }
+            let native = device::device_info(DeviceKind::Input, device_id)?;
+            sources.push(DeviceSource {
+                id: source.id.clone(),
+                node_name: device_id.to_string(),
+                channels: native.channels as usize,
+                sample_rate: native.sample_rate,
+            });
+        }
     }
     let stream_formats: Vec<_> = sources
         .iter()
@@ -188,7 +202,6 @@ pub(super) fn resolve_microphone_array(data: &MicrophoneArrayData) -> AppResult<
     Ok(ResolvedInput::MicrophoneArray { data, sources })
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) fn calibrate_microphone_array(
     data: MicrophoneArrayData,
 ) -> AppResult<MicrophoneArrayData> {
@@ -197,15 +210,6 @@ pub(super) fn calibrate_microphone_array(
         unreachable!("Microphone Array resolver returned another input kind")
     };
     crate::audio::microphone_array::calibrate(data, sources)
-}
-
-#[cfg(target_os = "linux")]
-pub(super) fn calibrate_microphone_array(
-    _data: crate::audio::graph::MicrophoneArrayData,
-) -> AppResult<crate::audio::graph::MicrophoneArrayData> {
-    Err(crate::error::AppError::Validation(
-        "Microphone Array calibration is not supported by the PipeWire backend yet".into(),
-    ))
 }
 
 /// Shared file probe -- both platforms resolve audio files identically.

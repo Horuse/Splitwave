@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::thread::{self, JoinHandle};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
@@ -31,8 +31,6 @@ use crate::audio::health;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::input_bridge::BroadcastRx;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::resample::MultiResamplerOut;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::audio::streams;
@@ -40,12 +38,18 @@ use crate::audio::streams;
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const FRACTIONAL_DELAY_ORDER: usize = 3;
 const HISTORY_FRAMES: usize = 2048;
-const MAX_CLOCK_CORRECTION_PPM: f64 = 500.0;
+const MAX_CLOCK_CORRECTION_PPM: f64 = 1_000.0;
+const MAX_CLOCK_SLEW_PPM: f64 = 5.0;
+const SYNC_READY_UPDATES: u32 = 20;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const ARRAY_RING_CAPACITY_FRAMES: usize = 48_000;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const ARRAY_WAIT: Duration = Duration::from_millis(1);
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const ARRAY_BLOCK_FRAMES: usize = 256;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const SYNC_TARGET_FRAMES: usize = 3_072;
 
 /// Bounded occupancy PLL for one slave clock-domain. Its ratio is shared by
 /// every channel of that physical stream, so resampling cannot change their
@@ -55,6 +59,8 @@ pub struct DomainSynchronizer {
     ratio: f64,
     target_frames: f64,
     integral: f64,
+    stable_updates: u32,
+    discontinuities: u64,
 }
 
 impl DomainSynchronizer {
@@ -70,6 +76,8 @@ impl DomainSynchronizer {
             ratio: base_ratio,
             target_frames: target_frames as f64,
             integral: 0.0,
+            stable_updates: 0,
+            discontinuities: 0,
         })
     }
 
@@ -78,17 +86,43 @@ impl DomainSynchronizer {
     /// slightly more slave frames on the next output block.
     pub fn update(&mut self, available_frames: usize) -> f64 {
         let error = (available_frames as f64 - self.target_frames) / self.target_frames;
-        self.integral = (self.integral + error * 0.000_02).clamp(-0.0005, 0.0005);
-        let correction = (-error * 0.000_5 - self.integral).clamp(
+        self.integral = (self.integral + error * 0.000_002).clamp(-0.0005, 0.0005);
+        let correction = (-error * 0.005 - self.integral).clamp(
             -MAX_CLOCK_CORRECTION_PPM / 1_000_000.0,
             MAX_CLOCK_CORRECTION_PPM / 1_000_000.0,
         );
-        self.ratio = self.base_ratio * (1.0 + correction);
+        let requested = self.base_ratio * (1.0 + correction);
+        let max_step = self.base_ratio * MAX_CLOCK_SLEW_PPM / 1_000_000.0;
+        self.ratio += (requested - self.ratio).clamp(-max_step, max_step);
+        if error.abs() <= 0.25 {
+            self.stable_updates = self.stable_updates.saturating_add(1);
+        } else {
+            self.stable_updates = 0;
+        }
         self.ratio
     }
 
     pub fn ratio(&self) -> f64 {
         self.ratio
+    }
+
+    pub fn correction_ppm(&self) -> f64 {
+        (self.ratio / self.base_ratio - 1.0) * 1_000_000.0
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.stable_updates >= SYNC_READY_UPDATES
+    }
+
+    pub fn reset(&mut self) {
+        self.ratio = self.base_ratio;
+        self.integral = 0.0;
+        self.stable_updates = 0;
+        self.discontinuities = self.discontinuities.saturating_add(1);
+    }
+
+    pub fn discontinuities(&self) -> u64 {
+        self.discontinuities
     }
 }
 
@@ -281,6 +315,16 @@ impl Processor {
     /// Processes `frames` planar samples into one mono block. `input` must have
     /// one plane for every configured member, including disabled members.
     pub fn process(&mut self, input: &[f32], frames: usize, output: &mut [f32]) -> AppResult<()> {
+        self.process_with_adaptation(input, frames, output, true)
+    }
+
+    fn process_with_adaptation(
+        &mut self,
+        input: &[f32],
+        frames: usize,
+        output: &mut [f32],
+        adapt: bool,
+    ) -> AppResult<()> {
         if output.len() < frames {
             return Err(AppError::Validation(
                 "Microphone Array output block is too small".into(),
@@ -310,6 +354,7 @@ impl Processor {
                         &self.history,
                         self.history_head,
                         &self.delays,
+                        adapt,
                     );
                     fixed + (cancelled - fixed) * self.strength
                 }
@@ -368,6 +413,7 @@ impl Gsc {
         samples: &[f32],
         head: usize,
         delays: &[f32],
+        adapt: bool,
     ) -> f32 {
         let channels = active.len();
         let reference = delayed_from_history(samples, channels - 1, head, delays[channels - 1]);
@@ -390,19 +436,21 @@ impl Gsc {
             self.max_correction.max(0.01),
         );
         let output = fixed - bounded * self.max_correction;
-        let residual = output;
-        let slowdown = if fixed.abs() > 1.5 * (norm.sqrt() / channels as f32) {
-            0.1
-        } else {
-            1.0
-        };
-        let step = self.adaptation_rate * slowdown * residual / norm;
-        for channel in 0..channels - 1 {
-            for tap in 0..self.filter_len {
-                let index = (self.head + self.filter_len - tap) % self.filter_len;
-                let value = self.history[channel * self.filter_len + index];
-                let coefficient = &mut self.coeffs[channel * self.filter_len + tap];
-                *coefficient = (*coefficient + step * value).clamp(-4.0, 4.0);
+        if adapt {
+            let residual = output;
+            let slowdown = if fixed.abs() > 1.5 * (norm.sqrt() / channels as f32) {
+                0.1
+            } else {
+                1.0
+            };
+            let step = self.adaptation_rate * slowdown * residual / norm;
+            for channel in 0..channels - 1 {
+                for tap in 0..self.filter_len {
+                    let index = (self.head + self.filter_len - tap) % self.filter_len;
+                    let value = self.history[channel * self.filter_len + index];
+                    let coefficient = &mut self.coeffs[channel * self.filter_len + tap];
+                    *coefficient = (*coefficient + step * value).clamp(-4.0, 4.0);
+                }
             }
         }
         self.head = (self.head + 1) % self.filter_len;
@@ -508,6 +556,7 @@ struct Domain {
     synchronizer: Option<DomainSynchronizer>,
     input: Vec<f32>,
     output: Vec<f32>,
+    healthy: bool,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -521,17 +570,13 @@ impl Domain {
         let resampler = MultiResamplerOut::new(
             source.sample_rate,
             processing_rate,
-            DSP_BLOCK_FRAMES,
+            ARRAY_BLOCK_FRAMES,
             source.channels,
         )?;
         let input_capacity = resampler.input_frames_max() * source.channels;
         let synchronizer = (!is_master)
             .then(|| {
-                DomainSynchronizer::new(
-                    source.sample_rate,
-                    processing_rate,
-                    ARRAY_RING_CAPACITY_FRAMES / 4,
-                )
+                DomainSynchronizer::new(source.sample_rate, processing_rate, SYNC_TARGET_FRAMES)
             })
             .transpose()?;
         Ok(Self {
@@ -540,7 +585,8 @@ impl Domain {
             resampler,
             synchronizer,
             input: Vec::with_capacity(input_capacity),
-            output: Vec::with_capacity(DSP_BLOCK_FRAMES * source.channels),
+            output: Vec::with_capacity(ARRAY_BLOCK_FRAMES * source.channels),
+            healthy: false,
         })
     }
 
@@ -550,6 +596,18 @@ impl Domain {
 
     fn next_input_frames(&self) -> usize {
         self.resampler.input_frames_next()
+    }
+
+    fn has_next_block(&self) -> bool {
+        self.available_frames() >= self.next_input_frames()
+    }
+
+    fn is_locked(&self) -> bool {
+        self.healthy
+            && self
+                .synchronizer
+                .as_ref()
+                .is_none_or(DomainSynchronizer::is_ready)
     }
 
     /// Produces one common-rate block. The master domain is allowed to gate the
@@ -563,6 +621,7 @@ impl Domain {
         }
         let input_frames = self.resampler.input_frames_next();
         if require_full_input && self.available_frames() < input_frames {
+            self.healthy = false;
             return false;
         }
         let want = input_frames * self.channels;
@@ -582,11 +641,18 @@ impl Domain {
         }
         if have < want {
             health::bump(&health::ARRAY_SOURCE_UNDERRUN_SAMPLES, (want - have) as u64);
+            if let Some(synchronizer) = &mut self.synchronizer {
+                synchronizer.reset();
+            }
         }
         self.output.clear();
-        self.resampler
+        let processed = self
+            .resampler
             .process(&self.input, &mut self.output)
-            .is_ok()
+            .is_ok();
+        self.healthy =
+            have == want && processed && self.output.len() == ARRAY_BLOCK_FRAMES * self.channels;
+        processed
     }
 }
 
@@ -711,6 +777,8 @@ pub fn start_capture(
                 master_index,
                 member_domains,
                 data.members,
+                data.processing_sample_rate,
+                data.bypassed,
                 processor,
                 bridge,
                 meter,
@@ -731,39 +799,88 @@ fn run_capture_worker(
     master_index: usize,
     member_domains: Vec<usize>,
     members: Vec<MicrophoneArrayMember>,
+    sample_rate: u32,
+    bypassed: bool,
     mut processor: Processor,
     mut bridge: BroadcastRx,
     meter: Option<MeterHandle>,
     stop: Arc<AtomicBool>,
 ) {
-    let mut planar = vec![0.0; members.len() * DSP_BLOCK_FRAMES];
-    let mut mono = vec![0.0; DSP_BLOCK_FRAMES];
+    let mut planar = vec![0.0; members.len() * ARRAY_BLOCK_FRAMES];
+    let mut spatial = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut mono = vec![0.0; ARRAY_BLOCK_FRAMES];
+    let mut startup_aligned = domains.len() == 1;
+    let startup_started = Instant::now();
+    let fade_step = 1.0 / (sample_rate.max(1) as f32 * 0.02);
+    let mut spatial_mix = 0.0f32;
     while !stop.load(Ordering::SeqCst) {
-        if domains[master_index].available_frames() < domains[master_index].next_input_frames() {
+        if !startup_aligned {
+            startup_aligned = domains
+                .iter()
+                .all(|domain| domain.available_frames() >= SYNC_TARGET_FRAMES)
+                || startup_started.elapsed() >= Duration::from_millis(500);
+            if !startup_aligned {
+                thread::sleep(ARRAY_WAIT);
+                continue;
+            }
+        }
+        let clock_index = if domains[master_index].has_next_block() {
+            Some(master_index)
+        } else {
+            domains.iter().position(Domain::has_next_block)
+        };
+        let Some(clock_index) = clock_index else {
             thread::sleep(ARRAY_WAIT);
             continue;
-        }
-        if !domains[master_index].fill(true) {
+        };
+        if !domains[clock_index].fill(true) {
             continue;
         }
         for (index, domain) in domains.iter_mut().enumerate() {
-            if index != master_index {
+            if index != clock_index {
                 let _ = domain.fill(false);
             }
         }
         for (member_index, member) in members.iter().enumerate() {
             let domain = &domains[member_domains[member_index]];
             let channel = member.channel_index as usize;
-            for frame in 0..DSP_BLOCK_FRAMES {
-                planar[member_index * DSP_BLOCK_FRAMES + frame] =
+            for frame in 0..ARRAY_BLOCK_FRAMES {
+                planar[member_index * ARRAY_BLOCK_FRAMES + frame] =
                     domain.output[frame * domain.channels + channel];
             }
         }
+        let spatial_ready = !bypassed && domains.iter().all(Domain::is_locked);
         if processor
-            .process(&planar, DSP_BLOCK_FRAMES, &mut mono)
+            .process_with_adaptation(&planar, ARRAY_BLOCK_FRAMES, &mut spatial, spatial_ready)
             .is_err()
         {
             break;
+        }
+        let fallback_member = members
+            .iter()
+            .enumerate()
+            .find(|(index, member)| {
+                member.enabled
+                    && member.quality
+                        != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded
+                    && domains[member_domains[*index]].healthy
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        let fallback = &planar
+            [fallback_member * ARRAY_BLOCK_FRAMES..(fallback_member + 1) * ARRAY_BLOCK_FRAMES];
+        let member = &members[fallback_member];
+        let gain = 10.0_f32.powf(member.gain_db.clamp(-24.0, 24.0) / 20.0)
+            * if member.polarity_inverted { -1.0 } else { 1.0 };
+        let target_mix = if spatial_ready { 1.0 } else { 0.0 };
+        for frame in 0..ARRAY_BLOCK_FRAMES {
+            if spatial_mix < target_mix {
+                spatial_mix = (spatial_mix + fade_step).min(target_mix);
+            } else if spatial_mix > target_mix {
+                spatial_mix = (spatial_mix - fade_step).max(target_mix);
+            }
+            let dry = fallback[frame] * gain;
+            mono[frame] = dry + (spatial[frame] - dry) * spatial_mix;
         }
         bridge.apply_commands();
         if let Some(meter) = &meter {
@@ -910,5 +1027,84 @@ mod tests {
         let corrected = sync.update(5_040);
         assert!(corrected < initial);
         assert!(corrected > initial * (1.0 - MAX_CLOCK_CORRECTION_PPM / 1_000_000.0));
+    }
+
+    fn simulate_sro(ppm: f64) -> (DomainSynchronizer, f64) {
+        let target = 3_072usize;
+        let frames = 480.0;
+        let produced = frames * (1.0 + ppm / 1_000_000.0);
+        let mut occupancy = target as f64 - frames;
+        let mut sync = DomainSynchronizer::new(48_000, 48_000, target).unwrap();
+        for _ in 0..60_000 {
+            occupancy += produced;
+            let ratio = sync.update(occupancy.floor().max(0.0) as usize);
+            occupancy -= frames / ratio;
+        }
+        (sync, occupancy + produced)
+    }
+
+    #[test]
+    fn synchronizer_holds_occupancy_for_plus_and_minus_100_ppm() {
+        for ppm in [-100.0, 100.0] {
+            let (sync, top_occupancy) = simulate_sro(ppm);
+            assert!(sync.is_ready());
+            assert!((top_occupancy - 3_072.0).abs() < 2.0);
+            assert!((sync.correction_ppm() + ppm).abs() < 2.0);
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn one_domain_asrc_preserves_five_sample_acoustic_tdoa() {
+        let (sync, _) = simulate_sro(100.0);
+        let mut resampler = MultiResamplerOut::new(48_000, 48_000, 256, 2).unwrap();
+        resampler.set_ratio(sync.ratio());
+        let mut noise = Vec::new();
+        let mut state = 0x1234_5678u32;
+        let mut input_offset = 0usize;
+        let mut interleaved_output = Vec::new();
+        for _ in 0..100 {
+            let need = resampler.input_frames_next();
+            while noise.len() < input_offset + need {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                noise.push((state as f32 / u32::MAX as f32) * 2.0 - 1.0);
+            }
+            let mut input = Vec::with_capacity(need * 2);
+            for frame in input_offset..input_offset + need {
+                input.push(noise[frame]);
+                input.push(if frame >= 5 { noise[frame - 5] } else { 0.0 });
+            }
+            resampler.process(&input, &mut interleaved_output).unwrap();
+            input_offset += need;
+        }
+        let left: Vec<f32> = interleaved_output
+            .chunks_exact(2)
+            .skip(1_024)
+            .map(|frame| frame[0])
+            .collect();
+        let right: Vec<f32> = interleaved_output
+            .chunks_exact(2)
+            .skip(1_024)
+            .map(|frame| frame[1])
+            .collect();
+        let best_lag = (-8isize..=8)
+            .max_by(|&a, &b| {
+                correlation_at_lag(&left, &right, a)
+                    .total_cmp(&correlation_at_lag(&left, &right, b))
+            })
+            .unwrap();
+        assert_eq!(best_lag, 5);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn correlation_at_lag(left: &[f32], right: &[f32], lag: isize) -> f64 {
+        let mut sum = 0.0f64;
+        for (index, &sample) in left.iter().enumerate() {
+            let other = index as isize + lag;
+            if (0..right.len() as isize).contains(&other) {
+                sum += sample as f64 * right[other as usize] as f64;
+            }
+        }
+        sum
     }
 }

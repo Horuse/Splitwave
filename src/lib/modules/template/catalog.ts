@@ -98,6 +98,30 @@ export const TEMPLATES: Template[] = [
 		]
 	},
 	{
+		id: 'spatial_voice_multimic',
+		accent: 'emerald',
+		name: 'Spatial Voice — Multi-Mic',
+		description: 'A setup-ready microphone array with spatial focus, denoise, compression and voice EQ.',
+		nodes: [
+			{ key: 'array', kind: 'microphoneArray', position: { x: 0, y: 0 } },
+			{ key: 'ns', kind: 'noiseSuppressor', position: { x: COL, y: 0 } },
+			{ key: 'comp', kind: 'compressor', position: { x: COL * 2, y: 0 } },
+			{
+				key: 'eq',
+				kind: 'eq',
+				position: { x: COL * 3, y: 0 },
+				data: { gainsDb: [-3, -2, -1, 0, 1, 2, 2, 1, 0, -1] }
+			},
+			{ key: 'spk', kind: 'speaker', position: { x: COL * 4, y: 0 } }
+		],
+		edges: [
+			{ from: 'array', to: 'ns' },
+			{ from: 'ns', to: 'comp' },
+			{ from: 'comp', to: 'eq' },
+			{ from: 'eq', to: 'spk' }
+		]
+	},
+	{
 		id: 'full-voice-and-ducking',
 		accent: 'rose',
 		name: 'Full voice + ducking',

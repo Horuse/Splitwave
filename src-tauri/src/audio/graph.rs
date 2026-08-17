@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::error::{AppError, AppResult};
@@ -139,7 +139,7 @@ fn default_array_max_attenuation() -> f32 {
     18.0
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneArraySource {
@@ -149,7 +149,7 @@ pub struct MicrophoneArraySource {
     pub label: String,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneArrayPoint {
@@ -161,7 +161,7 @@ pub struct MicrophoneArrayPoint {
     pub z: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 #[ts(export)]
 pub enum MicrophoneArrayGeometry {
@@ -201,7 +201,7 @@ impl Default for MicrophoneArrayGeometry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 #[ts(export)]
 pub enum MicrophoneArrayTarget {
@@ -230,7 +230,7 @@ impl Default for MicrophoneArrayTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum MicrophoneArrayAlgorithm {
@@ -246,7 +246,7 @@ impl Default for MicrophoneArrayAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum MicrophoneArrayChannelQuality {
@@ -261,7 +261,7 @@ impl Default for MicrophoneArrayChannelQuality {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneArrayMember {
@@ -287,7 +287,7 @@ pub struct MicrophoneArrayMember {
     pub exclusion_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum MicrophoneArrayCalibrationState {
@@ -302,7 +302,7 @@ impl Default for MicrophoneArrayCalibrationState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneArrayCalibration {
@@ -327,7 +327,7 @@ impl Default for MicrophoneArrayCalibration {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct MicrophoneArrayData {
@@ -1503,9 +1503,9 @@ fn validate_microphone_array(data: &MicrophoneArrayData) -> AppResult<()> {
             member.enabled && member.quality != MicrophoneArrayChannelQuality::Excluded,
         );
     }
-    if enabled == 0 {
+    if enabled < 2 {
         return Err(AppError::Validation(
-            "Microphone Array needs at least one enabled, non-excluded member".into(),
+            "Microphone Array needs at least two enabled, non-excluded members".into(),
         ));
     }
     Ok(())
@@ -1732,6 +1732,17 @@ mod tests {
     fn microphone_array_rejects_duplicate_physical_channels() {
         let mut array = microphone_array("array", 1, 2);
         array.data["members"][1]["channelIndex"] = serde_json::json!(0);
+        let g = GraphSpec {
+            nodes: vec![array, speaker("speaker")],
+            edges: vec![edge("array-speaker", "array", None, "speaker", None)],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn microphone_array_requires_two_usable_members() {
+        let mut array = microphone_array("array", 1, 2);
+        array.data["members"][1]["enabled"] = serde_json::json!(false);
         let g = GraphSpec {
             nodes: vec![array, speaker("speaker")],
             edges: vec![edge("array-speaker", "array", None, "speaker", None)],

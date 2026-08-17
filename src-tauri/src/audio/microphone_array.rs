@@ -900,6 +900,166 @@ pub fn start_capture(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn calibrate(
+    data: MicrophoneArrayData,
+    sources: Vec<DeviceSource>,
+) -> AppResult<MicrophoneArrayData> {
+    const CAPTURE_SECONDS: usize = 3;
+    if sources.len() != data.sources.len() {
+        return Err(AppError::Validation(
+            "Microphone Array calibration did not resolve every source".into(),
+        ));
+    }
+    let master_index = data
+        .master_source_id
+        .as_deref()
+        .and_then(|id| data.sources.iter().position(|source| source.id == id))
+        .unwrap_or(0);
+    let mut member_domains = Vec::with_capacity(data.members.len());
+    for member in &data.members {
+        let domain = sources
+            .iter()
+            .position(|source| source.id == member.source_id)
+            .ok_or_else(|| {
+                AppError::Validation("Microphone Array calibration source disappeared".into())
+            })?;
+        if member.channel_index as usize >= sources[domain].channels {
+            return Err(AppError::Validation(format!(
+                "Microphone Array channel {} is unavailable on source {}",
+                member.channel_index, sources[domain].id
+            )));
+        }
+        member_domains.push(domain);
+    }
+    let stream_formats: Vec<(String, u32, u16)> = sources
+        .iter()
+        .map(|source| {
+            (
+                source.id.clone(),
+                source.sample_rate,
+                source.channels.min(u16::MAX as usize) as u16,
+            )
+        })
+        .collect();
+    let stream_error = Arc::new(AtomicBool::new(false));
+    let mut domains = Vec::with_capacity(sources.len());
+    let mut streams = Vec::with_capacity(sources.len());
+    for (index, source) in sources.into_iter().enumerate() {
+        let (producer, consumer) =
+            RingBuffer::<f32>::new(ARRAY_RING_CAPACITY_FRAMES * source.channels);
+        let failed = stream_error.clone();
+        let stream = streams::build_raw_input_stream(
+            &source.device,
+            &source.config,
+            source.sample_format,
+            source.channels,
+            producer,
+            move |_| failed.store(true, Ordering::Relaxed),
+        )?;
+        domains.push(Domain::new(
+            source,
+            consumer,
+            data.processing_sample_rate,
+            index == master_index,
+        )?);
+        streams.push(stream);
+    }
+
+    let total_frames = data.processing_sample_rate as usize * CAPTURE_SECONDS;
+    let mut planar = vec![0.0; data.members.len() * total_frames];
+    let mut captured = 0usize;
+    let startup_started = Instant::now();
+    let deadline = startup_started + Duration::from_secs((CAPTURE_SECONDS + 5) as u64);
+    let mut startup_aligned = domains.len() == 1;
+    while captured < total_frames && Instant::now() < deadline {
+        if stream_error.load(Ordering::Relaxed) {
+            return Err(AppError::Stream(
+                "a Microphone Array device failed during calibration".into(),
+            ));
+        }
+        if !startup_aligned {
+            startup_aligned = domains
+                .iter()
+                .all(|domain| domain.available_frames() >= SYNC_TARGET_FRAMES)
+                || startup_started.elapsed() >= Duration::from_millis(500);
+            if !startup_aligned {
+                thread::sleep(ARRAY_WAIT);
+                continue;
+            }
+        }
+        let clock_index = if domains[master_index].has_next_block() {
+            Some(master_index)
+        } else {
+            domains.iter().position(Domain::has_next_block)
+        };
+        let Some(clock_index) = clock_index else {
+            thread::sleep(ARRAY_WAIT);
+            continue;
+        };
+        if !domains[clock_index].fill(true) {
+            captured = 0;
+            continue;
+        }
+        for (index, domain) in domains.iter_mut().enumerate() {
+            if index != clock_index {
+                let _ = domain.fill(false);
+            }
+        }
+        if domains.iter_mut().any(Domain::take_discontinuity)
+            || !domains.iter().all(Domain::is_locked)
+        {
+            captured = 0;
+            continue;
+        }
+        let block_frames = ARRAY_BLOCK_FRAMES.min(total_frames - captured);
+        for (member_index, member) in data.members.iter().enumerate() {
+            let domain = &domains[member_domains[member_index]];
+            let channel = member.channel_index as usize;
+            let destination = &mut planar[member_index * total_frames + captured
+                ..member_index * total_frames + captured + block_frames];
+            for (frame, sample) in destination.iter_mut().enumerate() {
+                *sample = domain.output[frame * domain.channels + channel];
+            }
+        }
+        captured += block_frames;
+    }
+    for stream in &streams {
+        let _ = stream.pause();
+    }
+    if captured < total_frames {
+        return Err(AppError::Stream(format!(
+            "Microphone Array calibration captured {captured} of {total_frames} synchronized frames"
+        )));
+    }
+
+    let config = calibration::CalibrationConfig {
+        sample_rate: data.processing_sample_rate,
+        positions: data
+            .members
+            .iter()
+            .map(|member| Point3 {
+                x: member.position.x,
+                y: member.position.y,
+                z: member.position.z,
+            })
+            .collect(),
+        target: processor_config(&data).target,
+        enabled: data
+            .members
+            .iter()
+            .map(|member| {
+                member.enabled
+                    && member.quality
+                        != crate::audio::graph::MicrophoneArrayChannelQuality::Excluded
+            })
+            .collect(),
+        independent_devices: data.sources.len() > 1,
+    };
+    let result = calibration::analyze(&config, &planar, total_frames)?;
+    calibration::apply_result(&data, &result, &stream_formats)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn run_capture_worker(
     mut domains: Vec<Domain>,
     master_index: usize,

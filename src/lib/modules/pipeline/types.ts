@@ -14,6 +14,7 @@ import type { SpectrumData } from './generated/SpectrumData';
 import type { DeclickData } from './generated/DeclickData';
 import type { DeEsserData } from './generated/DeEsserData';
 import type { MicrophoneData } from './generated/MicrophoneData';
+import type { MicrophoneArrayData } from './generated/MicrophoneArrayData';
 import type { NetReceiverData } from './generated/NetReceiverData';
 import type { NetSenderData } from './generated/NetSenderData';
 import type { MuteData } from './generated/MuteData';
@@ -30,6 +31,15 @@ export type { AiffBitDepth } from './generated/AiffBitDepth';
 export type { FlacBitDepth } from './generated/FlacBitDepth';
 export type { FlacCompression } from './generated/FlacCompression';
 export type { NetCodec } from './generated/NetCodec';
+export type { MicrophoneArrayAlgorithm } from './generated/MicrophoneArrayAlgorithm';
+export type { MicrophoneArrayCalibration } from './generated/MicrophoneArrayCalibration';
+export type { MicrophoneArrayCalibrationState } from './generated/MicrophoneArrayCalibrationState';
+export type { MicrophoneArrayChannelQuality } from './generated/MicrophoneArrayChannelQuality';
+export type { MicrophoneArrayGeometry } from './generated/MicrophoneArrayGeometry';
+export type { MicrophoneArrayMember } from './generated/MicrophoneArrayMember';
+export type { MicrophoneArrayPoint } from './generated/MicrophoneArrayPoint';
+export type { MicrophoneArraySource } from './generated/MicrophoneArraySource';
+export type { MicrophoneArrayTarget } from './generated/MicrophoneArrayTarget';
 export type { NodeKind } from './generated/NodeKind';
 export type { OpusApplication } from './generated/OpusApplication';
 export type { RecordingFormat } from './generated/RecordingFormat';
@@ -44,6 +54,7 @@ export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect'
 type XyData<T> = T & Record<string, unknown>;
 
 export type MicrophoneNodeData = XyData<MicrophoneData>;
+export type MicrophoneArrayNodeData = XyData<MicrophoneArrayData>;
 export type SystemAudioNodeData = XyData<SystemAudioData>;
 export type AppAudioNodeData = XyData<AppAudioData>;
 export type AudioFileNodeData = XyData<AudioFileData>;
@@ -93,6 +104,7 @@ export type LufsMeterNodeData = XyData<LufsMeterData & { target: number | null; 
 
 export type NodeDataMap = {
 	microphone: MicrophoneNodeData;
+	microphoneArray: MicrophoneArrayNodeData;
 	systemAudio: SystemAudioNodeData;
 	appAudio: AppAudioNodeData;
 	audioFile: AudioFileNodeData;

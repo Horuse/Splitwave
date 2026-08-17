@@ -54,6 +54,12 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
+pub(crate) fn calibrate_microphone_array(
+    data: crate::audio::graph::MicrophoneArrayData,
+) -> AppResult<crate::audio::graph::MicrophoneArrayData> {
+    input::calibrate_microphone_array(data)
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) const STATE_EVENT: &str = "audio://state";
 

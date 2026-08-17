@@ -234,6 +234,7 @@ pub fn run() {
             commands::uninstall_virtual_driver,
             commands::apply_virtual_devices,
             commands::device_info,
+            commands::calibrate_microphone_array,
             commands::check_capture_permission,
             commands::path_exists,
             commands::is_pipeline_running,

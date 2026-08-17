@@ -31,6 +31,7 @@ import {
 } from '$lib/components/icons';
 import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '$lib/modules/pipeline/types';
 import Microphone from '../ui/input/microphone.svelte';
+import MicrophoneArray from '../ui/input/microphone_array.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
 import AppAudio from '../ui/input/app_audio.svelte';
 import AudioFile from '../ui/input/audio_file.svelte';
@@ -86,6 +87,15 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Microphone,
 		icon: MicIcon,
 		defaultData: DEFAULT_NODE_DATA['microphone']
+	}),
+	microphoneArray: entry<'microphoneArray'>({
+		kind: 'microphoneArray',
+		category: 'input',
+		label: 'Microphone Array',
+		description: 'Focus two or more physical input channels into one calibrated spatial microphone.',
+		component: MicrophoneArray,
+		icon: MicIcon,
+		defaultData: DEFAULT_NODE_DATA['microphoneArray']
 	}),
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',

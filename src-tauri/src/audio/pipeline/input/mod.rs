@@ -163,6 +163,26 @@ pub(super) fn resolve_microphone_array(data: &MicrophoneArrayData) -> AppResult<
     })
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(super) fn calibrate_microphone_array(
+    data: MicrophoneArrayData,
+) -> AppResult<MicrophoneArrayData> {
+    let resolved = resolve_microphone_array(&data)?;
+    let ResolvedInput::MicrophoneArray { data, sources } = resolved else {
+        unreachable!("Microphone Array resolver returned another input kind")
+    };
+    crate::audio::microphone_array::calibrate(data, sources)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn calibrate_microphone_array(
+    _data: crate::audio::graph::MicrophoneArrayData,
+) -> AppResult<crate::audio::graph::MicrophoneArrayData> {
+    Err(crate::error::AppError::Validation(
+        "Microphone Array calibration is not supported by the PipeWire backend yet".into(),
+    ))
+}
+
 /// Shared file probe -- both platforms resolve audio files identically.
 pub(super) fn resolve_audio_file(file_path: &str) -> AppResult<ResolvedInput> {
     let path = PathBuf::from(file_path);

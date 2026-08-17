@@ -15,6 +15,7 @@ import type {
 	VirtualDriverStatus,
 	VolumeChange
 } from './types';
+import type { MicrophoneArrayNodeData } from '$lib/modules/pipeline/types';
 
 const AUDIO_STATE_EVENT = 'audio://state';
 const DEVICE_VOLUME_EVENT = 'audio://device_volume';
@@ -34,6 +35,8 @@ export const methods = {
 	listAudioApplications: (): Promise<AudioApplication[]> => invoke<AudioApplication[]>('list_audio_applications'),
 	getAppIcons: (bundleIds: string[]): Promise<Record<string, string>> => invoke<Record<string, string>>('get_app_icons', { bundleIds }),
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
+	calibrateMicrophoneArray: (data: MicrophoneArrayNodeData): Promise<MicrophoneArrayNodeData> =>
+		invoke<MicrophoneArrayNodeData>('calibrate_microphone_array', { data }),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
 	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),

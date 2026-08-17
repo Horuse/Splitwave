@@ -7,7 +7,7 @@ use tracing::{error, info};
 
 use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
 use crate::audio::engine::Command;
-use crate::audio::graph::{GraphSpec, OpusApplication};
+use crate::audio::graph::{GraphSpec, MicrophoneArrayData, OpusApplication};
 use crate::audio::permission::{self, CapturePermission};
 use crate::audio::system_audio::{self, AudioApplication};
 use crate::audio::virtual_device::{self, VirtualDeviceConfig, VirtualDriverStatus};
@@ -209,6 +209,17 @@ pub fn get_app_icons(bundle_ids: Vec<String>) -> std::collections::HashMap<Strin
 #[tauri::command]
 pub fn device_info(kind: DeviceKind, name: String) -> AppResult<NativeDeviceInfo> {
     device::device_info(kind, &name)
+}
+
+#[tauri::command]
+pub async fn calibrate_microphone_array(
+    data: MicrophoneArrayData,
+) -> AppResult<MicrophoneArrayData> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::pipeline::calibrate_microphone_array(data)
+    })
+    .await
+    .map_err(|_| AppError::Stream("Microphone Array calibration task failed".into()))?
 }
 
 #[tauri::command]

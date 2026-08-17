@@ -4,6 +4,28 @@ import type { NodeDataMap, NodeKind } from './types';
  * without importing Svelte components. */
 export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	microphone: { deviceId: null },
+	microphoneArray: {
+		sources: [],
+		members: [],
+		masterSourceId: null,
+		processingSampleRate: 48000,
+		geometry: { kind: 'linear', spacing_m: 0.04, orientation_degrees: 0 },
+		target: { kind: 'direction', azimuth_degrees: 90, elevation_degrees: 0 },
+		algorithm: 'delayAndSum',
+		strength: 1,
+		maxAttenuationDb: 18,
+		gscFilterLength: 8,
+		gscAdaptationRate: 0.05,
+		postfilterEnabled: false,
+		limiterEnabled: true,
+		bypassed: false,
+		calibration: {
+			state: 'missing',
+			fingerprint: null,
+			residualDelaySamples: null,
+			qualityScore: null
+		}
+	},
 	systemAudio: { excludeCurrentApp: true, volume: 1 },
 	appAudio: { bundleId: null, volume: 1 },
 	audioFile: { filePath: null, loopEnabled: false, volume: 1, autoStart: true },

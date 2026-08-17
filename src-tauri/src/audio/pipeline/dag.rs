@@ -1221,6 +1221,7 @@ pub(super) fn build_output_graph(
 
             let kind = match &input.spec {
                 InputSpec::Microphone { device_id } => format!("mic:{device_id}"),
+                InputSpec::MicrophoneArray { .. } => "microphone-array".to_string(),
                 InputSpec::SystemAudio { .. } => "system-audio".to_string(),
                 InputSpec::AppAudio { bundle_id } => format!("app:{bundle_id}"),
                 InputSpec::AudioFile { file_path } => format!("file:{file_path}"),

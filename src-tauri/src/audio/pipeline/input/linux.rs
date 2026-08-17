@@ -16,6 +16,9 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             node_id: device_id.clone(),
             sample_rate: 48_000,
         }),
+        InputSpec::MicrophoneArray { .. } => Err(crate::error::AppError::Stream(
+            "Microphone Array capture has not been started for this platform".into(),
+        )),
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {

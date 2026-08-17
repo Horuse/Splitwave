@@ -37,6 +37,7 @@ pub struct EdgeSpec {
 #[ts(export)]
 pub enum NodeKind {
     Microphone,
+    MicrophoneArray,
     SystemAudio,
     AppAudio,
     Speaker,
@@ -69,6 +70,7 @@ impl NodeKind {
     pub fn category(self) -> NodeCategory {
         match self {
             NodeKind::Microphone
+            | NodeKind::MicrophoneArray
             | NodeKind::SystemAudio
             | NodeKind::AppAudio
             | NodeKind::NetReceiver
@@ -116,6 +118,271 @@ pub enum NodeCategory {
 #[ts(export)]
 pub struct MicrophoneData {
     pub device_id: Option<String>,
+}
+
+fn default_array_rate() -> u32 {
+    48_000
+}
+fn default_array_one() -> f32 {
+    1.0
+}
+fn default_array_dimension() -> u32 {
+    1
+}
+fn default_array_gsc_length() -> u32 {
+    8
+}
+fn default_array_gsc_rate() -> f32 {
+    0.05
+}
+fn default_array_max_attenuation() -> f32 {
+    18.0
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicrophoneArraySource {
+    pub id: String,
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicrophoneArrayPoint {
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    #[serde(default)]
+    pub z: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+#[ts(export)]
+pub enum MicrophoneArrayGeometry {
+    Linear {
+        #[serde(default = "default_array_one")]
+        spacing_m: f32,
+        #[serde(default)]
+        orientation_degrees: f32,
+    },
+    Circular {
+        #[serde(default = "default_array_one")]
+        radius_m: f32,
+        #[serde(default)]
+        rotation_degrees: f32,
+    },
+    Rectangular {
+        #[serde(default = "default_array_dimension")]
+        rows: u32,
+        #[serde(default = "default_array_dimension")]
+        columns: u32,
+        #[serde(default = "default_array_one")]
+        horizontal_spacing_m: f32,
+        #[serde(default = "default_array_one")]
+        vertical_spacing_m: f32,
+        #[serde(default)]
+        rotation_degrees: f32,
+    },
+    Custom,
+}
+
+impl Default for MicrophoneArrayGeometry {
+    fn default() -> Self {
+        Self::Linear {
+            spacing_m: 0.04,
+            orientation_degrees: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+#[ts(export)]
+pub enum MicrophoneArrayTarget {
+    Direction {
+        #[serde(default)]
+        azimuth_degrees: f32,
+        #[serde(default)]
+        elevation_degrees: f32,
+    },
+    Point {
+        #[serde(default)]
+        x: f32,
+        #[serde(default)]
+        y: f32,
+        #[serde(default)]
+        z: f32,
+    },
+}
+
+impl Default for MicrophoneArrayTarget {
+    fn default() -> Self {
+        Self::Direction {
+            azimuth_degrees: 90.0,
+            elevation_degrees: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MicrophoneArrayAlgorithm {
+    Auto,
+    DelayAndSum,
+    Gsc,
+    Mvdr,
+}
+
+impl Default for MicrophoneArrayAlgorithm {
+    fn default() -> Self {
+        Self::DelayAndSum
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MicrophoneArrayChannelQuality {
+    Good,
+    Marginal,
+    Excluded,
+}
+
+impl Default for MicrophoneArrayChannelQuality {
+    fn default() -> Self {
+        Self::Good
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicrophoneArrayMember {
+    pub source_id: String,
+    pub channel_index: u32,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub position: MicrophoneArrayPoint,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_array_one")]
+    pub weight: f32,
+    #[serde(default)]
+    pub gain_db: f32,
+    #[serde(default)]
+    pub polarity_inverted: bool,
+    #[serde(default)]
+    pub fixed_delay_samples: f32,
+    #[serde(default)]
+    pub quality: MicrophoneArrayChannelQuality,
+    #[serde(default)]
+    pub exclusion_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MicrophoneArrayCalibrationState {
+    Missing,
+    Ready,
+    NeedsReview,
+}
+
+impl Default for MicrophoneArrayCalibrationState {
+    fn default() -> Self {
+        Self::Missing
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicrophoneArrayCalibration {
+    #[serde(default)]
+    pub state: MicrophoneArrayCalibrationState,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    #[serde(default)]
+    pub residual_delay_samples: Option<f32>,
+    #[serde(default)]
+    pub quality_score: Option<u8>,
+}
+
+impl Default for MicrophoneArrayCalibration {
+    fn default() -> Self {
+        Self {
+            state: MicrophoneArrayCalibrationState::Missing,
+            fingerprint: None,
+            residual_delay_samples: None,
+            quality_score: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MicrophoneArrayData {
+    #[serde(default)]
+    pub sources: Vec<MicrophoneArraySource>,
+    #[serde(default)]
+    pub members: Vec<MicrophoneArrayMember>,
+    #[serde(default)]
+    pub master_source_id: Option<String>,
+    #[serde(default = "default_array_rate")]
+    pub processing_sample_rate: u32,
+    #[serde(default)]
+    pub geometry: MicrophoneArrayGeometry,
+    #[serde(default)]
+    pub target: MicrophoneArrayTarget,
+    #[serde(default)]
+    pub algorithm: MicrophoneArrayAlgorithm,
+    #[serde(default = "default_array_one")]
+    pub strength: f32,
+    #[serde(default = "default_array_max_attenuation")]
+    pub max_attenuation_db: f32,
+    #[serde(default = "default_array_gsc_length")]
+    pub gsc_filter_length: u32,
+    #[serde(default = "default_array_gsc_rate")]
+    pub gsc_adaptation_rate: f32,
+    #[serde(default)]
+    pub postfilter_enabled: bool,
+    #[serde(default)]
+    pub limiter_enabled: bool,
+    #[serde(default)]
+    pub bypassed: bool,
+    #[serde(default)]
+    pub calibration: MicrophoneArrayCalibration,
+}
+
+impl Default for MicrophoneArrayData {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            members: Vec::new(),
+            master_source_id: None,
+            processing_sample_rate: default_array_rate(),
+            geometry: MicrophoneArrayGeometry::default(),
+            target: MicrophoneArrayTarget::default(),
+            algorithm: MicrophoneArrayAlgorithm::default(),
+            strength: default_array_one(),
+            max_attenuation_db: default_array_max_attenuation(),
+            gsc_filter_length: default_array_gsc_length(),
+            gsc_adaptation_rate: default_array_gsc_rate(),
+            postfilter_enabled: false,
+            limiter_enabled: true,
+            bypassed: false,
+            calibration: MicrophoneArrayCalibration::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -524,10 +791,13 @@ fn default_codec() -> NetCodec {
     NetCodec::Opus
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InputSpec {
     Microphone {
         device_id: String,
+    },
+    MicrophoneArray {
+        data: MicrophoneArrayData,
     },
     SystemAudio {
         exclude_current_app: bool,
@@ -897,6 +1167,11 @@ fn resolve_inputs(
                     };
                     (spec, 1.0f32, true)
                 }
+                NodeKind::MicrophoneArray => {
+                    let data: MicrophoneArrayData = parse(n.data, "Microphone Array")?;
+                    validate_microphone_array(&data)?;
+                    (InputSpec::MicrophoneArray { data }, 1.0f32, true)
+                }
                 NodeKind::SystemAudio => {
                     let data: SystemAudioData = parse(n.data, "SystemAudio")?;
                     let spec = InputSpec::SystemAudio {
@@ -1138,6 +1413,104 @@ fn parse<T: for<'de> Deserialize<'de>>(value: &serde_json::Value, ctx: &str) -> 
         .map_err(|e| AppError::Validation(format!("invalid {ctx} data: {e}")))
 }
 
+fn validate_microphone_array(data: &MicrophoneArrayData) -> AppResult<()> {
+    if data.members.len() < 2 {
+        return Err(AppError::Validation(
+            "Microphone Array needs at least two members".into(),
+        ));
+    }
+    if !(8_000..=192_000).contains(&data.processing_sample_rate) {
+        return Err(AppError::Validation(
+            "Microphone Array processing rate must be between 8 and 192 kHz".into(),
+        ));
+    }
+    if !data.strength.is_finite()
+        || !(0.0..=1.0).contains(&data.strength)
+        || !data.max_attenuation_db.is_finite()
+        || !(0.0..=36.0).contains(&data.max_attenuation_db)
+        || !data.gsc_adaptation_rate.is_finite()
+        || !(0.0..=1.0).contains(&data.gsc_adaptation_rate)
+        || !(1..=64).contains(&data.gsc_filter_length)
+    {
+        return Err(AppError::Validation(
+            "Microphone Array processing controls are outside their safe bounds".into(),
+        ));
+    }
+
+    let mut source_ids = HashSet::new();
+    let mut device_ids = HashSet::new();
+    for source in &data.sources {
+        if source.id.trim().is_empty() || !source_ids.insert(source.id.as_str()) {
+            return Err(AppError::Validation(
+                "Microphone Array source ids must be unique and non-empty".into(),
+            ));
+        }
+        let device_id = source.device_id.as_deref().ok_or_else(|| {
+            AppError::Validation(format!(
+                "Microphone Array source {} has no device selected",
+                source.id
+            ))
+        })?;
+        if !device_ids.insert(device_id) {
+            return Err(AppError::Validation(
+                "Microphone Array groups one device into one physical stream; duplicate device sources are not allowed".into(),
+            ));
+        }
+    }
+    if data.sources.is_empty() {
+        return Err(AppError::Validation(
+            "Microphone Array needs at least one physical source".into(),
+        ));
+    }
+    if data.sources.len() > 1
+        && !data
+            .master_source_id
+            .as_deref()
+            .is_some_and(|id| source_ids.contains(id))
+    {
+        return Err(AppError::Validation(
+            "Microphone Array needs a master clock-domain when using independent devices".into(),
+        ));
+    }
+
+    let mut selected_channels = HashSet::new();
+    let mut enabled = 0usize;
+    for member in &data.members {
+        if !source_ids.contains(member.source_id.as_str()) {
+            return Err(AppError::Validation(format!(
+                "Microphone Array member {} refers to a missing source",
+                member.label
+            )));
+        }
+        if !selected_channels.insert((member.source_id.as_str(), member.channel_index)) {
+            return Err(AppError::Validation(
+                "Microphone Array cannot select one physical channel twice".into(),
+            ));
+        }
+        if !member.position.x.is_finite()
+            || !member.position.y.is_finite()
+            || !member.position.z.is_finite()
+            || !member.weight.is_finite()
+            || !(0.0..=4.0).contains(&member.weight)
+            || !member.gain_db.is_finite()
+            || !member.fixed_delay_samples.is_finite()
+        {
+            return Err(AppError::Validation(
+                "Microphone Array member calibration or geometry is invalid".into(),
+            ));
+        }
+        enabled += usize::from(
+            member.enabled && member.quality != MicrophoneArrayChannelQuality::Excluded,
+        );
+    }
+    if enabled == 0 {
+        return Err(AppError::Validation(
+            "Microphone Array needs at least one enabled, non-excluded member".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn miss(node_id: &str, msg: &str) -> AppError {
     AppError::Validation(format!("{msg} (node {node_id})"))
 }
@@ -1222,6 +1595,35 @@ mod tests {
             id,
             NodeKind::Speaker,
             serde_json::json!({ "deviceId": "dev" }),
+        )
+    }
+
+    fn microphone_array(id: &str, sources: usize, members: usize) -> NodeSpec {
+        let source_data: Vec<_> = (0..sources)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("source-{index}"),
+                    "deviceId": format!("device-{index}"),
+                })
+            })
+            .collect();
+        let member_data: Vec<_> = (0..members)
+            .map(|index| {
+                serde_json::json!({
+                    "sourceId": format!("source-{}", index % sources.max(1)),
+                    "channelIndex": index,
+                    "position": { "x": index as f32 * 0.04, "y": 0.0, "z": 0.0 },
+                })
+            })
+            .collect();
+        node(
+            id,
+            NodeKind::MicrophoneArray,
+            serde_json::json!({
+                "sources": source_data,
+                "members": member_data,
+                "masterSourceId": sources.gt(&1).then_some("source-0"),
+            }),
         )
     }
 
@@ -1310,5 +1712,30 @@ mod tests {
             .expect("an unwired collaborator is a destination in waiting");
         assert!(v.inputs.is_empty());
         assert!(v.outputs.is_empty());
+    }
+
+    #[test]
+    fn microphone_array_keeps_dynamic_n_and_clock_domains_separate() {
+        let g = GraphSpec {
+            nodes: vec![microphone_array("array", 2, 8), speaker("speaker")],
+            edges: vec![edge("array-speaker", "array", None, "speaker", None)],
+        };
+        let graph = g.validate().expect("array graph is valid");
+        let InputSpec::MicrophoneArray { data } = &graph.inputs[0].spec else {
+            panic!("expected Microphone Array input");
+        };
+        assert_eq!(data.members.len(), 8);
+        assert_eq!(data.sources.len(), 2);
+    }
+
+    #[test]
+    fn microphone_array_rejects_duplicate_physical_channels() {
+        let mut array = microphone_array("array", 1, 2);
+        array.data["members"][1]["channelIndex"] = serde_json::json!(0);
+        let g = GraphSpec {
+            nodes: vec![array, speaker("speaker")],
+            edges: vec![edge("array-speaker", "array", None, "speaker", None)],
+        };
+        assert!(g.validate().is_err());
     }
 }

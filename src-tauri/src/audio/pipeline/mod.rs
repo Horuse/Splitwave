@@ -625,6 +625,7 @@ impl ActivePipeline {
                 .iter()
                 .filter_map(|i| match &i.spec {
                     InputSpec::Microphone { device_id } => Some(device_id.as_str()),
+                    InputSpec::MicrophoneArray { .. } => None,
                     _ => None,
                 })
                 .collect();

@@ -23,6 +23,8 @@ fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
         PluginFormat::Clap => &ClapHost,
         #[cfg(target_os = "macos")]
         PluginFormat::Au => &AuHost,
+        #[cfg(not(target_os = "macos"))]
+        PluginFormat::Au => panic!("Audio Unit plugins are only supported on macOS"),
         PluginFormat::Vst3 => &Vst3Host,
     }
 }

@@ -85,6 +85,9 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: TS-RS bindings up to date
+        run: git diff --exit-code -- src/lib/modules/pipeline/generated
+
       - name: Build Windows application
         working-directory: src-tauri
         run: cargo build --bin splitwave

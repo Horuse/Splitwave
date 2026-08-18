@@ -636,7 +636,7 @@
 					{/each}
 				{/if}
 			</div>
-			<p class="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-[9px] leading-relaxed text-sky-900">
+			<p class="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-[9px] leading-relaxed text-sky-900 dark:text-sky-300">
 				Fixed steering follows arrival delays, not speaker identity. Any source with matching delays can pass; two microphones cannot identify a unique
 				point. Moving-target tracking is not available.
 			</p>

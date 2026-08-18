@@ -8,7 +8,7 @@
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { goto } from '$app/navigation';
+	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
 	const isLinux = platform() === 'linux';
 	const isWindows = platform() === 'windows';
@@ -24,11 +24,7 @@
 	let error = $state<string | null>(null);
 
 	$effect(() => {
-		if (isWindows) {
-			void goto('/');
-		} else {
-			void loadAll();
-		}
+		if (!isWindows) void loadAll();
 	});
 
 	function sameDevices(a: VirtualDeviceConfig[], b: VirtualDeviceConfig[]): boolean {
@@ -103,24 +99,32 @@
 	}
 </script>
 
-{#if !isWindows}
-	<Header>
-		{#snippet left()}
-			<HeaderNav />
-		{/snippet}
-	</Header>
+<Header>
+	{#snippet left()}
+		<HeaderNav />
+	{/snippet}
+</Header>
 
-	<div class="flex h-[calc(100vh-40px)] flex-col gap-8 overflow-y-auto p-8">
-		<div class="mt-2 flex flex-col gap-1">
-			<h1 class="text-2xl font-semibold">Virtual Devices</h1>
+<div class="flex h-[calc(100vh-40px)] flex-col gap-8 overflow-y-auto p-8">
+	<div class="mt-2 flex flex-col gap-1">
+		<h1 class="text-2xl font-semibold">Virtual Devices</h1>
 
+		{#if isWindows}
+			<p class="max-w-3xl text-base text-neutral-700">
+				Windows uses the fixed VB-CABLE device pair. Send a Speaker node to CABLE Input, then select CABLE Output as the microphone in another app.
+			</p>
+		{:else}
 			<p class="max-w-3xl text-base text-neutral-700">
 				A virtual device is a system audio device that exists only in software - no hardware required. Apps can send audio to it or record from it just
 				like a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and route it
 				to another.
 			</p>
-		</div>
+		{/if}
+	</div>
 
+	{#if isWindows}
+		<WindowsVirtualMicrophone />
+	{:else}
 		{#if !isLinux}
 			<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
 				<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
@@ -248,5 +252,5 @@
 				</button>
 			</div>
 		{/if}
-	</div>
-{/if}
+	{/if}
+</div>

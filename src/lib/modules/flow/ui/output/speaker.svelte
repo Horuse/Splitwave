@@ -14,7 +14,6 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { chooseWindowsVirtualMicrophoneOutput } from '$lib/modules/audio/windows_virtual_microphone';
 
 	const isWindows = platform() === 'windows';
 	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
@@ -38,12 +37,7 @@
 	}
 
 	async function openVirtualDevice() {
-		if (!isWindows) {
-			await goto('/virtual-devices');
-			return;
-		}
-		const deviceId = await chooseWindowsVirtualMicrophoneOutput();
-		if (deviceId) setDevice(deviceId);
+		await goto('/virtual-devices');
 	}
 
 	let unlistenRefresh: (() => void) | undefined;

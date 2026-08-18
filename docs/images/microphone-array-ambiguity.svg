@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">What same-TDOA ambiguity means for direction and point targets</title>
+  <desc id="desc">For fixed far-field direction steering, sources on the same bearing have the same directional steering vector because range is not represented. For an exact symmetric two-microphone pair, every source on the perpendicular bisector has zero TDOA. More independent microphone positions add constraints but the array still filters spatial delay patterns rather than speaker identity.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#263244" stroke-width="1" opacity="0.42"/>
+    </pattern>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"/>
+    </marker>
+    <style>
+      .title { font: 700 34px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 17px Inter, Segoe UI, sans-serif; fill: #94a3b8; }
+      .heading { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; letter-spacing: .04em; }
+      .label { font: 600 15px Inter, Segoe UI, sans-serif; fill: #e2e8f0; }
+      .small { font: 400 13px Inter, Segoe UI, sans-serif; fill: #a8b3c4; }
+      .mono { font: 600 13px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #dbeafe; }
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#0b111a"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+  <text x="52" y="60" class="title">Spatial focus is not speaker identity</text>
+  <text x="52" y="90" class="subtitle">A source can pass when its relative arrival-delay pattern matches the configured target. The exact ambiguity depends on target mode and geometry.</text>
+
+  <!-- Far-field direction panel -->
+  <rect x="36" y="125" width="748" height="700" rx="22" fill="#0d1723" stroke="#334155" stroke-width="2"/>
+  <text x="62" y="164" class="heading">A · FIXED DIRECTION · FAR-FIELD MODEL</text>
+  <text x="62" y="193" class="small">The target stores azimuth/elevation, not range.</text>
+
+  <line x1="170" y1="705" x2="650" y2="705" stroke="#94a3b8" stroke-width="4"/>
+  <g>
+    <circle cx="170" cy="705" r="22" fill="#111827" stroke="#22d3ee" stroke-width="4"/><circle cx="170" cy="705" r="6" fill="#67e8f9"/>
+    <circle cx="330" cy="705" r="22" fill="#111827" stroke="#38bdf8" stroke-width="4"/><circle cx="330" cy="705" r="6" fill="#7dd3fc"/>
+    <circle cx="490" cy="705" r="22" fill="#111827" stroke="#818cf8" stroke-width="4"/><circle cx="490" cy="705" r="6" fill="#a5b4fc"/>
+    <circle cx="650" cy="705" r="22" fill="#111827" stroke="#c084fc" stroke-width="4"/><circle cx="650" cy="705" r="6" fill="#d8b4fe"/>
+  </g>
+  <text x="267" y="758" class="label">N-channel linear array</text>
+
+  <!-- Same-bearing sources -->
+  <path d="M410 680 L205 230" stroke="#34d399" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+  <circle cx="272" cy="377" r="24" fill="#047857" stroke="#6ee7b7" stroke-width="3"/>
+  <circle cx="205" cy="230" r="24" fill="#92400e" stroke="#fbbf24" stroke-width="3"/>
+  <text x="306" y="374" class="label" fill="#6ee7b7">configured target bearing</text>
+  <text x="239" y="225" class="label" fill="#fbbf24">another source, same bearing</text>
+  <text x="91" y="305" class="small">different range</text>
+
+  <!-- Parallel far-field wavefronts -->
+  <g stroke="#22d3ee" stroke-width="3" opacity=".8">
+    <line x1="92" y1="455" x2="438" y2="298"/>
+    <line x1="147" y1="576" x2="493" y2="419"/>
+    <line x1="202" y1="697" x2="548" y2="540"/>
+  </g>
+  <path d="M574 342 L669 550" stroke="#22d3ee" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="544" y="319" class="label" fill="#67e8f9">same propagation direction u</text>
+
+  <rect x="70" y="525" width="550" height="112" rx="14" fill="#102a25" stroke="#10b981"/>
+  <text x="92" y="556" class="mono">Δτᵢ = −(pᵢ · u) / c</text>
+  <text x="92" y="585" class="small">Same u → same relative steering delays.</text>
+  <text x="92" y="610" class="small">The direction target cannot distinguish distance along that bearing.</text>
+
+  <!-- Symmetric pair panel -->
+  <rect x="816" y="125" width="748" height="700" rx="22" fill="#111126" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="842" y="164" class="heading">B · TWO-MICROPHONE SYMMETRY · EXACT TDOA</text>
+  <text x="842" y="193" class="small">The perpendicular bisector is the zero-TDOA locus.</text>
+
+  <line x1="930" y1="705" x2="1450" y2="705" stroke="#94a3b8" stroke-width="4"/>
+  <circle cx="1000" cy="705" r="26" fill="#111827" stroke="#22d3ee" stroke-width="4"/><circle cx="1000" cy="705" r="7" fill="#67e8f9"/>
+  <circle cx="1380" cy="705" r="26" fill="#111827" stroke="#c084fc" stroke-width="4"/><circle cx="1380" cy="705" r="7" fill="#d8b4fe"/>
+  <text x="981" y="755" class="label">M1</text><text x="1361" y="755" class="label">M2</text>
+  <line x1="1190" y1="220" x2="1190" y2="705" stroke="#fbbf24" stroke-width="3" stroke-dasharray="9 7"/>
+  <text x="1210" y="248" class="label" fill="#fbbf24">perpendicular bisector</text>
+
+  <circle cx="1190" cy="355" r="25" fill="#047857" stroke="#6ee7b7" stroke-width="3"/>
+  <text x="1227" y="360" class="label" fill="#6ee7b7">target</text>
+  <circle cx="1190" cy="535" r="25" fill="#92400e" stroke="#fbbf24" stroke-width="3"/>
+  <text x="1227" y="540" class="label" fill="#fbbf24">other source</text>
+
+  <g fill="none" stroke-width="2.5" stroke-dasharray="7 6">
+    <path d="M1190 355 L1000 705 M1190 355 L1380 705" stroke="#34d399"/>
+    <path d="M1190 535 L1000 705 M1190 535 L1380 705" stroke="#f59e0b"/>
+  </g>
+  <text x="873" y="436" class="mono">r(T,M1) = r(T,M2)</text>
+  <text x="873" y="462" class="mono">r(I,M1) = r(I,M2)</text>
+  <text x="873" y="488" class="mono">therefore Δτ = 0 for both</text>
+
+  <rect x="850" y="575" width="680" height="92" rx="14" fill="#2a1d0b" stroke="#f59e0b"/>
+  <text x="872" y="606" class="label" fill="#fbbf24">Important boundary</text>
+  <text x="872" y="632" class="small">This exact line is the ambiguity of a symmetric two-mic pair. Additional independent</text>
+  <text x="872" y="653" class="small">microphone positions add constraints; they still do not identify the speaker.</text>
+
+  <text x="52" y="875" class="subtitle">Point targets use finite source-to-microphone distances. A second source at another range does not automatically share all N delays; it must match the full delay vector.</text>
+</svg>

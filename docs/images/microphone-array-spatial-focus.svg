@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">How a circular microphone array focuses on a point</title>
+  <desc id="desc">Eight microphones surround a target point at equal radius. The target reaches every microphone with the same relative delay, while an off-axis interferer has unequal path lengths. Target steering aligns the target channels, so their weighted sum reinforces the target. The interferer remains staggered and is attenuated by spatial averaging or adaptive beamforming, though rejection is not guaranteed to be perfect.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#263244" stroke-width="1" opacity=".42"/>
+    </pattern>
+    <radialGradient id="targetGlow">
+      <stop offset="0" stop-color="#6ee7b7" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="interfererGlow">
+      <stop offset="0" stop-color="#fbbf24" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0v6l9-3z" fill="#94a3b8"/>
+    </marker>
+    <style>
+      .title { font: 700 34px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 17px Inter, Segoe UI, sans-serif; fill: #94a3b8; }
+      .heading { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; letter-spacing: .04em; }
+      .label { font: 600 15px Inter, Segoe UI, sans-serif; fill: #e2e8f0; }
+      .small { font: 400 13px Inter, Segoe UI, sans-serif; fill: #a8b3c4; }
+      .tiny { font: 600 12px Inter, Segoe UI, sans-serif; fill: #cbd5e1; }
+      .mono { font: 600 13px ui-monospace, SFMono-Regular, Consolas, monospace; fill: #dbeafe; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#0b111a"/>
+  <rect width="1600" height="1000" fill="url(#grid)"/>
+  <text x="52" y="60" class="title">How microphones around a point create spatial focus</text>
+  <text x="52" y="91" class="subtitle">The array selects a relative arrival-delay pattern. A symmetric ring makes the central target pattern especially easy to see.</text>
+
+  <!-- Step 1: physical geometry -->
+  <rect x="36" y="125" width="635" height="710" rx="22" fill="#0d1723" stroke="#334155" stroke-width="2"/>
+  <text x="62" y="164" class="heading">1 · SAME TARGET DISTANCE, DIFFERENT NOISE DISTANCES</text>
+  <text x="62" y="193" class="small">Top view · 8 microphones at equal radius R around the focus point</text>
+
+  <circle cx="340" cy="470" r="225" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="7 7"/>
+  <circle cx="340" cy="470" r="170" fill="none" stroke="#10b981" stroke-width="2" opacity=".25"/>
+  <circle cx="340" cy="470" r="108" fill="none" stroke="#10b981" stroke-width="2" opacity=".35"/>
+  <circle cx="340" cy="470" r="58" fill="url(#targetGlow)"/>
+
+  <!-- Equal target paths -->
+  <g stroke="#34d399" stroke-width="2" stroke-dasharray="6 5" opacity=".78">
+    <line x1="340" y1="470" x2="340" y2="245"/><line x1="340" y1="470" x2="499" y2="311"/>
+    <line x1="340" y1="470" x2="565" y2="470"/><line x1="340" y1="470" x2="499" y2="629"/>
+    <line x1="340" y1="470" x2="340" y2="695"/><line x1="340" y1="470" x2="181" y2="629"/>
+    <line x1="340" y1="470" x2="115" y2="470"/><line x1="340" y1="470" x2="181" y2="311"/>
+  </g>
+
+  <!-- Eight exact microphones -->
+  <g fill="#111827" stroke-width="4">
+    <circle cx="340" cy="245" r="22" stroke="#22d3ee"/><circle cx="499" cy="311" r="22" stroke="#38bdf8"/>
+    <circle cx="565" cy="470" r="22" stroke="#818cf8"/><circle cx="499" cy="629" r="22" stroke="#c084fc"/>
+    <circle cx="340" cy="695" r="22" stroke="#f472b6"/><circle cx="181" cy="629" r="22" stroke="#fb7185"/>
+    <circle cx="115" cy="470" r="22" stroke="#fb923c"/><circle cx="181" cy="311" r="22" stroke="#f59e0b"/>
+  </g>
+  <g fill="#e2e8f0" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="700" text-anchor="middle">
+    <text x="340" y="250">M1</text><text x="499" y="316">M2</text><text x="565" y="475">M3</text><text x="499" y="634">M4</text>
+    <text x="340" y="700">M5</text><text x="181" y="634">M6</text><text x="115" y="475">M7</text><text x="181" y="316">M8</text>
+  </g>
+
+  <!-- Target -->
+  <circle cx="340" cy="470" r="29" fill="#047857" stroke="#6ee7b7" stroke-width="3"/>
+  <circle cx="340" cy="470" r="8" fill="#d1fae5"/>
+  <text x="340" y="437" class="label" fill="#6ee7b7" text-anchor="middle">TARGET POINT</text>
+  <text x="340" y="521" class="mono" text-anchor="middle">r₁ = r₂ = … = r₈ = R</text>
+
+  <!-- Off-axis interferer -->
+  <circle cx="592" cy="234" r="58" fill="url(#interfererGlow)"/>
+  <circle cx="592" cy="234" r="27" fill="#92400e" stroke="#fbbf24" stroke-width="3"/>
+  <circle cx="592" cy="234" r="7" fill="#fef3c7"/>
+  <text x="558" y="215" class="label" fill="#fbbf24" text-anchor="end">OFF-AXIS SOUND</text>
+  <path d="M592 234 L499 311" stroke="#fbbf24" stroke-width="3" stroke-dasharray="7 5"/>
+  <path d="M592 234 L181 629" stroke="#f59e0b" stroke-width="3" stroke-dasharray="7 5" opacity=".8"/>
+  <text x="507" y="271" class="tiny" fill="#fbbf24">NEAR PATH</text>
+  <text x="249" y="588" class="tiny" fill="#fbbf24">FAR PATH</text>
+  <rect x="70" y="745" width="565" height="64" rx="13" fill="#2a1d0b" stroke="#f59e0b"/>
+  <text x="91" y="772" class="label" fill="#fbbf24">Off-axis path lengths:</text>
+  <text x="91" y="795" class="small">q₁…q₈ are unequal → the same sound reaches the microphones at different times.</text>
+
+  <!-- Step 2: aligned/staggered channel snapshots -->
+  <rect x="696" y="125" width="415" height="710" rx="22" fill="#111126" stroke="#8b5cf6" stroke-width="2"/>
+  <path d="M671 470 H696" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="722" y="164" class="heading">2 · STEER TO THE TARGET</text>
+  <text x="722" y="193" class="small">Apply calibration + target delays per channel</text>
+
+  <rect x="722" y="220" width="363" height="230" rx="16" fill="#0d2a25" stroke="#10b981"/>
+  <text x="743" y="249" class="label" fill="#6ee7b7">TARGET COPIES</text>
+  <text x="743" y="271" class="small">same waveform, aligned at the green line</text>
+  <line x1="925" y1="285" x2="925" y2="427" stroke="#34d399" stroke-width="2" stroke-dasharray="5 5"/>
+  <g stroke="#334155" stroke-width="1.5">
+    <line x1="760" y1="300" x2="1050" y2="300"/><line x1="760" y1="318" x2="1050" y2="318"/>
+    <line x1="760" y1="336" x2="1050" y2="336"/><line x1="760" y1="354" x2="1050" y2="354"/>
+    <line x1="760" y1="372" x2="1050" y2="372"/><line x1="760" y1="390" x2="1050" y2="390"/>
+    <line x1="760" y1="408" x2="1050" y2="408"/><line x1="760" y1="426" x2="1050" y2="426"/>
+  </g>
+  <g fill="none" stroke="#6ee7b7" stroke-width="3">
+    <path d="M910 300h9l6-12 6 24 6-12h9"/><path d="M910 318h9l6-12 6 24 6-12h9"/>
+    <path d="M910 336h9l6-12 6 24 6-12h9"/><path d="M910 354h9l6-12 6 24 6-12h9"/>
+    <path d="M910 372h9l6-12 6 24 6-12h9"/><path d="M910 390h9l6-12 6 24 6-12h9"/>
+    <path d="M910 408h9l6-12 6 24 6-12h9"/><path d="M910 426h9l6-12 6 24 6-12h9"/>
+  </g>
+  <text x="740" y="304" class="tiny">M1</text><text x="740" y="322" class="tiny">M2</text><text x="740" y="340" class="tiny">M3</text><text x="740" y="358" class="tiny">M4</text>
+  <text x="740" y="376" class="tiny">M5</text><text x="740" y="394" class="tiny">M6</text><text x="740" y="412" class="tiny">M7</text><text x="740" y="430" class="tiny">M8</text>
+
+  <rect x="722" y="475" width="363" height="260" rx="16" fill="#2a1d0b" stroke="#f59e0b"/>
+  <text x="743" y="504" class="label" fill="#fbbf24">OFF-AXIS COPIES</text>
+  <text x="743" y="526" class="small">target steering leaves residual timing differences</text>
+  <g stroke="#4b3a20" stroke-width="1.5">
+    <line x1="760" y1="555" x2="1050" y2="555"/><line x1="760" y1="576" x2="1050" y2="576"/>
+    <line x1="760" y1="597" x2="1050" y2="597"/><line x1="760" y1="618" x2="1050" y2="618"/>
+    <line x1="760" y1="639" x2="1050" y2="639"/><line x1="760" y1="660" x2="1050" y2="660"/>
+    <line x1="760" y1="681" x2="1050" y2="681"/><line x1="760" y1="702" x2="1050" y2="702"/>
+  </g>
+  <g fill="none" stroke="#fbbf24" stroke-width="3">
+    <path d="M800 555h9l6-12 6 24 6-12h9"/><path d="M830 576h9l6-12 6 24 6-12h9"/>
+    <path d="M862 597h9l6-12 6 24 6-12h9"/><path d="M900 618h9l6-12 6 24 6-12h9"/>
+    <path d="M942 639h9l6-12 6 24 6-12h9"/><path d="M975 660h9l6-12 6 24 6-12h9"/>
+    <path d="M1000 681h9l6-12 6 24 6-12h9"/><path d="M1020 702h9l6-12 6 24 6-12h9"/>
+  </g>
+  <text x="740" y="559" class="tiny">M1</text><text x="740" y="580" class="tiny">M2</text><text x="740" y="601" class="tiny">M3</text><text x="740" y="622" class="tiny">M4</text>
+  <text x="740" y="643" class="tiny">M5</text><text x="740" y="664" class="tiny">M6</text><text x="740" y="685" class="tiny">M7</text><text x="740" y="706" class="tiny">M8</text>
+  <text x="722" y="783" class="mono">τᵢ = (rmax − rᵢ) / c</text>
+  <text x="722" y="809" class="small">For the centred ring, every rᵢ is equal, so every τᵢ is equal.</text>
+
+  <!-- Step 3: sum -->
+  <rect x="1136" y="125" width="428" height="710" rx="22" fill="#0c1c18" stroke="#10b981" stroke-width="2"/>
+  <text x="1162" y="164" class="heading">3 · WEIGHTED SUM / ADAPTIVE FILTER</text>
+  <text x="1162" y="193" class="small">One mono Spatial Voice output</text>
+
+  <path d="M1111 355 H1140" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1111 610 H1140" stroke="#94a3b8" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="1162" y="230" width="376" height="190" rx="16" fill="#0d2a25" stroke="#10b981"/>
+  <text x="1185" y="261" class="label" fill="#6ee7b7">TARGET REINFORCES COHERENTLY</text>
+  <text x="1185" y="287" class="small">aligned positive/negative samples add in the same phase</text>
+  <line x1="1190" y1="351" x2="1508" y2="351" stroke="#334155" stroke-width="2"/>
+  <path d="M1190 351 C1210 351 1214 315 1230 315 S1250 390 1268 390 S1288 290 1307 290 S1328 410 1348 410 S1367 303 1387 303 S1407 387 1427 387 S1448 326 1467 326 S1490 351 1508 351" fill="none" stroke="#34d399" stroke-width="5"/>
+  <text x="1185" y="399" class="tiny" fill="#6ee7b7">NORMALIZED SUM RETAINS THE TARGET</text>
+
+  <rect x="1162" y="448" width="376" height="190" rx="16" fill="#2a1d0b" stroke="#f59e0b"/>
+  <text x="1185" y="479" class="label" fill="#fbbf24">OFF-AXIS SOUND IS INCOHERENT</text>
+  <text x="1185" y="505" class="small">misaligned samples partly cancel in the sum</text>
+  <line x1="1190" y1="569" x2="1508" y2="569" stroke="#4b3a20" stroke-width="2"/>
+  <path d="M1190 569 C1210 569 1220 558 1240 558 S1260 581 1280 581 S1300 554 1320 554 S1340 578 1360 578 S1380 562 1400 562 S1420 575 1440 575 S1470 566 1508 569" fill="none" stroke="#fbbf24" stroke-width="4"/>
+  <text x="1185" y="617" class="tiny" fill="#fbbf24">ATTENUATED · NOT GUARANTEED TO BE ZERO</text>
+
+  <rect x="1162" y="670" width="376" height="139" rx="16" fill="#172337" stroke="#64748b"/>
+  <text x="1185" y="700" class="label">Algorithm depth</text>
+  <text x="1185" y="727" class="small">Delay-and-Sum: coherent spatial averaging</text>
+  <text x="1185" y="751" class="small">GSC / MVDR: adaptive off-target suppression</text>
+  <text x="1185" y="775" class="small">Postfilter: bounded residual suppression</text>
+  <text x="1185" y="799" class="small">Output remains one mono stream</text>
+
+  <!-- Honest boundary -->
+  <rect x="36" y="861" width="1528" height="104" rx="18" fill="#151923" stroke="#64748b" stroke-width="2"/>
+  <text x="62" y="895" class="heading">WHAT THE ARRAY CAN AND CANNOT SELECT</text>
+  <text x="62" y="925" class="small">It preserves sounds whose full N-channel delay/phase pattern matches the target and attenuates mismatched patterns. It does not recognize a person.</text>
+  <text x="62" y="950" class="small">Same-delay ambiguities, reflections, low frequencies, calibration error and finite microphone spacing limit rejection; “everything else is removed” is not physically guaranteed.</text>
+</svg>

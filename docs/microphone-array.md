@@ -1,15 +1,98 @@
 # Microphone Array
 
-Microphone Array is an input node that turns two or more physical microphone
-channels into one processed mono stream named `Spatial Voice`. Add the node from
-the input-node picker, open **Setup**, choose the channels, describe their
-positions, set a fixed target, and calibrate. The output connects to ordinary
-Splitwave effects, recorders, speakers, or an external virtual cable exactly
-like any other source.
+## What this feature is, why it exists, and how it works
 
-The processing is local. Splitwave does not upload microphone audio, and the
+**Microphone Array is a native N-channel input node that turns two or more
+physical microphone channels into one spatially focused mono stream named
+`Spatial Voice`.** It is intended for a fixed speaking position such as a desk,
+podcast seat, recording position, lectern, or conferencing spot where several
+microphones can observe the same sound field from known locations.
+
+A single microphone can describe only the waveform at one point. It cannot use
+the fact that a wanted voice reaches several places with one predictable set of
+arrival delays while a keyboard, fan, loudspeaker, or second talker reaches
+those places with another set. A microphone array preserves the identity and
+timing of every physical channel long enough to exploit those spatial
+differences. This happens before the ordinary Noise Suppressor and is a
+different job from spectral denoising or speaker recognition.
+
+Splitwave performs the feature as one deterministic signal path:
+
+1. Capture every selected physical channel without mixing the channels first.
+2. Preserve channels that share a hardware clock and synchronize each
+   independent slave device with one clock-domain ASRC.
+3. Calibrate fixed channel delay, gain, polarity, and channel quality.
+4. Use the measured microphone geometry and a fixed direction or point target
+   to predict the target's relative acoustic arrival delays.
+5. Align that target pattern and combine the channels with Delay-and-Sum, GSC,
+   or MVDR spatial processing.
+6. Publish exactly one mono `Spatial Voice` output to the normal Splitwave graph.
+
+The circular example below makes the spatial principle visible. Eight
+microphones sit at the same radius around the target point, so the wanted sound
+has equal propagation distances and its eight calibrated copies line up. An
+off-axis sound has unequal path lengths, so its copies remain staggered after
+target steering. The wanted copies reinforce in the weighted sum; the
+off-target copies partly cancel, and GSC/MVDR can deepen that attenuation.
+
+![How microphones around a point create spatial focus](images/microphone-array-spatial-focus.png)
+
+The image is a polished rendering of the
+[exact vector schematic](images/microphone-array-spatial-focus.svg). The centred
+ring is an explanatory case, not a hardware requirement: the implementation
+also supports linear, rectangular, circular, and custom arrays, and target
+points that are not at the array centre.
+
+Spatial focus is not a promise that every other sound becomes zero. The node
+matches delay/phase patterns, not a person's identity. Same-delay ambiguity,
+reflections, low frequencies, finite spacing, calibration error, and microphone
+mismatch limit rejection. A second source that matches the configured target's
+full steering-delay vector can pass through.
+
+## End-to-end signal path
+
+The next diagram separates microphone channels (`N`) from independent capture
+clock domains (`K`). A four-channel interface plus two USB microphones is
+`N=6, K=3`: the four interface channels remain separate and use the master
+clock directly, while each single-channel USB slave receives one ASRC. There is
+never one resampler per channel of the multichannel interface.
+
+![Microphone Array signal flow and clock domains](images/microphone-array-signal-flow.svg)
+
+Calibration and steering remain inside the Microphone Array input node. Noise
+Suppressor, Compressor, EQ, Recorder, Speaker, and virtual-cable routing remain
+ordinary, replaceable downstream graph nodes.
+
+All processing is local. Splitwave does not upload microphone audio, and the
 array setup does not save raw calibration or live audio unless you explicitly
 connect the graph to a recording output.
+
+## Product tour
+
+The `Spatial Voice — Multi-Mic` factory pipeline creates the complete graph in
+one action. A fresh graph intentionally leaves the physical microphones and
+speaker output unassigned so it can be moved safely between computers.
+
+![Spatial Voice Multi-Mic factory pipeline](images/microphone-array-pipeline.png)
+
+The compact graph node reports enabled microphones, independent clocks,
+configuration/calibration state, active algorithm, and strength. **Setup** opens
+the full configuration without adding separate pages to the application.
+
+![Microphone Array graph node](images/microphone-array-node.png)
+
+Setup keeps sources, geometry, target, calibration, processing, and diagnostics
+in one task-oriented dialog. The following screenshot shows a two-channel
+linear array with a fixed direction and a ready calibration.
+
+![Microphone Array geometry and calibration](images/microphone-array-setup.png)
+
+Diagnostics provide A/B audition modes and runtime state without creating extra
+graph outputs. Live drift, ASRC, lock, ring-fill, xrun, load, fallback, and
+member-health values appear when the graph is running; stopped-state values are
+not simulated.
+
+![Microphone Array diagnostics](images/microphone-array-diagnostics.png)
 
 ## Recommended hardware
 
@@ -70,6 +153,15 @@ Two microphones do not uniquely determine a point in space. More generally,
 any source with the same steering delays/TDOA as the target may pass through the
 array. A point target therefore describes the expected propagation delays; it
 is not speaker identification or guaranteed source isolation.
+
+![Direction and two-microphone same-TDOA ambiguity](images/microphone-array-ambiguity.svg)
+
+Direction steering intentionally ignores range: sources on the same far-field
+bearing have the same directional steering vector. For an exact symmetric
+two-microphone pair, every point on the perpendicular bisector has zero TDOA.
+A near-field point target with more independently positioned microphones adds
+distance constraints, but it still filters a spatial pattern rather than an
+identity.
 
 ## Calibration
 

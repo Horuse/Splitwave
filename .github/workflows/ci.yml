@@ -70,11 +70,34 @@ jobs:
             libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
             libpipewire-0.3-dev clang libclang-dev \
             libasound2-dev libopus-dev libpulse-dev \
-            desktop-file-utils xdg-utils patchelf
+            desktop-file-utils xdg-utils patchelf pipewire
 
+      # Linux hardware smoke tests (device/app enumeration) need a live
+      # PipeWire daemon; the runner has none. playback_pulls_samples hardcodes
+      # a real ALSA device name and cannot pass without hardware, so it is
+      # skipped here. Windows: the test binary cannot start because tauri's
+      # manifest (Common-Controls v6) is embedded into the app binary only,
+      # not test harnesses (tauri-apps/tauri#13419, #14580) — a known
+      # workaround is to compile-gate Windows with --no-run and run tests on
+      # the other two OSes.
       - name: Cargo test (also regenerates ts-rs bindings)
         working-directory: src-tauri
-        run: cargo test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            export XDG_RUNTIME_DIR=/tmp/pipewire
+            mkdir -p "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            pipewire &
+            sleep 2
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cargo test --no-run
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            cargo test -- --skip audio::playback::tests::playback_pulls_samples
+          else
+            cargo test
+          fi
 
       - name: TS-RS bindings up to date
         run: git diff --exit-code -- src/lib/modules/pipeline/generated

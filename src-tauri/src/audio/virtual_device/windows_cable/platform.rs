@@ -114,22 +114,6 @@ pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> 
     }
 }
 
-pub fn uninstall() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
-    let _guard = OperationGuard::acquire()?;
-    let root = current_install_root()?;
-    let consumer = consumer_id(&root)?;
-    let exit_code = elevate_current(&[
-        OsString::from(HELPER_FLAG),
-        OsString::from("remove"),
-        root.into_os_string(),
-        OsString::from(consumer),
-    ])?;
-    match exit_code {
-        0 | EXIT_REBOOT_REQUIRED => status(),
-        code => Err(helper_error("remove", code)),
-    }
-}
-
 pub fn run_helper() -> Option<i32> {
     let args: Vec<OsString> = std::env::args_os().collect();
     if args.get(1).and_then(|v| v.to_str()) != Some(HELPER_FLAG) {

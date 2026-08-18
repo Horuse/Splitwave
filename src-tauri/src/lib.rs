@@ -237,7 +237,6 @@ pub fn run() {
             commands::virtual_driver_status,
             commands::windows_virtual_cable_status,
             commands::install_windows_virtual_cable,
-            commands::uninstall_windows_virtual_cable,
             commands::install_virtual_driver,
             commands::uninstall_virtual_driver,
             commands::apply_virtual_devices,

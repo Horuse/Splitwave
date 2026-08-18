@@ -406,7 +406,7 @@ fn verified_package_after_setup<'a>(
 mod platform;
 
 #[cfg(target_os = "windows")]
-pub use platform::{install, status, uninstall};
+pub use platform::{install, status};
 
 #[cfg(target_os = "windows")]
 pub fn run_helper() -> Option<i32> {
@@ -427,11 +427,6 @@ pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> 
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn uninstall() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
-    status()
-}
-
-#[cfg(not(target_os = "windows"))]
 pub fn run_helper() -> Option<i32> {
     None
 }
@@ -444,11 +439,6 @@ pub fn windows_virtual_cable_status() -> Result<WindowsVirtualCableStatus, Windo
 pub fn install_windows_virtual_cable() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError>
 {
     install()
-}
-
-pub fn uninstall_windows_virtual_cable(
-) -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
-    uninstall()
 }
 
 #[cfg(test)]

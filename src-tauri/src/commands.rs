@@ -410,33 +410,6 @@ pub async fn install_windows_virtual_cable(
 }
 
 #[tauri::command]
-pub async fn uninstall_windows_virtual_cable(
-    confirmed: bool,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<virtual_device::WindowsVirtualCableStatus, virtual_device::WindowsVirtualCableError> {
-    if !confirmed {
-        return Err(virtual_device::WindowsVirtualCableError::confirmation_required());
-    }
-
-    let tx = state.audio_tx.clone();
-    let stopped = audio_request(tx, |reply| Command::Stop { reply })
-        .await
-        .map_err(|e| virtual_device::WindowsVirtualCableError::operation_failed(e.to_string()))?;
-    stopped
-        .map_err(|e| virtual_device::WindowsVirtualCableError::operation_failed(e.to_string()))?;
-    let _ = app.emit(STATE_EVENT, json!({ "kind": "stopped" }));
-
-    tauri::async_runtime::spawn_blocking(virtual_device::uninstall_windows_virtual_cable)
-        .await
-        .map_err(|_| {
-            virtual_device::WindowsVirtualCableError::operation_failed(
-                "Uninstallation task stopped unexpectedly",
-            )
-        })?
-}
-
-#[tauri::command]
 pub fn install_virtual_driver(app: AppHandle) -> Result<(), String> {
     virtual_device::install(&app)
 }

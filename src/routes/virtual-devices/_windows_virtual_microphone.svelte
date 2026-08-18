@@ -10,7 +10,8 @@
 	let installing = $state(false);
 	let issue = $state<string | null>(null);
 
-	const needsRestart = $derived(status?.state === 'partial' || status?.state === 'rebootRequired' || status?.state === 'removalPendingReboot');
+	const needsRestart = $derived(status?.state === 'rebootRequired' || status?.state === 'removalPendingReboot');
+	const incomplete = $derived(status?.state === 'partial');
 	const ready = $derived(!!status?.usable && !!status.renderEndpointName && !!status.captureEndpointName);
 
 	function errorCode(value: unknown): string | null {
@@ -66,6 +67,7 @@
 			issue = friendlyIssue(error);
 			try {
 				status = await methods.windowsVirtualCableStatus();
+				if (status.usable) issue = null;
 			} catch {
 				// Keep the installation error when the follow-up probe also fails.
 			}
@@ -93,20 +95,22 @@
 <section class="flex max-w-3xl flex-col gap-4 rounded-2xl bg-neutral-200 p-5">
 	<div class="flex items-start gap-4">
 		<div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
-			<Plug class={['size-5', ready ? 'text-emerald-600 dark:text-emerald-400' : needsRestart ? 'text-amber-600' : 'text-neutral-800']} />
+			<Plug class={['size-5', ready ? 'text-emerald-600 dark:text-emerald-400' : needsRestart || incomplete ? 'text-amber-600' : 'text-neutral-800']} />
 		</div>
 		<div class="flex min-w-0 flex-1 flex-col gap-1">
 			<h2 class="font-medium text-theme">VB-CABLE virtual microphone</h2>
 			{#if checking}
 				<p class="text-xs text-neutral-900">Checking Windows audio...</p>
-			{:else if ready}
-				<p class="text-xs text-emerald-700 dark:text-emerald-300">Ready</p>
-			{:else if needsRestart}
-				<p class="text-xs text-amber-700 dark:text-amber-300">Restart Windows to finish setup</p>
 			{:else if status?.state === 'installedExternal'}
 				<p class="text-xs text-neutral-900">Installed outside Splitwave</p>
 			{:else if status?.state === 'unknownOwnership'}
 				<p class="text-xs text-neutral-900">Installed, ownership could not be verified</p>
+			{:else if ready}
+				<p class="text-xs text-emerald-700 dark:text-emerald-300">Ready</p>
+			{:else if needsRestart}
+				<p class="text-xs text-amber-700 dark:text-amber-300">Restart Windows to finish setup</p>
+			{:else if incomplete}
+				<p class="text-xs text-amber-700 dark:text-amber-300">Installation incomplete</p>
 			{:else if status?.state === 'notInstalled'}
 				<p class="text-xs text-neutral-900">Not installed</p>
 			{:else}
@@ -117,7 +121,7 @@
 			<button type="button" class="button-main green rounded-lg" onclick={install} disabled={installing}>
 				{installing ? 'Installing...' : 'Install virtual microphone'}
 			</button>
-		{:else if !installing && (issue || needsRestart || status?.state === 'unknownOwnership')}
+		{:else if !installing && (issue || needsRestart || incomplete || status?.state === 'unknownOwnership')}
 			<button type="button" class="button-main primary rounded-lg" onclick={() => loadStatus(true)}>Check again</button>
 		{/if}
 	</div>
@@ -133,7 +137,9 @@
 				<span class="font-mono text-xs text-theme">{status?.captureEndpointName}</span>
 			</div>
 		</div>
-	{:else if needsRestart}
+	{/if}
+
+	{#if needsRestart}
 		<p class="text-xs leading-relaxed text-neutral-1000">
 			VB-CABLE is present, but Windows has not exposed both audio endpoints yet. Splitwave checks again when this window regains focus.
 		</p>
@@ -141,6 +147,8 @@
 		<p class="text-xs leading-relaxed text-neutral-1000">Splitwave will use this installation without claiming or removing it.</p>
 	{:else if status?.state === 'unknownOwnership'}
 		<p class="text-xs leading-relaxed text-neutral-1000">The existing driver will be preserved and not changed.</p>
+	{:else if incomplete}
+		<p class="text-xs leading-relaxed text-neutral-1000">Splitwave found only part of the expected VB-CABLE installation and will not modify it.</p>
 	{:else if status?.state === 'notInstalled'}
 		<p class="text-xs leading-relaxed text-neutral-1000">
 			Splitwave downloads the standard VB-Audio package from its official source. Administrator approval and a Windows restart may be required.

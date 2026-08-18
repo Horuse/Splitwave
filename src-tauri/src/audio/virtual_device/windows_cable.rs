@@ -157,6 +157,9 @@ fn detect_cable_from_inventory(
         if !belongs_to_cable {
             continue;
         }
+        if !is_expected_endpoint(endpoint.flow, &endpoint.name) {
+            continue;
+        }
         match endpoint.flow {
             CableEndpointFlow::Render if detected.render_endpoint_name.is_none() => {
                 detected.render_endpoint_name = Some(endpoint.name);
@@ -168,6 +171,20 @@ fn detect_cable_from_inventory(
         }
     }
     detected
+}
+
+fn is_expected_endpoint(flow: CableEndpointFlow, name: &str) -> bool {
+    let expected = match flow {
+        CableEndpointFlow::Render => "CABLE Input",
+        CableEndpointFlow::Capture => "CABLE Output",
+    };
+    name.eq_ignore_ascii_case(expected)
+        || name
+            .get(..expected.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(expected))
+            && name
+                .get(expected.len()..)
+                .is_some_and(|suffix| suffix.starts_with(" (") && suffix.ends_with(')'))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,6 +640,36 @@ mod tests {
         assert_eq!(
             cable.capture_endpoint_name.as_deref(),
             Some("CABLE Output (VB-Audio Virtual Cable)")
+        );
+    }
+
+    #[test]
+    fn multichannel_playback_endpoint_does_not_replace_cable_input() {
+        let cable = detect_cable_from_inventory(
+            vec![package()],
+            [
+                endpoint(
+                    CableEndpointFlow::Render,
+                    "CABLE In 16ch (VB-Audio Virtual Cable)",
+                    "ROOT\\VBCABLE\\0000",
+                ),
+                endpoint(
+                    CableEndpointFlow::Render,
+                    "CABLE Input (VB-Audio Virtual Cable)",
+                    "ROOT\\VBCABLE\\0000",
+                ),
+                endpoint(
+                    CableEndpointFlow::Capture,
+                    "CABLE Output (VB-Audio Virtual Cable)",
+                    "ROOT\\VBCABLE\\0000",
+                ),
+            ],
+        );
+
+        assert!(cable.usable());
+        assert_eq!(
+            cable.render_endpoint_name.as_deref(),
+            Some("CABLE Input (VB-Audio Virtual Cable)")
         );
     }
 

@@ -43,11 +43,14 @@ Requires Windows 10 version 2004 or newer (for per-app capture) and the
 (preinstalled on current Windows 10/11). Download the `.exe` installer from
 [Releases](https://github.com/Horuse/Splitwave/releases/latest) and run it.
 
-To expose a Splitwave output as a microphone, open **Virtual devices** and
-choose **Install virtual microphone**. Splitwave downloads the standard
-VB-Audio VB-CABLE package from its official source after confirmation, then
-shows the actual `CABLE Input` playback endpoint to select in a Speaker output
-node and the `CABLE Output` recording endpoint to select in the target app.
+To expose a Splitwave output as a microphone:
+
+1. Open **Virtual devices** and choose **Install virtual microphone**.
+2. Complete the VB-CABLE installer.
+3. Restart Windows if Splitwave shows **Restart required**.
+4. Select `CABLE Input` in a Speaker node.
+5. Select `CABLE Output` as the microphone in the target app.
+
 VB-CABLE is third-party donationware; see its
 [official page](https://vb-audio.com/Cable/) for licensing and support.
 
@@ -62,7 +65,7 @@ VB-CABLE is third-party donationware; see its
 | Device volume control                     |          ✅          |           ✅           |                ✅                 |
 | Recording: WAV / FLAC / AIFF / MP3 / Opus |          ✅          |           ✅           |                ✅                 |
 | Recording: AAC (M4A)                      |          ✅          |           ❌           |                ❌                 |
-| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks | ✅ fixed VB-CABLE microphone      |
+| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks |   ✅ fixed VB-CABLE microphone    |
 | Effects, metering, file playback          |          ✅          |           ✅           |                ✅                 |
 | CLAP plugins                              |          ✅          |           ✅           |                ✅                 |
 | VST3 plugins                              |          ✅          |         ✅ X11         |                ✅                 |

@@ -32,6 +32,11 @@
 			case 'checksumMismatch':
 			case 'invalidSignature':
 				return 'The downloaded driver could not be verified, so Splitwave did not run it.';
+			case 'driverPackageNotDetected':
+				return 'VB-CABLE installer finished, but Windows did not register the expected driver.';
+			case 'helperResultMissing':
+			case 'helperResultInvalid':
+				return 'Splitwave could not read the installer result. Details were written to the app log.';
 			case 'operationInProgress':
 				return 'Another virtual microphone operation is already in progress.';
 			default:

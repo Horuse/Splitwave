@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 use windows::core::{PCWSTR, PWSTR};
@@ -44,11 +45,11 @@ use winreg::RegKey;
 use zip::ZipArchive;
 
 use super::{
-    detect_cable_from_inventory, determine_state, removal_decision, status_from,
-    verified_package_after_setup, CableEndpoint, CableEndpointFlow, CablePackage, DetectedCable,
-    ManifestState, OwnershipManifest, RemovalAction, UninstallReason, WindowsVirtualCableError,
-    WindowsVirtualCableOwnership, WindowsVirtualCableStatus, MANIFEST_SCHEMA_VERSION,
-    PROVIDER_NAME,
+    detect_cable_from_inventory, determine_state, manifest_ownership, removal_decision,
+    status_from, verified_package_after_setup, CableEndpoint, CableEndpointFlow, CablePackage,
+    DetectedCable, ManifestState, OwnershipManifest, RemovalAction, UninstallReason,
+    WindowsVirtualCableError, WindowsVirtualCableOwnership, WindowsVirtualCableStatus,
+    MANIFEST_SCHEMA_VERSION, PROVIDER_NAME,
 };
 
 const VBCABLE_URL: &str = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
@@ -61,12 +62,40 @@ const VBCABLE_MAX_EXTRACTED_BYTES: u64 = 16 * 1024 * 1024;
 const REGISTRY_PATH: &str = r"SOFTWARE\Horuse\Splitwave\Dependencies\VBCable";
 const REGISTRY_VALUE: &str = "Manifest";
 const HELPER_FLAG: &str = "--vb-cable-helper";
+const HELPER_RESULT_PATH_FLAG: &str = "--result-path";
+const HELPER_REQUEST_ID_FLAG: &str = "--request-id";
+const HELPER_RESULT_MAX_BYTES: u64 = 16 * 1024;
 const EXIT_REQUIRES_CONFIRMATION: u32 = 20;
 const EXIT_REBOOT_REQUIRED: u32 = 21;
 
 static OPERATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 struct OperationGuard;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HelperResult {
+    request_id: String,
+    success: bool,
+    code: String,
+    message: String,
+    installer_exit_code: Option<i32>,
+    render_endpoint_name: Option<String>,
+    capture_endpoint_name: Option<String>,
+    published_inf: Option<String>,
+    ownership: WindowsVirtualCableOwnership,
+}
+
+struct HelperResultTarget {
+    path: PathBuf,
+    request_id: String,
+}
+
+struct HelperResultChannel {
+    _directory: TemporaryPath,
+    path: PathBuf,
+    request_id: String,
+}
 
 impl OperationGuard {
     fn acquire() -> Result<Self, WindowsVirtualCableError> {
@@ -102,15 +131,43 @@ pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> 
     let _guard = OperationGuard::acquire()?;
     let consumer = consumer_id(&current_install_root()?)?;
     let archive = download_archive()?;
+    let result_channel = HelperResultChannel::create()?;
     let exit_code = elevate_current(&[
         OsString::from(HELPER_FLAG),
         OsString::from("install"),
         archive.path().as_os_str().to_owned(),
         OsString::from(consumer),
+        OsString::from(HELPER_RESULT_PATH_FLAG),
+        result_channel.path.as_os_str().to_owned(),
+        OsString::from(HELPER_REQUEST_ID_FLAG),
+        OsString::from(&result_channel.request_id),
     ])?;
-    match exit_code {
-        0 | EXIT_REBOOT_REQUIRED => status(),
-        code => Err(helper_error("install", code)),
+    let helper_result = result_channel.read(exit_code).map_err(|error| {
+        warn!(
+            stage = "install",
+            helper_exit_code = exit_code,
+            code = %error.code,
+            message = %error.message,
+            "VB-CABLE elevated helper result could not be read"
+        );
+        error
+    })?;
+    info!(
+        stage = "install",
+        helper_exit_code = exit_code,
+        code = %helper_result.code,
+        message = %helper_result.message,
+        installer_exit_code = ?helper_result.installer_exit_code,
+        render_endpoint = ?helper_result.render_endpoint_name,
+        capture_endpoint = ?helper_result.capture_endpoint_name,
+        published_inf = ?helper_result.published_inf,
+        ownership = ?helper_result.ownership,
+        "VB-CABLE elevated helper completed"
+    );
+    if helper_result.success {
+        status()
+    } else {
+        Err(helper_result.into_error())
     }
 }
 
@@ -128,40 +185,60 @@ pub fn run_helper() -> Option<i32> {
             )
         })
     };
-    let result = match action {
-        Some("install") => args
-            .get(3)
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                WindowsVirtualCableError::new(
-                    "invalidHelperArguments",
-                    "Missing VB-CABLE archive path",
-                )
-            })
-            .and_then(|archive| {
-                let consumer = supplied_consumer_id(&args)?;
-                ensure_elevated_or_rerun(&args, || helper_install(&archive, &consumer))
-            }),
-        Some("register-consumer") => {
-            root().and_then(|root| register_consumer_with_elevation(&args, &root))
-        }
-        Some("unregister") => root().and_then(|root| unregister_consumer(&args, &root)),
-        Some("retain") => root().and_then(|root| retain_as_external_with_elevation(&args, &root)),
-        Some("remove") => root().and_then(|root| remove_exact_package_with_elevation(&args, &root)),
-        _ => Err(WindowsVirtualCableError::new(
-            "invalidHelperArguments",
-            "Unknown VB-CABLE helper action",
-        )),
+    let result_target = helper_result_target(&args);
+    let mut installer_exit_code = None;
+    let result = match &result_target {
+        Err(error) => Err(error.clone()),
+        Ok(_) => match action {
+            Some("install") => args
+                .get(3)
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    WindowsVirtualCableError::new(
+                        "invalidHelperArguments",
+                        "Missing VB-CABLE archive path",
+                    )
+                })
+                .and_then(|archive| {
+                    let consumer = supplied_consumer_id(&args)?;
+                    ensure_elevated_or_rerun(&args, || {
+                        installer_exit_code = helper_install(&archive, &consumer)?;
+                        Ok(())
+                    })
+                }),
+            Some("register-consumer") => {
+                root().and_then(|root| register_consumer_with_elevation(&args, &root))
+            }
+            Some("unregister") => root().and_then(|root| unregister_consumer(&args, &root)),
+            Some("retain") => {
+                root().and_then(|root| retain_as_external_with_elevation(&args, &root))
+            }
+            Some("remove") => {
+                root().and_then(|root| remove_exact_package_with_elevation(&args, &root))
+            }
+            _ => Err(WindowsVirtualCableError::new(
+                "invalidHelperArguments",
+                "Unknown VB-CABLE helper action",
+            )),
+        },
     };
-    let exit_code = match result {
+    let exit_code = match &result {
         Ok(()) => 0,
         Err(error) if error.code == "rebootRequired" => EXIT_REBOOT_REQUIRED,
         Err(error) if error.code == "confirmationRequired" => EXIT_REQUIRES_CONFIRMATION,
         Err(error) => {
-            warn!(code = error.code, message = %error.message, "VB-CABLE helper failed");
+            warn!(code = %error.code, message = %error.message, "VB-CABLE helper failed");
             1
         }
     };
+    if let Ok(Some(target)) = result_target {
+        let helper_result =
+            HelperResult::from_operation(target.request_id, &result, installer_exit_code);
+        if let Err(error) = write_helper_result(&target.path, &helper_result) {
+            warn!(code = %error.code, message = %error.message, "VB-CABLE helper could not write its result");
+            return Some(1);
+        }
+    }
     Some(
         exit_code
             .try_into()
@@ -214,7 +291,7 @@ fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirt
     }
 }
 
-fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCableError> {
+fn helper_install(archive: &Path, consumer: &str) -> Result<Option<i32>, WindowsVirtualCableError> {
     let before = detect_cable()?;
     if before.usable() || !before.packages.is_empty() {
         return Err(WindowsVirtualCableError::new(
@@ -234,7 +311,7 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCa
             format!("Could not launch VB-CABLE setup: {e}"),
         )
     })?;
-    let after = detect_cable()?;
+    let after = detect_cable().map_err(|error| error.with_installer_exit_code(result.code()))?;
     let package = verified_package_after_setup(&before, &after, result.code())?.clone();
     if !result.success() {
         warn!(
@@ -247,7 +324,8 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCa
         return Err(WindowsVirtualCableError::new(
             "driverPackageNotFound",
             "VB-CABLE setup did not expose a safe published driver package name",
-        ));
+        )
+        .with_installer_exit_code(result.code()));
     }
 
     let manifest = OwnershipManifest {
@@ -268,11 +346,11 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<(), WindowsVirtualCa
         pending_reboot: !after.usable(),
         removal_pending_reboot: false,
     };
-    write_manifest(&manifest)?;
+    write_manifest(&manifest).map_err(|error| error.with_installer_exit_code(result.code()))?;
     if !after.usable() {
-        return Err(WindowsVirtualCableError::new("rebootRequired", "VB-CABLE was installed, but Windows must be restarted before both endpoints are available"));
+        return Err(WindowsVirtualCableError::new("rebootRequired", "VB-CABLE was installed, but Windows must be restarted before both endpoints are available").with_installer_exit_code(result.code()));
     }
-    Ok(())
+    Ok(result.code())
 }
 
 fn register_consumer(consumer: &str) -> Result<(), WindowsVirtualCableError> {
@@ -881,9 +959,251 @@ fn finalize_temporary_archive(
     Ok(archive)
 }
 
+impl HelperResult {
+    fn from_operation(
+        request_id: String,
+        result: &Result<(), WindowsVirtualCableError>,
+        installer_exit_code: Option<i32>,
+    ) -> Self {
+        let detected = detect_cable().unwrap_or_default();
+        let manifest = read_manifest();
+        let published_inf = detected
+            .package()
+            .map(|package| package.published_name.clone());
+        let (success, code, message, installer_exit_code) = match result {
+            Ok(()) => (
+                true,
+                "ok".into(),
+                "VB-CABLE helper completed".into(),
+                installer_exit_code,
+            ),
+            Err(error) => (
+                error.code == "rebootRequired",
+                error.code.clone(),
+                error.message.clone(),
+                error.installer_exit_code.or(installer_exit_code),
+            ),
+        };
+        Self {
+            request_id,
+            success,
+            code,
+            message,
+            installer_exit_code,
+            render_endpoint_name: detected.render_endpoint_name,
+            capture_endpoint_name: detected.capture_endpoint_name,
+            published_inf,
+            ownership: manifest_ownership(&manifest),
+        }
+    }
+
+    fn into_error(self) -> WindowsVirtualCableError {
+        WindowsVirtualCableError::new(self.code, self.message)
+            .with_installer_exit_code(self.installer_exit_code)
+    }
+}
+
+impl HelperResultChannel {
+    fn create() -> Result<Self, WindowsVirtualCableError> {
+        let directory = TemporaryPath::create_dir("vb-cable-result")?;
+        let path = directory.path().join("result.json");
+        Ok(Self {
+            _directory: directory,
+            path,
+            request_id: cuid2::create_id(),
+        })
+    }
+
+    fn read(&self, helper_exit_code: u32) -> Result<HelperResult, WindowsVirtualCableError> {
+        read_helper_result(&self.path, &self.request_id, helper_exit_code)
+    }
+}
+
+fn helper_result_target(
+    args: &[OsString],
+) -> Result<Option<HelperResultTarget>, WindowsVirtualCableError> {
+    let path_index = args
+        .iter()
+        .position(|value| value.to_str() == Some(HELPER_RESULT_PATH_FLAG));
+    let request_index = args
+        .iter()
+        .position(|value| value.to_str() == Some(HELPER_REQUEST_ID_FLAG));
+    let (Some(path_index), Some(request_index)) = (path_index, request_index) else {
+        if path_index.is_none() && request_index.is_none() {
+            return Ok(None);
+        }
+        return Err(WindowsVirtualCableError::new(
+            "invalidHelperArguments",
+            "Incomplete helper result arguments",
+        ));
+    };
+    let path = args.get(path_index + 1).map(PathBuf::from).ok_or_else(|| {
+        WindowsVirtualCableError::new("invalidHelperArguments", "Missing helper result path")
+    })?;
+    let request_id = args
+        .get(request_index + 1)
+        .and_then(|value| value.to_str())
+        .filter(|value| valid_request_id(value))
+        .ok_or_else(|| {
+            WindowsVirtualCableError::new(
+                "invalidHelperArguments",
+                "Invalid helper request identifier",
+            )
+        })?;
+    Ok(Some(HelperResultTarget {
+        path,
+        request_id: request_id.into(),
+    }))
+}
+
+fn valid_request_id(value: &str) -> bool {
+    (16..=64).contains(&value.len())
+        && value
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+}
+
+fn valid_result_code(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+}
+
+fn write_helper_result(path: &Path, result: &HelperResult) -> Result<(), WindowsVirtualCableError> {
+    let bytes = serde_json::to_vec(result).map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultWriteFailed",
+            format!("Serialize helper result: {error}"),
+        )
+    })?;
+    if bytes.len() as u64 > HELPER_RESULT_MAX_BYTES {
+        return Err(WindowsVirtualCableError::new(
+            "helperResultWriteFailed",
+            "Helper result exceeds the allowed size",
+        ));
+    }
+    let part = path.with_extension("json.part");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part)
+        .map_err(|error| {
+            WindowsVirtualCableError::new(
+                "helperResultWriteFailed",
+                format!("Create helper result: {error}"),
+            )
+        })?;
+    file.write_all(&bytes).map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultWriteFailed",
+            format!("Write helper result: {error}"),
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultWriteFailed",
+            format!("Flush helper result: {error}"),
+        )
+    })?;
+    drop(file);
+    fs::rename(&part, path).map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultWriteFailed",
+            format!("Publish helper result: {error}"),
+        )
+    })
+}
+
+fn read_helper_result(
+    path: &Path,
+    request_id: &str,
+    helper_exit_code: u32,
+) -> Result<HelperResult, WindowsVirtualCableError> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        warn!(helper_exit_code, error = %error, "VB-CABLE helper result is missing");
+        WindowsVirtualCableError::new(
+            "helperResultMissing",
+            "VB-CABLE helper did not return a diagnostic result",
+        )
+    })?;
+    if !metadata.is_file() || metadata.len() > HELPER_RESULT_MAX_BYTES {
+        let _ = fs::remove_file(path);
+        return Err(WindowsVirtualCableError::new(
+            "helperResultInvalid",
+            "VB-CABLE helper returned an invalid diagnostic result",
+        ));
+    }
+    let bytes = fs::read(path).map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultInvalid",
+            format!("Read helper result: {error}"),
+        )
+    });
+    let _ = fs::remove_file(path);
+    let bytes = bytes?;
+    let result: HelperResult = serde_json::from_slice(&bytes).map_err(|error| {
+        WindowsVirtualCableError::new(
+            "helperResultInvalid",
+            format!("Parse helper result: {error}"),
+        )
+    })?;
+    if result.request_id != request_id
+        || !valid_request_id(&result.request_id)
+        || !valid_result_code(&result.code)
+        || result.message.is_empty()
+        || result.message.len() > 2048
+    {
+        return Err(WindowsVirtualCableError::new(
+            "helperResultInvalid",
+            "VB-CABLE helper returned an invalid diagnostic result",
+        ));
+    }
+    let expected_exit_code = if result.success {
+        if result.code == "rebootRequired" {
+            EXIT_REBOOT_REQUIRED
+        } else {
+            0
+        }
+    } else if result.code == "confirmationRequired" {
+        EXIT_REQUIRES_CONFIRMATION
+    } else {
+        1
+    };
+    if helper_exit_code != expected_exit_code {
+        return Err(WindowsVirtualCableError::new(
+            "helperResultInvalid",
+            "VB-CABLE helper result did not match the process exit code",
+        ));
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REQUEST_ID: &str = "0123456789abcdef01234567";
+
+    fn helper_result(success: bool, code: &str) -> HelperResult {
+        HelperResult {
+            request_id: REQUEST_ID.into(),
+            success,
+            code: code.into(),
+            message: "helper message".into(),
+            installer_exit_code: None,
+            render_endpoint_name: Some("CABLE Input".into()),
+            capture_endpoint_name: Some("CABLE Output".into()),
+            published_inf: Some("oem42.inf".into()),
+            ownership: WindowsVirtualCableOwnership::Managed,
+        }
+    }
+
+    fn result_file(prefix: &str) -> Result<(TemporaryPath, PathBuf), WindowsVirtualCableError> {
+        let directory = TemporaryPath::create_dir(prefix)?;
+        let path = directory.path().join("result.json");
+        Ok((directory, path))
+    }
 
     #[test]
     fn cable_device_name_excludes_voicemeeter() {
@@ -931,6 +1251,101 @@ mod tests {
             supplied_consumer_id(&args).unwrap_err().code,
             "invalidHelperArguments"
         );
+    }
+
+    #[test]
+    fn helper_result_round_trips_and_is_removed() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-round-trip")?;
+        let expected = helper_result(true, "ok");
+        write_helper_result(&path, &expected)?;
+
+        let actual = read_helper_result(&path, REQUEST_ID, 0)?;
+
+        assert_eq!(actual, expected);
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn helper_result_preserves_unknown_error_code() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-unknown-code")?;
+        let expected = helper_result(false, "newVendorFailure");
+        write_helper_result(&path, &expected)?;
+
+        let actual = read_helper_result(&path, REQUEST_ID, 1)?;
+
+        assert_eq!(actual.code, "newVendorFailure");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_helper_result_is_reported() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-missing")?;
+
+        let error = read_helper_result(&path, REQUEST_ID, 1).unwrap_err();
+
+        assert_eq!(error.code, "helperResultMissing");
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_helper_result_is_rejected_and_removed() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-corrupt")?;
+        fs::write(&path, b"{").unwrap();
+
+        let error = read_helper_result(&path, REQUEST_ID, 1).unwrap_err();
+
+        assert_eq!(error.code, "helperResultInvalid");
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_helper_result_is_rejected_and_removed() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-oversized")?;
+        fs::write(&path, vec![b'x'; HELPER_RESULT_MAX_BYTES as usize + 1]).unwrap();
+
+        let error = read_helper_result(&path, REQUEST_ID, 1).unwrap_err();
+
+        assert_eq!(error.code, "helperResultInvalid");
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn uac_cancellation_remains_distinct() {
+        let error = helper_error("install", ERROR_CANCELLED.0);
+        assert_eq!(error.code, "elevationCancelled");
+    }
+
+    #[test]
+    fn reboot_required_result_matches_reserved_exit_code() -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-reboot")?;
+        let expected = helper_result(true, "rebootRequired");
+        write_helper_result(&path, &expected)?;
+
+        let actual = read_helper_result(&path, REQUEST_ID, EXIT_REBOOT_REQUIRED)?;
+
+        assert!(actual.success);
+        assert_eq!(actual.code, "rebootRequired");
+        Ok(())
+    }
+
+    #[test]
+    fn installer_exit_code_is_preserved_with_specific_failure(
+    ) -> Result<(), WindowsVirtualCableError> {
+        let (_directory, path) = result_file("vb-cable-result-installer-exit")?;
+        let mut expected = helper_result(false, "driverPackageNotDetected");
+        expected.installer_exit_code = Some(1);
+        expected.message =
+            "VB-CABLE installer finished, but Windows did not register the expected driver".into();
+        write_helper_result(&path, &expected)?;
+
+        let error = read_helper_result(&path, REQUEST_ID, 1)?.into_error();
+
+        assert_eq!(error.code, "driverPackageNotDetected");
+        assert_eq!(error.installer_exit_code, Some(1));
+        Ok(())
     }
 }
 

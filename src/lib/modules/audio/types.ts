@@ -109,6 +109,7 @@ export interface WindowsVirtualCableStatus {
 export interface WindowsVirtualCableError {
 	code: string;
 	message: string;
+	installerExitCode?: number | null;
 }
 
 export type AudioStateEvent = { kind: 'started' } | { kind: 'stopped' } | { kind: 'error'; message: string };

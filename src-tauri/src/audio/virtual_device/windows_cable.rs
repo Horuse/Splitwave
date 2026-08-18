@@ -46,8 +46,10 @@ pub struct WindowsVirtualCableStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowsVirtualCableError {
-    pub code: &'static str,
+    pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installer_exit_code: Option<i32>,
 }
 
 impl WindowsVirtualCableError {
@@ -62,11 +64,17 @@ impl WindowsVirtualCableError {
         )
     }
 
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            code,
+            code: code.into(),
             message: message.into(),
+            installer_exit_code: None,
         }
+    }
+
+    fn with_installer_exit_code(mut self, installer_exit_code: Option<i32>) -> Self {
+        self.installer_exit_code = installer_exit_code;
+        self
     }
 }
 
@@ -386,19 +394,22 @@ fn verified_package_after_setup<'a>(
     after: &'a DetectedCable,
     setup_exit_code: Option<i32>,
 ) -> Result<&'a CablePackage, WindowsVirtualCableError> {
-    newly_installed_package(before, after).ok_or_else(|| match setup_exit_code {
-        Some(0) => WindowsVirtualCableError::new(
-            "driverPackageNotFound",
-            "VB-CABLE setup completed, but Splitwave could not identify one new exact driver package",
-        ),
-        Some(code) => WindowsVirtualCableError::new(
-            "installerFailed",
-            format!("VB-CABLE setup did not install the driver (exit code {code})"),
-        ),
-        None => WindowsVirtualCableError::new(
-            "installerFailed",
-            "VB-CABLE setup ended before Splitwave could verify the driver installation",
-        ),
+    newly_installed_package(before, after).ok_or_else(|| {
+        let error = match setup_exit_code {
+            Some(0) => WindowsVirtualCableError::new(
+                "driverPackageNotDetected",
+                "VB-CABLE installer finished, but Windows did not register the expected driver",
+            ),
+            Some(_) => WindowsVirtualCableError::new(
+                "driverPackageNotDetected",
+                "VB-CABLE installer exited without registering the expected driver",
+            ),
+            None => WindowsVirtualCableError::new(
+                "installerFailed",
+                "VB-CABLE setup ended before Splitwave could verify the driver installation",
+            ),
+        };
+        error.with_installer_exit_code(setup_exit_code)
     })
 }
 
@@ -759,11 +770,12 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_setup_exit_without_new_package_is_an_installer_failure() {
+    fn nonzero_setup_exit_without_new_package_preserves_the_specific_failure() {
         let before = DetectedCable::default();
         let error = verified_package_after_setup(&before, &DetectedCable::default(), Some(1))
             .expect_err("no package was installed");
-        assert_eq!(error.code, "installerFailed");
+        assert_eq!(error.code, "driverPackageNotDetected");
+        assert_eq!(error.installer_exit_code, Some(1));
     }
 
     #[test]

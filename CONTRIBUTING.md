@@ -1,9 +1,11 @@
 # Contributing
 
 Thanks for helping out. Build and run instructions live in
-[DEVELOPMENT.md](DEVELOPMENT.md); the engine's design rules live in
-[AGENTS.md](AGENTS.md). This file is about what a reviewable pull request
-looks like.
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); engine concepts in
+[docs/CONCEPT.md](docs/CONCEPT.md), universal rules in
+[docs/RULES.md](docs/RULES.md), and what a new feature must look like in
+[docs/FEATURES.md](docs/FEATURES.md). This file is about what a reviewable
+pull request looks like.
 
 ## Keep the diff to the change
 
@@ -75,7 +77,7 @@ src-tauri/src/audio/pipeline/output/
 
 If a platform genuinely cannot support what you are adding, return a real
 error from that backend. Do not silently substitute a different value — see
-the no-silent-fallback rule in AGENTS.md.
+the no-silent-fallback rule in [docs/RULES.md](docs/RULES.md).
 
 ## Before you open the PR
 
@@ -110,8 +112,9 @@ field.
 
 ## Real-time audio
 
-Read the "RT audio path — forbidden" section of [AGENTS.md](AGENTS.md) before
-touching anything inside a cpal or ScreenCaptureKit callback, or inside
+Read the "RT audio path — forbidden" section of
+[AGENTS.md](AGENTS.md) before touching anything inside a cpal or
+ScreenCaptureKit callback, or inside
 `DspWorker::run`. No allocations, no locks, no syscalls, no non-deterministic
 latency. This is the one area where a PR gets rejected on principle rather
 than on taste — a glitch here is audible to every user.

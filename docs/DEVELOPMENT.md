@@ -1,7 +1,7 @@
 # Development
 
 Setting up a build. For what a reviewable pull request looks like — diff
-scope, formatting, per-OS testing — see [CONTRIBUTING.md](CONTRIBUTING.md).
+scope, formatting, per-OS testing — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Prerequisites
 
@@ -61,7 +61,7 @@ bun run format   # Prettier (.prettierrc) + rustfmt (rustfmt.toml)
 ```
 
 Required before opening a PR — see
-[CONTRIBUTING.md](CONTRIBUTING.md#keep-the-diff-to-the-change).
+[CONTRIBUTING.md](../CONTRIBUTING.md#keep-the-diff-to-the-change).
 
 ## Project layout
 

@@ -26,12 +26,13 @@ publicly.
   hosting (CLAP, VST3, AU)
 - The Tauri IPC surface between the frontend and the Rust backend
 - Bundling, update, and installation paths
+- The macOS virtual device driver (`src-tauri/native/virtual_driver/`)
 
 ## What is out of scope
 
-- Third-party plugins you install and run yourself — they are separate
-  programs and run with the same privileges you grant them
-- Device drivers and the macOS virtual device driver
+- Third-party plugins you install and run yourself. Like every DAW, we load
+  plugins into the app process without sandboxing — a plugin runs with the
+  app's privileges, so install only plugins you trust.
 - Known limitations of the upstream crates we depend on, unless we failed to
   apply a published fix
 

@@ -101,6 +101,9 @@ explicitly experimental clock-synchronization mode and are less stable. See the
 [Microphone Array guide](docs/microphone-array.md),
 [architecture](docs/microphone-array-architecture.md), and
 [hardware test guide](docs/microphone-array-hardware-test.md).
+The Microphone Array contribution is attributed to
+[Red Rat in Hat](https://redratinhat.com/products/) in the node's lower-right
+corner and in the feature guide.
 
 ## Stack
 

@@ -79,6 +79,12 @@ The compact graph node reports enabled microphones, independent clocks,
 configuration/calibration state, active algorithm, and strength. **Setup** opens
 the full configuration without adding separate pages to the application.
 
+The lower-right corner carries a deliberately quiet
+[`byRedRatInHat`](https://redratinhat.com/products/) attribution link. In the
+desktop app it opens the Red Rat in Hat products page in the system browser.
+The attribution applies to this Microphone Array contribution only; Splitwave
+remains the Horuse project.
+
 ![Microphone Array graph node](images/microphone-array-node.png)
 
 Setup keeps sources, geometry, target, calibration, processing, and diagnostics

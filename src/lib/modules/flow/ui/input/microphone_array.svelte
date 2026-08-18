@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { onDestroy, onMount } from 'svelte';
+	import toast from 'svelte-french-toast';
 	import { Mic } from '$lib/components/icons';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -86,6 +88,14 @@
 	function setStrength(value: number) {
 		if (Number.isFinite(value)) flow.updateNodeData(id, { strength: value });
 	}
+
+	async function openAttribution() {
+		try {
+			await openUrl('https://redratinhat.com/products/');
+		} catch {
+			toast.error('Could not open the Red Rat in Hat website.');
+		}
+	}
 </script>
 
 <Wrapper label="Microphone Array" accent="input" icon={Mic} hasOutput bypassed={data.bypassed} onBypass={toggleBypass}>
@@ -95,7 +105,7 @@
 		{/if}
 	{/snippet}
 
-	<div class="flex w-56 flex-col gap-3">
+	<div class="relative flex w-56 flex-col gap-3">
 		<div class="grid grid-cols-2 gap-2">
 			<div class="rounded-lg border border-neutral-300 bg-neutral-100/70 px-2.5 py-2">
 				<div class="font-mono text-[9px] text-neutral-700">MICROPHONES</div>
@@ -136,5 +146,12 @@
 				value={data.strength}
 				oninput={(event) => setStrength(event.currentTarget.valueAsNumber)} />
 		</div>
+
+		<button
+			type="button"
+			class="nodrag nopan absolute right-0 -bottom-1.5 font-mono text-[8px] leading-none text-neutral-500 transition-colors hover:text-theme focus-visible:text-theme focus-visible:outline-none"
+			aria-label="Microphone Array contribution by Red Rat in Hat"
+			title="Microphone Array contribution by Red Rat in Hat"
+			onclick={openAttribution}>byRedRatInHat</button>
 	</div>
 </Wrapper>

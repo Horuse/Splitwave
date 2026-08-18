@@ -26,7 +26,15 @@ jobs:
           command: check licenses bans
 
   check:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # windows-latest ships CMake 4.x, which rejects audiopus_sys's pre-3.5
+      # policy version without this override (also set in src-tauri/.cargo/config.toml).
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,6 +54,23 @@ jobs:
 
       - name: Install JS deps
         run: bun install --frozen-lockfile
+
+      # Each OS backend needs its native headers to compile. Linux installs
+      # PipeWire and the GTK stack explicitly; macOS and Windows runners ship
+      # their SDKs (CoreAudio / WASAPI + MSVC) preinstalled.
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        # PPA backports a libpipewire new enough for the libspa crate
+        run: |
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
+            libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
+            libpipewire-0.3-dev clang libclang-dev \
+            libasound2-dev libopus-dev libpulse-dev \
+            desktop-file-utils xdg-utils patchelf
 
       - name: Cargo test (also regenerates ts-rs bindings)
         working-directory: src-tauri

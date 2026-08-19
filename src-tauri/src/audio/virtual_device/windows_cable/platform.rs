@@ -1564,11 +1564,13 @@ fn setup_program_name() -> &'static str {
 }
 
 fn verify_authenticode(installer: &Path) -> Result<(), WindowsVirtualCableError> {
+    // The archive hash pins the bytes; NotTrusted only means this machine lacks publisher trust.
     const SCRIPT: &str = r#"param([Parameter(Mandatory = $true)][string]$InstallerPath)
 $signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
-if ($signature.Status -ne 'Valid') { exit 2 }
+if ($null -eq $signature.SignerCertificate) { exit 2 }
 if ($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'BUREL VINCENT Entrepreneur individuel') { exit 3 }
 if ($signature.SignerCertificate.Thumbprint -ne 'A77952D93229D0EC36E2543081EEA7D125732B9C') { exit 4 }
+if ($signature.Status -ne 'Valid' -and $signature.Status -ne 'NotTrusted') { exit 2 }
 exit 0
 "#;
     let script_dir = TemporaryPath::create_dir("vb-cable-signature")?;

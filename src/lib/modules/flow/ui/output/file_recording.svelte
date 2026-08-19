@@ -425,6 +425,9 @@
 	let durationSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 	let dirty = $derived(recording && committedFormat !== null && (JSON.stringify(committedFormat) !== JSON.stringify(data.format) || committedMode !== mode));
 	let waveVisible = $derived(!(data.waveformHidden ?? false));
+	// Waveform shows only lanes that have a cable; a phantom multi lane with no
+	// handle stays hidden even though the encoder width may exceed it.
+	let waveformChannels = $derived(channelMode === 'multi' ? Math.max(1, wiredChannels) : slotCap);
 
 	function toggleWaveform() {
 		flow.updateNodeData(id, { waveformHidden: !(data.waveformHidden ?? false) });
@@ -532,7 +535,7 @@
 			</Tooltip>
 		</div>
 		{#if waveVisible}
-			<WaveformScope nodeId={id} filePath={data.filePath} />
+			<WaveformScope nodeId={id} filePath={data.filePath} maxChannels={waveformChannels} />
 		{/if}
 	</div>
 </Wrapper>

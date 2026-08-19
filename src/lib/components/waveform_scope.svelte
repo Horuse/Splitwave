@@ -21,8 +21,18 @@
 		height = 140,
 		fill = false,
 		pan = true,
-		filePath = null
-	}: { nodeId: string; height?: number; fill?: boolean; pan?: boolean; filePath?: string | null } = $props();
+		filePath = null,
+		maxChannels = null
+	}: {
+		nodeId: string;
+		height?: number;
+		fill?: boolean;
+		pan?: boolean;
+		filePath?: string | null;
+		// Caps the number of displayed lanes; extra scope channels (e.g. a
+		// phantom multi lane with no cable) are dropped.
+		maxChannels?: number | null;
+	} = $props();
 
 	const SEG_FRAMES = 64;
 	// Ring capacity floor (~6.4 s of history at 48 kHz); the live ring grows on
@@ -39,6 +49,9 @@
 	const TIME_H = 18;
 	const SCALE_W = 30;
 	const VERT_PAD = 10;
+	// Minimum height per channel lane, so many lanes don't collapse to a
+	// squished sliver. The widget grows (non-fill mode) to fit `channels`.
+	const MIN_LANE_H = 72;
 	const SCROLLBAR_HIT = 10;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
@@ -89,13 +102,19 @@
 	let fileCache = new Map<number, Float32Array>();
 	let fileTotalSegs = 0;
 	let fileChannels = 0;
-	let fileLoaded = false;
+	let fileLoaded = $state(false);
 	let fetching = false;
 	let lastTailCheck = 0;
 	let liveTotalSegs = 0;
 	let liveWriteSeg = 0;
 	let liveBaseSeg = -1;
 	let liveActive = false;
+	// Forces the next live-ring init to use a specific base (0 for an overwrite
+	// restart) instead of the disk-backed total, which may have regrown.
+	let liveBaseOverride: number | null = null;
+	// Set when a recording reports `stopped`; the next session that starts with
+	// a smaller total (overwrite of the same path) triggers a file-state reset.
+	let afterStop = false;
 
 	function isPcm(p: string | null | undefined): boolean {
 		if (!p) return false;
@@ -161,14 +180,16 @@
 	let lastX = 0;
 
 	function ensureRing(ch: number) {
-		if (ch === channels && minRing.length === capSegs * ch) return;
-		channels = ch;
-		minRing = new Float32Array(capSegs * ch);
-		maxRing = new Float32Array(capSegs * ch);
+		const eff = maxChannels ? Math.min(ch, maxChannels) : ch;
+		if (eff === channels && minRing.length === capSegs * eff) return;
+		channels = eff;
+		minRing = new Float32Array(capSegs * eff);
+		maxRing = new Float32Array(capSegs * eff);
 		writeSeg = 0;
 		totalSegs = 0;
 		viewEndSeg = 0;
 		following = true;
+		applyMinHeight();
 	}
 
 	function segSlot(d: number): number {
@@ -180,11 +201,18 @@
 	function segEnvelope(seg: number, c: number): [number, number] | null {
 		if (fileMode) {
 			if (liveActive && liveBaseSeg >= 0 && liveTotalSegs > 0) {
-				const li = seg - (fileTotalSegs - liveTotalSegs);
+				// `liveBaseSeg` is captured once, so the live envelope never
+				// re-bins when the disk-backed total advances on flush/progress.
+				const li = seg - liveBaseSeg;
 				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
 					const slot = li % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
+				// While following the live edge the view is fed purely from the
+				// ring; disk would draw the lagging flushed wave and visibly
+				// overwrite the realtime tail. History is shown only after the
+				// user pans away (following becomes false).
+				if (following) return null;
 			}
 			const e = fileCache.get(seg);
 			return e ? [e[c * 2], e[c * 2 + 1]] : null;
@@ -194,18 +222,27 @@
 	}
 
 	function ensureLiveRing(ch: number) {
-		if (ch === channels && minRing.length === capSegs * ch) return;
-		channels = ch;
-		minRing = new Float32Array(capSegs * ch);
-		maxRing = new Float32Array(capSegs * ch);
+		const eff = maxChannels ? Math.min(ch, maxChannels) : ch;
+		if (eff === channels && minRing.length === capSegs * eff) return;
+		channels = eff;
+		minRing = new Float32Array(capSegs * eff);
+		maxRing = new Float32Array(capSegs * eff);
 		liveWriteSeg = 0;
 		liveTotalSegs = 0;
-		liveBaseSeg = -1;
+		// On a ring reset anchor the live overlay at the current recorded total
+		// so a channel/mode change keeps the tail positioned and the view can
+		// advance at scope cadence immediately. An explicit override (overwrite
+		// restart) wins over the disk-backed total.
+		liveBaseSeg = liveBaseOverride !== null ? liveBaseOverride : fileTotalSegs;
+		liveBaseOverride = null;
+		applyMinHeight();
 	}
 
 	function captureLiveBase() {
-		if (liveBaseSeg < 0 && fileLoaded && liveTotalSegs > 0 && fileTotalSegs > 0) {
-			liveBaseSeg = fileTotalSegs - liveTotalSegs;
+		if (liveBaseSeg < 0 && fileLoaded && liveTotalSegs > 0) {
+			// `Math.max(0, ...)` keeps a fresh (empty) file's base at 0 instead
+			// of going negative while the disk total lags the live overlay.
+			liveBaseSeg = Math.max(0, fileTotalSegs - liveTotalSegs);
 		}
 	}
 
@@ -253,16 +290,18 @@
 			}
 			ensureLiveRing(p.channels);
 			liveActive = true;
-			const segs = binBlock(p.data, p.channels, frames, liveWriteSeg);
+			const segs = binBlock(p.data, channels, frames, liveWriteSeg);
 			liveWriteSeg = (liveWriteSeg + segs) % capSegs;
 			liveTotalSegs += segs;
 			captureLiveBase();
 			if (liveBaseSeg >= 0) {
+				// The live overlay is the source of truth for the recording's
+				// tail. Advance the total at scope cadence so the ruler and the
+				// right edge move smoothly; gating on `rt > fileTotalSegs` would
+				// pause the view for the slower disk/progress ticks.
 				const rt = liveBaseSeg + liveTotalSegs;
-				if (rt > fileTotalSegs) {
-					fileTotalSegs = rt;
-					totalSegs = rt;
-				}
+				fileTotalSegs = Math.max(fileTotalSegs, rt);
+				totalSegs = Math.max(totalSegs, rt);
 			}
 			if (following) viewEndSeg = totalSegs;
 			markDirty();
@@ -272,7 +311,7 @@
 		if (p.sampleRate) sampleRate = p.sampleRate;
 		const frames = p.data[0]?.length ?? 0;
 		if (frames === 0) return;
-		const segs = binBlock(p.data, p.channels, frames, writeSeg);
+		const segs = binBlock(p.data, channels, frames, writeSeg);
 		writeSeg = (writeSeg + segs) % capSegs;
 		totalSegs += segs;
 		if (following) viewEndSeg = totalSegs;
@@ -414,9 +453,9 @@
 	}
 
 	function scrollbarPanByPx(dx: number) {
-		const m = scrollbarMetrics();
-		const segsPerTrackPx = m.denom / m.scrollable;
-		viewEndSeg -= dx * segsPerTrackPx;
+		// Dragging the thumb pans content 1:1 with the cursor, like the body, so
+		// a pixel moves the same distance regardless of file length.
+		viewEndSeg -= dx * segsPerCol;
 		clampView();
 		following = viewEndSeg >= totalSegs;
 		markDirty();
@@ -519,6 +558,14 @@
 		c.lineTo(x, y + rr);
 		c.arcTo(x, y, x + rr, y, rr);
 		c.closePath();
+	}
+
+	// Grows the fixed-height widget so every channel lane stays at least
+	// `MIN_LANE_H` tall. Fill mode (parent-driven height) is left alone.
+	function applyMinHeight() {
+		if (fill) return;
+		const need = TIME_H + channels * MIN_LANE_H;
+		if (need > H) H = need;
 	}
 
 	function laneMetrics() {
@@ -656,8 +703,9 @@
 			const res = await methods.readFilePeaks(filePath, startSeg * SEG_FRAMES, SEG_FRAMES, cnt);
 			if (res.channels > 0) {
 				fileChannels = res.channels;
-				channels = res.channels;
+				channels = maxChannels ? Math.min(res.channels, maxChannels) : res.channels;
 				sampleRate = res.sampleRate;
+				applyMinHeight();
 			}
 			// Never regress: the live overlay / progress events may already know
 			// a larger total than the last disk flush.
@@ -676,8 +724,12 @@
 			}
 			trimFileCache();
 			captureLiveBase();
-			totalSegs = fileTotalSegs;
-			if (following) viewEndSeg = fileTotalSegs;
+			// While following the live edge the scope stream owns the view;
+			// moving it here from the (lagging) disk total is what made it step.
+			if (!(liveActive && following)) {
+				totalSegs = fileTotalSegs;
+				if (following) viewEndSeg = fileTotalSegs;
+			}
 			clampSegs();
 			clampView();
 			markDirty();
@@ -843,14 +895,38 @@
 			if (p.sampleRate) sampleRate = p.sampleRate;
 			if (p.frames > 0) {
 				const segs = Math.max(1, Math.ceil(p.frames / SEG_FRAMES));
+				// A fresh session whose total drops below the current one means
+				// the file was overwritten (mode "overwrite" rewrites the same
+				// path). Drop the old file-backed state so a stale wave and time
+				// scale don't linger, then let the new file refill from scratch.
+				if (afterStop && segs < fileTotalSegs) {
+					fileCache.clear();
+					fileLoaded = false;
+					fileTotalSegs = 0;
+					totalSegs = 0;
+					viewEndSeg = 0;
+					following = true;
+					liveActive = false;
+					liveTotalSegs = 0;
+					liveWriteSeg = 0;
+					liveBaseSeg = 0;
+					liveBaseOverride = 0;
+					lastTailCheck = 0;
+				}
 				if (segs > fileTotalSegs) {
 					fileTotalSegs = segs;
-					totalSegs = segs;
-					if (following) viewEndSeg = segs;
+					// While following the live edge the scope stream owns the
+					// view; progress ticks (250 ms) must not step it.
+					if (!(liveActive && following)) {
+						totalSegs = segs;
+						if (following) viewEndSeg = segs;
+					}
 					markDirty();
 				}
+				afterStop = false;
 			}
 			if (p.stopped) {
+				afterStop = true;
 				liveActive = false;
 				liveTotalSegs = 0;
 				liveWriteSeg = 0;
@@ -902,6 +978,11 @@
 	onmousedown={onDown}
 	ondblclick={onDblClick}>
 	<canvas bind:this={canvas} style="display:block;width:100%;height:100%" aria-hidden="true"></canvas>
+	{#if fileMode && !fileLoaded}
+		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+			<span class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">loading…</span>
+		</div>
+	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="nodrag nopan absolute top-0.5 right-0.5 flex items-center gap-0 rounded bg-neutral-900/40 px-0.5 py-0.5"

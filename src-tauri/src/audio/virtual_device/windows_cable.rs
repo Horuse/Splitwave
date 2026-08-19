@@ -97,14 +97,15 @@ struct CablePackage {
 
 impl CablePackage {
     fn fingerprint(&self) -> String {
-        let mut parts = self.device_instance_ids.clone();
-        parts.sort();
+        // SetupAPI provider labels and PnP instances can change while the package stays identical.
         format!(
-            "{}|{}|{}|{}",
-            self.provider,
+            "{}|{}|{}",
             self.version.as_deref().unwrap_or_default(),
-            self.published_name,
-            parts.join(",")
+            self.published_name.to_ascii_lowercase(),
+            self.original_name
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
         )
     }
 }
@@ -288,6 +289,26 @@ fn determine_state(
         }
         ManifestState::Valid(m) if m.matches(package) => WindowsVirtualCableState::InstalledManaged,
         ManifestState::Valid(_) => WindowsVirtualCableState::UnknownOwnership,
+    }
+}
+
+fn determine_removal_state(
+    detected: &DetectedCable,
+    manifest: &ManifestState,
+    current_consumer: &str,
+) -> WindowsVirtualCableState {
+    let state = determine_state(detected, manifest, current_consumer);
+    if state != WindowsVirtualCableState::Partial {
+        return state;
+    }
+    let Some(package) = detected.package() else {
+        return state;
+    };
+    match manifest {
+        ManifestState::Valid(manifest) if manifest.matches(package) => {
+            WindowsVirtualCableState::InstalledManaged
+        }
+        _ => state,
     }
 }
 
@@ -775,6 +796,62 @@ mod tests {
                 Some(true)
             ),
             RemovalAction::RemoveExactPackage
+        );
+    }
+
+    #[test]
+    fn package_fingerprint_ignores_setupapi_identity_churn() {
+        let original = package();
+        let mut changed = original.clone();
+        changed.provider = "BUREL Vincent".into();
+        changed
+            .device_instance_ids
+            .push("ROOT\\VBCABLE\\0001".into());
+
+        assert_eq!(original.fingerprint(), changed.fingerprint());
+    }
+
+    #[test]
+    fn exact_managed_package_remains_removable_when_endpoints_change() {
+        let partial = DetectedCable {
+            packages: vec![package()],
+            ..Default::default()
+        };
+        let manifest = managed(&["A"]);
+
+        assert_eq!(
+            determine_state(&partial, &manifest, "A"),
+            WindowsVirtualCableState::Partial
+        );
+        assert_eq!(
+            determine_removal_state(&partial, &manifest, "A"),
+            WindowsVirtualCableState::InstalledManaged
+        );
+        assert_eq!(
+            removal_decision(
+                determine_removal_state(&partial, &manifest, "A"),
+                &manifest,
+                "A",
+                UninstallReason::UserRemoval,
+                Some(true)
+            ),
+            RemovalAction::RemoveExactPackage
+        );
+    }
+
+    #[test]
+    fn changed_package_with_missing_endpoints_is_preserved() {
+        let mut changed = package();
+        changed.version = Some("2.0.0".into());
+        let partial = DetectedCable {
+            packages: vec![changed],
+            ..Default::default()
+        };
+        let manifest = managed(&["A"]);
+
+        assert_eq!(
+            determine_removal_state(&partial, &manifest, "A"),
+            WindowsVirtualCableState::Partial
         );
     }
 

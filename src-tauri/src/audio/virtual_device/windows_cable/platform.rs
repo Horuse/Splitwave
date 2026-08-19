@@ -45,7 +45,7 @@ use winreg::RegKey;
 use zip::ZipArchive;
 
 use super::{
-    detect_cable_from_inventory, determine_state, manifest_ownership, removal_decision,
+    detect_cable_from_inventory, determine_removal_state, manifest_ownership, removal_decision,
     status_from, verified_package_after_setup, CableEndpoint, CableEndpointFlow, CablePackage,
     DetectedCable, ManifestState, OwnershipManifest, RemovalAction, UninstallReason,
     WindowsVirtualCableError, WindowsVirtualCableOwnership, WindowsVirtualCableStatus,
@@ -266,7 +266,7 @@ fn unregister_consumer(args: &[OsString], root: &Path) -> Result<(), WindowsVirt
     let detected = detect_cable()?;
     let manifest = read_manifest();
     let consumer = helper_consumer_id(args, root)?;
-    let state = determine_state(&detected, &manifest, &consumer);
+    let state = determine_removal_state(&detected, &manifest, &consumer);
     // Treat the uninstaller's pending response as "keep" so a sole consumer
     // receives the explicit NSIS prompt instead of silently dropping ownership.
     let action = removal_decision(
@@ -419,7 +419,8 @@ fn retain_as_external(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let ManifestState::Valid(mut manifest) = read_manifest() else {
         return Ok(());
     };
-    let state = determine_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
+    let state =
+        determine_removal_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
     if removal_decision(
         state,
         &ManifestState::Valid(manifest.clone()),
@@ -461,13 +462,14 @@ fn remove_exact_package_with_elevation(
 
 fn remove_exact_package(consumer: &str) -> Result<(), WindowsVirtualCableError> {
     let detected = detect_cable()?;
-    let ManifestState::Valid(mut manifest) = read_manifest() else {
+    let ManifestState::Valid(manifest) = read_manifest() else {
         return Err(WindowsVirtualCableError::new(
             "ownershipConflict",
             "No managed VB-CABLE ownership record exists",
         ));
     };
-    let state = determine_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
+    let state =
+        determine_removal_state(&detected, &ManifestState::Valid(manifest.clone()), consumer);
     if removal_decision(
         state,
         &ManifestState::Valid(manifest.clone()),
@@ -502,25 +504,22 @@ fn remove_exact_package(consumer: &str) -> Result<(), WindowsVirtualCableError> 
     match status.code() {
         Some(0) => {
             let after = detect_cable()?;
-            if after
+            let reboot_required = after
                 .packages
                 .iter()
-                .any(|p| p.published_name.eq_ignore_ascii_case(published))
-            {
-                manifest.removal_pending_reboot = true;
-                write_manifest(&manifest)?;
+                .any(|p| p.published_name.eq_ignore_ascii_case(published));
+            delete_manifest()?;
+            if reboot_required {
                 Err(WindowsVirtualCableError::new(
                     "rebootRequired",
                     "VB-CABLE removal is pending a Windows restart",
                 ))
             } else {
-                delete_manifest()?;
                 Ok(())
             }
         }
         Some(3010) => {
-            manifest.removal_pending_reboot = true;
-            write_manifest(&manifest)?;
+            delete_manifest()?;
             Err(WindowsVirtualCableError::new(
                 "rebootRequired",
                 "VB-CABLE removal is pending a Windows restart",

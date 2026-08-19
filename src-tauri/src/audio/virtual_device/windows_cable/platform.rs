@@ -304,13 +304,17 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<Option<i32>, Windows
     let installer = extracted.path().join(setup_program_name());
     verify_authenticode(&installer)?;
 
-    info!("starting the visible VB-CABLE vendor installer");
-    let result = Command::new(&installer).status().map_err(|e| {
-        WindowsVirtualCableError::new(
-            "installerFailed",
-            format!("Could not launch VB-CABLE setup: {e}"),
-        )
-    })?;
+    info!("starting the VB-CABLE vendor installer");
+    let result = Command::new(&installer)
+        .args(["-i", "-h"])
+        .current_dir(extracted.path())
+        .status()
+        .map_err(|e| {
+            WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Could not launch VB-CABLE setup: {e}"),
+            )
+        })?;
     let after = detect_cable().map_err(|error| error.with_installer_exit_code(result.code()))?;
     let package = verified_package_after_setup(&before, &after, result.code())?.clone();
     if !result.success() {

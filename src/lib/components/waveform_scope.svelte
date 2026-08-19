@@ -88,7 +88,7 @@
 	let minRing = new Float32Array(capSegs);
 	let maxRing = new Float32Array(capSegs);
 	let writeSeg = 0;
-	let totalSegs = 0;
+	let totalSegs = $state(0);
 
 	// File mode (WAV/AIFF only): the whole recording is browsable by lazily
 	// loading min/max bins from disk for the visible range instead of holding
@@ -100,21 +100,28 @@
 	// then `liveBaseSeg + liveTotalSegs`.
 	let fileMode = $derived(isPcm(filePath));
 	let fileCache = new Map<number, Float32Array>();
-	let fileTotalSegs = 0;
+	let fileTotalSegs = $state(0);
 	let fileChannels = 0;
 	let fileLoaded = $state(false);
 	let fetching = false;
 	let lastTailCheck = 0;
 	let liveTotalSegs = 0;
-	let liveWriteSeg = 0;
 	let liveBaseSeg = -1;
-	let liveActive = false;
+	let liveActive = $state(false);
+	// Grid-aligned live binning: the total session frames seen and the absolute
+	// grid segment currently being accumulated, so the live ring shares the same
+	// SEG_FRAMES grid as the disk-loaded bins — no drift/time gap at the seam.
+	let liveSessionFrames = 0;
+	let liveOpenAbsSeg = -1;
 	// Forces the next live-ring init to use a specific base (0 for an overwrite
 	// restart) instead of the disk-backed total, which may have regrown.
 	let liveBaseOverride: number | null = null;
 	// Set when a recording reports `stopped`; the next session that starts with
 	// a smaller total (overwrite of the same path) triggers a file-state reset.
 	let afterStop = false;
+	// When a `stopped` isn't followed by a fresh session (permanent stop), this
+	// timer restores the recorded file view that the loader temporarily cleared.
+	let stopTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function isPcm(p: string | null | undefined): boolean {
 		if (!p) return false;
@@ -140,14 +147,22 @@
 	function resizeRings(newCap: number) {
 		const oldCap = capSegs;
 		const count = fileMode ? liveTotalSegs : totalSegs;
-		const head = fileMode ? liveWriteSeg : writeSeg;
 		const keep = Math.min(oldCap, newCap, count);
 		const newMin = new Float32Array(newCap * channels);
 		const newMax = new Float32Array(newCap * channels);
 		for (let i = 0; i < keep; i++) {
-			const idx = count - 1 - i;
-			const src = (((head - 1 - i) % oldCap) + oldCap) % oldCap;
-			const dst = ((idx % newCap) + newCap) % newCap;
+			let src: number;
+			let dst: number;
+			if (fileMode) {
+				// Grid-aligned live ring is keyed by absolute segment.
+				const absSeg = liveBaseSeg + (liveTotalSegs - 1 - i);
+				src = ((absSeg % oldCap) + oldCap) % oldCap;
+				dst = ((absSeg % newCap) + newCap) % newCap;
+			} else {
+				src = (((writeSeg - 1 - i) % oldCap) + oldCap) % oldCap;
+				const idx = totalSegs - 1 - i;
+				dst = ((idx % newCap) + newCap) % newCap;
+			}
 			newMin.set(minRing.subarray(src * channels, (src + 1) * channels), dst * channels);
 			newMax.set(maxRing.subarray(src * channels, (src + 1) * channels), dst * channels);
 		}
@@ -155,7 +170,6 @@
 		minRing = newMin;
 		maxRing = newMax;
 		writeSeg = totalSegs % newCap;
-		liveWriteSeg = liveTotalSegs % newCap;
 	}
 
 	let W = $state(0);
@@ -205,7 +219,9 @@
 				// re-bins when the disk-backed total advances on flush/progress.
 				const li = seg - liveBaseSeg;
 				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
-					const slot = li % capSegs;
+					// Ring is keyed by absolute segment (grid-aligned), so read
+					// the slot by `seg`, not the relative `li`.
+					const slot = ((seg % capSegs) + capSegs) % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
 				// While following the live edge the view is fed purely from the
@@ -227,8 +243,9 @@
 		channels = eff;
 		minRing = new Float32Array(capSegs * eff);
 		maxRing = new Float32Array(capSegs * eff);
-		liveWriteSeg = 0;
 		liveTotalSegs = 0;
+		liveSessionFrames = 0;
+		liveOpenAbsSeg = -1;
 		// On a ring reset anchor the live overlay at the current recorded total
 		// so a channel/mode change keeps the tail positioned and the view can
 		// advance at scope cadence immediately. An explicit override (overwrite
@@ -238,16 +255,53 @@
 		applyMinHeight();
 	}
 
-	function captureLiveBase() {
-		if (liveBaseSeg < 0 && fileLoaded && liveTotalSegs > 0) {
-			// `Math.max(0, ...)` keeps a fresh (empty) file's base at 0 instead
-			// of going negative while the disk total lags the live overlay.
-			liveBaseSeg = Math.max(0, fileTotalSegs - liveTotalSegs);
-		}
-	}
+	// The absolute base of the live session is set in `onScope` before the
+	// first bin and on `ensureLiveRing`; it never needs later adjustment.
 
 	function liveCoverStart(): number {
 		return fileTotalSegs - Math.min(liveTotalSegs, capSegs);
+	}
+
+	// Bins one live block into the ring, aligned to the *absolute* SEG_FRAMES
+	// grid (segment = `liveBaseSeg + floor(sessionFrame / SEG_FRAMES)`) so the
+	// live tail and the disk-loaded bins cover identical frame ranges. A segment
+	// straddling two blocks is merged by reading back the open slot. Returns the
+	// count of grid segments touched.
+	function binLiveGrid(data: number[][], ch: number, frames: number): number {
+		const sf0 = liveSessionFrames;
+		let written = 0;
+		for (let f = 0; f < frames; ) {
+			const gridIdx = Math.floor((sf0 + f) / SEG_FRAMES);
+			const absSeg = liveBaseSeg + gridIdx;
+			// Exclusive session-frame index where this grid segment ends.
+			const segEnd = (gridIdx + 1) * SEG_FRAMES - sf0;
+			const f1 = Math.min(segEnd, frames);
+			const slot = (((absSeg % capSegs) + capSegs) % capSegs) * ch;
+			const fresh = absSeg !== liveOpenAbsSeg;
+			for (let c = 0; c < ch; c++) {
+				let mn = fresh ? Infinity : minRing[slot + c];
+				let mx = fresh ? -Infinity : maxRing[slot + c];
+				for (let i = f; i < f1; i++) {
+					const v = data[c][i];
+					if (v < mn) mn = v;
+					if (v > mx) mx = v;
+				}
+				if (mn === Infinity) {
+					mn = 0;
+					mx = 0;
+				}
+				minRing[slot + c] = mn;
+				maxRing[slot + c] = mx;
+			}
+			if (fresh) {
+				liveTotalSegs++;
+				liveOpenAbsSeg = absSeg;
+				written++;
+			}
+			f = f1;
+		}
+		liveSessionFrames += frames;
+		return written;
 	}
 
 	// Bins one incoming block into the min/max ring, returning the number of
@@ -283,17 +337,34 @@
 		if (p.nodeId !== nodeId) return;
 		if (fileMode) {
 			if (p.sampleRate) sampleRate = p.sampleRate;
+			// A `stopped` followed by fresh scope data means the recorder
+			// restarted to a fresh file (mode switch in overwrite/new). Drop the
+			// old file-backed state now, before the new data anchors.
+			if (afterStop) {
+				if (stopTimer) {
+					clearTimeout(stopTimer);
+					stopTimer = undefined;
+				}
+				fileCache.clear();
+				fileLoaded = false;
+				fileTotalSegs = 0;
+				totalSegs = 0;
+				viewEndSeg = 0;
+				following = true;
+				liveBaseOverride = 0;
+				afterStop = false;
+			}
 			const frames = p.data[0]?.length ?? 0;
 			if (frames === 0) {
 				if (following) markDirty();
 				return;
 			}
 			ensureLiveRing(p.channels);
+			// Establish the absolute base before the first bin so grid-aligned
+			// segment indices are correct from the very first block.
+			if (liveBaseSeg < 0) liveBaseSeg = Math.max(0, fileTotalSegs);
 			liveActive = true;
-			const segs = binBlock(p.data, channels, frames, liveWriteSeg);
-			liveWriteSeg = (liveWriteSeg + segs) % capSegs;
-			liveTotalSegs += segs;
-			captureLiveBase();
+			binLiveGrid(p.data, channels, frames);
 			if (liveBaseSeg >= 0) {
 				// The live overlay is the source of truth for the recording's
 				// tail. Advance the total at scope cadence so the ruler and the
@@ -723,7 +794,6 @@
 				fileCache.set(seg, arr);
 			}
 			trimFileCache();
-			captureLiveBase();
 			// While following the live edge the scope stream owns the view;
 			// moving it here from the (lagging) disk total is what made it step.
 			if (!(liveActive && following)) {
@@ -877,7 +947,8 @@
 		viewEndSeg = 0;
 		following = true;
 		liveTotalSegs = 0;
-		liveWriteSeg = 0;
+		liveSessionFrames = 0;
+		liveOpenAbsSeg = -1;
 		liveBaseSeg = -1;
 		liveActive = false;
 		markDirty();
@@ -905,14 +976,15 @@
 					fileTotalSegs = 0;
 					totalSegs = 0;
 					viewEndSeg = 0;
-					following = true;
-					liveActive = false;
-					liveTotalSegs = 0;
-					liveWriteSeg = 0;
-					liveBaseSeg = 0;
-					liveBaseOverride = 0;
-					lastTailCheck = 0;
-				}
+				following = true;
+				liveActive = false;
+				liveTotalSegs = 0;
+				liveSessionFrames = 0;
+				liveOpenAbsSeg = -1;
+				liveBaseSeg = 0;
+				liveBaseOverride = 0;
+				lastTailCheck = 0;
+			}
 				if (segs > fileTotalSegs) {
 					fileTotalSegs = segs;
 					// While following the live edge the scope stream owns the
@@ -929,10 +1001,24 @@
 				afterStop = true;
 				liveActive = false;
 				liveTotalSegs = 0;
-				liveWriteSeg = 0;
+				liveSessionFrames = 0;
+				liveOpenAbsSeg = -1;
 				liveBaseSeg = -1;
 				lastTailCheck = 0;
-				ensureVisibleLoaded();
+				// Clear the view so a loader shows during a restart gap instead
+				// of the stale wave. If no fresh session follows (permanent
+				// stop), the timer restores the recorded file from the intact
+				// cache below.
+				totalSegs = 0;
+				viewEndSeg = 0;
+				following = true;
+				if (stopTimer) clearTimeout(stopTimer);
+				stopTimer = setTimeout(() => {
+					stopTimer = undefined;
+					totalSegs = fileTotalSegs;
+					viewEndSeg = fileTotalSegs;
+					markDirty();
+				}, 800);
 				markDirty();
 			}
 		});
@@ -956,6 +1042,7 @@
 	});
 
 	onDestroy(() => {
+		if (stopTimer) clearTimeout(stopTimer);
 		unlisten?.();
 		progressUnlisten?.();
 		ro?.disconnect();
@@ -978,7 +1065,7 @@
 	onmousedown={onDown}
 	ondblclick={onDblClick}>
 	<canvas bind:this={canvas} style="display:block;width:100%;height:100%" aria-hidden="true"></canvas>
-	{#if fileMode && !fileLoaded}
+	{#if fileMode && totalSegs <= 0}
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
 			<span class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">loading…</span>
 		</div>

@@ -578,24 +578,14 @@
 					for (let k = 1; k < colsCount; k++) c.lineTo(x0 - k, mid - pk[k] * halfH);
 					for (let k = colsCount - 1; k >= 0; k--) c.lineTo(x0 - k, mid - tr[k] * halfH);
 					c.closePath();
-					if (zoomLevel >= 10) {
-						// Deep zoom: the envelope is a thin trace; stroking keeps a
-						// uniform line width, where a fill fades to nothing at the
-						// signal peaks.
-						c.strokeStyle = color;
-						c.lineWidth = 0.75;
-						c.lineJoin = 'round';
-						c.stroke();
-					} else {
-						c.fillStyle = color;
-						c.globalAlpha = 0.7;
-						c.fill();
-						c.globalAlpha = 1;
-						c.strokeStyle = color;
-						c.lineWidth = 0.75;
-						c.lineJoin = 'round';
-						c.stroke();
-					}
+					c.fillStyle = color;
+					c.globalAlpha = 0.7;
+					c.fill();
+					c.globalAlpha = 1;
+					c.strokeStyle = color;
+					c.lineWidth = 0.75;
+					c.lineJoin = 'round';
+					c.stroke();
 					c.restore();
 				}
 

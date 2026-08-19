@@ -1581,7 +1581,13 @@ exit 0
         )
     })?;
     let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-File"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
         .arg(&script)
         .arg(installer)
         .output()

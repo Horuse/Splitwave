@@ -31,8 +31,9 @@
 			case 'downloadFailed':
 				return 'Splitwave could not download VB-CABLE. Check your connection and try again.';
 			case 'checksumMismatch':
+				return 'The downloaded VB-CABLE archive failed its SHA-256 check, so Splitwave did not run it.';
 			case 'invalidSignature':
-				return 'The downloaded driver could not be verified, so Splitwave did not run it.';
+				return errorMessage(value) ?? 'The downloaded driver could not be verified, so Splitwave did not run it.';
 			case 'driverPackageNotDetected':
 				return 'VB-CABLE installer finished, but Windows did not register the expected driver.';
 			case 'helperResultMissing':

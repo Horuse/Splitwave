@@ -1564,13 +1564,12 @@ fn setup_program_name() -> &'static str {
 }
 
 fn verify_authenticode(installer: &Path) -> Result<(), WindowsVirtualCableError> {
-    // The archive hash pins the bytes; NotTrusted only means this machine lacks publisher trust.
     const SCRIPT: &str = r#"param([Parameter(Mandatory = $true)][string]$InstallerPath)
 $signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
-if ($null -eq $signature.SignerCertificate) { exit 2 }
+Write-Output $signature.Status
+if ($signature.Status -ne 'Valid') { exit 2 }
 if ($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne 'BUREL VINCENT Entrepreneur individuel') { exit 3 }
 if ($signature.SignerCertificate.Thumbprint -ne 'A77952D93229D0EC36E2543081EEA7D125732B9C') { exit 4 }
-if ($signature.Status -ne 'Valid' -and $signature.Status -ne 'NotTrusted') { exit 2 }
 exit 0
 "#;
     let script_dir = TemporaryPath::create_dir("vb-cable-signature")?;
@@ -1581,27 +1580,35 @@ exit 0
             format!("Create Authenticode verification script: {e}"),
         )
     })?;
-    let status = Command::new("powershell.exe")
+    let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-File"])
         .arg(&script)
         .arg(installer)
-        .status()
+        .output()
         .map_err(|e| {
             WindowsVirtualCableError::new(
                 "invalidSignature",
                 format!("Start Authenticode verification: {e}"),
             )
         })?;
-    match status.code() {
+    match output.status.code() {
         Some(0) => Ok(()),
         Some(3 | 4) => Err(WindowsVirtualCableError::new(
             "unexpectedPublisher",
             "VB-CABLE setup was signed by an unexpected publisher",
         )),
-        _ => Err(WindowsVirtualCableError::new(
-            "invalidSignature",
-            "VB-CABLE setup does not have a valid Authenticode signature",
-        )),
+        code => {
+            let status = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let detail = if !status.is_empty() {
+                format!("Authenticode status: {status}")
+            } else if !stderr.is_empty() {
+                format!("Authenticode verification failed: {stderr}")
+            } else {
+                format!("Authenticode verification exited with {code:?}")
+            };
+            Err(WindowsVirtualCableError::new("invalidSignature", detail))
+        }
     }
 }
 

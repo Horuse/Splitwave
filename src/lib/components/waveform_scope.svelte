@@ -111,7 +111,6 @@
 	let fileChannels = 0;
 	let fileLoaded = $state(false);
 	let fetching = false;
-	let lastTailCheck = 0;
 	let liveTotalSegs = 0;
 	let liveBaseSeg = -1;
 	let liveActive = $state(false);
@@ -231,12 +230,6 @@
 					const slot = ((seg % capSegs) + capSegs) % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
-				// Only block disk from drawing inside the live region but past
-				// the retained ring (the lagging flushed wave must not overwrite
-				// the realtime tail). History *before* the live range falls
-				// through to the disk cache below, so it stays visible even
-				// while following (e.g. zoomed out to the whole file).
-				if (following && li >= 0 && li < liveTotalSegs) return null;
 			}
 			const e = fileCache.get(seg);
 			return e ? [e[c * 2], e[c * 2 + 1]] : null;
@@ -265,10 +258,6 @@
 
 	// The absolute base of the live session is set in `onScope` before the
 	// first bin and on `ensureLiveRing`; it never needs later adjustment.
-
-	function liveCoverStart(): number {
-		return fileTotalSegs - Math.min(liveTotalSegs, capSegs);
-	}
 
 	// Bins one live block into the ring, aligned to the *absolute* SEG_FRAMES
 	// grid so the live tail and the disk-loaded bins cover identical frame
@@ -833,6 +822,11 @@
 		}
 	}
 
+	// Loads the visible history in capped chunks, one fetch at a time (the
+	// `fetching` guard paces it), for both following and panning. Segments
+	// covered by the retained live ring are skipped. Fetching the first missing
+	// segment of the view means a wide/min-zoom view is filled progressively
+	// instead of stalling on a single huge read.
 	function ensureVisibleLoaded() {
 		if (!fileMode || !filePath || fetching) return;
 		if (!fileLoaded) {
@@ -840,26 +834,13 @@
 			return;
 		}
 		const plotW = Math.max(1, W - SCALE_W);
-		const liveStart = liveCoverStart();
-		if (following) {
-			const viewStart = Math.max(0, Math.ceil(viewEndSeg - plotW * segsPerCol));
-			// The live overlay already covers the newest ring segments; skip the
-			// disk read entirely when the view sits inside it.
-			if (liveActive && liveTotalSegs > 0 && viewStart >= liveStart) return;
-			const now = performance.now();
-			if (now - lastTailCheck < 150) return;
-			lastTailCheck = now;
-			if (liveActive && liveTotalSegs > 0) {
-				fetchPeaks(Math.max(0, viewStart), Math.max(64, liveStart - viewStart));
-			} else {
-				fetchPeaks(Math.max(0, fileTotalSegs - Math.ceil(plotW * segsPerCol) - 32));
-			}
-			return;
-		}
 		const viewStart = Math.max(0, Math.floor(viewEndSeg - plotW * segsPerCol));
 		const viewEnd = Math.ceil(viewEndSeg);
 		for (let seg = viewStart; seg < viewEnd; seg++) {
-			if (liveActive && seg >= liveStart) continue;
+			const li = seg - liveBaseSeg;
+			if (liveActive && liveBaseSeg >= 0 && li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
+				continue;
+			}
 			if (!fileCache.has(seg)) {
 				fetchPeaks(seg);
 				return;
@@ -996,7 +977,6 @@
 				liveOpenAbsSeg = -1;
 				liveBaseSeg = 0;
 				liveBaseOverride = 0;
-				lastTailCheck = 0;
 			}
 				if (segs > fileTotalSegs) {
 					fileTotalSegs = segs;
@@ -1017,7 +997,6 @@
 				liveSessionFrames = 0;
 				liveOpenAbsSeg = -1;
 				liveBaseSeg = -1;
-				lastTailCheck = 0;
 				// Clear the view so a loader shows during a restart gap instead
 				// of the stale wave. If no fresh session follows (permanent
 				// stop), the timer restores the recorded file from the intact

@@ -3,6 +3,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { methods } from '$lib/modules/audio/methods';
+	import { Add, Minus, ChevronDoubleRight } from '$lib/components/icons';
 
 	// Scope-style waveform viewer shared by the Waveform node and the File
 	// Recording node. Incoming scope blocks are pre-binned into fixed segments
@@ -52,6 +53,9 @@
 	// Minimum height per channel lane, so many lanes don't collapse to a
 	// squished sliver. The widget grows (non-fill mode) to fit `channels`.
 	const MIN_LANE_H = 72;
+	// Upper bound on one peak read, so zooming out to the whole file loads it in
+	// chunks instead of one huge read that stalls history while `fetching`.
+	const MAX_FETCH_SEGS = 8192;
 	const SCROLLBAR_HIT = 10;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
@@ -227,11 +231,12 @@
 					const slot = ((seg % capSegs) + capSegs) % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
-				// While following the live edge the view is fed purely from the
-				// ring; disk would draw the lagging flushed wave and visibly
-				// overwrite the realtime tail. History is shown only after the
-				// user pans away (following becomes false).
-				if (following) return null;
+				// Only block disk from drawing inside the live region but past
+				// the retained ring (the lagging flushed wave must not overwrite
+				// the realtime tail). History *before* the live range falls
+				// through to the disk cache below, so it stays visible even
+				// while following (e.g. zoomed out to the whole file).
+				if (following && li >= 0 && li < liveTotalSegs) return null;
 			}
 			const e = fileCache.get(seg);
 			return e ? [e[c * 2], e[c * 2 + 1]] : null;
@@ -633,12 +638,15 @@
 		c.closePath();
 	}
 
-	// Grows the fixed-height widget so every channel lane stays at least
-	// `MIN_LANE_H` tall. Fill mode (parent-driven height) is left alone.
+	// Grows (or shrinks back) the fixed-height widget so every channel lane
+	// stays at least `MIN_LANE_H` tall. Fill mode (parent-driven height) and the
+	// base `height` are the floor, so dropping from many lanes (multi) back to
+	// mono doesn't leave a stretched, full-height waveform.
 	function applyMinHeight() {
 		if (fill) return;
 		const need = TIME_H + channels * MIN_LANE_H;
-		if (need > H) H = need;
+		const next = Math.max(height, need);
+		if (next !== H) H = next;
 	}
 
 	function laneMetrics() {
@@ -772,7 +780,10 @@
 		fetching = true;
 		try {
 			const plotW = Math.max(1, W - SCALE_W);
-			const cnt = count ?? (fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64);
+			const cnt = Math.min(
+				count ?? (fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64),
+				MAX_FETCH_SEGS
+			);
 			const res = await methods.readFilePeaks(filePath, startSeg * SEG_FRAMES, SEG_FRAMES, cnt);
 			if (res.channels > 0) {
 				fileChannels = res.channels;
@@ -836,7 +847,7 @@
 			// disk read entirely when the view sits inside it.
 			if (liveActive && liveTotalSegs > 0 && viewStart >= liveStart) return;
 			const now = performance.now();
-			if (now - lastTailCheck < 500) return;
+			if (now - lastTailCheck < 150) return;
 			lastTailCheck = now;
 			if (liveActive && liveTotalSegs > 0) {
 				fetchPeaks(Math.max(0, viewStart), Math.max(64, liveStart - viewStart));
@@ -1080,24 +1091,24 @@
 		ondblclick={(e) => e.stopPropagation()}>
 		<button
 			type="button"
-			class="flex size-3.5 items-center justify-center rounded text-[10px] leading-none text-white/60 hover:bg-white/10 hover:text-white"
+			class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 			onclick={zoomOut}
-			title="Zoom out">−</button>
+			title="Zoom out"><Minus class="size-2.5" /></button>
 		<span class="min-w-7 text-center font-mono text-[8px] text-white/70 tabular-nums">{zoomLabel}</span>
 		<button
 			type="button"
-			class="flex size-3.5 items-center justify-center rounded text-[10px] leading-none text-white/60 hover:bg-white/10 hover:text-white"
+			class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 			onclick={zoomIn}
-			title="Zoom in">+</button>
+			title="Zoom in"><Add class="size-2.5" /></button>
 	</div>
 	{#if pan && !following}
 		<button
 			type="button"
-			class="nodrag nopan absolute top-7 right-1 flex size-5 items-center justify-center rounded-full bg-neutral-900/40 text-[11px] leading-none text-white/70 hover:bg-neutral-900/60 hover:text-white"
+			class="nodrag nopan absolute top-7 right-1 flex size-5 items-center justify-center rounded-full bg-neutral-900/40 text-white/70 hover:bg-neutral-900/60 hover:text-white"
 			onmousedown={(e) => e.stopPropagation()}
 			onwheel={(e) => e.stopPropagation()}
 			ondblclick={(e) => e.stopPropagation()}
 			onclick={jumpToEnd}
-			title="Jump to live edge">»</button>
+			title="Jump to live edge"><ChevronDoubleRight class="size-3" /></button>
 	{/if}
 </div>

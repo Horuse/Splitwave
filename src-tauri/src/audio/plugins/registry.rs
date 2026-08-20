@@ -18,15 +18,15 @@ use super::host_api::{ActivateRequest, HostedNode, PluginHost};
 use super::vst3_registry::Vst3Host;
 use super::PluginFormat;
 
-fn host_for(format: PluginFormat) -> Option<&'static dyn PluginHost> {
-    Some(match format {
+fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
+    match format {
         PluginFormat::Clap => &ClapHost,
         #[cfg(target_os = "macos")]
         PluginFormat::Au => &AuHost,
         #[cfg(not(target_os = "macos"))]
-        PluginFormat::Au => return None,
+        PluginFormat::Au => panic!("Audio Unit plugins are only supported on macOS"),
         PluginFormat::Vst3 => &Vst3Host,
-    })
+    }
 }
 
 fn owners() -> &'static Mutex<HashMap<String, PluginFormat>> {
@@ -47,12 +47,7 @@ pub fn hosts() -> impl Iterator<Item = &'static dyn PluginHost> {
 
 /// The host currently running this node, or `None` if it runs no plugin.
 pub fn for_node(node_id: &str) -> Option<&'static dyn PluginHost> {
-    owners()
-        .lock()
-        .unwrap()
-        .get(node_id)
-        .copied()
-        .and_then(host_for)
+    owners().lock().unwrap().get(node_id).copied().map(host_for)
 }
 
 /// Instantiates through the format's host, taking ownership of the node away
@@ -65,14 +60,11 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
     if previous.is_some_and(|p| p != format) {
         // Only the outgoing host can release its own hold; the instance itself
         // survives until its RT node leaves the old graph.
-        if let Some(host) = host_for(previous.expect("checked")) {
-            host.forget(&node_id);
-        }
+        host_for(previous.expect("checked")).forget(&node_id);
         owners().lock().unwrap().remove(&node_id);
     }
 
-    let host = host_for(format).ok_or_else(|| format!("{format:?} plugins are not supported"))?;
-    let node = host.activate(req)?;
+    let node = host_for(format).activate(req)?;
     if primary {
         owners().lock().unwrap().insert(node_id, format);
     }
@@ -84,18 +76,6 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
 pub fn forget(node_id: &str) {
     let owner = owners().lock().unwrap().remove(node_id);
     if let Some(format) = owner {
-        if let Some(host) = host_for(format) {
-            host.forget(node_id);
-        }
-    }
-}
-
-#[cfg(all(test, not(target_os = "macos")))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn audio_units_have_no_host() {
-        assert!(host_for(PluginFormat::Au).is_none());
+        host_for(format).forget(node_id);
     }
 }

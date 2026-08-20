@@ -1,5 +1,5 @@
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplitwave.app%2Fapi%2Fdownloads&query=downloads&label=downloads&color=brightgreen)](https://github.com/Horuse/Splitwave/releases/latest)
-[![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#support)
+[![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#donate)
 
 # Splitwave
 
@@ -8,6 +8,12 @@ Splitwave is a node-based audio router for macOS, Linux, and Windows. Wire micro
 ![Splitwave preview](./preview.webp)
 
 ## Installation
+
+Jump to: [macOS](#macos) · [Linux](#linux) · [Windows](#windows)
+
+Want to build the app or contribute? See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and
+[docs/CONCEPT.md](docs/CONCEPT.md).
 
 ### macOS
 
@@ -116,8 +122,7 @@ Windows uses VB-Audio VB-CABLE through the existing WASAPI output path.
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for prerequisites, setup, useful commands,
-and project layout.
+Want to build the app or contribute? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -126,7 +131,14 @@ Third-party component notices (LGPL, MPL-2.0, etc.) are in [NOTICE](NOTICE).
 
 ## Support
 
-If you find this app useful, consider supporting it:
+Questions, bug reports, and feature requests go through the
+[issue tracker](https://github.com/Horuse/Splitwave/issues); for anything
+else, email [support@splitwave.app](mailto:support@splitwave.app).
+
+## Donate
+
+If you find this app useful and want to help keep it going, consider a small
+donation:
 
 - Tether USDT (TRC20): `TLhTvnn8CtVuQZruLXmRurGhR9GWd7DrWZ`
 - TON: (TON) `UQCpokpaZfwmVTjKDj0LrAbEPO-65c81-MiuBQOa7lTXbMGR`

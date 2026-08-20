@@ -66,6 +66,9 @@
 		channels: number;
 		data: number[][];
 		sampleRate?: number;
+		// Absolute frame of the block's first sample in the scope's timeline,
+		// used to align the live ring exactly with the disk's SEG_FRAMES grid.
+		startFrame?: number;
 	}
 
 	interface RecorderProgress {
@@ -263,18 +266,18 @@
 	}
 
 	// Bins one live block into the ring, aligned to the *absolute* SEG_FRAMES
-	// grid (segment = `liveBaseSeg + floor(sessionFrame / SEG_FRAMES)`) so the
-	// live tail and the disk-loaded bins cover identical frame ranges. A segment
-	// straddling two blocks is merged by reading back the open slot. Returns the
-	// count of grid segments touched.
-	function binLiveGrid(data: number[][], ch: number, frames: number): number {
-		const sf0 = liveSessionFrames;
-		let written = 0;
+	// grid so the live tail and the disk-loaded bins cover identical frame
+	// ranges. `sessionStartFrame` is the scope-reported absolute frame of the
+	// block's first sample; binning from it keeps the ring exactly aligned even
+	// if a block is dropped. A segment straddling two blocks is merged by
+	// reading back the open slot.
+	function binLiveGrid(data: number[][], ch: number, frames: number, sessionStartFrame: number): void {
 		for (let f = 0; f < frames; ) {
-			const gridIdx = Math.floor((sf0 + f) / SEG_FRAMES);
+			const sFrame = sessionStartFrame + f;
+			const gridIdx = Math.floor(sFrame / SEG_FRAMES);
 			const absSeg = liveBaseSeg + gridIdx;
-			// Exclusive session-frame index where this grid segment ends.
-			const segEnd = (gridIdx + 1) * SEG_FRAMES - sf0;
+			// Exclusive index within the block where this grid segment ends.
+			const segEnd = (gridIdx + 1) * SEG_FRAMES - sessionStartFrame;
 			const f1 = Math.min(segEnd, frames);
 			const slot = (((absSeg % capSegs) + capSegs) % capSegs) * ch;
 			const fresh = absSeg !== liveOpenAbsSeg;
@@ -294,14 +297,11 @@
 				maxRing[slot + c] = mx;
 			}
 			if (fresh) {
-				liveTotalSegs++;
+				liveTotalSegs = absSeg - liveBaseSeg + 1;
 				liveOpenAbsSeg = absSeg;
-				written++;
 			}
 			f = f1;
 		}
-		liveSessionFrames += frames;
-		return written;
 	}
 
 	// Bins one incoming block into the min/max ring, returning the number of
@@ -364,7 +364,9 @@
 			// segment indices are correct from the very first block.
 			if (liveBaseSeg < 0) liveBaseSeg = Math.max(0, fileTotalSegs);
 			liveActive = true;
-			binLiveGrid(p.data, channels, frames);
+			const startFrame = p.startFrame ?? liveSessionFrames;
+			binLiveGrid(p.data, channels, frames, startFrame);
+			liveSessionFrames += frames;
 			if (liveBaseSeg >= 0) {
 				// The live overlay is the source of truth for the recording's
 				// tail. Advance the total at scope cadence so the ruler and the

@@ -3,10 +3,11 @@ use std::ffi::{c_void, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -23,7 +24,8 @@ use windows::Win32::Devices::Properties::{
     DEVPKEY_Device_DriverVersion, DEVPKEY_Device_FriendlyName, DEVPKEY_Device_Parent,
 };
 use windows::Win32::Foundation::{
-    CloseHandle, LocalFree, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE, HLOCAL,
+    CloseHandle, LocalFree, ERROR_CANCELLED, ERROR_NO_MORE_ITEMS, HANDLE, HLOCAL, WAIT_FAILED,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Media::Audio::{
     eCapture, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
@@ -36,8 +38,14 @@ use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
 };
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, WaitForSingleObject, INFINITE,
+    CreateProcessW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, ResumeThread,
+    TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED, PROCESS_INFORMATION, STARTUPINFOW,
 };
 use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY, KEY_WRITE};
@@ -67,10 +75,227 @@ const HELPER_REQUEST_ID_FLAG: &str = "--request-id";
 const HELPER_RESULT_MAX_BYTES: u64 = 16 * 1024;
 const EXIT_REQUIRES_CONFIRMATION: u32 = 20;
 const EXIT_REBOOT_REQUIRED: u32 = 21;
+const VBCABLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const VBCABLE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const VBCABLE_INSTALLER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const VBCABLE_HELPER_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+const PROCESS_TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
 static OPERATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 struct OperationGuard;
+
+fn download_client(timeout: Duration) -> Result<Client, WindowsVirtualCableError> {
+    Client::builder()
+        .connect_timeout(VBCABLE_CONNECT_TIMEOUT)
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() == "https"
+                && attempt.url().host_str() == Some("download.vb-audio.com")
+            {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .build()
+        .map_err(|error| {
+            WindowsVirtualCableError::new(
+                "downloadFailed",
+                format!("Create download client: {error}"),
+            )
+        })
+}
+
+fn is_download_timeout(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::TimedOut
+        || error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_timeout)
+}
+
+struct ManagedProcess {
+    job: HANDLE,
+    process: HANDLE,
+}
+
+impl ManagedProcess {
+    fn spawn(
+        program: &Path,
+        args: &[OsString],
+        current_dir: &Path,
+    ) -> Result<Self, WindowsVirtualCableError> {
+        let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.map_err(|error| {
+            WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Create VB-CABLE process job: {error}"),
+            )
+        })?;
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(error) = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            )
+        } {
+            unsafe {
+                let _ = CloseHandle(job);
+            }
+            return Err(WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Configure VB-CABLE process job: {error}"),
+            ));
+        }
+
+        let application = wide(program.as_os_str());
+        let mut command_line = wide(
+            std::iter::once(program.as_os_str().to_owned())
+                .chain(args.iter().cloned())
+                .map(|argument| quote_windows_arg(&argument))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        let working_directory = wide(current_dir.as_os_str());
+        let startup = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
+        let mut process = PROCESS_INFORMATION::default();
+        if let Err(error) = unsafe {
+            CreateProcessW(
+                PCWSTR(application.as_ptr()),
+                Some(PWSTR(command_line.as_mut_ptr())),
+                None,
+                None,
+                false,
+                CREATE_SUSPENDED,
+                None,
+                PCWSTR(working_directory.as_ptr()),
+                &startup,
+                &mut process,
+            )
+        } {
+            unsafe {
+                let _ = CloseHandle(job);
+            }
+            return Err(WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Launch VB-CABLE setup: {error}"),
+            ));
+        }
+
+        if let Err(error) = unsafe { AssignProcessToJobObject(job, process.hProcess) } {
+            unsafe {
+                let _ = TerminateProcess(process.hProcess, 1);
+                let _ = CloseHandle(process.hThread);
+                let _ = CloseHandle(process.hProcess);
+                let _ = CloseHandle(job);
+            }
+            return Err(WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Attach VB-CABLE setup to process job: {error}"),
+            ));
+        }
+
+        let resume_result = unsafe { ResumeThread(process.hThread) };
+        unsafe {
+            let _ = CloseHandle(process.hThread);
+        }
+        if resume_result == u32::MAX {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                let _ = TerminateJobObject(job, 1);
+                let _ = CloseHandle(process.hProcess);
+                let _ = CloseHandle(job);
+            }
+            return Err(WindowsVirtualCableError::new(
+                "installerFailed",
+                format!("Start VB-CABLE setup: {error}"),
+            ));
+        }
+
+        Ok(Self {
+            job,
+            process: process.hProcess,
+        })
+    }
+
+    fn wait(
+        &self,
+        timeout: Duration,
+        timeout_code: &str,
+        timeout_message: &str,
+    ) -> Result<ExitStatus, WindowsVirtualCableError> {
+        match wait_for_process(self.process, timeout)? {
+            ProcessWait::Exited => {
+                let mut code = 1;
+                unsafe { GetExitCodeProcess(self.process, &mut code) }.map_err(|error| {
+                    WindowsVirtualCableError::operation_failed(format!(
+                        "Read VB-CABLE process result: {error}"
+                    ))
+                })?;
+                Ok(ExitStatus::from_raw(code))
+            }
+            ProcessWait::TimedOut => {
+                if let Err(error) = unsafe { TerminateJobObject(self.job, 1) } {
+                    warn!(%error, "timed-out VB-CABLE process tree could not be terminated");
+                }
+                match wait_for_process(self.process, PROCESS_TERMINATION_GRACE) {
+                    Ok(ProcessWait::Exited) => {}
+                    Ok(ProcessWait::TimedOut) => {
+                        warn!("timed-out VB-CABLE process tree did not stop during the termination grace period");
+                    }
+                    Err(error) => {
+                        warn!(code = %error.code, message = %error.message, "timed-out VB-CABLE process tree could not be checked");
+                    }
+                }
+                Err(WindowsVirtualCableError::new(timeout_code, timeout_message))
+            }
+        }
+    }
+}
+
+impl Drop for ManagedProcess {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.job);
+            let _ = CloseHandle(self.process);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessWait {
+    Exited,
+    TimedOut,
+}
+
+fn wait_for_process(
+    handle: HANDLE,
+    timeout: Duration,
+) -> Result<ProcessWait, WindowsVirtualCableError> {
+    let milliseconds = timeout.as_millis().clamp(1, u32::MAX as u128) as u32;
+    let result = unsafe { WaitForSingleObject(handle, milliseconds) };
+    if result == WAIT_OBJECT_0 {
+        Ok(ProcessWait::Exited)
+    } else if result == WAIT_TIMEOUT {
+        Ok(ProcessWait::TimedOut)
+    } else if result == WAIT_FAILED {
+        Err(WindowsVirtualCableError::operation_failed(format!(
+            "Wait for VB-CABLE process: {}",
+            std::io::Error::last_os_error()
+        )))
+    } else {
+        Err(WindowsVirtualCableError::operation_failed(format!(
+            "Wait for VB-CABLE process returned unexpected status {}",
+            result.0
+        )))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -305,16 +530,16 @@ fn helper_install(archive: &Path, consumer: &str) -> Result<Option<i32>, Windows
     verify_authenticode(&installer)?;
 
     info!("starting the VB-CABLE vendor installer");
-    let result = Command::new(&installer)
-        .args(["-i", "-h"])
-        .current_dir(extracted.path())
-        .status()
-        .map_err(|e| {
-            WindowsVirtualCableError::new(
-                "installerFailed",
-                format!("Could not launch VB-CABLE setup: {e}"),
-            )
-        })?;
+    let child = ManagedProcess::spawn(
+        &installer,
+        &[OsString::from("-i"), OsString::from("-h")],
+        extracted.path(),
+    )?;
+    let result = child.wait(
+        VBCABLE_INSTALLER_TIMEOUT,
+        "installerTimedOut",
+        "VB-CABLE setup did not finish within 5 minutes and was stopped",
+    )?;
     let after = detect_cable().map_err(|error| error.with_installer_exit_code(result.code()))?;
     let package = verified_package_after_setup(&before, &after, result.code())?.clone();
     if !result.success() {
@@ -1208,6 +1433,10 @@ mod tests {
         Ok((directory, path))
     }
 
+    fn system_executable(relative_path: &str) -> PathBuf {
+        PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(relative_path)
+    }
+
     #[test]
     fn cable_device_name_excludes_voicemeeter() {
         assert!(is_vb_cable_friendly_name("VB-Audio Virtual Cable"));
@@ -1350,6 +1579,134 @@ mod tests {
         assert_eq!(error.installer_exit_code, Some(1));
         Ok(())
     }
+
+    #[test]
+    fn stalled_download_body_reaches_the_configured_timeout() {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nx")
+                .unwrap();
+            stream.flush().unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(3));
+        });
+
+        let client = download_client(Duration::from_millis(100)).unwrap();
+        let started = Instant::now();
+        let mut response = client.get(format!("http://{address}")).send().unwrap();
+        let mut body = Vec::new();
+        let error = response.read_to_end(&mut body).unwrap_err();
+        let elapsed = started.elapsed();
+        let _ = release_tx.send(());
+        server.join().unwrap();
+
+        assert!(is_download_timeout(&error));
+        assert!(elapsed < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn stalled_child_tree_is_terminated_at_the_deadline() -> Result<(), WindowsVirtualCableError> {
+        use std::thread;
+        use std::time::{Duration, Instant};
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        let directory = TemporaryPath::create_dir("vb-cable-process-tree-test")?;
+        let pid_file = directory.path().join("descendant.pid");
+        let script = format!(
+            "$child = Start-Process \"$env:SystemRoot\\System32\\ping.exe\" -ArgumentList '-n 30 127.0.0.1' -PassThru -WindowStyle Hidden; [IO.File]::WriteAllText('{}', [string]$child.Id); Wait-Process -Id $child.Id",
+            pid_file.display()
+        );
+        let child = ManagedProcess::spawn(
+            &system_executable("System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            &[
+                OsString::from("-NoProfile"),
+                OsString::from("-Command"),
+                OsString::from(script),
+            ],
+            directory.path(),
+        )?;
+        let pid_deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_file.is_file() {
+            assert!(
+                Instant::now() < pid_deadline,
+                "test descendant did not start"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let descendant_pid = fs::read_to_string(&pid_file)
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        let started = Instant::now();
+
+        let error = child
+            .wait(
+                Duration::from_millis(100),
+                "installerTimedOut",
+                "installer timed out",
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, "installerTimedOut");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(
+            wait_for_process(child.process, Duration::ZERO)?,
+            ProcessWait::Exited
+        );
+        let descendant_running = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, descendant_pid) }
+            .map(|handle| {
+                let running = unsafe { WaitForSingleObject(handle, 0) } == WAIT_TIMEOUT;
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                running
+            })
+            .unwrap_or(false);
+        if descendant_running {
+            let _ = Command::new("taskkill.exe")
+                .args(["/PID", &descendant_pid.to_string(), "/F"])
+                .status();
+        }
+        assert!(!descendant_running, "descendant survived the timeout");
+        Ok(())
+    }
+
+    #[test]
+    fn completed_child_returns_its_exit_status() {
+        use std::time::Duration;
+
+        let child = ManagedProcess::spawn(
+            &system_executable("System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            &[
+                OsString::from("-NoProfile"),
+                OsString::from("-Command"),
+                OsString::from("exit 0"),
+            ],
+            &std::env::current_dir().unwrap(),
+        )
+        .unwrap();
+
+        let status = child
+            .wait(
+                Duration::from_secs(5),
+                "installerTimedOut",
+                "installer timed out",
+            )
+            .unwrap();
+
+        assert!(status.success());
+    }
 }
 
 fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
@@ -1362,26 +1719,20 @@ fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
             "VB-CABLE source is not the approved VB-Audio HTTPS host",
         ));
     }
-    let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https"
-                && attempt.url().host_str() == Some("download.vb-audio.com")
-            {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .build()
-        .map_err(|e| {
-            WindowsVirtualCableError::new("downloadFailed", format!("Create download client: {e}"))
-        })?;
+    let client = download_client(VBCABLE_DOWNLOAD_TIMEOUT)?;
     let mut response = client
         .get(VBCABLE_URL)
         .send()
         .and_then(|response| response.error_for_status())
         .map_err(|e| {
-            WindowsVirtualCableError::new("downloadFailed", format!("Download VB-CABLE: {e}"))
+            WindowsVirtualCableError::new(
+                if e.is_timeout() {
+                    "downloadTimedOut"
+                } else {
+                    "downloadFailed"
+                },
+                format!("Download VB-CABLE: {e}"),
+            )
         })?;
     if response
         .content_length()
@@ -1399,7 +1750,14 @@ fn download_archive() -> Result<TemporaryArchive, WindowsVirtualCableError> {
     let mut buf = [0_u8; 32 * 1024];
     loop {
         let read = response.read(&mut buf).map_err(|e| {
-            WindowsVirtualCableError::new("downloadFailed", format!("Read VB-CABLE archive: {e}"))
+            WindowsVirtualCableError::new(
+                if is_download_timeout(&e) {
+                    "downloadTimedOut"
+                } else {
+                    "downloadFailed"
+                },
+                format!("Read VB-CABLE archive: {e}"),
+            )
         })?;
         if read == 0 {
             break;
@@ -1813,16 +2171,42 @@ fn elevate_current(args: &[OsString]) -> Result<u32, WindowsVirtualCableError> {
             "Administrator approval is required to manage VB-CABLE",
         )
     })?;
-    unsafe {
-        WaitForSingleObject(execute.hProcess, INFINITE);
+    let wait = wait_for_process(execute.hProcess, VBCABLE_HELPER_TIMEOUT);
+    match wait {
+        Ok(ProcessWait::Exited) => {}
+        Ok(ProcessWait::TimedOut) => {
+            warn!("VB-CABLE elevated helper timed out");
+            if let Err(error) = unsafe { TerminateProcess(execute.hProcess, 1) } {
+                warn!(%error, "timed-out VB-CABLE elevated helper could not be terminated");
+            } else {
+                let milliseconds = PROCESS_TERMINATION_GRACE.as_millis() as u32;
+                unsafe {
+                    WaitForSingleObject(execute.hProcess, milliseconds);
+                }
+            }
+            unsafe {
+                let _ = CloseHandle(execute.hProcess);
+            }
+            return Err(WindowsVirtualCableError::new(
+                "helperTimedOut",
+                "The VB-CABLE administrator operation did not finish within 6 minutes",
+            ));
+        }
+        Err(error) => {
+            unsafe {
+                let _ = CloseHandle(execute.hProcess);
+            }
+            return Err(error);
+        }
     }
     let mut code = 1;
-    unsafe { GetExitCodeProcess(execute.hProcess, &mut code) }.map_err(|e| {
-        WindowsVirtualCableError::new("operationFailed", format!("Read helper exit code: {e}"))
-    })?;
+    let read_code = unsafe { GetExitCodeProcess(execute.hProcess, &mut code) };
     unsafe {
         let _ = CloseHandle(execute.hProcess);
     }
+    read_code.map_err(|e| {
+        WindowsVirtualCableError::new("operationFailed", format!("Read helper exit code: {e}"))
+    })?;
     Ok(code)
 }
 

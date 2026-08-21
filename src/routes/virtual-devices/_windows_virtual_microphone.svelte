@@ -30,6 +30,8 @@
 				return 'Administrator approval was cancelled.';
 			case 'downloadFailed':
 				return 'Splitwave could not download VB-CABLE. Check your connection and try again.';
+			case 'downloadTimedOut':
+				return 'Downloading VB-CABLE timed out. Check your connection and try again.';
 			case 'checksumMismatch':
 				return 'The downloaded VB-CABLE archive failed its SHA-256 check, so Splitwave did not run it.';
 			case 'invalidSignature':
@@ -41,6 +43,9 @@
 				return 'Splitwave could not read the installer result. Details were written to the app log.';
 			case 'operationInProgress':
 				return 'Another virtual microphone operation is already in progress.';
+			case 'installerTimedOut':
+			case 'helperTimedOut':
+				return 'VB-CABLE setup took too long and was stopped. Try the installation again.';
 			default:
 				return errorMessage(value) ?? 'The virtual microphone could not be installed.';
 		}
@@ -79,7 +84,7 @@
 
 	async function learnAboutVbCable() {
 		try {
-			await openUrl('https://vb-audio.com/Cable/');
+			await openUrl('https://vb-cable.com/');
 		} catch {
 			issue = 'Splitwave could not open the VB-Audio website.';
 		}
@@ -164,8 +169,9 @@
 		<p class="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-700 dark:text-red-300">{issue}</p>
 	{/if}
 
-	<div class="flex items-center gap-3 border-t border-neutral-300 pt-3 text-xs text-neutral-900">
-		<span>VB-CABLE is third-party donationware by VB-Audio.</span>
-		<button type="button" class="text-blue-600 underline-offset-2 hover:underline" onclick={learnAboutVbCable}>About VB-CABLE</button>
+	<div class="border-t border-neutral-300 pt-3 text-xs leading-relaxed text-neutral-900">
+		The origin of VB-CABLE :
+		<button type="button" class="text-blue-600 underline-offset-2 hover:underline" onclick={learnAboutVbCable}>www.vb-cable.com</button>. VB-CABLE is a
+		donationware, all participations are welcome.
 	</div>
 </section>

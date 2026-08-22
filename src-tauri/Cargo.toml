@@ -27,6 +27,13 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 
+# audiopus_sys uses CMake. At opt-level 0 CMake selects the debug MSVC runtime,
+# while Rust uses the release runtime even in dev/test profiles on Windows.
+[profile.dev.package.audiopus_sys]
+opt-level = 3
+[profile.test.package.audiopus_sys]
+opt-level = 3
+
 # DeepFilterNet inference (tract) is far heavier than the FFT crates above. At
 # -O0 a single block's inference blows the DSP block deadline, the worker
 # stalls, and the voice gets glitchy. Optimise the tract stack + deep_filter in
@@ -115,18 +122,27 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.61"
 png = "0.17"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-webpki-roots"] }
+sha2 = "0.10"
+winreg = "0.55"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_JobObjects",
+    "Win32_System_Registry",
     "Win32_System_Variant",
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
     "Win32_Storage_FileSystem",
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_FunctionDiscovery",
+    "Win32_Devices_Properties",
     "Win32_UI_Shell",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",

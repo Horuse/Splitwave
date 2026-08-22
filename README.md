@@ -49,7 +49,16 @@ Requires Windows 10 version 2004 or newer (for per-app capture) and the
 (preinstalled on current Windows 10/11). Download the `.exe` installer from
 [Releases](https://github.com/Horuse/Splitwave/releases/latest) and run it.
 
-Virtual audio devices are not available on Windows.
+To expose a Splitwave output as a microphone:
+
+1. Open **Virtual devices** and choose **Install virtual microphone**.
+2. Complete the VB-CABLE installer.
+3. Restart Windows if Splitwave shows **Restart required**.
+4. Select `CABLE Input` in a Speaker node.
+5. Select `CABLE Output` as the microphone in the target app.
+
+VB-CABLE is third-party donationware; see its
+[official page](https://vb-audio.com/Cable/) for licensing and support.
 
 ## Platform support
 
@@ -62,7 +71,7 @@ Virtual audio devices are not available on Windows.
 | Device volume control                     |          ✅          |           ✅           |                ✅                 |
 | Recording: WAV / FLAC / AIFF / MP3 / Opus |          ✅          |           ✅           |                ✅                 |
 | Recording: AAC (M4A)                      |          ✅          |           ❌           |                ❌                 |
-| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks |  ❌ (no user-mode driver model)   |
+| Virtual audio devices                     | ✅ AudioServerPlugin | ✅ PipeWire null-sinks |   ✅ fixed VB-CABLE microphone    |
 | Effects, metering, file playback          |          ✅          |           ✅           |                ✅                 |
 | CLAP plugins                              |          ✅          |           ✅           |                ✅                 |
 | VST3 plugins                              |          ✅          |         ✅ X11         |                ✅                 |
@@ -86,14 +95,14 @@ Virtual audio devices are not available on Windows.
   VST3 defines no Wayland embedding
 - **Presets & templates:** shared effect presets with factory defaults, plus
   ready-made pipeline templates in the create flow
-- **Virtual devices:** create named virtual audio devices that appear system-wide.
-  Use them to capture loopback audio from any app or to feed processed audio into
-  apps that accept a microphone input (DAWs, Discord, etc.)
+- **Virtual devices:** create named virtual audio devices that appear system-wide
+  on macOS and Linux. Windows uses the single fixed VB-Audio VB-CABLE pair as a
+  managed virtual microphone; it does not provide arbitrary named Windows devices.
 
 System and per-app capture use **ScreenCaptureKit** on macOS, **PipeWire** on
 Linux, and **WASAPI loopback** / the **Process Loopback API** on Windows. Virtual
-devices are AudioServerPlugin drivers on macOS and PipeWire null-sinks on Linux;
-Windows has no user-mode virtual-device model, so they are unavailable there.
+devices are AudioServerPlugin drivers on macOS and PipeWire null-sinks on Linux.
+Windows uses VB-Audio VB-CABLE through the existing WASAPI output path.
 
 ## Stack
 

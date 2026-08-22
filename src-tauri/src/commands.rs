@@ -386,6 +386,30 @@ pub fn virtual_driver_status() -> VirtualDriverStatus {
 }
 
 #[tauri::command]
+pub async fn windows_virtual_cable_status(
+) -> Result<virtual_device::WindowsVirtualCableStatus, virtual_device::WindowsVirtualCableError> {
+    tauri::async_runtime::spawn_blocking(virtual_device::windows_virtual_cable_status)
+        .await
+        .map_err(|_| {
+            virtual_device::WindowsVirtualCableError::operation_failed(
+                "Status query stopped unexpectedly",
+            )
+        })?
+}
+
+#[tauri::command]
+pub async fn install_windows_virtual_cable(
+) -> Result<virtual_device::WindowsVirtualCableStatus, virtual_device::WindowsVirtualCableError> {
+    tauri::async_runtime::spawn_blocking(virtual_device::install_windows_virtual_cable)
+        .await
+        .map_err(|_| {
+            virtual_device::WindowsVirtualCableError::operation_failed(
+                "Installation task stopped unexpectedly",
+            )
+        })?
+}
+
+#[tauri::command]
 pub fn install_virtual_driver(app: AppHandle) -> Result<(), String> {
     virtual_device::install(&app)
 }

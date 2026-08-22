@@ -25,6 +25,11 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 // line) and replayed on the next launch.
 static CRASH_FILE: OnceLock<PathBuf> = OnceLock::new();
 
+#[cfg(target_os = "windows")]
+pub fn run_windows_vb_cable_helper() -> Option<i32> {
+    audio::virtual_device::windows_cable::run_helper()
+}
+
 pub fn app_handle() -> Option<&'static AppHandle> {
     APP_HANDLE.get()
 }
@@ -230,6 +235,8 @@ pub fn run() {
             commands::list_audio_applications,
             commands::get_app_icons,
             commands::virtual_driver_status,
+            commands::windows_virtual_cable_status,
+            commands::install_windows_virtual_cable,
             commands::install_virtual_driver,
             commands::uninstall_virtual_driver,
             commands::apply_virtual_devices,

@@ -81,7 +81,7 @@ src-tauri/src/audio/
   capture/      system + per-app capture (macos.rs SCK / linux.rs PipeWire / windows.rs WASAPI)
   device/       device enumeration (macos.rs CoreAudio / linux.rs PipeWire / windows.rs cpal)
   volume/       device volume (macos.rs / linux.rs / windows.rs)
-  virtual_device/  null-sink / driver management per OS (unsupported on Windows)
+  virtual_device/  null-sink / driver management per OS (fixed VB-CABLE on Windows)
   plugins/      CLAP / VST3 / AU hosts behind one interface, scan + registry
                 (vst3_backend.rs loads CFBundles on macOS, DLLs/.so elsewhere)
   streams/      cpal stream builders (macOS + Windows)

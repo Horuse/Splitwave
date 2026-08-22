@@ -22,6 +22,12 @@ pub struct VirtualDriverStatus {
     pub needs_update: bool,
 }
 
+pub mod windows_cable;
+pub use windows_cable::{
+    install_windows_virtual_cable, windows_virtual_cable_status, WindowsVirtualCableError,
+    WindowsVirtualCableStatus,
+};
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

@@ -104,3 +104,12 @@ jobs:
 
       - name: Svelte / TypeScript check
         run: bun run check
+
+      - name: Build Windows application
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: cargo build --bin splitwave
+
+      - name: Build unsigned NSIS installer
+        if: runner.os == 'Windows'
+        run: bun run tauri build --bundles nsis --no-sign

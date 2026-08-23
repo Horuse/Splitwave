@@ -9,7 +9,9 @@ use serde_json::json;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, SeekedTo, TrackType};
+use symphonia::core::formats::{
+    FormatOptions, FormatReader, SeekMode, SeekTo, SeekedTo, TrackType,
+};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, Timestamp};

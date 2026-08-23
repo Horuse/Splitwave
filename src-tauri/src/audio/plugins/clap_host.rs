@@ -613,14 +613,14 @@ mod tests {
             // input; that's the plugin's own behavior, not a host regression, so
             // it's reported and skipped rather than failing the whole suite (CI
             // has no plugins at all and must stay green).
-            let mut instance = match ClapInstance::new(&mut bundles, "test", &plugin.path, &plugin.plugin_id)
-            {
-                Ok(i) => i,
-                Err(e) => {
-                    println!("SKIPPED: {} failed to load: {e}", plugin.name);
-                    continue;
-                }
-            };
+            let mut instance =
+                match ClapInstance::new(&mut bundles, "test", &plugin.path, &plugin.plugin_id) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        println!("SKIPPED: {} failed to load: {e}", plugin.name);
+                        continue;
+                    }
+                };
             let mut node = match instance.activate(
                 SAMPLE_RATE,
                 FRAMES,
@@ -647,7 +647,10 @@ mod tests {
                 peak = block.iter().fold(peak, |a, s| a.max(s.abs()));
             }
             if peak <= 0.01 {
-                println!("SKIPPED: {} produced silence; cannot validate rendering", plugin.name);
+                println!(
+                    "SKIPPED: {} produced silence; cannot validate rendering",
+                    plugin.name
+                );
                 continue;
             }
             drop(node);

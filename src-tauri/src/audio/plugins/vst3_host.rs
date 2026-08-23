@@ -712,7 +712,10 @@ mod tests {
                 node.latency_frames()
             );
             if rms <= 0.0 {
-                println!("SKIPPED: {} produced no audio; cannot validate rendering", plugin.name);
+                println!(
+                    "SKIPPED: {} produced no audio; cannot validate rendering",
+                    plugin.name
+                );
                 continue;
             }
 

@@ -765,10 +765,7 @@
 		fetching = true;
 		try {
 			const plotW = Math.max(1, W - SCALE_W);
-			const cnt = Math.min(
-				count ?? (fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64),
-				MAX_FETCH_SEGS
-			);
+			const cnt = Math.min(count ?? (fileLoaded ? Math.max(64, Math.ceil(plotW * segsPerCol) + 32) : 64), MAX_FETCH_SEGS);
 			const res = await methods.readFilePeaks(filePath, startSeg * SEG_FRAMES, SEG_FRAMES, cnt);
 			if (res.channels > 0) {
 				fileChannels = res.channels;
@@ -973,14 +970,14 @@
 					fileTotalSegs = 0;
 					totalSegs = 0;
 					viewEndSeg = 0;
-				following = true;
-				liveActive = false;
-				liveTotalSegs = 0;
-				liveSessionFrames = 0;
-				liveOpenAbsSeg = -1;
-				liveBaseSeg = 0;
-				liveBaseOverride = 0;
-			}
+					following = true;
+					liveActive = false;
+					liveTotalSegs = 0;
+					liveSessionFrames = 0;
+					liveOpenAbsSeg = -1;
+					liveBaseSeg = 0;
+					liveBaseOverride = 0;
+				}
 				if (segs > fileTotalSegs) {
 					fileTotalSegs = segs;
 					// While following the live edge the scope stream owns the

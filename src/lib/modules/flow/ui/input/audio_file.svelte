@@ -34,6 +34,10 @@
 	let channels = $state(0);
 	let playing = $state(false);
 	let paused = $state(false);
+	// While the user drags the scrubber, this holds the hand position so the
+	// thumb follows the cursor instead of being yanked back by the 100 ms
+	// progress events; cleared on release to resume live updates.
+	let scrubValue: number | null = $state(null);
 
 	let unlisten: UnlistenFn | undefined;
 	let unlistenChoose: (() => void) | undefined;
@@ -50,6 +54,13 @@
 			channels = p.channels;
 			paused = p.paused;
 			playing = !p.stopped && !p.paused;
+			// Re-assert the loop flag on every tick: the reader starts with loop
+			// disabled and only a fresh reader reports frames 0, which can arrive
+			// before `isRunning` flips. Keeping it in sync here guarantees the
+			// reader sees the intended value well before EOF. Idempotent store.
+			if (audioStore.isRunning && data.filePath) {
+				audioMethods.setAudioFileLoop(id, data.loopEnabled).catch(() => {});
+			}
 		});
 	});
 
@@ -133,10 +144,15 @@
 		const target = e.target as HTMLInputElement;
 		const target_frame = Number(target.value);
 		if (!Number.isFinite(target_frame)) return;
+		scrubValue = target_frame;
 		frames = target_frame;
 		if (audioStore.isRunning) {
 			audioMethods.seekAudioFile(id, target_frame).catch(() => {});
 		}
+	}
+
+	function clearScrub() {
+		scrubValue = null;
 	}
 
 	function basename(p: string | null): string {
@@ -230,9 +246,12 @@
 			class="nodrag nopan nowheel h-1 w-full cursor-pointer accent-neutral-900 disabled:opacity-40"
 			min="0"
 			max={Math.max(totalFrames, 1)}
-			value={frames}
+			value={scrubValue ?? frames}
 			disabled={!data.filePath || totalFrames === 0}
-			oninput={onScrub} />
+			oninput={onScrub}
+			onpointerup={clearScrub}
+			onpointercancel={clearScrub}
+			onkeyup={clearScrub} />
 
 		<div class="flex items-center justify-between font-mono text-[11px]">
 			<span class="text-neutral-900 tabular-nums">{formatTime(currentSec)}</span>

@@ -9,10 +9,10 @@ use serde_json::json;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, SeekedTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::Time;
+use symphonia::core::units::{Time, Timestamp};
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
@@ -96,7 +96,16 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
         .map(|c| c.count() as u32)
         .unwrap_or(2)
         .max(1);
-    let total_frames = track.num_frames.unwrap_or(0);
+    let total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
+        track
+            .duration
+            .zip(track.time_base)
+            .and_then(|(d, tb)| {
+                tb.calc_time(Timestamp::new(d.get() as i64))
+                    .map(|t| (t.as_secs_f64() * sample_rate as f64).round() as u64)
+            })
+            .unwrap_or(0)
+    });
     Ok(AudioFileInfo {
         sample_rate,
         channels,
@@ -163,7 +172,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let format = symphonia::default::get_probe()
+    let mut format = symphonia::default::get_probe()
         .probe(
             &hint,
             mss,
@@ -172,7 +181,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         )
         .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
 
-    let (track_id, sample_rate, channels, total_frames, audio_params) = {
+    let (track_id, sample_rate, channels, mut total_frames, audio_params) = {
         let track = format
             .default_track(TrackType::Audio)
             .ok_or_else(|| AppError::Stream("no audio track".into()))?;
@@ -184,7 +193,18 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         let sample_rate = audio
             .sample_rate
             .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
-        let total_frames = track.num_frames.unwrap_or(0);
+        // Some formats (streaming/flac) leave `num_frames` unset; fall back to
+        // the track duration so the scrubber gets a real range.
+        let total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
+            track
+                .duration
+                .zip(track.time_base)
+                .and_then(|(d, tb)| {
+                    tb.calc_time(Timestamp::new(d.get() as i64))
+                        .map(|t| (t.as_secs_f64() * sample_rate as f64).round() as u64)
+                })
+                .unwrap_or(0)
+        });
         let channels = audio
             .channels
             .as_ref()
@@ -195,9 +215,47 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         (track.id, sample_rate, channels, total_frames, audio_params)
     };
 
-    let decoder = symphonia::default::get_codecs()
+    let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| AppError::Stream(format!("unsupported codec: {e}")))?;
+
+    // Formats that omit length metadata (no num_frames, duration or time_base)
+    // still need a real total for the scrubber. Seek to the end, and if that
+    // can't produce one, scan the whole file decoding it.
+    if total_frames == 0 {
+        let time_base = format
+            .tracks()
+            .iter()
+            .find(|t| t.id == track_id)
+            .and_then(|t| t.time_base);
+        if let Some(tb) = time_base {
+            if let Ok(SeekedTo { actual_ts, .. }) = format.seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: Time::MAX,
+                    track_id: None,
+                },
+            ) {
+                total_frames = tb
+                    .calc_time(actual_ts)
+                    .map(|t| (t.as_secs_f64() * sample_rate as f64).round() as u64)
+                    .unwrap_or(0);
+            }
+        }
+        if total_frames == 0 {
+            // Last resort: count frames by decoding the file once.
+            total_frames = scan_frames(&mut format, &mut decoder, track_id);
+        }
+        // Rewind to the start for playback regardless of which probe ran.
+        let _ = format.seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time: Time::ZERO,
+                track_id: None,
+            },
+        );
+        decoder.reset();
+    }
 
     Ok(OpenedDecoder {
         format,
@@ -209,20 +267,56 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
     })
 }
 
+/// Decodes the whole file counting audio frames — the definitive total for
+/// containers that expose no length metadata and whose seek can't report one.
+fn scan_frames(
+    format: &mut Box<dyn FormatReader>,
+    decoder: &mut Box<dyn AudioDecoder>,
+    track_id: u32,
+) -> u64 {
+    let mut total = 0u64;
+    loop {
+        match format.next_packet() {
+            Ok(Some(p)) => {
+                if p.track_id != track_id {
+                    continue;
+                }
+                if let Ok(buf) = decoder.decode(&p) {
+                    total += buf.frames() as u64;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+    total
+}
+
 fn do_seek(od: &mut OpenedDecoder, target_frame: u64) {
     let secs_f64 = target_frame as f64 / od.sample_rate as f64;
     let time = Time::try_from_secs_f64(secs_f64).unwrap_or(Time::ZERO);
     match od.format.seek(
-        SeekMode::Accurate,
+        SeekMode::Coarse,
         SeekTo::Time {
             time,
-            track_id: None,
+            track_id: Some(od.track_id),
         },
     ) {
         Ok(_) => {}
         Err(e) => warn!("seek failed: {e}"),
     }
     od.decoder.reset();
+}
+
+/// Reopens the file into a fresh decoder. Used for restart-to-start (loop wrap,
+/// stop/rewind): symphonia's isomp4 reader can't seek back to the beginning once
+/// the stream has been read — `next_packet` then dies with "no atom pending
+/// read" — so a fresh probe is the only reliable rewind across formats.
+fn reopen_decoder(od: &mut OpenedDecoder, path: &Path) {
+    match open_decoder(path) {
+        Ok(fresh) => *od = fresh,
+        Err(e) => warn!(path = %path.display(), error = %e, "reopen for restart failed"),
+    }
 }
 
 fn run(
@@ -290,7 +384,11 @@ fn run(
             let pending = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
             if pending >= 0 {
                 let target = clamp_frame(pending as u64, od.total_frames);
-                do_seek(&mut od, target);
+                if target == 0 {
+                    reopen_decoder(&mut od, path);
+                } else {
+                    do_seek(&mut od, target);
+                }
                 frames_played = target;
             }
             if last_paused_progress.elapsed() >= PROGRESS_INTERVAL {
@@ -314,7 +412,11 @@ fn run(
         let pending = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
         if pending >= 0 {
             let target = clamp_frame(pending as u64, od.total_frames);
-            do_seek(&mut od, target);
+            if target == 0 {
+                reopen_decoder(&mut od, path);
+            } else {
+                do_seek(&mut od, target);
+            }
             frames_played = target;
             emit_progress(
                 app,
@@ -353,8 +455,21 @@ fn run(
 
         if frames_decoded == 0 {
             if loop_enabled.load(Ordering::SeqCst) {
-                do_seek(&mut od, 0);
+                reopen_decoder(&mut od, path);
                 frames_played = 0;
+                // Make the wrap visible immediately instead of waiting for the
+                // next 100 ms progress tick.
+                emit_progress(
+                    app,
+                    &node_id,
+                    0,
+                    od.total_frames,
+                    od.sample_rate,
+                    od.channels as u32,
+                    false,
+                    false,
+                );
+                last_progress = Instant::now();
                 continue;
             }
             // Fade out to avoid a hard click at end of file.
@@ -514,4 +629,201 @@ fn emit_progress(
             "paused": paused,
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::encoders::build_encoder;
+    use crate::audio::graph::{
+        AiffBitDepth, FlacBitDepth, FlacCompression, RecordingFormat, WavBitDepth,
+    };
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("file_reader_test_{}_{}", std::process::id(), name));
+        p
+    }
+
+    #[test]
+    fn open_decoder_reports_real_frame_count() {
+        let path = temp_path("open.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut block = Vec::with_capacity(4096);
+        for f in 0..2048 {
+            block.push((f % 10) as f32 / 10.0);
+            block.push(-(f % 10) as f32 / 10.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let od = open_decoder(&path).unwrap();
+        assert_eq!(od.total_frames, 2048);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn seek_to_start_restarts_decode_after_eof() {
+        let path = temp_path("loop.wav");
+        let _ = std::fs::remove_file(&path);
+        let frames = 48_000;
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push((f % 100) as f32 / 100.0);
+            block.push(-((f % 100) as i32) as f32 / 100.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let mut od = open_decoder(&path).unwrap();
+        let mut interleaved = Vec::new();
+        let mut out = vec![0.0f32; 4096];
+        // Decode to EOF.
+        loop {
+            let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+            if n == 0 {
+                break;
+            }
+        }
+        // Rewind to the start; a loop must decode audio again, not hit EOF.
+        do_seek(&mut od, 0);
+        let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+        assert!(n > 0, "seek to start after EOF did not restart decode");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // Exercises the reader's contract for one format: opens the file, reports a
+    // nonzero total, decodes the whole track, then restarts from the start after
+    // EOF (the loop path) instead of staying at the end. Lossy codecs pad/trim,
+    // so frame counts are checked against a generous band around the source.
+    fn assert_format_roundtrip(fmt: RecordingFormat, label: &str) {
+        let path = temp_path(&format!("{label}.out"));
+        let _ = std::fs::remove_file(&path);
+        let sample_rate = 48_000u32;
+        let ch = 2u16;
+        let frames = 48_000usize;
+        let mut block = Vec::with_capacity(frames * ch as usize);
+        for f in 0..frames {
+            block.push((f % 101) as f32 / 101.0 - 0.5);
+            block.push(-((f % 101) as i32) as f32 / 101.0 + 0.5);
+        }
+        let mut enc = build_encoder(&path, sample_rate, ch, fmt.clone(), false).unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let mut od = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: open: {e}"));
+        assert_eq!(od.sample_rate, sample_rate, "{label}: sample rate");
+        assert!(od.channels >= 1, "{label}: channels");
+
+        let band_min = (frames as f64 * 0.8) as u64;
+        let band_max = (frames as f64 * 1.5) as u64;
+        assert!(
+            (band_min..=band_max).contains(&od.total_frames),
+            "{label}: total_frames {} outside ~{frames}",
+            od.total_frames
+        );
+
+        let mut interleaved = Vec::new();
+        let mut out = vec![0.0f32; 8192];
+        let mut decoded = 0u64;
+        loop {
+            let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+            if n == 0 {
+                break;
+            }
+            decoded += n as u64;
+        }
+        assert!(
+            (band_min..=band_max).contains(&decoded),
+            "{label}: decoded {decoded} outside ~{frames}"
+        );
+
+        // Loop restart: after EOF, the reader reopens the file (symphonia's isomp4
+        // reader can't rewind an already-read stream), so a fresh decode must
+        // yield audio again rather than staying at the end.
+        reopen_decoder(&mut od, &path);
+        let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+        assert!(n > 0, "{label}: decode did not restart after EOF reopen");
+
+        // Metadata-less fallback: a fresh scan agrees with the reported total.
+        let mut od2 = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));
+        let scanned = scan_frames(&mut od2.format, &mut od2.decoder, od2.track_id);
+        assert!(
+            (band_min..=band_max).contains(&scanned),
+            "{label}: scan_frames {scanned} outside ~{frames}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn all_formats_open_decode_seek_loop() {
+        assert_format_roundtrip(
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            "wav_f32",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::I16,
+            },
+            "wav_i16",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::I24,
+            },
+            "wav_i24",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Aiff {
+                bit_depth: AiffBitDepth::I16,
+            },
+            "aiff_i16",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Aiff {
+                bit_depth: AiffBitDepth::I24,
+            },
+            "aiff_i24",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Flac {
+                bit_depth: FlacBitDepth::I16,
+                compression: FlacCompression::Default,
+            },
+            "flac_i16",
+        );
+        assert_format_roundtrip(
+            RecordingFormat::Flac {
+                bit_depth: FlacBitDepth::I24,
+                compression: FlacCompression::Default,
+            },
+            "flac_i24",
+        );
+        assert_format_roundtrip(RecordingFormat::Mp3 { bitrate_kbps: 192 }, "mp3");
+        #[cfg(target_os = "macos")]
+        assert_format_roundtrip(RecordingFormat::Aac { bitrate: 128_000 }, "aac");
+    }
 }

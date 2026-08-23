@@ -559,6 +559,13 @@ fn decode_next(
                 od.decoder.reset();
                 continue;
             }
+            // A WAV whose data chunk size exceeds the actual bytes ends with
+            // "unexpected end of file" instead of a clean Ok(None); that's a
+            // truncated/mis-declared file reaching its real end, so treat it as
+            // end-of-stream rather than killing the reader thread mid-file.
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(0);
+            }
             Err(e) => return Err(AppError::Stream(format!("read packet: {e}"))),
         };
 
@@ -842,5 +849,49 @@ mod tests {
         );
         #[cfg(target_os = "macos")]
         assert_format_roundtrip(RecordingFormat::Aac { bitrate: 128_000 }, "aac");
+    }
+
+    #[test]
+    fn truncated_wav_reaches_clean_eof() {
+        let path = temp_path("trunc.wav");
+        let _ = std::fs::remove_file(&path);
+        let frames = 32_000;
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push((f % 100) as f32 / 100.0);
+            block.push(-((f % 100) as i32) as f32 / 100.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            32_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        // Drop trailing bytes but leave the header's data-chunk size intact, so
+        // symphonia reads past the real end and reports "unexpected end of file".
+        let bytes = std::fs::read(&path).unwrap();
+        let remove = 100_000usize;
+        std::fs::write(&path, &bytes[..bytes.len() - remove]).unwrap();
+
+        let mut od = open_decoder(&path).unwrap();
+        let mut interleaved = Vec::new();
+        let mut out = vec![0.0f32; 8192];
+        let mut decoded = 0u64;
+        loop {
+            match decode_next(&mut od, &mut interleaved, &mut out) {
+                Ok(0) => break,
+                Ok(n) => decoded += n as u64,
+                Err(e) => panic!("decode errored instead of clean EOF: {e}"),
+            }
+        }
+        assert!(decoded > 0, "no audio decoded from truncated wav");
+        let _ = std::fs::remove_file(&path);
     }
 }

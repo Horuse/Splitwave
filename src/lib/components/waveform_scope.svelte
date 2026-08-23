@@ -55,7 +55,7 @@
 	const MIN_LANE_H = 72;
 	// Upper bound on one peak read, so zooming out to the whole file loads it in
 	// chunks instead of one huge read that stalls history while `fetching`.
-	const MAX_FETCH_SEGS = 8192;
+	const MAX_FETCH_SEGS = 65536;
 	const SCROLLBAR_HIT = 10;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
@@ -144,7 +144,12 @@
 	// are preserved at their `index % newCap` slots, so live reads stay correct.
 	function ensureCap() {
 		const plotW = Math.max(1, W - SCALE_W);
-		const needed = Math.max(BASE_CAP_SEGS, Math.ceil(plotW * segsPerCol));
+		// File mode: the disk cache serves the history, so the live ring only
+		// keeps a fixed realtime tail. Growing it to the visible span would
+		// retain the whole zoomed-out view as realtime bins and blank the
+		// unwritten remainder with zeros — a region the disk can't fill because
+		// the ring wins the draw.
+		const needed = fileMode ? BASE_CAP_SEGS : Math.max(BASE_CAP_SEGS, Math.ceil(plotW * segsPerCol));
 		if (needed > capSegs || needed < capSegs / 2) {
 			resizeRings(needed);
 		}
@@ -364,10 +369,10 @@
 			if (liveBaseSeg >= 0) {
 				// The live overlay is the source of truth for the recording's
 				// tail. Advance the total at scope cadence so the ruler and the
-				// right edge move smoothly; gating on `rt > fileTotalSegs` would
-				// pause the view for the slower disk/progress ticks.
+				// right edge move smoothly; `fileTotalSegs` stays the flushed
+				// disk total so history loading never reaches into unflushed
+				// (live-only) frames.
 				const rt = liveBaseSeg + liveTotalSegs;
-				fileTotalSegs = Math.max(fileTotalSegs, rt);
 				totalSegs = Math.max(totalSegs, rt);
 			}
 			if (following) viewEndSeg = totalSegs;
@@ -508,15 +513,6 @@
 			denom,
 			thumbX: trackX + posFrac * scrollable
 		};
-	}
-
-	function scrollbarToPx(x: number) {
-		const m = scrollbarMetrics();
-		const frac = Math.min(1, Math.max(0, (x - m.trackX - m.thumbW / 2) / m.scrollable));
-		viewEndSeg = m.availStart + frac * m.denom + m.visibleSegs;
-		clampView();
-		following = viewEndSeg >= totalSegs;
-		markDirty();
 	}
 
 	function scrollbarPanByPx(dx: number) {
@@ -788,6 +784,10 @@
 			const bins = res.mins[0]?.length ?? 0;
 			for (let b = 0; b < bins; b++) {
 				const seg = firstSeg + b;
+				// Bins that start at or past the file's frame count are the
+				// zeroed tail of an unflushed read; caching them as silence
+				// would blank those segments once the flush catches up.
+				if (seg * SEG_FRAMES >= res.totalFrames) continue;
 				const arr = new Float32Array(res.channels * 2);
 				for (let c = 0; c < res.channels; c++) {
 					arr[c * 2] = res.mins[c][b];
@@ -823,10 +823,10 @@
 	}
 
 	// Loads the visible history in capped chunks, one fetch at a time (the
-	// `fetching` guard paces it), for both following and panning. Segments
-	// covered by the retained live ring are skipped. Fetching the first missing
-	// segment of the view means a wide/min-zoom view is filled progressively
-	// instead of stalling on a single huge read.
+	// `fetching` guard paces it), for both following and panning. The disk cache
+	// is warmed even while following so it survives the live ring's teardown on
+	// stop. Fetching the first missing segment of the view means a wide/min-zoom
+	// view is filled progressively instead of stalling on a single huge read.
 	function ensureVisibleLoaded() {
 		if (!fileMode || !filePath || fetching) return;
 		if (!fileLoaded) {
@@ -835,12 +835,13 @@
 		}
 		const plotW = Math.max(1, W - SCALE_W);
 		const viewStart = Math.max(0, Math.floor(viewEndSeg - plotW * segsPerCol));
-		const viewEnd = Math.ceil(viewEndSeg);
+		// Warm the visible history from disk. Capped at the flushed total: while
+		// following, the newest segments are drawn from the live ring, but their
+		// disk bins are still loaded so the recorded file is already cached when
+		// the ring is torn down on stop. Segments the flush hasn't reached are
+		// left to the ring and refetched from the finalized file after stop.
+		const viewEnd = Math.min(Math.ceil(viewEndSeg), Math.ceil(fileTotalSegs));
 		for (let seg = viewStart; seg < viewEnd; seg++) {
-			const li = seg - liveBaseSeg;
-			if (liveActive && liveBaseSeg >= 0 && li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
-				continue;
-			}
 			if (!fileCache.has(seg)) {
 				fetchPeaks(seg);
 				return;
@@ -885,9 +886,11 @@
 		const rect = wrap.getBoundingClientRect();
 		const y = e.clientY - rect.top;
 		if (y >= H - SCROLLBAR_HIT && canScroll()) {
+			// Pressing the track starts a drag, not a jump: only thumb movement
+			// pans (1:1 with the cursor). A click on empty space near the bottom
+			// must not throw the view across the file.
 			scrollbarDragging = true;
 			lastX = e.clientX;
-			scrollbarToPx(e.clientX - rect.left);
 			e.preventDefault();
 			return;
 		}

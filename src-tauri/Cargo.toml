@@ -75,6 +75,10 @@ opus = "0.3"
 ogg = "0.9"
 mp3lame-encoder = "0.2"
 symphonia = { version = "0.6", features = ["all"] }
+# Opus has no first-party symphonia codec; this adapter registers a libopus
+# decoder into the same symphonia registry so the reader handles it like any
+# other format.
+symphonia-adapter-libopus = "0.3"
 base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net"] }
 webrtc = "0.11"

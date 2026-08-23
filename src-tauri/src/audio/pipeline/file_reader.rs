@@ -164,6 +164,16 @@ struct OpenedDecoder {
     total_frames: u64,
 }
 
+/// Symphonia's default registry plus the third-party libopus Opus decoder.
+/// Symphonia has no first-party Opus codec yet, so `make_audio_decoder` for an
+/// Opus track would otherwise fail with "unsupported codec".
+fn codec_registry() -> symphonia::core::codecs::registry::CodecRegistry {
+    let mut registry = symphonia::core::codecs::registry::CodecRegistry::new();
+    symphonia::default::register_enabled_codecs(&mut registry);
+    registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
+    registry
+}
+
 fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
     let file =
         File::open(path).map_err(|e| AppError::Stream(format!("open {}: {e}", path.display())))?;
@@ -215,7 +225,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         (track.id, sample_rate, channels, total_frames, audio_params)
     };
 
-    let mut decoder = symphonia::default::get_codecs()
+    let mut decoder = codec_registry()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| AppError::Stream(format!("unsupported codec: {e}")))?;
 
@@ -636,7 +646,7 @@ mod tests {
     use super::*;
     use crate::audio::encoders::build_encoder;
     use crate::audio::graph::{
-        AiffBitDepth, FlacBitDepth, FlacCompression, RecordingFormat, WavBitDepth,
+        AiffBitDepth, FlacBitDepth, FlacCompression, OpusApplication, RecordingFormat, WavBitDepth,
     };
 
     fn temp_path(name: &str) -> std::path::PathBuf {
@@ -823,6 +833,13 @@ mod tests {
             "flac_i24",
         );
         assert_format_roundtrip(RecordingFormat::Mp3 { bitrate_kbps: 192 }, "mp3");
+        assert_format_roundtrip(
+            RecordingFormat::Opus {
+                bitrate: 128_000,
+                application: OpusApplication::Audio,
+            },
+            "opus",
+        );
         #[cfg(target_os = "macos")]
         assert_format_roundtrip(RecordingFormat::Aac { bitrate: 128_000 }, "aac");
     }

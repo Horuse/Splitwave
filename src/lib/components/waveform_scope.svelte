@@ -56,6 +56,11 @@
 	// Upper bound on one peak read, so zooming out to the whole file loads it in
 	// chunks instead of one huge read that stalls history while `fetching`.
 	const MAX_FETCH_SEGS = 65536;
+	// Extra view-widths of disk cache warmed on both sides of the visible range,
+	// so panning into neighbouring history hits the cache instead of showing
+	// progressive fills. Point fetches only — a whole-file pre-pass would read
+	// gigabytes on long recordings (24 h WAV32 ≈ 13 GB).
+	const PREFETCH_PLOTS = 1;
 	const SCROLLBAR_HIT = 10;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
@@ -190,6 +195,9 @@
 	let colsCount = 0;
 	let peaks: Float32Array[] = [];
 	let troughs: Float32Array[] = [];
+	// File mode only: 1 when a column still has uncached segments inside the
+	// file's flushed range, so the draw pass can shade it as "loading".
+	let missing: Uint8Array = new Uint8Array(0);
 	let off = 0;
 	let ticks: { x: number; label: string }[] = [];
 
@@ -345,6 +353,7 @@
 					stopTimer = undefined;
 				}
 				fileCache.clear();
+				scanCleanKey = '';
 				fileLoaded = false;
 				fileTotalSegs = 0;
 				totalSegs = 0;
@@ -419,6 +428,8 @@
 		viewEndSeg -= dx * segsPerCol;
 		clampView();
 		following = viewEndSeg >= totalSegs;
+		if (dx > 0) lastPanDir = 1;
+		else if (dx < 0) lastPanDir = -1;
 		markDirty();
 	}
 
@@ -521,6 +532,8 @@
 		viewEndSeg -= dx * segsPerCol;
 		clampView();
 		following = viewEndSeg >= totalSegs;
+		if (dx > 0) lastPanDir = 1;
+		else if (dx < 0) lastPanDir = -1;
 		markDirty();
 	}
 
@@ -555,6 +568,7 @@
 			peaks = Array.from({ length: channels }, () => new Float32Array(cols));
 			troughs = Array.from({ length: channels }, () => new Float32Array(cols));
 		}
+		if (missing.length !== cols) missing = new Uint8Array(cols);
 
 		for (let c = 0; c < channels; c++) {
 			const pk = peaks[c];
@@ -567,11 +581,15 @@
 				if (seg1 > availStart && seg0 < totalSegs) {
 					seg0 = Math.max(seg0, availStart);
 					seg1 = Math.min(seg1, totalSegs);
+					missing[k] = 0;
 					mn = Infinity;
 					mx = -Infinity;
 					for (let seg = seg0; seg < seg1; seg++) {
 						const env = segEnvelope(seg, c);
-						if (env === null) continue;
+						if (env === null) {
+							if (c === 0) missing[k] = 1;
+							continue;
+						}
 						if (env[0] < mn) mn = env[0];
 						if (env[1] > mx) mx = env[1];
 					}
@@ -677,10 +695,11 @@
 
 				if (pk) {
 					c.save();
-					// Clip to the plot area so the envelope never bleeds into the
-					// scale gutter behind the amp labels.
+					// Clip to this channel's lane: float recordings can hold
+					// amplitudes above 1.0, and an unclipped envelope would draw
+					// over the neighbouring lanes.
 					c.beginPath();
-					c.rect(SCALE_W, TIME_H, W - SCALE_W, H - TIME_H);
+					c.rect(SCALE_W, top, W - SCALE_W, laneH);
 					c.clip();
 					c.beginPath();
 					// Right-anchored: x0 is the newest column's centre, at the
@@ -699,6 +718,14 @@
 					c.lineWidth = 0.75;
 					c.lineJoin = 'round';
 					c.stroke();
+					// Shade columns whose disk bins haven't arrived yet, so
+					// progressive loading reads as a background fill, not a gap.
+					if (fileMode) {
+						c.fillStyle = 'rgba(255,255,255,0.04)';
+						for (let k = 0; k < colsCount; k++) {
+							if (missing[k]) c.fillRect(x0 - k - 0.5, top + 2, 1, laneH - 4);
+						}
+					}
 					c.restore();
 				}
 
@@ -793,6 +820,7 @@
 				fileCache.set(seg, arr);
 			}
 			trimFileCache();
+			scanCleanKey = '';
 			// While following the live edge the scope stream owns the view;
 			// moving it here from the (lagging) disk total is what made it step.
 			if (!(liveActive && following)) {
@@ -820,10 +848,24 @@
 	}
 
 	// Loads the visible history in capped chunks, one fetch at a time (the
-	// `fetching` guard paces it), for both following and panning. The disk cache
-	// is warmed even while following so it survives the live ring's teardown on
-	// stop. Fetching the first missing segment of the view means a wide/min-zoom
-	// view is filled progressively instead of stalling on a single huge read.
+	// `fetching` guard paces it). Chunks are picked in pan-direction order:
+	// the margin band ahead of the drag first, then the visible range from the
+	// leading edge inward, then the trailing band — so a pan lands on cached
+	// history instead of filling under the cursor. A fetch always reads
+	// forward, which lines up with the leading-start band; on the other
+	// direction the nearest miss sits at the right edge and its chunk warms
+	// the margin ahead of it. The clean-scan key skips the O(span) rescan
+	// while idle — only view movement or new data re-arms it.
+	let scanCleanKey = '';
+	let lastPanDir = 0; // +1: view moved to earlier audio, -1: to later
+	function firstMissing(from: number, to: number, step: 1 | -1): number {
+		if (step > 0) {
+			for (let seg = from; seg < to; seg++) if (!fileCache.has(seg)) return seg;
+		} else {
+			for (let seg = from; seg > to; seg--) if (!fileCache.has(seg)) return seg;
+		}
+		return -1;
+	}
 	function ensureVisibleLoaded() {
 		if (!fileMode || !filePath || fetching) return;
 		if (!fileLoaded) {
@@ -831,19 +873,42 @@
 			return;
 		}
 		const plotW = Math.max(1, W - SCALE_W);
-		const viewStart = Math.max(0, Math.floor(viewEndSeg - plotW * segsPerCol));
+		const spanSegs = Math.ceil(plotW * segsPerCol);
+		const viewStart = Math.max(0, Math.floor(viewEndSeg - spanSegs));
 		// Warm the visible history from disk. Capped at the flushed total: while
 		// following, the newest segments are drawn from the live ring, but their
 		// disk bins are still loaded so the recorded file is already cached when
 		// the ring is torn down on stop. Segments the flush hasn't reached are
 		// left to the ring and refetched from the finalized file after stop.
 		const viewEnd = Math.min(Math.ceil(viewEndSeg), Math.ceil(fileTotalSegs));
-		for (let seg = viewStart; seg < viewEnd; seg++) {
-			if (!fileCache.has(seg)) {
+		const margin = spanSegs * PREFETCH_PLOTS;
+		const lo = Math.max(0, viewStart - margin);
+		const hi = Math.min(Math.ceil(fileTotalSegs), viewEnd + margin);
+		if (lo >= hi) return;
+		const key = `${lo}|${hi}`;
+		if (key === scanCleanKey) return;
+		const vs = Math.max(viewStart, lo);
+		const ve = Math.min(viewEnd, hi);
+		const bands: [number, number, 1 | -1][] =
+			lastPanDir > 0
+				? [
+						[lo, vs, 1],
+						[vs, ve, 1],
+						[ve, hi, 1]
+					]
+				: [
+						[hi - 1, ve - 1, -1],
+						[ve - 1, vs - 1, -1],
+						[vs - 1, lo - 1, -1]
+					];
+		for (const [a, b, step] of bands) {
+			const seg = firstMissing(a, b, step);
+			if (seg >= 0) {
 				fetchPeaks(seg);
 				return;
 			}
 		}
+		scanCleanKey = key;
 	}
 
 	// Coalesced repaint: redraw at most once per animation frame, and only when
@@ -934,6 +999,7 @@
 		const p = filePath;
 		if (!isPcm(p)) return;
 		fileCache.clear();
+		scanCleanKey = '';
 		fileLoaded = false;
 		fileTotalSegs = 0;
 		fileChannels = 0;
@@ -966,6 +1032,7 @@
 				// scale don't linger, then let the new file refill from scratch.
 				if (afterStop && segs < fileTotalSegs) {
 					fileCache.clear();
+					scanCleanKey = '';
 					fileLoaded = false;
 					fileTotalSegs = 0;
 					totalSegs = 0;

@@ -291,7 +291,10 @@
 			message: `In Overwrite mode, ${what} erases "${basename(path)}" the next time you record.`,
 			confirmLabel: 'Change anyway',
 			danger: true,
-			checkboxLabel: "Don't ask again for this file"
+			checkboxLabel: "Don't ask again for this file",
+			warning: audioStore.isRunning
+				? 'The pipeline is running right now — confirming restarts this recording immediately and the existing file is erased at once.'
+				: undefined
 		});
 		if (typeof res === 'object' && res.ok && res.dontAskAgain) {
 			overwriteSkip.add(path);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { modalManager, type ModalBaseProps } from '../../modal';
+	import Toggle from '$lib/components/toggle.svelte';
 
 	interface Props {
 		message?: string;
@@ -9,6 +10,9 @@
 		/** When set, shows a checkbox; the resolved value becomes
 		 * `{ ok, dontAskAgain }` instead of a plain boolean. */
 		checkboxLabel?: string;
+		/** Extra emphasis shown between the message and the actions, e.g. a
+		 * warning that the change takes effect on the running pipeline. */
+		warning?: string;
 	}
 
 	let {
@@ -17,7 +21,8 @@
 		confirmLabel = 'Confirm',
 		cancelLabel = 'Cancel',
 		danger = false,
-		checkboxLabel
+		checkboxLabel,
+		warning
 	}: ModalBaseProps & Props = $props();
 
 	let dontAskAgain = $state(false);
@@ -30,11 +35,12 @@
 <div class="flex flex-col gap-4 px-5 py-4">
 	<p class="text-sm text-neutral-1100">{message}</p>
 
+	{#if warning}
+		<div class="warning-block">{warning}</div>
+	{/if}
+
 	{#if checkboxLabel}
-		<label class="flex cursor-pointer items-center gap-2 text-xs text-neutral-900 select-none">
-			<input type="checkbox" bind:checked={dontAskAgain} class="size-3.5 accent-neutral-800" />
-			{checkboxLabel}
-		</label>
+		<Toggle checked={dontAskAgain} label={checkboxLabel} onChange={(v) => (dontAskAgain = v)} />
 	{/if}
 
 	<div class="flex justify-end gap-2">

@@ -85,10 +85,21 @@
 		const retryId = audioStore.pendingRetryPipelineId;
 		audioStore.pendingRetryPipelineId = null;
 		chooseFile()
-			.then((picked) => {
-				if (!picked || retryId === null) return;
+			.then(async (picked) => {
+				if (!picked || retryId === null) {
+					// Cancelled after a failed start in New mode: the node is left
+					// pointing at an existing file it cannot write to, so offer
+					// the explicit overwrite confirmation as the way out.
+					if (!picked && retryId !== null && mode === 'new' && data.filePath) {
+						await confirmModeSwitch('overwrite');
+					}
+					return;
+				}
 				const snapshot = pipelineStore.editorActions?.getSnapshot();
 				if (!snapshot) return;
+				// Keep the node's mode in sync with the activated snapshot, or
+				// the next manual activation would fail on the existing file.
+				flow.updateNodeData(id, { mode: 'overwrite' });
 				const nodes = snapshot.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, mode: 'overwrite' } } : n));
 				audioStore.activatePipeline(retryId, { nodes, edges: snapshot.edges }).catch((e) => audioStore.reportError(e));
 			})

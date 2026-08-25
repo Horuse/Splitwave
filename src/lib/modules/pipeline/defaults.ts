@@ -13,6 +13,7 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 		format: { kind: 'wav', bitDepth: 'f32' },
 		mode: 'new',
 		channels: 2,
+		sampleRate: 48_000,
 		waveformHidden: false
 	},
 	gain: { gainDb: 0, bypassed: false },

@@ -2,7 +2,8 @@
 	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-	import { onDestroy, onMount, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type {
 		AiffBitDepth,
@@ -41,24 +42,20 @@
 	let committedFormat = $state<RecordingFormat | null>(null);
 	let committedMode = $state<RecordingMode | null>(null);
 
-	let unlisten: UnlistenFn | undefined;
 	let unlistenChoose: (() => void) | undefined;
-	onMount(async () => {
-		unlistenChoose = onNodeAction(id, 'chooseFile', () => {
-			chooseFile().catch(() => {});
-		});
-		unlisten = await listen<ProgressEvent>('audio://recorder_progress', (e) => {
-			const p = e.payload;
-			if (p.nodeId !== id) return;
-			frames = p.frames;
-			sampleRate = p.sampleRate;
-			if (!p.stopped) {
-				recording = true;
-			} else {
-				recording = false;
-				committedFormat = null;
-			}
-		});
+	unlistenChoose = onNodeAction(id, 'chooseFile', () => {
+		chooseFile().catch(() => {});
+	});
+	tauriListen<ProgressEvent>('audio://recorder_progress', (p) => {
+		if (p.nodeId !== id) return;
+		frames = p.frames;
+		sampleRate = p.sampleRate;
+		if (!p.stopped) {
+			recording = true;
+		} else {
+			recording = false;
+			committedFormat = null;
+		}
 	});
 
 	$effect(() => {
@@ -97,7 +94,6 @@
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		unlistenChoose?.();
 	});
 
@@ -373,6 +369,37 @@
 		{ value: 'i24', label: '24-bit' }
 	];
 
+	// Pinned file rate; the default 48 kHz always applies — there is no auto
+	// mode, so the readout next to the format label is always concrete. Opus
+	// and Mp3 are locked to 48 kHz by the backend, so no selector for them.
+	// Custom reveals a numeric input; any rate outside the presets lands there.
+	const RATE_PRESETS: number[] = [44_100, 48_000, 88_200, 96_000];
+	const SAMPLE_RATES: { value: string; label: string }[] = [
+		{ value: '44100', label: '44.1' },
+		{ value: '48000', label: '48' },
+		{ value: '88200', label: '88.2' },
+		{ value: '96000', label: '96' },
+		{ value: 'custom', label: 'Custom' }
+	];
+
+	let rateSelection = $derived(RATE_PRESETS.includes(data.sampleRate ?? 0) ? String(data.sampleRate) : 'custom');
+
+	function setRateSelection(sel: string) {
+		flow.updateNodeData(id, {
+			sampleRate: sel === 'custom' ? (data.sampleRate ?? 96_000) : Number(sel)
+		});
+	}
+
+	function setCustomRate(raw: string) {
+		const n = Math.round(Number(raw));
+		if (Number.isFinite(n)) flow.updateNodeData(id, { sampleRate: n });
+	}
+
+	function setRateStep(delta: number) {
+		const n = (data.sampleRate ?? 48_000) + delta;
+		flow.updateNodeData(id, { sampleRate: Math.min(384_000, Math.max(8_000, n)) });
+	}
+
 	const AIFF_BYTES_PER_FRAME: Record<AiffBitDepth, number> = { i16: 4, i24: 6 };
 
 	const WAV_BYTES_PER_FRAME: Record<WavBitDepth, number> = { i16: 4, i24: 6, f32: 8 };
@@ -426,8 +453,10 @@
 	let dirty = $derived(recording && committedFormat !== null && (JSON.stringify(committedFormat) !== JSON.stringify(data.format) || committedMode !== mode));
 	let waveVisible = $derived(!(data.waveformHidden ?? false));
 	// Waveform shows only lanes that have a cable; a phantom multi lane with no
-	// handle stays hidden even though the encoder width may exceed it.
-	let waveformChannels = $derived(channelMode === 'multi' ? Math.max(1, wiredChannels) : slotCap);
+	// handle stays hidden even though the encoder width may exceed it. With no
+	// cables at all the cap lifts: an existing recording's own channel count
+	// (from the file header) is then what the scope displays.
+	let waveformChannels = $derived(channelMode === 'multi' ? (wiredChannels > 0 ? wiredChannels : null) : slotCap);
 
 	function toggleWaveform() {
 		flow.updateNodeData(id, { waveformHidden: !(data.waveformHidden ?? false) });
@@ -464,6 +493,44 @@
 			options={CHANNEL_MODES}
 			value={channelMode}
 			onSelect={setChannelMode} />
+
+		{#if data.format.kind === 'opus' || data.format.kind === 'mp3'}
+			<div class="flex items-baseline justify-between gap-2">
+				<span class="font-mono text-[9px] text-neutral-500">Sample rate</span>
+				<span class="font-mono text-[9px] text-neutral-400">48 kHz fixed</span>
+			</div>
+		{:else}
+			<SegmentedButtons label="Sample rate" note="kHz" options={SAMPLE_RATES} value={rateSelection} onSelect={setRateSelection} columns={5} />
+			{#if rateSelection === 'custom'}
+				<div class="flex items-center justify-end gap-2">
+					<span class="font-mono text-[9px] text-neutral-500">Hz</span>
+					<div class="nodrag nopan flex items-center overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100">
+						<button
+							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
+							disabled={(data.sampleRate ?? 0) <= 8000}
+							onclick={() => setRateStep(-100)}
+							aria-label="Slower rate">
+							&minus;
+						</button>
+						<input
+							type="number"
+							class="h-7 w-16 [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-xs tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+							min={8000}
+							max={384000}
+							step={100}
+							value={data.sampleRate ?? ''}
+							onchange={(e) => setCustomRate(e.currentTarget.value)} />
+						<button
+							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
+							disabled={(data.sampleRate ?? 0) >= 384000}
+							onclick={() => setRateStep(100)}
+							aria-label="Faster rate">
+							+
+						</button>
+					</div>
+				</div>
+			{/if}
+		{/if}
 
 		{#if data.format.kind === 'wav'}
 			<SegmentedButtons
@@ -512,7 +579,11 @@
 			<span class="text-neutral-1000 tabular-nums">{formatDuration(durationSec)}</span>
 		</div>
 		<div class="flex justify-between text-[10px] text-neutral-900">
-			<span>{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)} · {channelLabel}</span>
+			<span class="truncate">
+				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
+				· {data.format.kind === 'opus' || data.format.kind === 'mp3' ? '48 kHz' : `${(data.sampleRate ?? 48_000) / 1000} kHz`}
+				· {channelLabel}
+			</span>
 			<span class="font-mono tabular-nums">{formatSize(estSize)}</span>
 		</div>
 		{#if dirty}

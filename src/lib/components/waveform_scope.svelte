@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { methods } from '$lib/modules/audio/methods';
 	import { Add, Minus, ChevronDoubleRight } from '$lib/components/icons';
@@ -798,7 +798,7 @@
 	}
 
 	async function fetchPeaks(startSeg: number, count?: number) {
-		if (!filePath || fetching) return;
+		if (!filePath || fetching || disposed) return;
 		fetching = true;
 		try {
 			const plotW = Math.max(1, W - SCALE_W);
@@ -927,6 +927,7 @@
 	// which on WKWebView degrades anti-aliasing of the surrounding UI — the
 	// persistent "everything is slightly aliased while recording" artifact.
 	function markDirty() {
+		if (disposed) return;
 		dirty = true;
 		if (rafScheduled) return;
 		rafScheduled = true;
@@ -1000,9 +1001,11 @@
 		markDirty();
 	}
 
-	let unlisten: UnlistenFn | undefined;
-	let progressUnlisten: UnlistenFn | undefined;
 	let ro: ResizeObserver | undefined;
+	// Set on destroy; the mount-time listeners resolve asynchronously, so a
+	// fast route change would otherwise leave them registered forever, with
+	// every tick waking the dead component (derived_inert flood, dead UI).
+	let disposed = false;
 
 	// Reset and load from disk when a WAV/AIFF path is set or changes.
 	$effect(() => {
@@ -1024,73 +1027,74 @@
 		markDirty();
 	});
 
-	onMount(async () => {
-		ctx = canvas.getContext('2d');
-		unlisten = await listen<ScopeTick>('audio://scope', (e) => onScope(e.payload));
-		// File mode only: recorder progress carries the real-time total (base +
-		// session), which the live overlay uses to advance the tail between disk
-		// reads, and `stopped` hands the tail back to disk for the final state.
-		progressUnlisten = await listen<RecorderProgress>('audio://recorder_progress', (e) => {
-			const p = e.payload;
-			if (p.nodeId !== nodeId || !fileMode) return;
-			if (p.sampleRate) sampleRate = p.sampleRate;
-			if (p.frames > 0) {
-				const segs = Math.max(1, Math.ceil(p.frames / SEG_FRAMES));
-				// A fresh session whose total drops below the current one means
-				// the file was overwritten (mode "overwrite" rewrites the same
-				// path). Drop the old file-backed state so a stale wave and time
-				// scale don't linger, then let the new file refill from scratch.
-				if (afterStop && segs < fileTotalSegs) {
-					fileCache.clear();
-					scanCleanKey = '';
-					fileLoaded = false;
-					fileTotalSegs = 0;
-					totalSegs = 0;
-					viewEndSeg = 0;
-					following = true;
-					liveActive = false;
-					liveTotalSegs = 0;
-					liveSessionFrames = 0;
-					liveOpenAbsSeg = -1;
-					liveBaseSeg = 0;
-					liveBaseOverride = 0;
-				}
-				if (segs > fileTotalSegs) {
-					fileTotalSegs = segs;
-					// While following the live edge the scope stream owns the
-					// view; progress ticks (250 ms) must not step it.
-					if (!(liveActive && following)) {
-						totalSegs = segs;
-						if (following) viewEndSeg = segs;
-					}
-					markDirty();
-				}
-				afterStop = false;
-			}
-			if (p.stopped) {
-				afterStop = true;
+	// File mode only: recorder progress carries the real-time total (base +
+	// session), which the live overlay uses to advance the tail between disk
+	// reads, and `stopped` hands the tail back to disk for the final state.
+	function onProgress(p: RecorderProgress) {
+		if (p.nodeId !== nodeId || !fileMode) return;
+		if (p.sampleRate) sampleRate = p.sampleRate;
+		if (p.frames > 0) {
+			const segs = Math.max(1, Math.ceil(p.frames / SEG_FRAMES));
+			// A fresh session whose total drops below the current one means
+			// the file was overwritten (mode "overwrite" rewrites the same
+			// path). Drop the old file-backed state so a stale wave and time
+			// scale don't linger, then let the new file refill from scratch.
+			if (afterStop && segs < fileTotalSegs) {
+				fileCache.clear();
+				scanCleanKey = '';
+				fileLoaded = false;
+				fileTotalSegs = 0;
+				totalSegs = 0;
+				viewEndSeg = 0;
+				following = true;
 				liveActive = false;
 				liveTotalSegs = 0;
 				liveSessionFrames = 0;
 				liveOpenAbsSeg = -1;
-				liveBaseSeg = -1;
-				// Clear the view so a loader shows during a restart gap instead
-				// of the stale wave. If no fresh session follows (permanent
-				// stop), the timer restores the recorded file from the intact
-				// cache below.
-				totalSegs = 0;
-				viewEndSeg = 0;
-				following = true;
-				if (stopTimer) clearTimeout(stopTimer);
-				stopTimer = setTimeout(() => {
-					stopTimer = undefined;
-					totalSegs = fileTotalSegs;
-					viewEndSeg = fileTotalSegs;
-					markDirty();
-				}, 800);
+				liveBaseSeg = 0;
+				liveBaseOverride = 0;
+			}
+			if (segs > fileTotalSegs) {
+				fileTotalSegs = segs;
+				// While following the live edge the scope stream owns the
+				// view; progress ticks (250 ms) must not step it.
+				if (!(liveActive && following)) {
+					totalSegs = segs;
+					if (following) viewEndSeg = segs;
+				}
 				markDirty();
 			}
-		});
+			afterStop = false;
+		}
+		if (p.stopped) {
+			afterStop = true;
+			liveActive = false;
+			liveTotalSegs = 0;
+			liveSessionFrames = 0;
+			liveOpenAbsSeg = -1;
+			liveBaseSeg = -1;
+			// Clear the view so a loader shows during a restart gap instead
+			// of the stale wave. If no fresh session follows (permanent
+			// stop), the timer restores the recorded file from the intact
+			// cache below.
+			totalSegs = 0;
+			viewEndSeg = 0;
+			following = true;
+			if (stopTimer) clearTimeout(stopTimer);
+			stopTimer = setTimeout(() => {
+				stopTimer = undefined;
+				totalSegs = fileTotalSegs;
+				viewEndSeg = fileTotalSegs;
+				markDirty();
+			}, 800);
+			markDirty();
+		}
+	}
+
+	onMount(() => {
+		ctx = canvas.getContext('2d');
+		tauriListen<ScopeTick>('audio://scope', (p) => onScope(p));
+		tauriListen<RecorderProgress>('audio://recorder_progress', (p) => onProgress(p));
 		ro = new ResizeObserver((entries) => {
 			const rect = entries[0].contentRect;
 			const w = rect.width;
@@ -1111,9 +1115,8 @@
 	});
 
 	onDestroy(() => {
+		disposed = true;
 		if (stopTimer) clearTimeout(stopTimer);
-		unlisten?.();
-		progressUnlisten?.();
 		ro?.disconnect();
 		ctx = null;
 		if (rafId) cancelAnimationFrame(rafId);

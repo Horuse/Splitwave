@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { Position } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
@@ -60,7 +60,6 @@
 	}
 
 	let rafId: number | undefined;
-	let unlisten: UnlistenFn | undefined;
 	let lastFrame = 0;
 
 	function tick(now: number) {
@@ -89,17 +88,16 @@
 		rafId = requestAnimationFrame(tick);
 	}
 
-	onMount(async () => {
-		unlisten = await listen<MeterTick>('audio://meter', (event) => {
-			const p = event.payload;
-			if (p.nodeId !== nodeId) return;
-			targets = p.peaks;
-		});
+	tauriListen<MeterTick>('audio://meter', (p) => {
+		if (p.nodeId !== nodeId) return;
+		targets = p.peaks;
+	});
+
+	onMount(() => {
 		rafId = requestAnimationFrame(tick);
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		if (rafId) cancelAnimationFrame(rafId);
 	});
 </script>

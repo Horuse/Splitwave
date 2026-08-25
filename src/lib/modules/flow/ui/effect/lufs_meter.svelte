@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LufsMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
@@ -230,33 +231,28 @@
 		tpMax = LUFS_SILENT;
 	}
 
-	let unlisten: UnlistenFn | undefined;
 	let unlistenReset: (() => void) | undefined;
 
-	onMount(async () => {
-		unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
-		unlisten = await listen<LufsTick>('audio://lufs', (event) => {
-			const p = event.payload;
-			if (p.nodeId !== id) return;
-			momentary = p.momentary;
-			shortterm = p.shortterm;
-			integrated = p.integrated;
-			holdM = Math.max(holdM, momentary);
-			holdS = Math.max(holdS, shortterm);
-			holdI = Math.max(holdI, integrated);
-			tpMax = Math.max(tpMax, p.tpL, p.tpR);
-			lra = p.lra;
-			rms = p.rms;
-			noiseFloor = p.noiseFloor;
-			samplePeak = p.samplePeak;
-			dcOffset = p.dcOffset;
-			correlation = p.correlation;
-			clips = p.clips;
-		});
+	unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
+	tauriListen<LufsTick>('audio://lufs', (p) => {
+		if (p.nodeId !== id) return;
+		momentary = p.momentary;
+		shortterm = p.shortterm;
+		integrated = p.integrated;
+		holdM = Math.max(holdM, momentary);
+		holdS = Math.max(holdS, shortterm);
+		holdI = Math.max(holdI, integrated);
+		tpMax = Math.max(tpMax, p.tpL, p.tpR);
+		lra = p.lra;
+		rms = p.rms;
+		noiseFloor = p.noiseFloor;
+		samplePeak = p.samplePeak;
+		dcOffset = p.dcOffset;
+		correlation = p.correlation;
+		clips = p.clips;
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		unlistenReset?.();
 	});
 </script>

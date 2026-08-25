@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { open } from '@tauri-apps/plugin-dialog';
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { AudioFileNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -39,29 +39,25 @@
 	// progress events; cleared on release to resume live updates.
 	let scrubValue: number | null = $state(null);
 
-	let unlisten: UnlistenFn | undefined;
 	let unlistenChoose: (() => void) | undefined;
-	onMount(async () => {
-		unlistenChoose = onNodeAction(id, 'chooseFile', () => {
-			chooseFile().catch(() => {});
-		});
-		unlisten = await listen<ProgressEvent>('audio://audio_file_progress', (e) => {
-			const p = e.payload;
-			if (p.nodeId !== id) return;
-			frames = p.frames;
-			totalFrames = p.totalFrames;
-			sampleRate = p.sampleRate;
-			channels = p.channels;
-			paused = p.paused;
-			playing = !p.stopped && !p.paused;
-			// Re-assert the loop flag on every tick: the reader starts with loop
-			// disabled and only a fresh reader reports frames 0, which can arrive
-			// before `isRunning` flips. Keeping it in sync here guarantees the
-			// reader sees the intended value well before EOF. Idempotent store.
-			if (audioStore.isRunning && data.filePath) {
-				audioMethods.setAudioFileLoop(id, data.loopEnabled).catch(() => {});
-			}
-		});
+	unlistenChoose = onNodeAction(id, 'chooseFile', () => {
+		chooseFile().catch(() => {});
+	});
+	tauriListen<ProgressEvent>('audio://audio_file_progress', (p) => {
+		if (p.nodeId !== id) return;
+		frames = p.frames;
+		totalFrames = p.totalFrames;
+		sampleRate = p.sampleRate;
+		channels = p.channels;
+		paused = p.paused;
+		playing = !p.stopped && !p.paused;
+		// Re-assert the loop flag on every tick: the reader starts with loop
+		// disabled and only a fresh reader reports frames 0, which can arrive
+		// before `isRunning` flips. Keeping it in sync here guarantees the
+		// reader sees the intended value well before EOF. Idempotent store.
+		if (audioStore.isRunning && data.filePath) {
+			audioMethods.setAudioFileLoop(id, data.loopEnabled).catch(() => {});
+		}
 	});
 
 	$effect(() => {
@@ -81,7 +77,6 @@
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		unlistenChoose?.();
 	});
 

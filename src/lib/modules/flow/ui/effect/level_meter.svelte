@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
@@ -77,7 +77,6 @@
 		return 'text-neutral-700';
 	}
 
-	let unlisten: UnlistenFn | undefined;
 	let unlistenReset: (() => void) | undefined;
 	let rafId: number | undefined;
 	let lastFrame = 0;
@@ -133,19 +132,18 @@
 		}
 	}
 
-	onMount(async () => {
-		unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
-		unlisten = await listen<MeterTick>('audio://meter', (event) => {
-			const p = event.payload;
-			if (p.nodeId !== id) return;
-			targetPeaks = p.peaks;
-			targetRms = p.rms;
-		});
+	unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
+	tauriListen<MeterTick>('audio://meter', (p) => {
+		if (p.nodeId !== id) return;
+		targetPeaks = p.peaks;
+		targetRms = p.rms;
+	});
+
+	onMount(() => {
 		rafId = requestAnimationFrame(tick);
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		unlistenReset?.();
 		if (rafId) cancelAnimationFrame(rafId);
 	});

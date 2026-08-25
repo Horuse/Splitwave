@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onDestroy, onMount } from 'svelte';
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SpectrumNodeData } from '$lib/modules/pipeline/types';
 	import { DataBar } from '$lib/components/icons';
@@ -226,19 +226,16 @@
 		sampleRate: number;
 	}
 
-	let unlisten: UnlistenFn | undefined;
+	tauriListen<ScopeTick>('audio://scope', (p) => {
+		if (p.nodeId !== id) return;
+		analyze(p.data, p.sampleRate);
+	});
 
-	onMount(async () => {
-		unlisten = await listen<ScopeTick>('audio://scope', (event) => {
-			const p = event.payload;
-			if (p.nodeId !== id) return;
-			analyze(p.data, p.sampleRate);
-		});
+	onMount(() => {
 		rafId = requestAnimationFrame(frame);
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		if (rafId !== undefined) cancelAnimationFrame(rafId);
 	});
 </script>

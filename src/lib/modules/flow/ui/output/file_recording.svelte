@@ -127,13 +127,17 @@
 	let appendable = $derived(isAppendable(data.format));
 	let modeOptions = $derived(MODES.map((m) => (m.value === 'append' ? { ...m, disabled: !appendable } : m)));
 	let mode = $derived<RecordingMode>(data.mode ?? 'new');
+	// Append extends an existing file byte-for-byte, so the encoder shape is
+	// frozen: format, bit depth, bitrate, channels and sample rate are all
+	// read-only until the mode changes.
+	let locked = $derived(mode === 'append');
 
 	let maxChannels = $derived(maxChannelsFor(data.format));
 
 	let CHANNEL_MODES = $derived([
-		{ value: 'mono' as const, label: 'Mono' },
-		{ value: 'stereo' as const, label: 'Stereo' },
-		{ value: 'multi' as const, label: 'Multi', disabled: maxChannels <= 2 }
+		{ value: 'mono' as const, label: 'Mono', disabled: locked },
+		{ value: 'stereo' as const, label: 'Stereo', disabled: locked },
+		{ value: 'multi' as const, label: 'Multi', disabled: maxChannels <= 2 || locked }
 	]);
 
 	type ChannelMode = 'mono' | 'stereo' | 'multi';
@@ -383,19 +387,23 @@
 	];
 
 	let rateSelection = $derived(RATE_PRESETS.includes(data.sampleRate ?? 0) ? String(data.sampleRate) : 'custom');
+	let rateOptions = $derived(SAMPLE_RATES.map((r) => ({ ...r, disabled: locked })));
 
 	function setRateSelection(sel: string) {
+		if (locked) return;
 		flow.updateNodeData(id, {
 			sampleRate: sel === 'custom' ? (data.sampleRate ?? 96_000) : Number(sel)
 		});
 	}
 
 	function setCustomRate(raw: string) {
+		if (locked) return;
 		const n = Math.round(Number(raw));
 		if (Number.isFinite(n)) flow.updateNodeData(id, { sampleRate: n });
 	}
 
 	function setRateStep(delta: number) {
+		if (locked) return;
 		const n = (data.sampleRate ?? 48_000) + delta;
 		flow.updateNodeData(id, { sampleRate: Math.min(384_000, Math.max(8_000, n)) });
 	}
@@ -485,7 +493,7 @@
 
 		<SegmentedButtons options={modeOptions} value={mode} onSelect={setMode} label="Mode" columns={3} />
 
-		<SegmentedButtons options={FORMATS} value={data.format.kind} onSelect={setFormatKind} columns={3} />
+		<SegmentedButtons options={FORMATS.map((f) => ({ ...f, disabled: locked }))} value={data.format.kind} onSelect={setFormatKind} columns={3} />
 
 		<SegmentedButtons
 			label="Channels"
@@ -500,29 +508,30 @@
 				<span class="font-mono text-[9px] text-neutral-400">48 kHz fixed</span>
 			</div>
 		{:else}
-			<SegmentedButtons label="Sample rate" note="kHz" options={SAMPLE_RATES} value={rateSelection} onSelect={setRateSelection} columns={5} />
+			<SegmentedButtons label="Sample rate" note="kHz" options={rateOptions} value={rateSelection} onSelect={setRateSelection} columns={5} />
 			{#if rateSelection === 'custom'}
 				<div class="flex items-center justify-end gap-2">
 					<span class="font-mono text-[9px] text-neutral-500">Hz</span>
 					<div class="nodrag nopan flex items-center overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100">
 						<button
-							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
-							disabled={(data.sampleRate ?? 0) <= 8000}
+							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
+							disabled={locked || (data.sampleRate ?? 0) <= 8000}
 							onclick={() => setRateStep(-100)}
 							aria-label="Slower rate">
 							&minus;
 						</button>
 						<input
 							type="number"
-							class="h-7 w-16 [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-xs tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+							class="h-7 w-16 [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-xs tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+							disabled={locked}
 							min={8000}
 							max={384000}
 							step={100}
 							value={data.sampleRate ?? ''}
 							onchange={(e) => setCustomRate(e.currentTarget.value)} />
 						<button
-							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
-							disabled={(data.sampleRate ?? 0) >= 384000}
+							class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
+							disabled={locked || (data.sampleRate ?? 0) >= 384000}
 							onclick={() => setRateStep(100)}
 							aria-label="Faster rate">
 							+
@@ -534,28 +543,31 @@
 
 		{#if data.format.kind === 'wav'}
 			<SegmentedButtons
-				options={WAV_BIT_DEPTHS.map((b) => ({ value: b.value, label: b.label, subtitle: b.sub }))}
+				options={WAV_BIT_DEPTHS.map((b) => ({ value: b.value, label: b.label, subtitle: b.sub, disabled: locked }))}
 				value={data.format.bitDepth}
 				onSelect={setWavBitDepth} />
 		{:else if data.format.kind === 'flac'}
-			<SegmentedButtons options={FLAC_BIT_DEPTHS} value={data.format.bitDepth} onSelect={setFlacBitDepth} />
-			<SegmentedButtons options={FLAC_COMPRESSIONS} value={data.format.compression} onSelect={setFlacCompression} />
+			<SegmentedButtons options={FLAC_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setFlacBitDepth} />
+			<SegmentedButtons
+				options={FLAC_COMPRESSIONS.map((c) => ({ ...c, disabled: locked }))}
+				value={data.format.compression}
+				onSelect={setFlacCompression} />
 		{:else if data.format.kind === 'opus'}
 			<SegmentedButtons
 				label="Bitrate"
 				note="kbps"
-				options={OPUS_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
+				options={OPUS_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label, disabled: locked }))}
 				value={data.format.bitrate}
 				onSelect={setOpusBitrate} />
 			<SegmentedButtons
-				options={OPUS_APPLICATIONS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
+				options={OPUS_APPLICATIONS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub, disabled: locked }))}
 				value={data.format.application}
 				onSelect={setOpusApplication} />
 		{:else if data.format.kind === 'mp3'}
 			<SegmentedButtons
 				label="Bitrate"
 				note="kbps"
-				options={MP3_BITRATE_PRESETS.map((p) => ({ value: p.kbps, label: p.label }))}
+				options={MP3_BITRATE_PRESETS.map((p) => ({ value: p.kbps, label: p.label, disabled: locked }))}
 				value={data.format.bitrateKbps}
 				onSelect={setMp3Bitrate} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">CBR</div>
@@ -563,12 +575,12 @@
 			<SegmentedButtons
 				label="Bitrate"
 				note="kbps"
-				options={AAC_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label }))}
+				options={AAC_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label, disabled: locked }))}
 				value={data.format.bitrate}
 				onSelect={setAacBitrate} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">M4A</div>
 		{:else}
-			<SegmentedButtons options={AIFF_BIT_DEPTHS} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
+			<SegmentedButtons options={AIFF_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
 			<div class="text-center font-mono text-[9px] text-neutral-600">PCM big-endian</div>
 		{/if}
 

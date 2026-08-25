@@ -23,6 +23,8 @@
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
+	import { modalManager } from '$lib/modules/overlay/modal';
+	import { ConfirmModal } from '$lib/modules/overlay/ui';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
 	let { id, data }: NodeProps<FileRecordingNodeType> = $props();
@@ -248,6 +250,23 @@
 
 	function setMode(m: RecordingMode) {
 		if (mode === m) return;
+		confirmModeSwitch(m).catch(() => {});
+	}
+
+	// Append extends the file in place; switching that node to Overwrite makes
+	// the next recording erase everything recorded so far, so require an
+	// explicit confirmation before the mode changes. Other transitions are
+	// safe: New just fails to start on an existing file, and choosing an
+	// existing path in Overwrite is confirmed by the native save dialog.
+	async function confirmModeSwitch(m: RecordingMode): Promise<void> {
+		if (mode === 'append' && m === 'overwrite' && data.filePath) {
+			const ok = await modalManager.open<boolean>('Overwrite recording?', ConfirmModal, {
+				message: `Recording in Overwrite mode will permanently replace "${basename(data.filePath)}".`,
+				confirmLabel: 'Erase and overwrite',
+				danger: true
+			});
+			if (!ok) return;
+		}
 		flow.updateNodeData(id, { mode: m });
 	}
 

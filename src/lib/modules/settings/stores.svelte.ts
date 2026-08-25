@@ -9,6 +9,7 @@ interface Stored {
 	snapToGrid: boolean;
 	gridSize: number;
 	launchOnStartup: boolean;
+	confirmOverwriteChanges: boolean;
 }
 
 const DEFAULTS: Stored = {
@@ -16,7 +17,8 @@ const DEFAULTS: Stored = {
 	maxSnapshots: 20,
 	snapToGrid: false,
 	gridSize: 20,
-	launchOnStartup: false
+	launchOnStartup: false,
+	confirmOverwriteChanges: true
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
@@ -38,11 +40,15 @@ class AppSettings {
 	snapToGrid = $state(this.#initial.snapToGrid);
 	gridSize = $state(this.#initial.gridSize);
 	launchOnStartup = $state(this.#initial.launchOnStartup);
+	confirmOverwriteChanges = $state(this.#initial.confirmOverwriteChanges);
 
 	persist(): void {
 		if (!browser) return;
-		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup } = this;
-		window.localStorage.setItem(KEY, JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup }));
+		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges } = this;
+		window.localStorage.setItem(
+			KEY,
+			JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges })
+		);
 	}
 
 	reset(): void {

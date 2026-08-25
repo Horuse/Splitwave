@@ -16,6 +16,7 @@
 		WavBitDepth
 	} from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
@@ -158,7 +159,8 @@
 
 	let channelLabel = $derived(data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : `${data.channels} ch`);
 
-	function setChannelMode(m: ChannelMode) {
+	async function setChannelMode(m: ChannelMode) {
+		if (!(await confirmOverwriteChange('changing the channel layout'))) return;
 		const target = m === 'mono' ? 1 : m === 'stereo' ? 2 : Math.max(3, data.channels);
 		dropEdgesAbove(Math.min(target, maxChannels));
 		flow.updateNodeData(id, { channels: Math.min(target, maxChannels) });
@@ -240,7 +242,8 @@
 		return `${path}.${newExt}`;
 	}
 
-	function setFormatKind(kind: 'wav' | 'flac' | 'opus' | 'mp3' | 'aac' | 'aiff') {
+	async function setFormatKind(kind: 'wav' | 'flac' | 'opus' | 'mp3' | 'aac' | 'aiff') {
+		if (!(await confirmOverwriteChange('changing the format'))) return;
 		if (data.format.kind === kind) return;
 		let next: RecordingFormat;
 		if (kind === 'wav') next = { kind: 'wav', bitDepth: 'f32' };
@@ -264,6 +267,40 @@
 		confirmModeSwitch(m).catch(() => {});
 	}
 
+	// Overwrite rewrites the file from scratch on the next recording, so any
+	// change to the encoder shape while it is armed must be confirmed. The
+	// confirmation can be skipped per file (modal checkbox) or disabled
+	// entirely in Settings.
+	const OVERWRITE_SKIP_KEY = 'recording:overwriteSkip';
+	let overwriteSkip: Set<string> = loadOverwriteSkip();
+	function loadOverwriteSkip(): Set<string> {
+		if (typeof window === 'undefined') return new Set();
+		try {
+			return new Set(JSON.parse(window.localStorage.getItem(OVERWRITE_SKIP_KEY) ?? '[]'));
+		} catch {
+			return new Set();
+		}
+	}
+
+	async function confirmOverwriteChange(what: string): Promise<boolean> {
+		if (!appSettings.confirmOverwriteChanges) return true;
+		const path = data.filePath;
+		if (mode !== 'overwrite' || !path) return true;
+		if (overwriteSkip.has(path)) return true;
+		const res = await modalManager.open<boolean | { ok: boolean; dontAskAgain: boolean }>('Recording will be erased', ConfirmModal, {
+			message: `In Overwrite mode, ${what} erases "${basename(path)}" the next time you record.`,
+			confirmLabel: 'Change anyway',
+			danger: true,
+			checkboxLabel: "Don't ask again for this file"
+		});
+		if (typeof res === 'object' && res.ok && res.dontAskAgain) {
+			overwriteSkip.add(path);
+			window.localStorage.setItem(OVERWRITE_SKIP_KEY, JSON.stringify([...overwriteSkip]));
+			return true;
+		}
+		return res === true;
+	}
+
 	// Append extends the file in place; switching that node to Overwrite makes
 	// the next recording erase everything recorded so far, so require an
 	// explicit confirmation before the mode changes. Other transitions are
@@ -271,60 +308,64 @@
 	// existing path in Overwrite is confirmed by the native save dialog.
 	async function confirmModeSwitch(m: RecordingMode): Promise<void> {
 		if (mode === 'append' && m === 'overwrite' && data.filePath) {
-			const ok = await modalManager.open<boolean>('Overwrite recording?', ConfirmModal, {
-				message: `Recording in Overwrite mode will permanently replace "${basename(data.filePath)}".`,
-				confirmLabel: 'Erase and overwrite',
-				danger: true
-			});
+			const ok = await confirmOverwriteChange('switching to Overwrite');
 			if (!ok) return;
 		}
 		flow.updateNodeData(id, { mode: m });
 	}
 
-	function setWavBitDepth(bd: WavBitDepth) {
+	async function setWavBitDepth(bd: WavBitDepth) {
+		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
 		if (data.format.kind !== 'wav') return;
 		flow.updateNodeData(id, { format: { kind: 'wav', bitDepth: bd } });
 	}
 
-	function setFlacBitDepth(bd: FlacBitDepth) {
+	async function setFlacBitDepth(bd: FlacBitDepth) {
+		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
 		if (data.format.kind !== 'flac') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'flac', bitDepth: bd, compression: data.format.compression }
 		});
 	}
 
-	function setFlacCompression(c: FlacCompression) {
+	async function setFlacCompression(c: FlacCompression) {
+		if (!(await confirmOverwriteChange('changing the compression'))) return;
 		if (data.format.kind !== 'flac') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'flac', bitDepth: data.format.bitDepth, compression: c }
 		});
 	}
 
-	function setOpusBitrate(bps: number) {
+	async function setOpusBitrate(bps: number) {
+		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
 		if (data.format.kind !== 'opus') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'opus', bitrate: bps, application: data.format.application }
 		});
 	}
 
-	function setOpusApplication(a: OpusApplication) {
+	async function setOpusApplication(a: OpusApplication) {
+		if (!(await confirmOverwriteChange('changing the application mode'))) return;
 		if (data.format.kind !== 'opus') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'opus', bitrate: data.format.bitrate, application: a }
 		});
 	}
 
-	function setMp3Bitrate(kbps: number) {
+	async function setMp3Bitrate(kbps: number) {
+		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
 		if (data.format.kind !== 'mp3') return;
 		flow.updateNodeData(id, { format: { kind: 'mp3', bitrateKbps: kbps } });
 	}
 
-	function setAacBitrate(bps: number) {
+	async function setAacBitrate(bps: number) {
+		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
 		if (data.format.kind !== 'aac') return;
 		flow.updateNodeData(id, { format: { kind: 'aac', bitrate: bps } });
 	}
 
-	function setAiffBitDepth(bd: AiffBitDepth) {
+	async function setAiffBitDepth(bd: AiffBitDepth) {
+		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
 		if (data.format.kind !== 'aiff') return;
 		flow.updateNodeData(id, { format: { kind: 'aiff', bitDepth: bd } });
 	}
@@ -419,21 +460,24 @@
 	let rateSelection = $derived(RATE_PRESETS.includes(data.sampleRate ?? 0) ? String(data.sampleRate) : 'custom');
 	let rateOptions = $derived(SAMPLE_RATES.map((r) => ({ ...r, disabled: locked })));
 
-	function setRateSelection(sel: string) {
+	async function setRateSelection(sel: string) {
 		if (locked) return;
+		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
 		flow.updateNodeData(id, {
 			sampleRate: sel === 'custom' ? (data.sampleRate ?? 96_000) : Number(sel)
 		});
 	}
 
-	function setCustomRate(raw: string) {
+	async function setCustomRate(raw: string) {
 		if (locked) return;
+		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
 		const n = Math.round(Number(raw));
 		if (Number.isFinite(n)) flow.updateNodeData(id, { sampleRate: n });
 	}
 
-	function setRateStep(delta: number) {
+	async function setRateStep(delta: number) {
 		if (locked) return;
+		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
 		const n = (data.sampleRate ?? 48_000) + delta;
 		flow.updateNodeData(id, { sampleRate: Math.min(384_000, Math.max(8_000, n)) });
 	}

@@ -42,7 +42,10 @@
 		void disableAutostart();
 	}
 
-	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize'>(key: K, value: (typeof appSettings)[K]) {
+	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges'>(
+		key: K,
+		value: (typeof appSettings)[K]
+	) {
 		appSettings[key] = value;
 		appSettings.persist();
 	}
@@ -206,6 +209,19 @@
 				label="Check on launch"
 				hint="Looks for a new version each time the app starts."
 				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)} />
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Recording</h2>
+				<p class="text-xs text-neutral-900">Guards against accidentally erasing an existing recording in Overwrite mode.</p>
+			</div>
+
+			<Toggle
+				checked={appSettings.confirmOverwriteChanges}
+				label="Confirm changes in Overwrite mode"
+				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
+				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
 		</section>
 
 		<section class="flex flex-col gap-2">

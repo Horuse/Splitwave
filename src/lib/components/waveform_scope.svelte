@@ -613,7 +613,10 @@
 			}
 		}
 		const stepSamples = step * sampleRate;
-		const firstSample = Math.ceil((viewStartSeg * SEG_FRAMES) / stepSamples) * stepSamples;
+		// Floor, not ceil: one tick before the view start is kept so a label
+		// straddling the left boundary keeps rendering (sliced by the draw
+		// clip) instead of vanishing whole the moment its anchor crosses.
+		const firstSample = Math.floor((viewStartSeg * SEG_FRAMES) / stepSamples) * stepSamples;
 		const outTicks: { x: number; label: string }[] = [];
 		for (let s = firstSample; s < (viewStartSeg + plotW * segsPerCol) * SEG_FRAMES; s += stepSamples) {
 			outTicks.push({
@@ -758,6 +761,12 @@
 			c.lineTo(W, TIME_H - 1);
 			c.stroke();
 
+			// Clip to the plot area: a label crossing the left boundary is
+			// sliced mid-glyph instead of vanishing whole at the edge.
+			c.save();
+			c.beginPath();
+			c.rect(SCALE_W, 0, W - SCALE_W, H);
+			c.clip();
 			for (const t of ticks) {
 				// Fade tick + label as the label nears the right edge so it glides
 				// out instead of being clipped mid-glyph.
@@ -772,6 +781,7 @@
 				c.textBaseline = 'middle';
 				c.fillText(t.label, t.x + 3, TIME_H / 2);
 			}
+			c.restore();
 
 			if (canScroll()) {
 				const m = scrollbarMetrics();

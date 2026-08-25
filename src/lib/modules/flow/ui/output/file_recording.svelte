@@ -296,10 +296,12 @@
 				? 'The pipeline is running right now — confirming restarts this recording immediately and the existing file is erased at once.'
 				: undefined
 		});
-		if (typeof res === 'object' && res.ok && res.dontAskAgain) {
-			overwriteSkip.add(path);
-			window.localStorage.setItem(OVERWRITE_SKIP_KEY, JSON.stringify([...overwriteSkip]));
-			return true;
+		if (typeof res === 'object') {
+			if (res.ok && res.dontAskAgain) {
+				overwriteSkip.add(path);
+				window.localStorage.setItem(OVERWRITE_SKIP_KEY, JSON.stringify([...overwriteSkip]));
+			}
+			return res.ok;
 		}
 		return res === true;
 	}

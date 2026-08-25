@@ -164,6 +164,11 @@ struct OpenedDecoder {
     sample_rate: u32,
     channels: usize,
     total_frames: u64,
+    /// A broken Xing/Info tag can report a zero frame count; symphonia's mpa
+    /// demuxer then treats the track as ending at timestamp 0 and trims every
+    /// packet to zero length, so decode yields silent empty buffers and the
+    /// reader hits EOF immediately. Such packets are rebuilt without trim.
+    fix_gapless_trim: bool,
 }
 
 /// Symphonia's default registry plus the third-party libopus Opus decoder.
@@ -193,7 +198,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         )
         .map_err(|e| AppError::Stream(format!("unsupported format {}: {e}", path.display())))?;
 
-    let (track_id, sample_rate, channels, mut total_frames, audio_params) = {
+    let (track_id, sample_rate, channels, mut total_frames, audio_params, fix_gapless_trim) = {
         let track = format
             .default_track(TrackType::Audio)
             .ok_or_else(|| AppError::Stream("no audio track".into()))?;
@@ -224,7 +229,14 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
             .unwrap_or(2)
             .max(1);
         let audio_params = audio.clone();
-        (track.id, sample_rate, channels, total_frames, audio_params)
+        (
+            track.id,
+            sample_rate,
+            channels,
+            total_frames,
+            audio_params,
+            track.num_frames == Some(0),
+        )
     };
 
     let mut decoder = codec_registry()
@@ -256,7 +268,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         }
         if total_frames == 0 {
             // Last resort: count frames by decoding the file once.
-            total_frames = scan_frames(&mut format, &mut decoder, track_id);
+            total_frames = scan_frames(&mut format, &mut decoder, track_id, fix_gapless_trim);
         }
         // Rewind to the start for playback regardless of which probe ran.
         let _ = format.seek(
@@ -276,7 +288,25 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         sample_rate,
         channels,
         total_frames,
+        fix_gapless_trim,
     })
+}
+
+fn next_packet(
+    od: &mut OpenedDecoder,
+) -> Result<Option<symphonia::core::packet::Packet>, SymphoniaError> {
+    match od.format.next_packet()? {
+        Some(p) if od.fix_gapless_trim => {
+            // Drop the bogus gapless trim; keep the full block duration.
+            Ok(Some(symphonia::core::packet::Packet::new(
+                p.track_id,
+                p.pts,
+                p.block_dur(),
+                p.data,
+            )))
+        }
+        other => Ok(other),
+    }
 }
 
 /// Decodes the whole file counting audio frames — the definitive total for
@@ -285,10 +315,20 @@ fn scan_frames(
     format: &mut Box<dyn FormatReader>,
     decoder: &mut Box<dyn AudioDecoder>,
     track_id: u32,
+    fix_gapless_trim: bool,
 ) -> u64 {
     let mut total = 0u64;
     loop {
-        match format.next_packet() {
+        let res = format.next_packet().map(|p| {
+            p.map(|p| {
+                if fix_gapless_trim {
+                    symphonia::core::packet::Packet::new(p.track_id, p.pts, p.block_dur(), p.data)
+                } else {
+                    p
+                }
+            })
+        });
+        match res {
             Ok(Some(p)) => {
                 if p.track_id != track_id {
                     continue;
@@ -554,7 +594,7 @@ fn decode_next(
     out: &mut Vec<f32>,
 ) -> AppResult<usize> {
     loop {
-        let packet = match od.format.next_packet() {
+        let packet = match next_packet(od) {
             Ok(Some(p)) => p,
             Ok(None) => return Ok(0),
             Err(SymphoniaError::ResetRequired) => {
@@ -786,7 +826,12 @@ mod tests {
 
         // Metadata-less fallback: a fresh scan agrees with the reported total.
         let mut od2 = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));
-        let scanned = scan_frames(&mut od2.format, &mut od2.decoder, od2.track_id);
+        let scanned = scan_frames(
+            &mut od2.format,
+            &mut od2.decoder,
+            od2.track_id,
+            od2.fix_gapless_trim,
+        );
         assert!(
             (band_min..=band_max).contains(&scanned),
             "{label}: scan_frames {scanned} outside ~{frames}"

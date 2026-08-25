@@ -502,12 +502,7 @@
 			value={channelMode}
 			onSelect={setChannelMode} />
 
-		{#if data.format.kind === 'opus' || data.format.kind === 'mp3'}
-			<div class="flex items-baseline justify-between gap-2">
-				<span class="font-mono text-[9px] text-neutral-500">Sample rate</span>
-				<span class="font-mono text-[9px] text-neutral-400">48 kHz fixed</span>
-			</div>
-		{:else}
+		{#if data.format.kind !== 'opus' && data.format.kind !== 'mp3'}
 			<SegmentedButtons label="Sample rate" note="kHz" options={rateOptions} value={rateSelection} onSelect={setRateSelection} columns={5} />
 			{#if rateSelection === 'custom'}
 				<div class="flex items-center justify-end gap-2">
@@ -570,7 +565,6 @@
 				options={MP3_BITRATE_PRESETS.map((p) => ({ value: p.kbps, label: p.label, disabled: locked }))}
 				value={data.format.bitrateKbps}
 				onSelect={setMp3Bitrate} />
-			<div class="text-center font-mono text-[9px] text-neutral-600">CBR</div>
 		{:else if data.format.kind === 'aac'}
 			<SegmentedButtons
 				label="Bitrate"
@@ -578,10 +572,8 @@
 				options={AAC_BITRATE_PRESETS.map((p) => ({ value: p.kbps * 1000, label: p.label, disabled: locked }))}
 				value={data.format.bitrate}
 				onSelect={setAacBitrate} />
-			<div class="text-center font-mono text-[9px] text-neutral-600">M4A</div>
 		{:else}
 			<SegmentedButtons options={AIFF_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
-			<div class="text-center font-mono text-[9px] text-neutral-600">PCM big-endian</div>
 		{/if}
 
 		<div class="flex items-baseline justify-between font-mono text-[11px]">

@@ -282,8 +282,16 @@ pub struct FileRecordingData {
     pub mode: RecordingMode,
     #[serde(default = "default_two")]
     pub channels: u16,
+    /// Pinned file sample rate; defaults to 48 kHz so the recorded rate is
+    /// always explicit. Ignored for Opus/Mp3, which are locked to 48 kHz.
+    #[serde(default = "default_rec_sample_rate")]
+    pub sample_rate: Option<u32>,
     #[serde(default)]
     pub waveform_hidden: bool,
+}
+
+fn default_rec_sample_rate() -> Option<u32> {
+    Some(48_000)
 }
 
 fn default_two() -> u16 {
@@ -577,6 +585,7 @@ pub enum OutputSpec {
         format: RecordingFormat,
         channels: u16,
         mode: RecordingMode,
+        sample_rate: Option<u32>,
     },
     NetSender {
         node_id: String,
@@ -1024,11 +1033,25 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                         n.id, data.channels
                     )));
                 }
+                if let Some(sr) = data.sample_rate {
+                    if !(8000..=384_000).contains(&sr) {
+                        return Err(AppError::Validation(format!(
+                            "recording node {} pins sample rate {sr}; expected 8000..384000",
+                            n.id
+                        )));
+                    }
+                }
                 OutputSpec::FileRecording {
                     file_path,
                     format: data.format,
                     channels: data.channels,
                     mode: data.mode,
+                    sample_rate: data.sample_rate.filter(|_| {
+                        !matches!(
+                            data.format,
+                            RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. }
+                        )
+                    }),
                 }
             }
             NodeKind::NetSender => {

@@ -97,9 +97,10 @@ pub(super) fn resolve_output(
             format,
             channels,
             mode,
+            sample_rate: pinned,
         } => {
             let path = PathBuf::from(file_path);
-            let sample_rate = file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR);
+            let sample_rate = pinned.or(file_sr_hint).unwrap_or(RECORDER_DEFAULT_SR);
             let append = *mode == RecordingMode::Append;
             let base_frames = if append && path.exists() {
                 validate_append_target(&path, sample_rate, *channels, *format)?

@@ -126,7 +126,6 @@
 	let liveOpenAbsSeg = -1;
 	// Forces the next live-ring init to use a specific base (0 for an overwrite
 	// restart) instead of the disk-backed total, which may have regrown.
-	let liveBaseOverride: number | null = null;
 	// Set when a recording reports `stopped`; the next session that starts with
 	// a smaller total (overwrite of the same path) triggers a file-state reset.
 	let afterStop = false;
@@ -148,7 +147,6 @@
 		liveSessionFrames = 0;
 		liveOpenAbsSeg = -1;
 		liveBaseSeg = 0;
-		liveBaseOverride = 0;
 	}
 	// When a `stopped` isn't followed by a fresh session (permanent stop), this
 	// timer restores the recorded file view that the loader temporarily cleared.
@@ -280,12 +278,9 @@
 		liveTotalSegs = 0;
 		liveSessionFrames = 0;
 		liveOpenAbsSeg = -1;
-		// On a ring reset anchor the live overlay at the current recorded total
-		// so a channel/mode change keeps the tail positioned and the view can
-		// advance at scope cadence immediately. An explicit override (overwrite
-		// restart) wins over the disk-backed total.
-		liveBaseSeg = liveBaseOverride !== null ? liveBaseOverride : fileTotalSegs;
-		liveBaseOverride = null;
+		// Scope startFrame is file-absolute (the recorder seeds its counter
+		// with the append base), so the overlay always anchors at segment 0.
+		liveBaseSeg = 0;
 		applyMinHeight();
 	}
 
@@ -387,9 +382,6 @@
 				return;
 			}
 			ensureLiveRing(p.channels);
-			// Establish the absolute base before the first bin so grid-aligned
-			// segment indices are correct from the very first block.
-			if (liveBaseSeg < 0) liveBaseSeg = Math.max(0, fileTotalSegs);
 			liveActive = true;
 			const startFrame = p.startFrame ?? liveSessionFrames;
 			binLiveGrid(p.data, channels, frames, startFrame);
@@ -1078,7 +1070,6 @@
 				liveSessionFrames = 0;
 				liveOpenAbsSeg = -1;
 				liveBaseSeg = 0;
-				liveBaseOverride = 0;
 			}
 			lastProgressFrames = p.frames;
 			if (segs > fileTotalSegs) {
@@ -1100,7 +1091,7 @@
 			liveTotalSegs = 0;
 			liveSessionFrames = 0;
 			liveOpenAbsSeg = -1;
-			liveBaseSeg = -1;
+			liveBaseSeg = 0;
 			// Clear the view so a loader shows during a restart gap instead
 			// of the stale wave. If no fresh session follows (permanent
 			// stop), the timer restores the recorded file from the intact

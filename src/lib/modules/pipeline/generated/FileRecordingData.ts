@@ -4,7 +4,7 @@ import type { RecordingMode } from "./RecordingMode";
 
 export type FileRecordingData = { filePath: string | null, format: RecordingFormat, mode: RecordingMode, channels: number, 
 /**
- * Pinned file sample rate; `None` follows the sources feeding the node.
- * Ignored for Opus/Mp3, which are locked to 48 kHz.
+ * Pinned file sample rate; defaults to 48 kHz so the recorded rate is
+ * always explicit. Ignored for Opus/Mp3, which are locked to 48 kHz.
  */
 sampleRate: number | null, waveformHidden: boolean, };

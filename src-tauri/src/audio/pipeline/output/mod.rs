@@ -451,7 +451,7 @@ pub(super) fn start_recorder_worker(
             worker.run(stop_thread, clock, |block| {
                 encoder.write_interleaved(block)?;
                 frames_written += (block.len() / channels_usize) as u64;
-                wave_thread.push_interleaved(block, block.len() / channels_usize);
+                wave_thread.push_interleaved(block, block.len() / channels_usize, base_frames);
 
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
                     if let Err(e) = encoder.flush() {

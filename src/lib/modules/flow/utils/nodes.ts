@@ -71,6 +71,8 @@ export interface NodeRegistryEntry<K extends NodeKind = NodeKind> {
 	component: Component<any>;
 	icon: Component<{ class?: ClassValue; title?: string }>;
 	defaultData: NodeDataMap[K];
+	/** Fixed spawn size for nodes whose content needs room (resizable after). */
+	defaultSize?: { width: number; height: number };
 }
 
 function entry<K extends NodeKind>(e: NodeRegistryEntry<K>): NodeRegistryEntry {
@@ -202,7 +204,8 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		description: 'Live waveform — filled min/max envelope for L and R channels.',
 		component: Waveform,
 		icon: PulseIcon,
-		defaultData: DEFAULT_NODE_DATA['waveform']
+		defaultData: DEFAULT_NODE_DATA['waveform'],
+		defaultSize: { width: 200, height: 140 }
 	}),
 	spectrum: entry<'spectrum'>({
 		kind: 'spectrum',

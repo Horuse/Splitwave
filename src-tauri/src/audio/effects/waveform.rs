@@ -109,11 +109,17 @@ impl WaveformHandle {
 
     /// Ingests an interleaved block from a non-RT thread (the recorder worker).
     /// Blocks on the state lock, unlike the effect's `try_lock` path.
-    pub fn push_interleaved(&self, samples: &[f32], frames: usize) {
+    /// `base_frames` seeds the absolute frame counter on the first block, so
+    /// `drain` reports file-absolute start positions even when the UI scopes
+    /// a recording that appended onto existing content.
+    pub fn push_interleaved(&self, samples: &[f32], frames: usize, base_frames: u64) {
         if frames == 0 {
             return;
         }
         let mut g = self.state.lock().unwrap();
+        if g.total == 0 && g.emit_pos == 0 && base_frames > 0 {
+            g.total = base_frames;
+        }
         write(&mut g, samples, frames);
     }
 }

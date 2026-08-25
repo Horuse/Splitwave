@@ -130,6 +130,26 @@
 	// Set when a recording reports `stopped`; the next session that starts with
 	// a smaller total (overwrite of the same path) triggers a file-state reset.
 	let afterStop = false;
+	let lastProgressFrames = 0;
+
+	// Drops every file-backed and live-overlay state, e.g. when an overwrite
+	// session rewrites the path: the old totals, cache and live base are all
+	// stale the moment the new session starts.
+	function resetFileState() {
+		fileCache.clear();
+		scanCleanKey = '';
+		fileLoaded = false;
+		fileTotalSegs = 0;
+		totalSegs = 0;
+		viewEndSeg = 0;
+		following = true;
+		liveActive = false;
+		liveTotalSegs = 0;
+		liveSessionFrames = 0;
+		liveOpenAbsSeg = -1;
+		liveBaseSeg = 0;
+		liveBaseOverride = 0;
+	}
 	// When a `stopped` isn't followed by a fresh session (permanent stop), this
 	// timer restores the recorded file view that the loader temporarily cleared.
 	let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -352,15 +372,14 @@
 					clearTimeout(stopTimer);
 					stopTimer = undefined;
 				}
-				fileCache.clear();
-				scanCleanKey = '';
-				fileLoaded = false;
-				fileTotalSegs = 0;
-				totalSegs = 0;
-				viewEndSeg = 0;
-				following = true;
-				liveBaseOverride = 0;
+				resetFileState();
 				afterStop = false;
+			} else if (liveSessionFrames > 0 && (p.startFrame ?? liveSessionFrames) < liveSessionFrames) {
+				// Overwrite restart without an observed `stopped` (e.g. the stop
+				// happened while this component was not mounted): the session
+				// frame counter went backwards, so the file is being rewritten
+				// and every cached segment and total is stale.
+				resetFileState();
 			}
 			const frames = p.data[0]?.length ?? 0;
 			if (frames === 0) {
@@ -1035,11 +1054,18 @@
 		if (p.sampleRate) sampleRate = p.sampleRate;
 		if (p.frames > 0) {
 			const segs = Math.max(1, Math.ceil(p.frames / SEG_FRAMES));
-			// A fresh session whose total drops below the current one means
-			// the file was overwritten (mode "overwrite" rewrites the same
-			// path). Drop the old file-backed state so a stale wave and time
-			// scale don't linger, then let the new file refill from scratch.
-			if (afterStop && segs < fileTotalSegs) {
+			// A session whose frame count goes backwards (overwrite restart
+			// observed without a `stopped`) means the file is being rewritten:
+			// drop the old file-backed state so a stale wave and time scale
+			// don't linger, then let the new file refill from scratch.
+			if (p.frames < lastProgressFrames) {
+				if (stopTimer) {
+					clearTimeout(stopTimer);
+					stopTimer = undefined;
+				}
+				resetFileState();
+				afterStop = false;
+			} else if (afterStop && segs < fileTotalSegs) {
 				fileCache.clear();
 				scanCleanKey = '';
 				fileLoaded = false;
@@ -1054,6 +1080,7 @@
 				liveBaseSeg = 0;
 				liveBaseOverride = 0;
 			}
+			lastProgressFrames = p.frames;
 			if (segs > fileTotalSegs) {
 				fileTotalSegs = segs;
 				// While following the live edge the scope stream owns the
@@ -1068,6 +1095,7 @@
 		}
 		if (p.stopped) {
 			afterStop = true;
+			lastProgressFrames = 0;
 			liveActive = false;
 			liveTotalSegs = 0;
 			liveSessionFrames = 0;

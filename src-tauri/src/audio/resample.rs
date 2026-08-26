@@ -111,7 +111,7 @@ impl MultiResampler {
 
         let out_max = inner.output_frames_max();
         let in_planar = vec![vec![0.0_f32; chunk_size]; channels];
-        let out_planar = vec![Vec::with_capacity(out_max); channels];
+        let out_planar = vec![vec![0.0_f32; out_max]; channels];
 
         Ok(Self {
             inner,
@@ -130,8 +130,17 @@ impl MultiResampler {
         self.out_max
     }
 
-    pub fn process_chunk(&mut self, interleaved_in: &[f32], dst: &mut Vec<f32>) -> AppResult<()> {
+    /// Resample one fixed input chunk into a caller-owned, preallocated
+    /// interleaved buffer. Returns the number of written samples. This is the
+    /// RT-safe form used by speaker workers: it never grows a `Vec` in the DSP
+    /// path.
+    pub fn process_chunk_into(
+        &mut self,
+        interleaved_in: &[f32],
+        output: &mut [f32],
+    ) -> AppResult<usize> {
         debug_assert_eq!(interleaved_in.len(), self.chunk_in * self.channels);
+        debug_assert!(output.len() >= self.out_max * self.channels);
 
         for (i, frame) in interleaved_in.chunks_exact(self.channels).enumerate() {
             for c in 0..self.channels {
@@ -139,25 +148,23 @@ impl MultiResampler {
             }
         }
 
-        // Rubato 0.16 writes INTO existing slots (`AsMut<[T]>`) and uses
-        // `len()` to know the available space. Reserving capacity isn't enough
-        // -- we must resize so `len >= out_max`.
-        for v in &mut self.out_planar {
-            v.resize(self.out_max, 0.0);
-        }
-
         let (_in_used, produced) = self
             .inner
             .process_into_buffer(&self.in_planar, &mut self.out_planar, None)
             .map_err(|e| AppError::Stream(format!("resampler process: {e}")))?;
-
-        // `produced` is the number of valid output frames per channel; the rest
-        // of out_planar may be unwritten zero-padding.
         for i in 0..produced {
             for c in 0..self.channels {
-                dst.push(self.out_planar[c][i]);
+                output[i * self.channels + c] = self.out_planar[c][i];
             }
         }
+        Ok(produced * self.channels)
+    }
+
+    pub fn process_chunk(&mut self, interleaved_in: &[f32], dst: &mut Vec<f32>) -> AppResult<()> {
+        let start = dst.len();
+        dst.resize(start + self.out_max * self.channels, 0.0);
+        let written = self.process_chunk_into(interleaved_in, &mut dst[start..])?;
+        dst.truncate(start + written);
         Ok(())
     }
 }
@@ -194,5 +201,21 @@ mod tests {
         let frames = produced_frames(48_000, 88_200);
         let expected = 32 * 256 * 88_200 / 48_000;
         assert!((frames as isize - expected as isize).unsigned_abs() <= 256);
+    }
+
+    #[test]
+    fn independent_speaker_resamplers_do_not_share_state() {
+        let mut a = MultiResampler::new(48_000, 44_100, 256, 2).unwrap();
+        let mut b = MultiResampler::new(48_000, 88_200, 256, 2).unwrap();
+        let input = vec![0.25_f32; 256 * 2];
+        let mut out_a = vec![0.0; a.out_max() * 2];
+        let mut out_b = vec![0.0; b.out_max() * 2];
+
+        let written_a = a.process_chunk_into(&input, &mut out_a).unwrap();
+        let written_b = b.process_chunk_into(&input, &mut out_b).unwrap();
+
+        assert_eq!(written_a % 2, 0);
+        assert_eq!(written_b % 2, 0);
+        assert!(written_a < written_b);
     }
 }

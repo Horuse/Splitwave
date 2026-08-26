@@ -5,6 +5,7 @@
 //! dispatcher.
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use tauri::AppHandle;
 use tracing::{error, info, warn};
@@ -69,6 +70,13 @@ pub enum Command {
     /// Current speaker output buffering latency in milliseconds (0 when idle).
     OutputLatencyMs {
         reply: Sender<u32>,
+    },
+    /// CoreAudio notified us that one physical output changed its nominal
+    /// sample rate. This is deliberately output-scoped: capture and unrelated
+    /// DAG workers must survive the device re-open.
+    SpeakerRateChanged {
+        node_id: Arc<str>,
+        app: AppHandle,
     },
 }
 
@@ -173,6 +181,13 @@ pub fn run(rx: Receiver<Command>) {
             Command::OutputLatencyMs { reply } => {
                 let ms = active.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0);
                 let _ = reply.send(ms);
+            }
+            Command::SpeakerRateChanged { node_id, app } => {
+                if let Some(p) = active.as_mut() {
+                    if let Err(e) = p.reconfigure_speaker(&node_id, app) {
+                        error!(node_id = %node_id, error = %e, "speaker rate reconfigure failed");
+                    }
+                }
             }
         }
     }

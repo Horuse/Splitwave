@@ -205,6 +205,44 @@ impl ActivePipeline {
         }
     }
 
+    /// Re-open exactly one physical speaker after its native clock changed.
+    /// Removing its bridge slots before dropping the stream ensures their
+    /// producers are reclaimed on the control thread; the following reconcile
+    /// sees only this output as missing, so capture and every other worker stay
+    /// alive. This is intentionally event-driven, never a timer-based full
+    /// reconcile.
+    pub fn reconfigure_speaker(&mut self, node_id: &str, app: AppHandle) -> AppResult<()> {
+        let graph = self.current.clone().ok_or(AppError::NotRunning)?;
+        let output = graph
+            .outputs
+            .iter()
+            .find(|out| out.id == node_id)
+            .ok_or_else(|| AppError::Validation(format!("speaker output missing: {node_id}")))?;
+        if !matches!(output.spec, OutputSpec::Speaker { .. }) {
+            return Ok(());
+        }
+        let ResolvedOutput::Speaker(resolved) = resolve_output(output, Some(ENGINE_SAMPLE_RATE))?
+        else {
+            return Ok(());
+        };
+        if self.speakers.get(node_id).is_some_and(|state| {
+            state.sample_rate == resolved.sample_rate && !state.dead.load(Ordering::Relaxed)
+        }) {
+            return Ok(());
+        }
+
+        for input in self.inputs.values_mut() {
+            if let Some(slots) = input.bridges_by_output.remove(node_id) {
+                for slot in slots {
+                    let _ = input.bridge_tx.remove(slot);
+                }
+            }
+            input.bridge_tx.drain_discarded();
+        }
+        self.speakers.remove(node_id);
+        self.reconcile(&graph, app)
+    }
+
     pub fn update_effect(&self, node_id: &str, data: &serde_json::Value) {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);

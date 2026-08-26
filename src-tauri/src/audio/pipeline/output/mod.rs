@@ -296,12 +296,13 @@ pub(super) fn spawn_speaker_worker(
             channels,
         )?)
     };
-    let mut resampled = Vec::with_capacity(
+    let mut resampled = vec![
+        0.0_f32;
         resampler
             .as_ref()
             .map(|r| r.out_max() * channels * (DSP_BLOCK_FRAMES / RESAMPLE_CHUNK))
-            .unwrap_or(DSP_BLOCK_FRAMES * channels),
-    );
+            .unwrap_or(DSP_BLOCK_FRAMES * channels)
+    ];
     let join = thread::Builder::new()
         .name(format!("speaker:{initial_device_rate}"))
         .spawn(move || {
@@ -309,11 +310,12 @@ pub(super) fn spawn_speaker_worker(
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let device_block = if let Some(resampler) = &mut resampler {
-                    resampled.clear();
+                    let mut written = 0;
                     for chunk in block.chunks_exact(RESAMPLE_CHUNK * channels) {
-                        resampler.process_chunk(chunk, &mut resampled)?;
+                        written +=
+                            resampler.process_chunk_into(chunk, &mut resampled[written..])?;
                     }
-                    resampled.as_slice()
+                    &resampled[..written]
                 } else {
                     block
                 };

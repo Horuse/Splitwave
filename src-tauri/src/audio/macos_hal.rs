@@ -552,6 +552,31 @@ pub struct VolumeListener {
     notify: *mut crate::audio::volume::Notify,
 }
 
+/// Registered listener for the nominal rate of one output device. Its callback
+/// only forwards a pre-built notification; HAL reads and stream recreation run
+/// later on the audio control thread.
+pub struct SampleRateListener {
+    device_id: AudioObjectID,
+    address: AudioObjectPropertyAddress,
+    notify: *mut crate::audio::volume::Notify,
+}
+
+unsafe impl Send for SampleRateListener {}
+
+impl Drop for SampleRateListener {
+    fn drop(&mut self) {
+        unsafe {
+            AudioObjectRemovePropertyListener(
+                self.device_id,
+                &self.address,
+                volume_listener_proc,
+                self.notify as *mut c_void,
+            );
+            drop(Box::from_raw(self.notify));
+        }
+    }
+}
+
 // The device id and the notify box are plain data; CoreAudio accepts add and
 // remove from any thread, so the handle can live in the watch registry.
 unsafe impl Send for VolumeListener {}
@@ -630,6 +655,41 @@ pub fn watch_volume(
         addresses,
         notify,
     })
+}
+
+/// Watches only an output device's nominal sample rate. `notify` must be
+/// non-blocking because CoreAudio calls it from its own real-time thread.
+pub fn watch_output_sample_rate(
+    name: &str,
+    notify: crate::audio::volume::Notify,
+) -> Option<SampleRateListener> {
+    let device_id = find_device_id(name, K_AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT)?;
+    let address = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_NOMINAL_SAMPLE_RATE,
+        scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    unsafe {
+        if AudioObjectHasProperty(device_id, &address) == 0 {
+            return None;
+        }
+        let notify = Box::into_raw(Box::new(notify));
+        if AudioObjectAddPropertyListener(
+            device_id,
+            &address,
+            volume_listener_proc,
+            notify as *mut c_void,
+        ) != 0
+        {
+            drop(Box::from_raw(notify));
+            return None;
+        }
+        Some(SampleRateListener {
+            device_id,
+            address,
+            notify,
+        })
+    }
 }
 
 unsafe fn read_element_average(

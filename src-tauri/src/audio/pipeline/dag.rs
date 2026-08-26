@@ -1883,16 +1883,6 @@ pub(super) fn reachable_backward(output_id: &str, valid: &ValidGraph) -> HashSet
     seen
 }
 
-pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) -> Vec<&'a str> {
-    let reachable = reachable_backward(output_id, valid);
-    valid
-        .inputs
-        .iter()
-        .filter(|i| reachable.contains(&i.id))
-        .map(|i| i.id.as_str())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{add_mapped, crossfade_into, DelayLine, DSP_BLOCK_FRAMES, SPLICE_FADE_FRAMES};

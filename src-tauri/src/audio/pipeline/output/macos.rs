@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
@@ -36,6 +36,7 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
     _alive: StreamGuard,
+    _rate_watch: Option<crate::audio::macos_hal::SampleRateListener>,
 }
 
 // cpal's coreaudio backend registers a device-alive property listener for any
@@ -108,6 +109,18 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     }
 
     let dead = Arc::new(AtomicBool::new(false));
+    let node_for_watch: Arc<str> = Arc::from(node_id);
+    let audio_tx = app.state::<crate::state::AppState>().audio_tx.clone();
+    let app_for_watch = app.clone();
+    let rate_watch = crate::audio::macos_hal::watch_output_sample_rate(
+        &device_name,
+        Arc::new(move || {
+            let _ = audio_tx.send(crate::audio::engine::Command::SpeakerRateChanged {
+                node_id: node_for_watch.clone(),
+                app: app_for_watch.clone(),
+            });
+        }),
+    );
 
     let mut producer_holder: Option<rtrb::Producer<f32>> = None;
     let mut level_holder: Option<Arc<AtomicI64>> = None;
@@ -173,6 +186,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             _stream: stream,
             _worker: worker_handle,
             _alive: StreamGuard::new(),
+            _rate_watch: rate_watch,
         },
         ctrl,
         dead,

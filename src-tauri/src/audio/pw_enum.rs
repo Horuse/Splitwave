@@ -10,6 +10,7 @@ pub struct PwNode {
     pub id: u32,
     pub name: String,
     pub description: String,
+    pub sample_rate: Option<u32>,
 }
 
 pub fn nodes_by_class(media_class: &'static str) -> AppResult<Vec<PwNode>> {
@@ -46,10 +47,15 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                 .filter(|d| !d.is_empty())
                 .unwrap_or(name)
                 .to_string();
+            let sample_rate = props
+                .get("audio.rate")
+                .and_then(|rate| rate.parse::<u32>().ok())
+                .filter(|rate| *rate > 0);
             nodes_cb.borrow_mut().push(PwNode {
                 id: global.id,
                 name: name.to_string(),
                 description,
+                sample_rate,
             });
         })
         .register();

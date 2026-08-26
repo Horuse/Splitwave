@@ -24,9 +24,23 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+    let node = crate::audio::pw_enum::nodes_by_class("Audio/Sink")?
+        .into_iter()
+        .find(|node| node.name == device_id)
+        .ok_or_else(|| {
+            crate::error::AppError::Device(format!("PipeWire sink not found: {device_id}"))
+        })?;
+    // PipeWire exposes the sink's negotiated graph clock as audio.rate. Do
+    // not silently pretend it is 48 kHz: this feeds the explicit engine→sink
+    // resampler and speaker fill clock.
+    let sample_rate = node.sample_rate.ok_or_else(|| {
+        crate::error::AppError::Device(format!(
+            "PipeWire sink {device_id:?} did not report audio.rate"
+        ))
+    })?;
     Ok(SpeakerResolved {
-        node_id: device_id.to_string(),
-        sample_rate: 48_000,
+        node_id: node.name,
+        sample_rate,
         out_channels: 2,
     })
 }

@@ -89,11 +89,12 @@ fn run(
             if capacity == 0 {
                 return;
             }
-            let mut samples = vec![0.0f32; capacity];
-            let written = (user_data.fill)(&mut samples).min(capacity);
-            for (i, s) in samples[..written].iter().enumerate() {
-                raw[i * F32_SIZE..(i + 1) * F32_SIZE].copy_from_slice(&s.to_le_bytes());
-            }
+            // PipeWire mapped an F32LE buffer for this stream. Fill it in
+            // place: allocating an interleaved staging Vec here would happen
+            // on every process callback and is forbidden on the RT path.
+            let samples =
+                unsafe { std::slice::from_raw_parts_mut(raw.as_mut_ptr().cast::<f32>(), capacity) };
+            let written = (user_data.fill)(samples).min(capacity);
             let chunk = data.chunk_mut();
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = STRIDE as i32;

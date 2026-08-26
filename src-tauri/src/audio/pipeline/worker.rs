@@ -11,9 +11,13 @@ use crate::error::{AppError, AppResult};
 
 use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
 
-/// Let input rings collect a few cpal buffers before starting the clock --
-/// otherwise the first block is all zeros.
-pub(super) const DSP_PREROLL: Duration = Duration::from_millis(50);
+/// Let live input rings establish a two-block engine-rate jitter reserve before
+/// the device-paced speaker fills its own three-block ring. A 50 ms preroll
+/// only covered about two 1024-frame DSP blocks, so the initial fill burst
+/// drained App Audio to zero and ordinary capture callback jitter became a
+/// one-block SOURCE_XRUN. 110 ms leaves roughly 46 ms source headroom at
+/// 48 kHz without changing steady-state DSP timing.
+pub(super) const DSP_PREROLL: Duration = Duration::from_millis(110);
 
 pub(super) struct DspWorker {
     pub graph: OutputGraph,

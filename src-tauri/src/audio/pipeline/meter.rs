@@ -250,12 +250,11 @@ pub(super) fn spawn_xrun_thread(
                         (requested_delta, read_delta, callbacks_delta)
                     });
                     let io_off_rate = io.is_some_and(|(requested_delta, _, callbacks_delta)| {
-                        let expected_samples =
-                            o.io.as_ref()
-                                .map_or(o.sample_rate, |speaker| speaker.sample_rate)
-                                as f64
-                                * o.channels as f64
-                                * elapsed_secs;
+                        let expected_samples = o.io.as_ref().map_or(o.sample_rate, |speaker| {
+                            speaker.sample_rate.load(Ordering::Relaxed)
+                        }) as f64
+                            * o.channels as f64
+                            * elapsed_secs;
                         // The device's own buffer size, measured rather than
                         // assumed: cpal opens with `BufferSize::Default`.
                         let quantum = if callbacks_delta > 0 {

@@ -98,7 +98,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         producer,
         level,
         target,
-        spec.sample_rate,
+        io.sample_rate.clone(),
         spec.out_channels,
         graph,
         meter,

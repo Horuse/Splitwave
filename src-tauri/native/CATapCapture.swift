@@ -194,6 +194,8 @@ private final class Tap {
     private var tapChannels = 0
     private var tapBufferIndex = 0
     private var sampleRate = 0.0
+    // The aggregate is clocked by its main sub-device, not the tap ASBD.
+    private var deliveryRate = 0.0
     /// Preallocated so the IOProc never allocates while de-interleaving.
     private var scratch = [Float]()
 
@@ -227,7 +229,7 @@ private final class Tap {
     var format: (rate: Double, channels: Int) {
         lock.lock()
         defer { lock.unlock() }
-        return (sampleRate, tapChannels)
+        return (deliveryRate, tapChannels)
     }
 
     // MARK: Graph
@@ -324,6 +326,16 @@ private final class Tap {
             return RESULT_TAP_ERROR
         }
         aggregateID = aggregate
+
+        guard let aggregateRate = readValue(
+            aggregateID,
+            kAudioDevicePropertyNominalSampleRate,
+            Double(0)
+        ), aggregateRate > 0 else {
+            teardown()
+            return RESULT_TAP_ERROR
+        }
+        deliveryRate = aggregateRate
 
         let maxFrames = Int(readValue(aggregateID, kAudioDevicePropertyBufferFrameSize, UInt32(0)) ?? 4096)
         scratch = [Float](repeating: 0, count: max(maxFrames, 4096) * tapChannels)

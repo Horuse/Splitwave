@@ -1,6 +1,6 @@
 //! Pacing source for the DSP worker.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -99,8 +99,8 @@ const FILL_CLOCK_MAX_SLEEP: Duration = Duration::from_millis(5);
 /// target, so the worker produces the next block immediately and never loses
 /// the notion of "how far behind" the way a deadline reset would.
 pub struct DeviceFillClock {
-    sample_rate: u32,
-    block_frames: usize,
+    sample_rate: Arc<AtomicU32>,
+    engine_block_frames: usize,
     level: Arc<AtomicI64>,
     /// Fill target, sized to the device's own buffer by the audio callback
     /// (see `speaker_ring`). Read here every tick so the ring always bridges
@@ -113,14 +113,14 @@ pub struct DeviceFillClock {
 
 impl DeviceFillClock {
     pub fn new(
-        sample_rate: u32,
-        block_frames: usize,
+        sample_rate: Arc<AtomicU32>,
+        engine_block_frames: usize,
         level: Arc<AtomicI64>,
         target: Arc<AtomicI64>,
     ) -> Self {
         Self {
             sample_rate,
-            block_frames,
+            engine_block_frames,
             level,
             target,
             primed: false,
@@ -136,24 +136,27 @@ impl ClockSource for DeviceFillClock {
             }
             let target_frames = self.target.load(Ordering::Relaxed).max(0) as usize;
             let queued = self.level.load(Ordering::Relaxed).max(0) as usize;
-            if queued + self.block_frames <= target_frames {
+            let sample_rate = self.sample_rate.load(Ordering::Relaxed).max(1);
+            let block_frames = ((self.engine_block_frames as u64 * sample_rate as u64
+                + crate::audio::ENGINE_SAMPLE_RATE as u64 / 2)
+                / crate::audio::ENGINE_SAMPLE_RATE as u64) as usize;
+            if queued + block_frames <= target_frames {
                 // Less than one block of headroom left in the ring -- the
                 // worker isn't staying ahead of the device.
-                if self.primed && queued < self.block_frames {
+                if self.primed && queued < block_frames {
                     health::bump(&health::CLOCK_LATE_BLOCKS, 1);
                 }
                 return true;
             }
             self.primed = true;
-            let overshoot = queued + self.block_frames - target_frames;
-            let drain = Duration::from_nanos(
-                (overshoot as u64 * 1_000_000_000) / self.sample_rate.max(1) as u64,
-            );
+            let overshoot = queued + block_frames - target_frames;
+            let drain =
+                Duration::from_nanos((overshoot as u64 * 1_000_000_000) / sample_rate as u64);
             thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));
         }
     }
 
     fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        self.sample_rate.load(Ordering::Relaxed)
     }
 }

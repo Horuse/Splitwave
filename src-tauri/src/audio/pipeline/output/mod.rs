@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -133,7 +133,7 @@ impl Drop for RecorderWorker {
 pub(super) struct SpeakerIo {
     /// Native clock rate of the physical output stream. This differs from the
     /// graph's fixed engine rate when the output resampler is active.
-    pub sample_rate: u32,
+    pub sample_rate: Arc<AtomicU32>,
     /// Samples cpal's `fill` was asked for (`out.len()`), summed across callbacks.
     pub requested: Arc<AtomicU64>,
     /// Samples actually popped off the ring (`bulk_pop`'s return), summed across callbacks.
@@ -152,7 +152,7 @@ pub(super) struct SpeakerIo {
 impl SpeakerIo {
     fn new(sample_rate: u32, target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
         Self {
-            sample_rate,
+            sample_rate: Arc::new(AtomicU32::new(sample_rate)),
             requested: Arc::new(AtomicU64::new(0)),
             read: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
@@ -271,7 +271,7 @@ pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     level: Arc<AtomicI64>,
     target: Arc<AtomicI64>,
-    device_sample_rate: u32,
+    device_sample_rate: Arc<AtomicU32>,
     channels: usize,
     graph: OutputGraph,
     meter: MeterHandle,
@@ -280,18 +280,18 @@ pub(super) fn spawn_speaker_worker(
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
     let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
-        device_sample_rate,
-        ((DSP_BLOCK_FRAMES as u64 * device_sample_rate as u64 + ENGINE_SAMPLE_RATE as u64 / 2)
-            / ENGINE_SAMPLE_RATE as u64) as usize,
+        device_sample_rate.clone(),
+        DSP_BLOCK_FRAMES,
         level.clone(),
         target,
     ));
-    let mut resampler = if device_sample_rate == ENGINE_SAMPLE_RATE {
+    let initial_device_rate = device_sample_rate.load(Ordering::Relaxed);
+    let mut resampler = if initial_device_rate == ENGINE_SAMPLE_RATE {
         None
     } else {
         Some(MultiResampler::new(
             ENGINE_SAMPLE_RATE,
-            device_sample_rate,
+            initial_device_rate,
             RESAMPLE_CHUNK,
             channels,
         )?)
@@ -303,9 +303,9 @@ pub(super) fn spawn_speaker_worker(
             .unwrap_or(DSP_BLOCK_FRAMES * channels),
     );
     let join = thread::Builder::new()
-        .name(format!("speaker:{device_sample_rate}"))
+        .name(format!("speaker:{initial_device_rate}"))
         .spawn(move || {
-            let _rt = RtThread::promote("speaker", device_sample_rate);
+            let _rt = RtThread::promote("speaker", initial_device_rate);
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let device_block = if let Some(resampler) = &mut resampler {

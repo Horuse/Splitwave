@@ -229,6 +229,14 @@ private final class Tap {
     var format: (rate: Double, channels: Int) {
         lock.lock()
         defer { lock.unlock() }
+        // The aggregate follows its main output device. Re-read its nominal
+        // rate here so Rust's non-RT normalizer can adapt when Audio MIDI
+        // Setup changes that device without rebuilding the process tap.
+        if aggregateID != 0,
+           let rate = readValue(aggregateID, kAudioDevicePropertyNominalSampleRate, Double(0)),
+           rate > 0 {
+            deliveryRate = rate
+        }
         return (deliveryRate, tapChannels)
     }
 

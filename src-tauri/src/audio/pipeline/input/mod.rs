@@ -85,6 +85,16 @@ impl Drop for InputHandle {
     }
 }
 
+impl InputHandle {
+    #[cfg(target_os = "macos")]
+    fn tap_rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
+        match self {
+            InputHandle::Capture(capture) => capture.tap_rate_probe(),
+            _ => None,
+        }
+    }
+}
+
 pub(super) enum ResolvedInput {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     Cpal {
@@ -191,6 +201,8 @@ pub(super) fn start_input_stream(
     let (mut raw_tx, raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
     let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
+    #[cfg(target_os = "macos")]
+    let rate_probe = input.tap_rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let label = node_id.to_string();
@@ -199,10 +211,11 @@ pub(super) fn start_input_stream(
         .spawn(move || {
             let mut bridge = bridge;
             let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
-            let mut resampler = if sample_rate == ENGINE_SAMPLE_RATE {
+            let mut native_rate = sample_rate;
+            let mut resampler = if native_rate == ENGINE_SAMPLE_RATE {
                 None
             } else {
-                match MultiResampler::new(sample_rate, ENGINE_SAMPLE_RATE, RESAMPLE_CHUNK, channels)
+                match MultiResampler::new(native_rate, ENGINE_SAMPLE_RATE, RESAMPLE_CHUNK, channels)
                 {
                     Ok(resampler) => Some(resampler),
                     Err(_) => return,
@@ -216,6 +229,36 @@ pub(super) fn start_input_stream(
             );
             while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
                 bridge.apply_commands();
+                #[cfg(target_os = "macos")]
+                if let Some(rate) = rate_probe.and_then(|probe| probe.sample_rate()) {
+                    if rate == native_rate {
+                        // Nothing to do; avoid perturbing the sinc state.
+                    } else {
+                        // Raw samples on either side of a device-rate transition
+                        // cannot share a sinc state. Drop only this input's raw
+                        // backlog, then rebuild the non-RT normalizer; the tap and
+                        // every engine/output worker keep running.
+                        let pending = raw_consumer.slots();
+                        if pending > 0 {
+                            if let Ok(chunk) = raw_consumer.read_chunk(pending) {
+                                chunk.commit_all();
+                            }
+                        }
+                        native_rate = rate;
+                        resampler = if rate == ENGINE_SAMPLE_RATE {
+                            None
+                        } else {
+                            MultiResampler::new(rate, ENGINE_SAMPLE_RATE, RESAMPLE_CHUNK, channels)
+                                .ok()
+                        };
+                        output_buf = Vec::with_capacity(
+                            resampler
+                                .as_ref()
+                                .map(|r| r.out_max() * channels)
+                                .unwrap_or(input_buf.len()),
+                        );
+                    }
+                }
                 if raw_consumer.slots() < input_buf.len() {
                     thread::sleep(Duration::from_millis(1));
                     continue;

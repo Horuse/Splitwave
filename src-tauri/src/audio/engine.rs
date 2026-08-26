@@ -7,7 +7,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 use crate::audio::graph::ValidGraph;
@@ -184,8 +184,10 @@ pub fn run(rx: Receiver<Command>) {
             }
             Command::SpeakerRateChanged { node_id, app } => {
                 if let Some(p) = active.as_mut() {
-                    if let Err(e) = p.reconfigure_speaker(&node_id, app) {
+                    if let Err(e) = p.reconfigure_speaker(&node_id, app.clone()) {
                         error!(node_id = %node_id, error = %e, "speaker rate reconfigure failed");
+                    } else {
+                        let _ = app.emit("audio://speaker_rate_changed", node_id.as_ref());
                     }
                 }
             }

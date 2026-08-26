@@ -41,10 +41,18 @@
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
+	let unlistenRateChanged: (() => void) | undefined;
 	onMount(() => {
 		unlistenRefresh = onNodeAction(id, 'refresh', () => refresh());
+		audioMethods.onSpeakerRateChanged((nodeId) => {
+			if (nodeId !== id || !data.deviceId) return;
+			void audioMethods.deviceInfo('output', data.deviceId).then((next) => (info = next));
+		}).then((unlisten) => (unlistenRateChanged = unlisten));
 	});
-	onDestroy(() => unlistenRefresh?.());
+	onDestroy(() => {
+		unlistenRefresh?.();
+		unlistenRateChanged?.();
+	});
 
 	let options = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
 	let missing = $derived(!!data.deviceId && !audioStore.outputDevices.some((d) => d.id === data.deviceId));

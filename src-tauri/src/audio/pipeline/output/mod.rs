@@ -58,6 +58,12 @@ pub(super) const SPEAKER_TARGET_FILL_BLOCKS: usize = 3;
 // sits exactly empty when the next callback lands.
 const SPEAKER_TARGET_MARGIN_BLOCKS: usize = 2;
 
+#[inline]
+fn engine_frames_to_device_frames(frames: usize, device_rate: u32) -> usize {
+    ((frames as u64 * device_rate.max(1) as u64 + ENGINE_SAMPLE_RATE as u64 / 2)
+        / ENGINE_SAMPLE_RATE as u64) as usize
+}
+
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
     File {
@@ -203,9 +209,10 @@ pub(super) fn speaker_ring(
         RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
-    let target = Arc::new(AtomicI64::new(
-        (SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES) as i64,
-    ));
+    let target = Arc::new(AtomicI64::new(engine_frames_to_device_frames(
+        SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
+        sample_rate,
+    ) as i64));
     let target_cb = target.clone();
     let io = SpeakerIo::new(sample_rate, target.clone(), graph_latency_frames);
     let io_cb = io.clone();
@@ -217,8 +224,14 @@ pub(super) fn speaker_ring(
         // blocks and the floor holds; a large-buffer device (PipeWire handing
         // out ~250 ms buffers) grows the target and runs at that latency instead
         // of underrunning at a fraction of real time.
-        let min = SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES;
-        let margin = SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES;
+        let min = engine_frames_to_device_frames(
+            SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
+            sample_rate,
+        );
+        let margin = engine_frames_to_device_frames(
+            SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES,
+            sample_rate,
+        );
         let dev_frames = out.len() / out_channels;
         let max = SPEAKER_RING_CAPACITY_FRAMES
             .saturating_sub(dev_frames + margin)

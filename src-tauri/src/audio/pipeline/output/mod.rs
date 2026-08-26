@@ -16,10 +16,12 @@ use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::encoders::{build_encoder, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
+use crate::audio::resample::MultiResampler;
 use crate::audio::streams;
+use crate::audio::ENGINE_SAMPLE_RATE;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::{OutputGraph, DSP_BLOCK_FRAMES, RESAMPLE_CHUNK};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -38,7 +40,7 @@ use windows as platform;
 pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, SpeakerResolved};
 
 // No live inputs -> fall back to 48 kHz for the recorder.
-const RECORDER_DEFAULT_SR: u32 = 48_000;
+const RECORDER_DEFAULT_SR: u32 = ENGINE_SAMPLE_RATE;
 
 // Ring length in frames; multiplied by the device channel count at open. ~1 s
 // @ 48 kHz so the adaptive fill target (which follows the device's own buffer
@@ -68,16 +70,6 @@ pub(super) enum ResolvedOutput {
     // `build_output_graph`, so nothing device-specific to resolve here. Covers
     // both direct-IP and WebRTC senders.
     WireSender,
-}
-
-impl ResolvedOutput {
-    pub(super) fn sample_rate(&self) -> u32 {
-        match self {
-            ResolvedOutput::Speaker(s) => s.sample_rate,
-            ResolvedOutput::File { sample_rate, .. } => *sample_rate,
-            ResolvedOutput::WireSender => crate::audio::netaudio::SR,
-        }
-    }
 }
 
 pub(super) fn resolve_output(
@@ -139,6 +131,9 @@ impl Drop for RecorderWorker {
 // `Ordering::Relaxed`, no allocation, no other sync.
 #[derive(Clone)]
 pub(super) struct SpeakerIo {
+    /// Native clock rate of the physical output stream. This differs from the
+    /// graph's fixed engine rate when the output resampler is active.
+    pub sample_rate: u32,
     /// Samples cpal's `fill` was asked for (`out.len()`), summed across callbacks.
     pub requested: Arc<AtomicU64>,
     /// Samples actually popped off the ring (`bulk_pop`'s return), summed across callbacks.
@@ -155,8 +150,9 @@ pub(super) struct SpeakerIo {
 }
 
 impl SpeakerIo {
-    fn new(target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
+    fn new(sample_rate: u32, target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
         Self {
+            sample_rate,
             requested: Arc::new(AtomicU64::new(0)),
             read: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
@@ -194,6 +190,7 @@ impl Drop for StreamGuard {
 // worker's clock steers toward -- one ring shape for all platforms.
 pub(super) fn speaker_ring(
     out_channels: usize,
+    sample_rate: u32,
     graph_latency_frames: usize,
 ) -> (
     Producer<f32>,
@@ -210,7 +207,7 @@ pub(super) fn speaker_ring(
         (SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES) as i64,
     ));
     let target_cb = target.clone();
-    let io = SpeakerIo::new(target.clone(), graph_latency_frames);
+    let io = SpeakerIo::new(sample_rate, target.clone(), graph_latency_frames);
     let io_cb = io.clone();
     let fill = move |out: &mut [f32], _frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);
@@ -274,7 +271,7 @@ pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     level: Arc<AtomicI64>,
     target: Arc<AtomicI64>,
-    sample_rate: u32,
+    device_sample_rate: u32,
     channels: usize,
     graph: OutputGraph,
     meter: MeterHandle,
@@ -283,20 +280,46 @@ pub(super) fn spawn_speaker_worker(
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
     let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
-        sample_rate,
-        DSP_BLOCK_FRAMES,
+        device_sample_rate,
+        ((DSP_BLOCK_FRAMES as u64 * device_sample_rate as u64 + ENGINE_SAMPLE_RATE as u64 / 2)
+            / ENGINE_SAMPLE_RATE as u64) as usize,
         level.clone(),
         target,
     ));
+    let mut resampler = if device_sample_rate == ENGINE_SAMPLE_RATE {
+        None
+    } else {
+        Some(MultiResampler::new(
+            ENGINE_SAMPLE_RATE,
+            device_sample_rate,
+            RESAMPLE_CHUNK,
+            channels,
+        )?)
+    };
+    let mut resampled = Vec::with_capacity(
+        resampler
+            .as_ref()
+            .map(|r| r.out_max() * channels * (DSP_BLOCK_FRAMES / RESAMPLE_CHUNK))
+            .unwrap_or(DSP_BLOCK_FRAMES * channels),
+    );
     let join = thread::Builder::new()
-        .name(format!("speaker:{sample_rate}"))
+        .name(format!("speaker:{device_sample_rate}"))
         .spawn(move || {
-            let _rt = RtThread::promote("speaker", sample_rate);
+            let _rt = RtThread::promote("speaker", device_sample_rate);
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
+                let device_block = if let Some(resampler) = &mut resampler {
+                    resampled.clear();
+                    for chunk in block.chunks_exact(RESAMPLE_CHUNK * channels) {
+                        resampler.process_chunk(chunk, &mut resampled)?;
+                    }
+                    resampled.as_slice()
+                } else {
+                    block
+                };
                 let written = streams::bulk_push_counted(
                     &mut producer,
-                    block,
+                    device_block,
                     &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
                 );
                 level.fetch_add((written / channels) as i64, Ordering::Relaxed);

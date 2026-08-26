@@ -26,3 +26,7 @@ pub mod virtual_device;
 pub mod volume;
 pub mod webrtc;
 pub mod webrtc_codec;
+
+/// The only sample rate used by the DSP graph, effects, monitors, and
+/// fixed-rate outputs. Device and capture adapters convert at its boundary.
+pub const ENGINE_SAMPLE_RATE: u32 = 48_000;

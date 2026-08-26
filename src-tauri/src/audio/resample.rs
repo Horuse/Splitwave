@@ -161,3 +161,38 @@ impl MultiResampler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MultiResampler;
+
+    fn produced_frames(from_rate: u32, to_rate: u32) -> usize {
+        const CHANNELS: usize = 2;
+        const CHUNKS: usize = 32;
+        let mut resampler = MultiResampler::new(from_rate, to_rate, 256, CHANNELS).unwrap();
+        let input = vec![0.25_f32; 256 * CHANNELS];
+        let mut output = Vec::with_capacity(resampler.out_max() * CHANNELS);
+        let mut frames = 0;
+        for _ in 0..CHUNKS {
+            output.clear();
+            resampler.process_chunk(&input, &mut output).unwrap();
+            assert_eq!(output.len() % CHANNELS, 0);
+            frames += output.len() / CHANNELS;
+        }
+        frames
+    }
+
+    #[test]
+    fn converts_engine_rate_to_44k1() {
+        let frames = produced_frames(48_000, 44_100);
+        let expected = 32 * 256 * 44_100 / 48_000;
+        assert!((frames as isize - expected as isize).unsigned_abs() <= 256);
+    }
+
+    #[test]
+    fn converts_engine_rate_to_88k2() {
+        let frames = produced_frames(48_000, 88_200);
+        let expected = 32 * 256 * 88_200 / 48_000;
+        assert!((frames as isize - expected as isize).unsigned_abs() <= 256);
+    }
+}

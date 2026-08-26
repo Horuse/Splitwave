@@ -1,15 +1,21 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
+use rtrb::RingBuffer;
 use tauri::AppHandle;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tracing::warn;
 
-use crate::audio::input_bridge::BroadcastRx;
-use crate::error::AppResult;
+use crate::audio::effects::{update_meter, MeterHandle};
+use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
+use crate::audio::resample::MultiResampler;
+use crate::audio::ENGINE_SAMPLE_RATE;
+use crate::error::{AppError, AppResult};
 
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 
@@ -26,7 +32,10 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::{resolve_input, start_input_stream};
+pub(super) use platform::resolve_input;
+use platform::start_input_stream as start_native_input_stream;
+
+use super::dag::{RESAMPLE_CHUNK, RING_CAPACITY_FRAMES};
 
 /// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
 /// the device side so no resampling happens on capture delivery.
@@ -41,6 +50,22 @@ pub(super) enum InputHandle {
     Cpal(cpal::Stream),
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
+    Normalized(NormalizedInput),
+}
+
+pub(super) struct NormalizedInput {
+    _input: Box<InputHandle>,
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl Drop for NormalizedInput {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 // cpal's coreaudio backend never stops a non-default device's AudioUnit just
@@ -147,4 +172,84 @@ pub(super) fn start_audio_file(
         app.clone(),
     )?;
     Ok(InputHandle::AudioFile(reader))
+}
+
+/// Capture callbacks only enqueue native-rate samples. A dedicated worker
+/// normalizes each input once before the dynamic fan-out reaches the DSP graph.
+pub(super) fn start_input_stream(
+    node_id: &str,
+    resolved: ResolvedInput,
+    bridge: BroadcastRx,
+    paused: Option<Arc<AtomicBool>>,
+    meter: Option<MeterHandle>,
+    app: &AppHandle,
+) -> AppResult<InputHandle> {
+    let sample_rate = resolved.sample_rate();
+    let channels = resolved.native_channels() as usize;
+    let (raw_producer, mut raw_consumer) =
+        RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * channels.max(1));
+    let (mut raw_tx, raw_rx) = broadcast_channel();
+    raw_tx.add(raw_producer)?;
+    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    let label = node_id.to_string();
+    let join = thread::Builder::new()
+        .name(format!("normalize:{label}"))
+        .spawn(move || {
+            let mut bridge = bridge;
+            let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            let mut resampler = if sample_rate == ENGINE_SAMPLE_RATE {
+                None
+            } else {
+                match MultiResampler::new(sample_rate, ENGINE_SAMPLE_RATE, RESAMPLE_CHUNK, channels)
+                {
+                    Ok(resampler) => Some(resampler),
+                    Err(_) => return,
+                }
+            };
+            let mut output_buf = Vec::with_capacity(
+                resampler
+                    .as_ref()
+                    .map(|r| r.out_max() * channels)
+                    .unwrap_or(input_buf.len()),
+            );
+            while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                bridge.apply_commands();
+                if raw_consumer.slots() < input_buf.len() {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                let Ok(chunk) = raw_consumer.read_chunk(input_buf.len()) else {
+                    continue;
+                };
+                let (first, second) = chunk.as_slices();
+                let n = first.len();
+                input_buf[..n].copy_from_slice(first);
+                input_buf[n..].copy_from_slice(second);
+                chunk.commit_all();
+                let normalized = if let Some(resampler) = &mut resampler {
+                    output_buf.clear();
+                    if resampler
+                        .process_chunk(&input_buf, &mut output_buf)
+                        .is_err()
+                    {
+                        break;
+                    }
+                    output_buf.as_slice()
+                } else {
+                    input_buf.as_slice()
+                };
+                if let Some(meter) = &meter {
+                    update_meter(meter, normalized, channels);
+                }
+                bridge.broadcast(normalized);
+            }
+        })
+        .map_err(|e| AppError::Stream(format!("spawn input normalizer: {e}")))?;
+    Ok(InputHandle::Normalized(NormalizedInput {
+        _input: Box::new(input),
+        stop,
+        join: Some(join),
+    }))
 }

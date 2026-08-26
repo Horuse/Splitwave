@@ -23,8 +23,9 @@ use tracing::{info, warn};
 use crate::audio::effects::{
     EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
 };
-use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
+use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats};
+use crate::audio::ENGINE_SAMPLE_RATE;
 use crate::error::{AppError, AppResult};
 
 mod cue;
@@ -41,10 +42,7 @@ pub(crate) use output::RtThread;
 mod sig;
 mod worker;
 
-use dag::{
-    build_output_graph, inputs_feeding_output, OutputGraph, OutputMeta, SourceMeta,
-    RING_CAPACITY_FRAMES,
-};
+use dag::{build_output_graph, OutputGraph, OutputMeta, SourceMeta, RING_CAPACITY_FRAMES};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
@@ -593,7 +591,7 @@ impl ActivePipeline {
     fn apply_full(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
         let monitor_mode = monitor_mode(graph);
 
-        let mut input_native_sr: HashMap<String, u32> = HashMap::new();
+        let mut input_engine_sr: HashMap<String, u32> = HashMap::new();
         let mut input_native_channels: HashMap<String, u32> = HashMap::new();
         let mut input_runtime: HashMap<String, ResolvedInput> = HashMap::new();
         for inp in &graph.inputs {
@@ -606,11 +604,11 @@ impl ActivePipeline {
                 continue;
             }
             if let Some(state) = self.inputs.get(&inp.id) {
-                input_native_sr.insert(inp.id.clone(), state.sample_rate);
+                input_engine_sr.insert(inp.id.clone(), state.sample_rate);
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
                 let resolved = resolve_input(inp)?;
-                input_native_sr.insert(inp.id.clone(), resolved.sample_rate());
+                input_engine_sr.insert(inp.id.clone(), ENGINE_SAMPLE_RATE);
                 input_native_channels.insert(inp.id.clone(), resolved.native_channels());
                 input_runtime.insert(inp.id.clone(), resolved);
             }
@@ -725,18 +723,7 @@ impl ActivePipeline {
             if !rebuild.contains(&out.id) {
                 continue;
             }
-            let file_sr_hint: Option<u32> = match &out.spec {
-                OutputSpec::FileRecording {
-                    format: RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. },
-                    ..
-                } => Some(48_000),
-                OutputSpec::FileRecording { .. } => inputs_feeding_output(out.id.as_str(), graph)
-                    .into_iter()
-                    .filter_map(|input_id| input_native_sr.get(input_id).copied())
-                    .max(),
-                _ => None,
-            };
-            let resolved = resolve_output(out, file_sr_hint)?;
+            let resolved = resolve_output(out, Some(ENGINE_SAMPLE_RATE))?;
             output_runtime.insert(out.id.clone(), resolved);
         }
 
@@ -760,10 +747,7 @@ impl ActivePipeline {
             if !output_runtime.contains_key(&out.id) {
                 continue;
             }
-            let output_sr = output_runtime
-                .get(&out.id)
-                .map(|o| o.sample_rate())
-                .ok_or_else(|| AppError::Validation("missing output runtime".into()))?;
+            let output_sr = ENGINE_SAMPLE_RATE;
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
             let mut built = build_output_graph(
@@ -771,7 +755,7 @@ impl ActivePipeline {
                 output_sr,
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
-                &input_native_sr,
+                &input_engine_sr,
                 &input_native_channels,
                 &mut my_pairs,
                 &mut self.effect_registry,
@@ -837,7 +821,7 @@ impl ActivePipeline {
             let needs_build =
                 monitor_forced || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
             if needs_build {
-                let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
+                let monitor_sr = ENGINE_SAMPLE_RATE;
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
                 // Realtime: the monitor consumes live sources forever, so it must
                 // drop backlog like any other live path. Without this its ring
@@ -848,7 +832,7 @@ impl ActivePipeline {
                     monitor_sr,
                     true,
                     graph,
-                    &input_native_sr,
+                    &input_engine_sr,
                     &input_native_channels,
                     &mut my_pairs,
                     &mut self.effect_registry,
@@ -928,7 +912,7 @@ impl ActivePipeline {
                 let resolved = input_runtime.remove(&input_id).ok_or_else(|| {
                     AppError::Validation(format!("input runtime missing for {input_id}"))
                 })?;
-                let sample_rate = resolved.sample_rate();
+                let sample_rate = ENGINE_SAMPLE_RATE;
                 let channels = resolved.native_channels();
                 let meter = new_input_meters
                     .remove(&input_id)
@@ -987,7 +971,7 @@ impl ActivePipeline {
             if matches!(resolved, ResolvedInput::AudioFile { .. }) {
                 continue;
             }
-            let sample_rate = resolved.sample_rate();
+            let sample_rate = ENGINE_SAMPLE_RATE;
             let channels = resolved.native_channels();
             let meter = new_input_meters
                 .remove(&input_id)

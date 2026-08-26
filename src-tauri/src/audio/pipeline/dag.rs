@@ -1009,7 +1009,7 @@ pub(super) fn build_output_graph(
     output_sr: u32,
     realtime: bool,
     valid: &ValidGraph,
-    input_native_sr: &HashMap<String, u32>,
+    input_engine_sr: &HashMap<String, u32>,
     input_native_channels: &HashMap<String, u32>,
     producer_pairs: &mut Vec<(String, Producer<f32>)>,
     registry: &mut EffectRegistry,
@@ -1173,7 +1173,7 @@ pub(super) fn build_output_graph(
             }
             // File sources are paced by backpressure; dropping backlog plays fast.
             let source_realtime = realtime && !matches!(input.spec, InputSpec::AudioFile { .. });
-            let input_sr = *input_native_sr
+            let input_sr = *input_engine_sr
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
             let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;

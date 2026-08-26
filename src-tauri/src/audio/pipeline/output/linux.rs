@@ -42,7 +42,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let dead = Arc::new(AtomicBool::new(false));
 
     let (producer, mut fill, level, target, io) =
-        speaker_ring(spec.out_channels, graph.latency_frames());
+        speaker_ring(spec.out_channels, spec.sample_rate, graph.latency_frames());
     let fill_pw = move |out: &mut [f32]| {
         fill(out, 0);
         out.len()

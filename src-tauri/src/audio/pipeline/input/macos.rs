@@ -23,13 +23,10 @@ use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 /// mistimed audio.
 const CAPTURE_CHANNELS: u32 = 2;
 
-fn check_capture_format(
-    capture: &crate::audio::capture::Capture,
-    expected_rate: u32,
-) -> AppResult<()> {
-    if capture.sample_rate() != expected_rate || capture.channels() != CAPTURE_CHANNELS {
+fn check_capture_format(capture: &crate::audio::capture::Capture) -> AppResult<()> {
+    if capture.channels() != CAPTURE_CHANNELS {
         return Err(AppError::Stream(format!(
-            "capture format changed while starting: expected {expected_rate} Hz / {CAPTURE_CHANNELS} ch, got {} Hz / {} ch",
+            "capture channel layout changed while starting: expected {CAPTURE_CHANNELS} ch, got {} Hz / {} ch",
             capture.sample_rate(),
             capture.channels()
         )));
@@ -113,7 +110,12 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 sample_rate,
                 bridge,
             )?;
-            check_capture_format(&capture, sample_rate)?;
+            // A process tap's aggregate can settle on a different nominal rate
+            // than the default output observed during graph resolution. The
+            // shared normalizer reads that actual rate and converts to the
+            // fixed engine rate; rejecting this race made App Audio unusable
+            // on otherwise valid 44.1/48 kHz setups.
+            check_capture_format(&capture)?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AppAudio {
@@ -122,7 +124,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         } => {
             let capture =
                 crate::audio::capture::Capture::start_app(&bundle_id, sample_rate, bridge)?;
-            check_capture_format(&capture, sample_rate)?;
+            check_capture_format(&capture)?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {

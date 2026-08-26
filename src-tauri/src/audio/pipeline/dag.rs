@@ -232,6 +232,10 @@ pub(super) struct SourceMeta {
 /// after `start_speaker_stream` returns (see `pipeline/mod.rs`).
 #[derive(Clone)]
 pub(super) struct OutputMeta {
+    /// Stable graph output id (or the monitor sentinel), separate from the
+    /// human-readable label so metrics of unchanged outputs survive a
+    /// single-speaker reconfigure.
+    pub output_id: String,
     pub label: String,
     pub blocks: Arc<AtomicU64>,
     pub sample_rate: u32,
@@ -1568,6 +1572,7 @@ pub(super) fn build_output_graph(
             scopes,
             sources,
             output: OutputMeta {
+                output_id: output_id.unwrap_or("monitor").to_string(),
                 label: out_label,
                 blocks,
                 sample_rate: output_sr,
@@ -1635,6 +1640,7 @@ pub(super) fn build_output_graph(
         scopes,
         sources,
         output: OutputMeta {
+            output_id: output_id.unwrap_or("monitor").to_string(),
             label: out_label,
             blocks,
             sample_rate: output_sr,

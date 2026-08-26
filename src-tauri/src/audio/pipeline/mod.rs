@@ -483,10 +483,14 @@ impl ActivePipeline {
         }
 
         // Drop the meter / xrun tick threads -- they captured stale snapshots.
-        // Fresh ones are spawned at the tail of `apply_full`.
+        // Keep diagnostics for Full survivors: a speaker-rate reconfigure
+        // rebuilds one output only, and losing the other speakers' counters
+        // makes the watcher look like it orphaned their streams.
         self.meter_thread = None;
-        self.source_stats.clear();
-        self.output_stats.clear();
+        self.source_stats
+            .retain(|meta| matches!(cats.get(&meta.output_id), Some(Cat::Full)));
+        self.output_stats
+            .retain(|meta| matches!(cats.get(&meta.output_id), Some(Cat::Full)));
         self.xrun_thread = None;
 
         // Inputs whose spec changed (or vanished) drop here. Consumers
@@ -1241,6 +1245,7 @@ impl ActivePipeline {
             Some(spawn_xrun_thread(
                 self.source_stats.clone(),
                 self.output_stats.clone(),
+                self.speakers.len() as i64,
             ))
         };
 

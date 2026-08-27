@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
@@ -30,6 +30,7 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
     _worker: SpeakerWorker,
     _alive: StreamGuard,
+    _rate_watch: Option<crate::audio::windows_hal::EndpointRateListener>,
 }
 
 // `Stream::drop` isn't guaranteed to stop the underlying device (cpal's macOS
@@ -73,6 +74,22 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
+    // Same pattern as the macOS speaker: the native callback only queues
+    // `SpeakerRateChanged`; the engine resolves the fresh rate and no-ops when
+    // nothing actually changed.
+    let node_for_watch: Arc<str> = Arc::from(node_id);
+    let audio_tx = app.state::<crate::state::AppState>().audio_tx.clone();
+    let app_for_watch = app.clone();
+    let rate_watch = crate::audio::windows_hal::watch_output_sample_rate(
+        &device_name,
+        Arc::new(move || {
+            let _ = audio_tx.send(crate::audio::engine::Command::SpeakerRateChanged {
+                node_id: node_for_watch.clone(),
+                app: app_for_watch.clone(),
+            });
+        }),
+    );
+
     let (producer, fill, level, target, io) =
         speaker_ring(spec.out_channels, spec.sample_rate, graph.latency_frames());
     let app_err = app.clone();
@@ -108,6 +125,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             _stream: stream,
             _worker: worker_handle,
             _alive: StreamGuard::new(),
+            _rate_watch: rate_watch,
         },
         ctrl,
         dead,

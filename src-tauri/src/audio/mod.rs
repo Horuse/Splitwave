@@ -26,6 +26,8 @@ pub mod virtual_device;
 pub mod volume;
 pub mod webrtc;
 pub mod webrtc_codec;
+#[cfg(target_os = "windows")]
+pub mod windows_hal;
 
 /// The only sample rate used by the DSP graph, effects, monitors, and
 /// fixed-rate outputs. Device and capture adapters convert at its boundary.

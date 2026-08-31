@@ -256,7 +256,10 @@
 		if (mode === 'append' && !isAppendable(next)) {
 			patch.mode = 'new';
 		}
-		if (data.filePath && !audioStore.isRunning) {
+		// The path names the *next* recording: a pending change keeps the
+		// running recorder on the activated path (it shows "changes pending"),
+		// while the node already points at the renamed target.
+		if (data.filePath) {
 			patch.filePath = replaceExtension(data.filePath, extension(next));
 		}
 		flow.updateNodeData(id, patch);
@@ -677,6 +680,11 @@
 			<span class="flex items-center gap-1 font-mono text-[9px] text-neutral-500">
 				<Pulse class="size-3" />
 				Waveform
+				{#if !isAppendable(data.format)}
+					<!-- Non-PCM formats have no disk peak source: the scope shows
+					only the live tail, no browsable history. -->
+					<span class="text-neutral-400">· realtime, no history</span>
+				{/if}
 			</span>
 			<Tooltip text={waveVisible ? 'Hide waveform' : 'Show waveform'}>
 				<button type="button" class="nodrag nopan button-main primary size-4 p-0" onclick={toggleWaveform}>
@@ -689,7 +697,11 @@
 			</Tooltip>
 		</div>
 		{#if waveVisible}
-			<WaveformScope nodeId={id} filePath={data.filePath} maxChannels={waveformChannels} />
+			<WaveformScope
+				nodeId={id}
+				filePath={data.filePath}
+				pcm={data.format.kind === 'wav' || data.format.kind === 'aiff'}
+				maxChannels={waveformChannels} />
 		{/if}
 	</div>
 </Wrapper>

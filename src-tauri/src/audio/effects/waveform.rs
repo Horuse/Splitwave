@@ -1,8 +1,14 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::audio::graph::WaveformData;
 
 use super::Effect;
+
+/// Distinguishes recorder sessions in scope/progress payloads: an overwrite
+/// restart rewinds the absolute frame counter, so frame arithmetic alone
+/// cannot tell a fresh session from a stale tail block of the previous one.
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// Scope ring holds several blocks so the 33 ms meter tick never outruns the
 /// ~21 ms DSP block rate. Without this, blocks completing between ticks were
@@ -48,6 +54,12 @@ pub struct WaveformHandle {
     /// Rate the captured samples run at (monitor SR), so the UI can map bins to
     /// frequency without assuming 48 kHz.
     pub sample_rate: u32,
+    /// Recording session this handle belongs to; emitted with every scope and
+    /// progress payload so the UI can drop state owned by a replaced session.
+    pub session: u64,
+    /// Pre-existing file frames this session appends to (0 for a fresh or
+    /// overwrite write); lets the UI keep disk-backed history across an append.
+    pub base_frames: u64,
     state: Arc<Mutex<WaveformState>>,
     spectrum: bool,
 }
@@ -57,6 +69,8 @@ impl WaveformHandle {
         Self {
             node_id,
             sample_rate,
+            session: 0,
+            base_frames: 0,
             state: Arc::new(Mutex::new(WaveformState::new(frames))),
             spectrum,
         }
@@ -66,6 +80,16 @@ impl WaveformHandle {
     /// consumers such as the File Recording node.
     pub fn new(node_id: String, sample_rate: u32) -> Self {
         Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+    }
+
+    /// Scope-size handle for one recorder worker invocation; each call mints a
+    /// fresh session id.
+    pub fn for_recorder(node_id: String, sample_rate: u32, base_frames: u64) -> Self {
+        Self {
+            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            base_frames,
+            ..Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+        }
     }
 
     pub fn is_spectrum(&self) -> bool {
@@ -117,10 +141,14 @@ impl WaveformHandle {
             return;
         }
         let mut g = self.state.lock().unwrap();
-        if g.total == 0 && g.emit_pos == 0 && base_frames > 0 {
-            g.total = base_frames;
-        }
+        // write() resets the counters when it latches the channel stride, so the
+        // append base must be applied after it.
+        let seed = g.total == 0 && g.emit_pos == 0 && base_frames > 0;
         write(&mut g, samples, frames);
+        if seed {
+            g.total = base_frames + frames as u64;
+            g.emit_pos = base_frames;
+        }
     }
 }
 

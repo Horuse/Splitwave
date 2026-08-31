@@ -317,6 +317,39 @@ mod tests {
     }
 
     #[test]
+    fn reads_peaks_from_a_recording_in_progress() {
+        use crate::audio::encoders::build_encoder;
+        use crate::audio::graph::{RecordingFormat, WavBitDepth};
+        let path = temp_path("peaks_live.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        let mut block = Vec::with_capacity(2048);
+        for f in 0..1024 {
+            block.push((f % 256) as f32 / 255.0);
+            block.push(-((f % 256) as f32) / 255.0);
+        }
+        for _ in 0..96 {
+            enc.write_interleaved(&block).unwrap();
+        }
+        enc.flush().unwrap();
+        // Header sizes are patched by the periodic flush; a reader must see the
+        // flushed frames while the encoder still holds the file open.
+        let peaks = read_peaks(&path, 0, 64, 100).unwrap();
+        assert_eq!(peaks.total_frames, 96 * 1024);
+        assert!(peaks.maxs[0][0] > 0.0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn reads_wav_f32_peaks() {
         use crate::audio::encoders::build_encoder;
         use crate::audio::graph::RecordingFormat;

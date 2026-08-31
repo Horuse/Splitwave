@@ -411,6 +411,8 @@ pub(super) fn spawn_meter_thread(
                             "data": chans,
                             "sampleRate": s.sample_rate,
                             "startFrame": start,
+                            "session": s.session,
+                            "baseFrames": s.base_frames,
                         }),
                         None => json!({
                             "nodeId": s.node_id,

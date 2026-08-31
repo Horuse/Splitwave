@@ -409,8 +409,9 @@ pub(super) fn start_recorder_worker(
         Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
 
     // Scope-style waveform feed, emitted to the UI by the meter tick thread.
-    let wave = WaveformHandle::new(node_id.clone(), sample_rate);
+    let wave = WaveformHandle::for_recorder(node_id.clone(), sample_rate, base_frames);
     let wave_thread = wave.clone();
+    let session = wave.session;
 
     // No real-time promotion: this worker blocks on encoder file I/O.
     let channels_usize = channels as usize;
@@ -431,6 +432,8 @@ pub(super) fn start_recorder_worker(
                                 "frames": 0u64,
                                 "sampleRate": sample_rate,
                                 "stopped": true,
+                                "session": session,
+                                "baseFrames": base_frames,
                                 "error": e.to_string(),
                             }),
                         );
@@ -466,6 +469,8 @@ pub(super) fn start_recorder_worker(
                             "nodeId": node_id,
                             "frames": frames_written,
                             "sampleRate": sample_rate,
+                            "session": session,
+                            "baseFrames": base_frames,
                         }),
                     );
                     last_progress = std::time::Instant::now();
@@ -480,6 +485,8 @@ pub(super) fn start_recorder_worker(
                     "frames": frames_written,
                     "sampleRate": sample_rate,
                     "stopped": true,
+                    "session": session,
+                    "baseFrames": base_frames,
                 }),
             );
 

@@ -692,6 +692,10 @@
 						mn = 0;
 						mx = 0;
 					}
+				} else {
+					// Out of the data range (before its start / past the edge):
+					// nothing to load, so a stale "loading" flag must not stick.
+					missing[k] = 0;
 				}
 				pk[k] = mx;
 				tr[k] = mn;
@@ -709,8 +713,9 @@
 		}
 		const stepSamples = step * sampleRate;
 		// Floor, not ceil: a label straddling the left edge keeps rendering,
-		// sliced by the draw clip.
-		const firstSample = Math.floor((viewStartSeg * SEG_FRAMES) / stepSamples) * stepSamples;
+		// sliced by the draw clip. Clamped at 0 -- time starts at the take's
+		// first frame, and negative seconds format as bogus large labels.
+		const firstSample = Math.max(0, Math.floor((viewStartSeg * SEG_FRAMES) / stepSamples) * stepSamples);
 		const outTicks: { x: number; label: string }[] = [];
 		for (let s = firstSample; s < (viewStartSeg + plotW * segsPerCol) * SEG_FRAMES; s += stepSamples) {
 			outTicks.push({

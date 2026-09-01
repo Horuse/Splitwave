@@ -267,8 +267,9 @@
 		minRing = newMin;
 		maxRing = newMax;
 		writeSeg = totalSegs % newCap;
-		// Slots below the copied range were never rewritten.
-		if (!fileMode) ringFrom = totalSegs - keep;
+		// Slots below the copied range were never rewritten; a resize can only
+		// keep what the ring already held, never extend it over zeroed slots.
+		if (!fileMode && ringFrom >= 0) ringFrom = Math.max(ringFrom, totalSegs - keep);
 	}
 
 	let W = $state(0);

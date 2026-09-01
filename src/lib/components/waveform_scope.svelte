@@ -5,26 +5,18 @@
 	import { methods } from '$lib/modules/audio/methods';
 	import { Add, Minus, ChevronDoubleRight } from '$lib/components/icons';
 
-	// Scope-style waveform viewer shared by the Waveform node and the File
-	// Recording node. Incoming scope blocks are pre-binned into fixed segments
-	// (block-aligned, so binning is stable), then the view re-aggregates those
-	// segments under a sub-pixel scroll offset. Because columns only re-bin when
-	// the grid advances a whole column, the envelope never shimmers while new
-	// audio streams in. Interactions mirror the flow editor: wheel zooms, drag
-	// pans, shift+wheel pans, double-click resets to the live edge.
-	//
-	// Rendered on a single Canvas 2D surface scaled by devicePixelRatio for
-	// retina. Envelope columns are drawn directly from precomputed Float32
-	// min/max buffers, with no Svelte reactivity in the hot path. Repaints are
-	// coalesced through rAF and only run when something actually changed.
+	// Canvas waveform viewer shared by the Waveform and File Recording nodes:
+	// scope blocks are pre-binned into fixed segments, and the view
+	// re-aggregates them per column so the envelope never shimmers while
+	// streaming. Repaints are coalesced through rAF.
 	let {
 		nodeId,
 		height = 140,
 		fill = false,
 		pan = true,
 		filePath = null,
-		// Whether the encoder writes PCM (WAV/AIFF) — the disk-peak source.
-		// `null` falls back to the path-extension heuristic.
+		// Encoder writes PCM (WAV/AIFF) — the disk-peak source; `null` falls
+		// back to the path-extension heuristic.
 		pcm = null,
 		maxChannels = null
 	}: {
@@ -34,46 +26,38 @@
 		pan?: boolean;
 		filePath?: string | null;
 		pcm?: boolean | null;
-		// Caps the number of displayed lanes; extra scope channels (e.g. a
-		// phantom multi lane with no cable) are dropped.
+		// Caps displayed lanes; phantom multi lanes without a cable are dropped.
 		maxChannels?: number | null;
 	} = $props();
 
 	const SEG_FRAMES = 64;
-	// Ring capacity floor (~6.4 s of history at 48 kHz); the live ring grows on
-	// demand to cover the visible span so a wide node zoomed out stays filled.
+	// Ring capacity floor (~6.4 s of history at 48 kHz); grows on demand to
+	// the visible span.
 	const BASE_CAP_SEGS = (300 * 1024) / SEG_FRAMES;
-	// Time-label fade zone near the right edge (px).
 	const FADE_PX = 40;
 	const DEFAULT_SEGS = 20; // fixed "×1" reference, so max zoom (1 seg/px) reads ×20 at any sample rate
-	// Fixed zoom steps (label × values), snapped to so the readout never shows
-	// arbitrary fractions. Min 0.1 caps the per-column segment count, which also
-	// bounds the aggregation cost that made long files janky.
+	// Zoom is time-normalized: ×1 covers the same wall-clock window at any
+	// sample rate, so nodes at different rates scroll identically.
+	const REFERENCE_RATE = 48_000;
+	// Fixed zoom steps; the 0.1 floor bounds per-column aggregation cost.
 	const ZOOM_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 7.5, 10, 15, 20];
 	const MAX_FILE_CACHE_SEGS = 200_000;
 	const TIME_H = 18;
 	const SCALE_W = 30;
 	const VERT_PAD = 10;
-	// Minimum height per channel lane, so many lanes don't collapse to a
-	// squished sliver. The widget grows (non-fill mode) to fit `channels`.
+	// Many lanes must not collapse to a sliver; the widget grows to fit.
 	const MIN_LANE_H = 72;
-	// Upper bound on one peak read, so zooming out to the whole file loads it in
-	// chunks instead of one huge read that stalls history while `fetching`.
+	// Caps one peak read so zooming out loads in chunks, not one huge read.
 	const MAX_FETCH_SEGS = 65536;
-	// Extra view-widths of disk cache warmed on both sides of the visible range,
-	// so panning into neighbouring history hits the cache instead of showing
-	// progressive fills. Point fetches only — a whole-file pre-pass would read
-	// gigabytes on long recordings (24 h WAV32 ≈ 13 GB).
+	// Extra view-widths of disk cache warmed around the visible range; point
+	// fetches only -- a whole-file pre-pass would read gigabytes.
 	const PREFETCH_PLOTS = 1;
 	const SCROLLBAR_HIT = 10;
-	// Live-only formats (MP3/Opus/FLAC/AAC) have no disk peak source, so their
-	// browsable history is the binned scope stream itself, kept in a
-	// module-level store keyed by node id: it survives editor entry/exit
-	// (component remounts), which a per-component ring cannot. Cleared only
-	// when a new session rewrites the timeline (overwrite restart).
+	// Live-only formats (MP3/Opus/FLAC/AAC) have no disk peak source: their
+	// browsable history is the binned scope stream, kept per node id so it
+	// survives remounts. Cleared when a new session rewrites the timeline.
 	const liveHistories = new Map<string, { session: number; bins: Map<number, Float32Array>; low: number }>();
-	// Upper bound per node (~3.5 h at 48 kHz, ~1.8 h at 96 kHz); the front is
-	// trimmed once exceeded.
+	// ~3.5 h per node at 48 kHz; trimmed from the front once exceeded.
 	const LIVE_HISTORY_CAP = 200_000;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
@@ -121,27 +105,17 @@
 	let writeSeg = 0;
 	let totalSegs = $state(0);
 
-	// File mode (WAV/AIFF only): the whole recording is browsable by lazily
-	// loading min/max bins from disk for the visible range instead of holding
-	// every sample in RAM. While a recording is in flight, scope deltas for the
-	// same node are also binned into the ring below and drawn over the file's
-	// tail, so following the live edge is real-time instead of lagging disk
-	// flushes. `liveBaseSeg` is the file segment of session frame 0, captured
-	// once the header and the first delta are known; the real-time total is
-	// then `liveBaseSeg + liveTotalSegs`.
-	// Disk peaks follow the encoder's format, not the file's extension: a
-	// pending format change renames the path before the running recorder
-	// switches, and the bytes on disk are what `read_file_peaks` sniffs.
-	// `pcm === null` falls back to the extension heuristic for callers that
-	// don't know their format.
+	// File mode (WAV/AIFF): the recording is browsable by lazy-loading min/max
+	// bins from disk for the visible range; while recording, scope deltas are
+	// binned into a ring and drawn over the file's tail. Disk peaks follow the
+	// encoder's format, not the path extension; `pcm === null` falls back to
+	// the extension heuristic.
 	let fileMode = $derived(pcm === null ? isPcm(filePath) : pcm && filePath != null);
 	let fileCache = new Map<number, Float32Array>();
-	// Total the view/ruler know about (progress-driven; leads the disk by up to
-	// one flush interval while recording).
+	// Progress-driven total; leads the disk by up to one flush interval.
 	let fileTotalSegs = $state(0);
-	// Total actually readable from disk (last successful read). Cache scans
-	// must cap at this: segments past it don't exist on disk yet, so a fetch
-	// can never fill them and the loader would rescan them forever.
+	// Total actually readable from disk; scans must cap here -- past it
+	// nothing can be cached and the scan would chase it forever.
 	let readableTotalSegs = 0;
 	let fileChannels = 0;
 	let fileLoaded = $state(false);
@@ -149,33 +123,27 @@
 	let liveTotalSegs = 0;
 	let liveBaseSeg = -1;
 	let liveActive = $state(false);
-	// Grid-aligned live binning: the total session frames seen and the absolute
-	// grid segment currently being accumulated, so the live ring shares the same
-	// SEG_FRAMES grid as the disk-loaded bins — no drift/time gap at the seam.
+	// Grid-aligned live binning: the live ring shares the SEG_FRAMES grid with
+	// the disk-loaded bins.
 	let liveSessionFrames = 0;
 	let liveOpenAbsSeg = -1;
-	// First absolute grid segment the live ring actually wrote. Mounting into a
-	// session already in flight starts the counter mid-timeline, so ring reads
-	// must stop there or the unwritten slots' zeros would shadow the disk bins.
+	// First segment the live ring wrote this session; ring reads stop there.
 	let liveFirstSeg = -1;
-	// Live-only: first absolute segment this instance binned into the ring. A
-	// mid-session mount starts the ring mid-timeline, so reads below it come
-	// from the shared history store instead of unwritten (zeroed) slots.
-	let binFirstSeg = -1;
-	// True between an observed `stopped` and the next session; ticks of the
-	// ended session still arriving (the meter thread can outrun the recorder's
-	// stop event across threads) are dropped instead of binned.
+	// Live-only: oldest absolute segment the ring holds; older slots are
+	// zeroed after resizes/window slides, so reads fall to the store.
+	let ringFrom = -1;
+	// Last frame the previous scope tick ended at; a forward jump means the
+	// backend ring overwrote frames (a skipped span).
+	let liveLastEnd = -1;
+	// Between an observed `stopped` and the next session: dying-tail ticks.
 	let afterStop = false;
-	// Session id currently rendered; payloads carrying a newer one trigger
-	// adoption below. -1 until the first payload arrives.
+	// Session id currently rendered; newer payloads trigger adoption.
 	let session = -1;
-	// Live-only history store for this node (see `liveHistories`); shared with
-	// other instances of the same node.
+	// Shared with other instances of the same node.
 	let liveStore = liveHistories.get(nodeId) ?? { session: -1, bins: new Map<number, Float32Array>(), low: -1 };
 	liveHistories.set(nodeId, liveStore);
 
-	// Copies the ring bins of one closed live segment into the history store.
-	// `slot` is the segment's ring slot, `ch` the channel count it holds.
+	// Copies one closed segment's ring bins into the history store.
 	function storeLiveBin(seg: number, slot: number, ch: number) {
 		const arr = new Float32Array(ch * 2);
 		for (let c = 0; c < ch; c++) {
@@ -190,9 +158,7 @@
 		}
 	}
 
-	// Drops every file-backed and live-overlay state, e.g. when an overwrite
-	// session rewrites the path: the old totals, cache and live base are all
-	// stale the moment the new session starts.
+	// Everything here is stale the moment a new session starts.
 	function resetFileState() {
 		fileCache.clear();
 		scanCleanKey = '';
@@ -210,9 +176,7 @@
 		liveBaseSeg = 0;
 	}
 
-	// A recorder restart mints a fresh backend session id. Overwrite/new
-	// restart the frame timeline at zero, so the file-backed view must reset
-	// with it; append continues the same timeline and keeps it.
+	// A fresh session id resets the view for overwrite/new; append keeps it.
 	function adoptSession(sid: number, baseFrames: number) {
 		session = sid;
 		afterStop = false;
@@ -225,13 +189,12 @@
 		liveSessionFrames = 0;
 		liveOpenAbsSeg = -1;
 		liveFirstSeg = -1;
+		liveLastEnd = -1;
 		liveBaseSeg = 0;
 		if (baseFrames <= 0) resetFileState();
 	}
 
-	// Same idea for the live-only scope: a session that rewrites the timeline
-	// (overwrite restart) clears the history so the new take draws on an empty
-	// timeline. A remount of the same session or an append keeps it.
+	// An overwrite restart clears the shared history; remount/append keeps it.
 	function adoptLiveSession(sid: number, baseFrames: number) {
 		session = sid;
 		if (liveStore.session !== sid && baseFrames <= 0) {
@@ -242,7 +205,8 @@
 		minRing.fill(0);
 		maxRing.fill(0);
 		writeSeg = 0;
-		binFirstSeg = -1;
+		ringFrom = -1;
+		liveLastEnd = -1;
 		totalSegs = 0;
 		viewEndSeg = 0;
 		following = true;
@@ -265,16 +229,12 @@
 		return Math.max(0, totalSegs - capSegs);
 	}
 
-	// Grows/shrinks the ring to the visible span so zooming out on a wide node
-	// keeps the whole width fed with data. The newest `min(old,new)` segments
-	// are preserved at their `index % newCap` slots, so live reads stay correct.
+	// Grows/shrinks the ring to the visible span, preserving the newest
+	// segments at their `index % newCap` slots.
 	function ensureCap() {
 		const plotW = Math.max(1, W - SCALE_W);
-		// File mode: the disk cache serves the history, so the live ring only
-		// keeps a fixed realtime tail. Growing it to the visible span would
-		// retain the whole zoomed-out view as realtime bins and blank the
-		// unwritten remainder with zeros — a region the disk can't fill because
-		// the ring wins the draw.
+		// File mode keeps a fixed realtime tail: growing the ring would blank
+		// unwritten zeros over the disk history.
 		const needed = fileMode ? BASE_CAP_SEGS : Math.max(BASE_CAP_SEGS, Math.ceil(plotW * segsPerCol));
 		if (needed > capSegs || needed < capSegs / 2) {
 			resizeRings(needed);
@@ -307,6 +267,8 @@
 		minRing = newMin;
 		maxRing = newMax;
 		writeSeg = totalSegs % newCap;
+		// Slots below the copied range were never rewritten.
+		if (!fileMode) ringFrom = totalSegs - keep;
 	}
 
 	let W = $state(0);
@@ -316,8 +278,8 @@
 	let colsCount = 0;
 	let peaks: Float32Array[] = [];
 	let troughs: Float32Array[] = [];
-	// File mode only: 1 when a column still has uncached segments inside the
-	// file's flushed range, so the draw pass can shade it as "loading".
+	// File mode: a column has uncached segments in the flushed range; the draw
+	// shades it as "loading".
 	let missing: Uint8Array = new Uint8Array(0);
 	let off = 0;
 	let ticks: { x: number; label: string }[] = [];
@@ -340,7 +302,8 @@
 		minRing = new Float32Array(capSegs * eff);
 		maxRing = new Float32Array(capSegs * eff);
 		writeSeg = 0;
-		binFirstSeg = -1;
+		ringFrom = -1;
+		liveLastEnd = -1;
 		totalSegs = 0;
 		viewEndSeg = 0;
 		following = true;
@@ -356,12 +319,9 @@
 	function segEnvelope(seg: number, c: number): [number, number] | null {
 		if (fileMode) {
 			if (liveActive && liveBaseSeg >= 0 && liveTotalSegs > 0 && (liveFirstSeg < 0 || seg >= liveFirstSeg)) {
-				// `liveBaseSeg` is captured once, so the live envelope never
-				// re-bins when the disk-backed total advances on flush/progress.
 				const li = seg - liveBaseSeg;
 				if (li >= 0 && li < liveTotalSegs && li >= liveTotalSegs - capSegs) {
-					// Ring is keyed by absolute segment (grid-aligned), so read
-					// the slot by `seg`, not the relative `li`.
+					// The ring is keyed by absolute segment, not by `li`.
 					const slot = ((seg % capSegs) + capSegs) % capSegs;
 					return [minRing[slot * channels + c], maxRing[slot * channels + c]];
 				}
@@ -369,16 +329,14 @@
 			const e = fileCache.get(seg);
 			return e ? [e[c * 2], e[c * 2 + 1]] : null;
 		}
-		// The ring only holds what this instance binned (from `binFirstSeg`);
-		// older segments come from the shared history store, and neither means
-		// no data yet -- not the ring's unwritten zeros.
-		if (binFirstSeg >= 0 && seg >= binFirstSeg) {
+		if (ringFrom >= 0 && seg >= ringFrom) {
 			const d = totalSegs - 1 - seg;
 			if (d >= 0 && d < capSegs) {
 				const base = segSlot(d) * channels + c;
 				return [minRing[base], maxRing[base]];
 			}
 		}
+		// Outside the ring's held range: the shared history store, or no data.
 		const e = liveStore.bins.get(seg);
 		return e ? [e[c * 2], e[c * 2 + 1]] : null;
 	}
@@ -393,21 +351,15 @@
 		liveSessionFrames = 0;
 		liveOpenAbsSeg = -1;
 		liveFirstSeg = -1;
-		// Scope startFrame is file-absolute (the recorder seeds its counter
-		// with the append base), so the overlay always anchors at segment 0.
+		liveLastEnd = -1;
+		// startFrame is file-absolute, so the overlay anchors at segment 0.
 		liveBaseSeg = 0;
 		applyMinHeight();
 	}
 
-	// The absolute base of the live session is set in `onScope` before the
-	// first bin and on `ensureLiveRing`; it never needs later adjustment.
-
-	// Bins one live block into the ring, aligned to the *absolute* SEG_FRAMES
-	// grid so the live tail and the disk-loaded bins cover identical frame
-	// ranges. `sessionStartFrame` is the scope-reported absolute frame of the
-	// block's first sample; binning from it keeps the ring exactly aligned even
-	// if a block is dropped. A segment straddling two blocks is merged by
-	// reading back the open slot.
+	// Bins one live block into the ring aligned to the absolute SEG_FRAMES
+	// grid, so the live tail matches the disk bins exactly; a segment
+	// straddling two blocks merges by reading back the open slot.
 	function binLiveGrid(data: number[][], ch: number, frames: number, sessionStartFrame: number): void {
 		for (let f = 0; f < frames; ) {
 			const sFrame = sessionStartFrame + f;
@@ -442,10 +394,8 @@
 		}
 	}
 
-	// Bins one incoming block into the min/max ring, returning the number of
-	// segments written. `head` is the write head of whichever ring the caller
-	// owns (the scope ring or the live overlay); a segment lands at
-	// `index % capSegs`.
+	// Bins one incoming block into the min/max ring at `head`; a segment lands
+	// at `index % capSegs`.
 	function binBlock(data: number[][], ch: number, frames: number, head: number): number {
 		const segsInBlock = Math.max(1, Math.ceil(frames / SEG_FRAMES));
 		for (let s = 0; s < segsInBlock; s++) {
@@ -474,7 +424,7 @@
 	function onScope(p: ScopeTick) {
 		if (p.nodeId !== nodeId) return;
 		if (fileMode) {
-			if (p.sampleRate) sampleRate = p.sampleRate;
+			setSampleRate(p.sampleRate);
 			// Session ids only move forward; a smaller one is a straggler from
 			// an already-replaced recording, and an equal one after `stopped`
 			// is its dying tail -- neither may touch the current state.
@@ -490,14 +440,18 @@
 			ensureLiveRing(p.channels);
 			liveActive = true;
 			const startFrame = p.startFrame ?? liveSessionFrames;
+			// A scope-ring overrun skips grid segments; cut the ring at the gap
+			// so the skipped span loads from the disk cache instead of showing
+			// the ring's stale slots.
+			if (liveLastEnd >= 0 && startFrame > liveLastEnd) {
+				liveFirstSeg = liveBaseSeg + Math.floor(startFrame / SEG_FRAMES);
+			}
+			liveLastEnd = startFrame + frames;
 			binLiveGrid(p.data, channels, frames, startFrame);
 			liveSessionFrames += frames;
 			if (liveBaseSeg >= 0) {
-				// The live overlay is the source of truth for the recording's
-				// tail. Advance the total at scope cadence so the ruler and the
-				// right edge move smoothly; `fileTotalSegs` stays the flushed
-				// disk total so history loading never reaches into unflushed
-				// (live-only) frames.
+				// The live overlay owns the tail total; fileTotalSegs stays the
+				// flushed disk total so loading never reaches unflushed frames.
 				const rt = liveBaseSeg + liveTotalSegs;
 				totalSegs = Math.max(totalSegs, rt);
 			}
@@ -506,9 +460,8 @@
 			return;
 		}
 		// Live-only scopes (compressed formats have no disk peak source) track
-		// the recorder's session too: without this an overwrite restart would
-		// append the new take onto the old waveform's tail. Effect scopes
-		// (no startFrame, constant session 0) never trigger it.
+		// the session too: without this an overwrite restart would append the
+		// new take onto the old waveform's tail.
 		const sid = p.session ?? 0;
 		if (p.startFrame !== undefined) {
 			if (sid < session) return;
@@ -517,46 +470,55 @@
 			session = sid;
 		}
 		ensureRing(p.channels);
-		if (p.sampleRate) sampleRate = p.sampleRate;
+		setSampleRate(p.sampleRate);
 		const frames = p.data[0]?.length ?? 0;
 		if (frames === 0) return;
 		const head = writeSeg;
 		const segs = binBlock(p.data, channels, frames, head);
 		writeSeg = (writeSeg + segs) % capSegs;
-		// Recorder scopes carry file-absolute frames: entering mid-session
-		// pins the live edge to the true recording position. History before
-		// the entry comes from the shared store; with none, it stays blank.
+		// Recorder scopes carry file-absolute frames: mid-session entry pins
+		// the live edge to the true recording position.
 		totalSegs = p.startFrame !== undefined ? Math.floor((p.startFrame + frames) / SEG_FRAMES) : totalSegs + segs;
-		// Closed segments land in the shared per-node history, which survives
-		// remounts and appends; the ring alone holds only the recent window.
+		// Closed segments land in the shared history, which survives remounts
+		// and appends.
 		const first = Math.max(0, totalSegs - segs);
+		// A scope-ring overrun skips segments; cut the ring at the gap so the
+		// stale slots cannot render as shifted data.
+		if (liveLastEnd >= 0 && p.startFrame !== undefined && p.startFrame > liveLastEnd) ringFrom = first;
+		liveLastEnd = p.startFrame !== undefined ? p.startFrame + frames : Math.max(0, liveLastEnd) + frames;
 		for (let s = 0; s < segs; s++) storeLiveBin(first + s, (head + s) % capSegs, channels);
-		if (binFirstSeg < 0) binFirstSeg = first;
+		ringFrom = ringFrom < 0 ? first : Math.max(ringFrom, totalSegs - capSegs);
 		if (following) viewEndSeg = totalSegs;
 		markDirty();
 	}
 
 	function clampSegs() {
 		zoomLevelF = Math.min(Math.max(zoomLevelF, ZOOM_LEVELS[0]), ZOOM_LEVELS[ZOOM_LEVELS.length - 1]);
-		// Snap to the nearest fixed level; the 0.1 floor keeps the per-column
-		// aggregation cost bounded. No data-fitting cap: zooming out past the
-		// available content just leaves leading empty space, as in any editor.
+		// Snap to the fixed level; no data-fitting cap -- zooming out leaves
+		// leading empty space, as in any editor.
 		let best = ZOOM_LEVELS[0];
 		for (const l of ZOOM_LEVELS) {
 			if (Math.abs(l - zoomLevelF) < Math.abs(best - zoomLevelF)) best = l;
 		}
 		zoomLevel = best;
-		segsPerCol = Math.max(1, Math.round(DEFAULT_SEGS / zoomLevel));
+		segsPerCol = Math.max(1, Math.round((DEFAULT_SEGS * sampleRate) / REFERENCE_RATE / zoomLevel));
 		ensureCap();
 		updateZoomLabel();
+	}
+
+	// A rate change rescales the time-normalized zoom.
+	function setSampleRate(sr: number | undefined) {
+		if (!sr || sr === sampleRate) return;
+		sampleRate = sr;
+		clampSegs();
+		markDirty();
 	}
 
 	function clampView() {
 		const availStart = dataStart();
 		const plotW = Math.max(1, W - SCALE_W);
-		// Capped at `totalSegs`: a view wider than the available data must keep
-		// the live edge, leaving leading empty space, rather than pushing past
-		// the end (which would flicker against `following`).
+		// Capped at totalSegs: a wider view keeps the live edge rather than
+		// pushing past it (which would flicker against `following`).
 		const minViewEnd = Math.min(availStart + plotW * segsPerCol, totalSegs);
 		viewEndSeg = Math.max(minViewEnd, Math.min(totalSegs, viewEndSeg));
 	}
@@ -572,8 +534,7 @@
 
 	function zoomAt(px: number, factor: number) {
 		if (!pan || following) {
-			// Monitor mode, or following the live edge: zoom stays pinned to the
-			// edge so the timeline keeps advancing while you zoom.
+			// Zoom stays pinned to the live edge.
 			zoomLevelF /= factor;
 			clampSegs();
 			viewEndSeg = totalSegs;
@@ -664,8 +625,7 @@
 	}
 
 	function scrollbarPanByPx(dx: number) {
-		// Dragging the thumb pans content 1:1 with the cursor, like the body, so
-		// a pixel moves the same distance regardless of file length.
+		// Thumb pans 1:1 with the cursor, like the body.
 		viewEndSeg -= dx * segsPerCol;
 		clampView();
 		following = viewEndSeg >= totalSegs;
@@ -690,12 +650,9 @@
 		}
 		const availStart = dataStart();
 		const viewStartSeg = viewEndSeg - plotW * segsPerCol;
-		// Right-anchored stable grid: column boundaries are multiples of
-		// `segsPerCol` counted from the view *end*, so the rightmost column
-		// always covers the newest audio. A left-anchored grid leaves that
-		// column empty whenever the left edge aligns to a boundary (`off === 0`,
-		// which is permanent at ×20 where segsPerCol === 1) — a flat notch at
-		// the live edge that visibly fills in as the view scrolls.
+		// Right-anchored grid: columns are multiples of `segsPerCol` from the
+		// view end, so the rightmost column always covers the newest audio (a
+		// left-anchored grid leaves a flat notch at the live edge).
 		const rightAnchor = Math.ceil(viewEndSeg / segsPerCol) * segsPerCol;
 		off = (rightAnchor - viewEndSeg) / segsPerCol;
 
@@ -750,15 +707,13 @@
 			}
 		}
 		const stepSamples = step * sampleRate;
-		// Floor, not ceil: one tick before the view start is kept so a label
-		// straddling the left boundary keeps rendering (sliced by the draw
-		// clip) instead of vanishing whole the moment its anchor crosses.
+		// Floor, not ceil: a label straddling the left edge keeps rendering,
+		// sliced by the draw clip.
 		const firstSample = Math.floor((viewStartSeg * SEG_FRAMES) / stepSamples) * stepSamples;
 		const outTicks: { x: number; label: string }[] = [];
 		for (let s = firstSample; s < (viewStartSeg + plotW * segsPerCol) * SEG_FRAMES; s += stepSamples) {
 			outTicks.push({
-				// Fractional x so ticks glide with the stream instead of
-				// integer-snapping (which read as micro-stutter).
+				// Fractional x so ticks glide with the stream.
 				x: SCALE_W + (s / SEG_FRAMES - viewStartSeg) / segsPerCol,
 				label: formatTime(s / sampleRate)
 			});
@@ -781,10 +736,8 @@
 		c.closePath();
 	}
 
-	// Grows (or shrinks back) the fixed-height widget so every channel lane
-	// stays at least `MIN_LANE_H` tall. Fill mode (parent-driven height) and the
-	// base `height` are the floor, so dropping from many lanes (multi) back to
-	// mono doesn't leave a stretched, full-height waveform.
+	// Keeps every lane >= MIN_LANE_H; `fill` mode and the base height are the
+	// floor.
 	function applyMinHeight() {
 		if (fill) return;
 		const need = TIME_H + channels * MIN_LANE_H;
@@ -800,8 +753,7 @@
 
 	function draw() {
 		const c = ctx;
-		// `canvas`/`ctx` are nulled on unmount; a rAF or async fetch may still
-		// land after teardown, so bail instead of touching a removed element.
+		// canvas/ctx are nulled on unmount; a rAF may still land after teardown.
 		if (!c || !canvas) return;
 		const dpr = window.devicePixelRatio || 1;
 		const bw = Math.max(1, Math.round(W * dpr));
@@ -834,17 +786,14 @@
 				c.stroke();
 
 				if (pk) {
+					// Float recordings can exceed 1.0; clip to the lane.
 					c.save();
-					// Clip to this channel's lane: float recordings can hold
-					// amplitudes above 1.0, and an unclipped envelope would draw
-					// over the neighbouring lanes.
 					c.beginPath();
 					c.rect(SCALE_W, top, W - SCALE_W, laneH);
 					c.clip();
 					c.beginPath();
-					// Right-anchored: x0 is the newest column's centre, at the
-					// right edge; index k runs right-to-left. The +0.5 tile keeps
-					// the columns covering the full plot at every sub-pixel off.
+					// Right-anchored: k runs right-to-left from the newest column;
+					// +0.5 keeps the plot covered at every sub-pixel off.
 					const x0 = W - 0.5 + off;
 					c.moveTo(x0, mid - pk[0] * halfH);
 					for (let k = 1; k < colsCount; k++) c.lineTo(x0 - k, mid - pk[k] * halfH);
@@ -858,8 +807,7 @@
 					c.lineWidth = 0.75;
 					c.lineJoin = 'round';
 					c.stroke();
-					// Shade columns whose disk bins haven't arrived yet, so
-					// progressive loading reads as a background fill, not a gap.
+					// Shade columns whose disk bins haven't arrived yet.
 					if (fileMode) {
 						c.fillStyle = 'rgba(255,255,255,0.04)';
 						for (let k = 0; k < colsCount; k++) {
@@ -898,15 +846,13 @@
 			c.lineTo(W, TIME_H - 1);
 			c.stroke();
 
-			// Clip to the plot area: a label crossing the left boundary is
-			// sliced mid-glyph instead of vanishing whole at the edge.
+			// Clip to the plot area so boundary labels slice, not vanish.
 			c.save();
 			c.beginPath();
 			c.rect(SCALE_W, 0, W - SCALE_W, H);
 			c.clip();
 			for (const t of ticks) {
-				// Fade tick + label as the label nears the right edge so it glides
-				// out instead of being clipped mid-glyph.
+				// Fade near the right edge so labels glide out, not clip.
 				c.font = '7.5px monospace';
 				const labelW = c.measureText(t.label).width;
 				const fade = Math.max(0, Math.min(1, (W - (t.x + 3 + labelW)) / FADE_PX));
@@ -960,7 +906,7 @@
 			if (res.channels > 0) {
 				fileChannels = res.channels;
 				channels = maxChannels ? Math.min(res.channels, maxChannels) : res.channels;
-				sampleRate = res.sampleRate;
+				setSampleRate(res.sampleRate);
 				applyMinHeight();
 			}
 			// Never regress: progress may already know a larger total than the
@@ -1120,10 +1066,8 @@
 		}
 		const rect = wrap.getBoundingClientRect();
 		const y = e.clientY - rect.top;
+		// Pressing the track starts a thumb drag, not a jump.
 		if (y >= H - SCROLLBAR_HIT && canScroll()) {
-			// Pressing the track starts a drag, not a jump: only thumb movement
-			// pans (1:1 with the cursor). A click on empty space near the bottom
-			// must not throw the view across the file.
 			scrollbarDragging = true;
 			lastX = e.clientX;
 			e.preventDefault();
@@ -1164,9 +1108,8 @@
 	}
 
 	let ro: ResizeObserver | undefined;
-	// Set on destroy; the mount-time listeners resolve asynchronously, so a
-	// fast route change would otherwise leave them registered forever, with
-	// every tick waking the dead component (derived_inert flood, dead UI).
+	// Set on destroy: mount-time listeners resolve asynchronously, and a fast
+	// teardown would leave them waking a dead component.
 	let disposed = false;
 
 	// Reset and load from disk when a PCM-capable path is set or changes.
@@ -1187,23 +1130,21 @@
 		liveSessionFrames = 0;
 		liveOpenAbsSeg = -1;
 		liveFirstSeg = -1;
-		binFirstSeg = -1;
+		ringFrom = -1;
+		liveLastEnd = -1;
 		liveBaseSeg = -1;
 		liveActive = false;
 		session = -1;
 		markDirty();
 	});
 
-	// File mode only: recorder progress carries the real-time total (base +
-	// session), which the live overlay uses to advance the tail between disk
-	// reads, and `stopped` hands the tail back to disk for the final state.
+	// File mode: progress carries the real-time total; `stopped` hands the
+	// tail back to disk for the final state.
 	function onProgress(p: RecorderProgress) {
 		if (p.nodeId !== nodeId || !fileMode) return;
-		if (p.sampleRate) sampleRate = p.sampleRate;
+		setSampleRate(p.sampleRate);
 		const sid = p.session ?? 0;
-		// Same forward-only rule as `onScope`: a smaller id is a straggler of
-		// an already-replaced session; a new one adopts (and resets for
-		// overwrite/new) before any of its numbers touch the state.
+		// Same forward-only rule as `onScope`.
 		if (sid < session) return;
 		if (sid !== session) adoptSession(sid, p.baseFrames ?? 0);
 		if (p.frames > 0) {
@@ -1229,11 +1170,10 @@
 			liveSessionFrames = 0;
 			liveOpenAbsSeg = -1;
 			liveFirstSeg = -1;
+			liveLastEnd = -1;
 			liveBaseSeg = 0;
-			// Clear the view so a loader shows during a restart gap instead
-			// of the stale wave. If no fresh session follows (permanent
-			// stop), the timer restores the recorded file from the intact
-			// cache below.
+			// Blank the view during a restart gap; with no fresh session the
+			// timer below restores the recorded file.
 			totalSegs = 0;
 			viewEndSeg = 0;
 			following = true;

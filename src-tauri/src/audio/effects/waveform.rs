@@ -11,10 +11,9 @@ use super::Effect;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// Scope ring holds several blocks so the 33 ms meter tick never outruns the
-/// ~21 ms DSP block rate. Without this, blocks completing between ticks were
-/// overwritten before emission and every scope dropped a different, drifting
-/// subset of blocks, so two identical nodes rendered different waveforms.
-pub const SCOPE_RING_FRAMES: usize = 8192;
+/// ~21 ms DSP block rate; a longer tick stall overwrites the oldest frames,
+/// which the UI renders as a skipped span.
+pub const SCOPE_RING_FRAMES: usize = 16384;
 
 /// Spectrum nodes need a longer contiguous window than the scope: a single
 /// 1024-frame block is ~47 Hz/bin and cannot separate low tones. 4096 frames
@@ -69,7 +68,9 @@ impl WaveformHandle {
         Self {
             node_id,
             sample_rate,
-            session: 0,
+            // Every handle owns one timeline: a rebuilt graph must adopt as a
+            // new session, or the UI's absolute frame counters rewind under it.
+            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             base_frames: 0,
             state: Arc::new(Mutex::new(WaveformState::new(frames))),
             spectrum,
@@ -82,11 +83,9 @@ impl WaveformHandle {
         Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
     }
 
-    /// Scope-size handle for one recorder worker invocation; each call mints a
-    /// fresh session id.
+    /// Scope-size handle for one recorder worker invocation.
     pub fn for_recorder(node_id: String, sample_rate: u32, base_frames: u64) -> Self {
         Self {
-            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             base_frames,
             ..Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
         }

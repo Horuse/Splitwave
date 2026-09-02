@@ -102,6 +102,50 @@ pub(super) fn resolve_output(
             let path = PathBuf::from(file_path);
             let sample_rate = pinned.or(file_sr_hint).unwrap_or(RECORDER_DEFAULT_SR);
             let append = *mode == RecordingMode::Append;
+            // Overwrite erases the file up front -- the confirmed modal's
+            // contract -- so every encoder starts from a clean path: the FLAC
+            // writer refuses existing files, and CoreAudio's AAC rejects
+            // arbitrary sample rates, custom ones included.
+            if *mode == RecordingMode::Overwrite && path.exists() {
+                std::fs::remove_file(&path)
+                    .map_err(|e| AppError::Stream(format!("remove {}: {e}", path.display())))?;
+            }
+            if let RecordingFormat::Aac { bitrate } = format {
+                // Probed limits of Apple's AAC encoder (macOS 14): it encodes
+                // only 32/44.1/48 kHz, with bitrate bounds scaling by channel
+                // count under a 320 kbps absolute cap.
+                let channels = u32::from(*channels);
+                let (min_per_ch, max_per_ch) = match sample_rate {
+                    32_000 => (24_000, 96_000),
+                    44_100 | 48_000 => (32_000, 256_000),
+                    _ => {
+                        return Err(AppError::Validation(format!(
+                            "AAC supports only 32000, 44100 and 48000 Hz, {sample_rate} Hz requested"
+                        )));
+                    }
+                };
+                let bounds = (min_per_ch * channels, (max_per_ch * channels).min(320_000));
+                if *bitrate < bounds.0 || *bitrate > bounds.1 {
+                    return Err(AppError::Validation(format!(
+                        "AAC bitrate {bitrate} bps is out of {}..{} at {sample_rate} Hz",
+                        bounds.0, bounds.1
+                    )));
+                }
+            }
+            if let RecordingFormat::Mp3 { bitrate_kbps } = format {
+                // LAME CBR ranges track the MPEG layer of the sample rate.
+                let bounds = match sample_rate {
+                    32_000 | 44_100 | 48_000 => (32, 320),
+                    16_000 | 22_050 | 24_000 => (8, 160),
+                    _ => (8, 64),
+                };
+                if *bitrate_kbps < bounds.0 || *bitrate_kbps > bounds.1 {
+                    return Err(AppError::Validation(format!(
+                        "MP3 bitrate {bitrate_kbps} kbps is out of {}..{} at {sample_rate} Hz",
+                        bounds.0, bounds.1
+                    )));
+                }
+            }
             let base_frames = if append && path.exists() {
                 validate_append_target(&path, sample_rate, *channels, *format)?
             } else {

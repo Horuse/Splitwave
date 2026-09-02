@@ -245,12 +245,14 @@ impl Default for RecordingFormat {
 }
 
 impl RecordingFormat {
-    /// LAME and the plain Opus encoder are two-channel; FLAC and AAC cap by spec.
+    /// LAME, the plain Opus encoder and Apple's AAC encoder are two-channel
+    /// (probed: CoreAudio's AAC rejects 3+ channels); FLAC caps by spec.
     pub fn max_channels(self) -> u16 {
         match self {
-            RecordingFormat::Mp3 { .. } | RecordingFormat::Opus { .. } => 2,
+            RecordingFormat::Mp3 { .. }
+            | RecordingFormat::Opus { .. }
+            | RecordingFormat::Aac { .. } => 2,
             RecordingFormat::Flac { .. } => 8,
-            RecordingFormat::Aac { .. } => 48,
             RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. } => 512,
         }
     }
@@ -1034,9 +1036,16 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                     )));
                 }
                 if let Some(sr) = data.sample_rate {
-                    if !(8000..=384_000).contains(&sr) {
+                    // FLAC's format tops out at 655350 Hz (20-bit rate field);
+                    // every other recording format caps at 384000.
+                    let max = if matches!(data.format, RecordingFormat::Flac { .. }) {
+                        655_350
+                    } else {
+                        384_000
+                    };
+                    if !(8000..=max).contains(&sr) {
                         return Err(AppError::Validation(format!(
-                            "recording node {} pins sample rate {sr}; expected 8000..384000",
+                            "recording node {} pins sample rate {sr}; expected 8000..{max}",
                             n.id
                         )));
                     }

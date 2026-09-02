@@ -134,24 +134,32 @@ impl AudioEncoder for Mp3Recorder {
     }
 }
 
+/// LAME CBR is discrete, so a custom bitrate snaps to the nearest rung.
 fn bitrate_to_lame(kbps: u32) -> mp3lame_encoder::Bitrate {
     use mp3lame_encoder::Bitrate::*;
-    match kbps {
-        ..=8 => Kbps8,
-        ..=16 => Kbps16,
-        ..=24 => Kbps24,
-        ..=32 => Kbps32,
-        ..=40 => Kbps40,
-        ..=48 => Kbps48,
-        ..=64 => Kbps64,
-        ..=80 => Kbps80,
-        ..=96 => Kbps96,
-        ..=112 => Kbps112,
-        ..=128 => Kbps128,
-        ..=160 => Kbps160,
-        ..=192 => Kbps192,
-        ..=224 => Kbps224,
-        ..=256 => Kbps256,
-        _ => Kbps320,
+    const LADDER: [(u32, mp3lame_encoder::Bitrate); 16] = [
+        (8, Kbps8),
+        (16, Kbps16),
+        (24, Kbps24),
+        (32, Kbps32),
+        (40, Kbps40),
+        (48, Kbps48),
+        (64, Kbps64),
+        (80, Kbps80),
+        (96, Kbps96),
+        (112, Kbps112),
+        (128, Kbps128),
+        (160, Kbps160),
+        (192, Kbps192),
+        (224, Kbps224),
+        (256, Kbps256),
+        (320, Kbps320),
+    ];
+    let mut best = LADDER[0];
+    for pair in LADDER {
+        if (pair.0 as i64 - kbps as i64).abs() < (best.0 as i64 - kbps as i64).abs() {
+            best = pair;
+        }
     }
+    best.1
 }

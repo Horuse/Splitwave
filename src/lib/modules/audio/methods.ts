@@ -13,6 +13,7 @@ import type {
 	StartPipelinePayload,
 	VirtualDeviceConfig,
 	VirtualDriverStatus,
+	WindowsVirtualCableStatus,
 	VolumeChange
 } from './types';
 
@@ -78,6 +79,8 @@ export const methods = {
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> => listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),
 	onSpeakerError: (cb: () => void): Promise<UnlistenFn> => listen('audio://speaker_error', () => cb()),
 	virtualDriverStatus: (): Promise<VirtualDriverStatus> => invoke<VirtualDriverStatus>('virtual_driver_status'),
+	windowsVirtualCableStatus: (): Promise<WindowsVirtualCableStatus> => invoke<WindowsVirtualCableStatus>('windows_virtual_cable_status'),
+	installWindowsVirtualCable: (): Promise<WindowsVirtualCableStatus> => invoke<WindowsVirtualCableStatus>('install_windows_virtual_cable'),
 	installVirtualDriver: (): Promise<void> => invoke('install_virtual_driver'),
 	uninstallVirtualDriver: (): Promise<void> => invoke('uninstall_virtual_driver'),
 	applyVirtualDevices: (devices: VirtualDeviceConfig[]): Promise<void> => invoke('apply_virtual_devices', { devices }),

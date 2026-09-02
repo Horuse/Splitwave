@@ -82,6 +82,36 @@ export interface VirtualDeviceConfig {
 	channels: number;
 }
 
+export type WindowsVirtualCableState =
+	| 'notInstalled'
+	| 'installedExternal'
+	| 'installedManaged'
+	| 'partial'
+	| 'rebootRequired'
+	| 'removalPendingReboot'
+	| 'unknownOwnership';
+
+export type WindowsVirtualCableOwnership = 'external' | 'managed' | 'unknown';
+
+export interface WindowsVirtualCableStatus {
+	state: WindowsVirtualCableState;
+	usable: boolean;
+	provider: string;
+	installedVersion: string | null;
+	renderEndpointName: string | null;
+	captureEndpointName: string | null;
+	ownership: WindowsVirtualCableOwnership;
+	managedBySplitwave: boolean;
+	rebootRequired: boolean;
+	detail: string | null;
+}
+
+export interface WindowsVirtualCableError {
+	code: string;
+	message: string;
+	installerExitCode?: number | null;
+}
+
 export type AudioStateEvent = { kind: 'started' } | { kind: 'stopped' } | { kind: 'error'; message: string };
 
 export interface StartPipelinePayload {

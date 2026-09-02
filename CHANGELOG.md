@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-17
+
+### Added
+
+- **Persistent pipeline activation** - the pipeline that was running when the
+  app closed is remembered and starts again on launch. App Audio and Audio File
+  sources that are not available yet are left out and reconnect automatically
+  once they appear (#21).
+- **Device volume in dB** - the hardware volume sliders on input and output
+  nodes show their attenuation in decibels and follow changes made outside the
+  app through native OS listeners on every platform (#20).
+- **Native audio on Linux** - device volume is driven through libpulse and
+  virtual devices through the PipeWire library instead of shelling out to
+  `wpctl`, `pactl` and `pw-cli` (#23).
+- **End-to-end latency badge in the header** - combines the input backlog, the
+  graph's delay compensation and the adaptive output buffer into one live
+  readout.
+- **System theme** - the header theme toggle now cycles light, dark and system.
+
+### Changed
+
+- Recording is paced by the wall clock, so file sources that decode faster than
+  real time no longer over-run the encoder.
+- Speaker ring fill adapts to the device's own buffer size, running at that
+  latency instead of underrunning on large-buffer (PipeWire) setups.
+
+### Fixed
+
+- Update checks work in sandboxed AppImage builds on Linux (bundled
+  CA roots), and a missing build for the current OS/arch shows a friendly note
+  instead of an error.
+- Activating a pipeline from the list prompts for a missing recording file
+  instead of failing.
+- Pipeline name input sizes itself to its content and is capped at 64
+  characters.
+- Virtual device page marks unsaved edits as dirty until applied.
+- Log and snapshot lists no longer produce duplicate list keys (#18).
+
 ## [1.0.0]
 
 ### Added
@@ -148,6 +186,7 @@ Initial release.
 - Undo/redo, node copy/paste, pipeline snapshot history, auto-update and the
   virtual audio driver.
 
+[1.1.0]: https://github.com/Horuse/Splitwave/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Horuse/Splitwave/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/Horuse/Splitwave/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Horuse/Splitwave/compare/v0.3.0...v0.4.0

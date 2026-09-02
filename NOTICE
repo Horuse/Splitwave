@@ -146,7 +146,27 @@ licenses and are not distributed with Splitwave.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-7. Dependency License Gating
+7. VB-Audio VB-CABLE (Windows virtual microphone)
+-----------------------------------------------
+
+On Windows, Splitwave can install and manage the standard VB-CABLE virtual
+audio driver from VB-Audio Software. VB-CABLE is a third-party donationware
+component; it is not developed by Splitwave and is not covered by Splitwave's
+MIT license.
+
+  VB-CABLE origin:     https://www.vb-cable.com
+  VB-CABLE information: https://vb-audio.com/Cable/
+  Licensing terms:     https://vb-audio.com/Services/licensing.htm
+
+Splitwave downloads only the standard VB-CABLE package from VB-Audio's official
+HTTPS host after an explicit user action. The user-facing setup identifies
+VB-CABLE as donationware and provides the official information page. VB-Audio's
+licensing terms may require a separate distribution or volume license for
+professional deployments.
+
+
+-----------------------------------------------------------------
+8. Dependency License Gating
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The Rust dependency tree is checked in CI with `cargo-deny` against
@@ -156,7 +176,7 @@ than reviewed after the fact.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-8. Other Notable Dependencies
+9. Other Notable Dependencies
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The following components are used under permissive licenses

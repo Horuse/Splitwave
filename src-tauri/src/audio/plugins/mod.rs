@@ -42,7 +42,6 @@ pub use scan::scan_all;
 #[ts(export)]
 pub enum PluginFormat {
     Clap,
-    #[cfg(target_os = "macos")]
     Au,
     Vst3,
 }

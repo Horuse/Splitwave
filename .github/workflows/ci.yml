@@ -26,7 +26,15 @@ jobs:
           command: check licenses bans
 
   check:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # windows-latest ships CMake 4.x, which rejects audiopus_sys's pre-3.5
+      # policy version without this override (also set in src-tauri/.cargo/config.toml).
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,12 +55,61 @@ jobs:
       - name: Install JS deps
         run: bun install --frozen-lockfile
 
+      # Each OS backend needs its native headers to compile. Linux installs
+      # PipeWire and the GTK stack explicitly; macOS and Windows runners ship
+      # their SDKs (CoreAudio / WASAPI + MSVC) preinstalled.
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        # PPA backports a libpipewire new enough for the libspa crate
+        run: |
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev librsvg2-bin libgtk-3-bin \
+            libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev \
+            libpipewire-0.3-dev clang libclang-dev \
+            libasound2-dev libopus-dev libpulse-dev \
+            desktop-file-utils xdg-utils patchelf pipewire
+
+      # Linux hardware smoke tests (device/app enumeration) need a live
+      # PipeWire daemon; the runner has none. playback_pulls_samples hardcodes
+      # a real ALSA device name and cannot pass without hardware, so it is
+      # skipped here. Windows: the test binary cannot start because tauri's
+      # manifest (Common-Controls v6) is embedded into the app binary only,
+      # not test harnesses (tauri-apps/tauri#13419, #14580) — a known
+      # workaround is to compile-gate Windows with --no-run and run tests on
+      # the other two OSes.
       - name: Cargo test (also regenerates ts-rs bindings)
         working-directory: src-tauri
-        run: cargo test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            export XDG_RUNTIME_DIR=/tmp/pipewire
+            mkdir -p "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            pipewire &
+            sleep 2
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cargo test --no-run
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            cargo test -- --skip audio::playback::tests::playback_pulls_samples
+          else
+            cargo test
+          fi
 
       - name: TS-RS bindings up to date
         run: git diff --exit-code -- src/lib/modules/pipeline/generated
 
       - name: Svelte / TypeScript check
         run: bun run check
+
+      - name: Build Windows application
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: cargo build --bin splitwave
+
+      - name: Build unsigned NSIS installer
+        if: runner.os == 'Windows'
+        run: bun run tauri build --bundles nsis --no-sign

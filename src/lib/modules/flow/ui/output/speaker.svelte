@@ -15,7 +15,8 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 
-	const supportsVirtualDevices = platform() !== 'windows';
+	const isWindows = platform() === 'windows';
+	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
 
 	type SpeakerNodeType = Node<SpeakerNodeData, 'speaker'>;
 	let { id, data }: NodeProps<SpeakerNodeType> = $props();
@@ -33,6 +34,10 @@
 
 	async function refresh() {
 		await audioStore.refreshOutputDevices();
+	}
+
+	async function openVirtualDevice() {
+		await goto('/virtual-devices');
 	}
 
 	let unlistenRefresh: (() => void) | undefined;
@@ -89,15 +94,13 @@
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
-				{#if supportsVirtualDevices}
-					<ComboboxAction
-						label="Add virtual device"
-						icon={Add}
-						onclick={() => {
-							close();
-							goto('/virtual-devices');
-						}} />
-				{/if}
+				<ComboboxAction
+					label={virtualDevicesLabel}
+					icon={Add}
+					onclick={() => {
+						close();
+						void openVirtualDevice();
+					}} />
 			{/snippet}
 		</Combobox>
 		{#if missing}

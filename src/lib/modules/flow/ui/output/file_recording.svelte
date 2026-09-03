@@ -673,7 +673,8 @@
 				<Folder class="size-3.5" />
 				Choose file
 			</button>
-			<Tooltip text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
+			<Tooltip
+				text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
 				<button type="button" class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
 				</button>

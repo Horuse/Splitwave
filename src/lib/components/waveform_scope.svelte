@@ -1190,12 +1190,7 @@
 			const x = (e.clientX - rect.left) * scaleX;
 			const y = (e.clientY - rect.top) * scaleY;
 			const m = scrollbarMetrics();
-			scrollbarHover =
-				canScroll() &&
-				y >= H - SCROLL_H &&
-				y <= H &&
-				x >= m.trackX &&
-				x <= m.trackX + m.trackW;
+			scrollbarHover = canScroll() && y >= H - SCROLL_H && y <= H && x >= m.trackX && x <= m.trackX + m.trackW;
 		}
 
 		if (scrollbarDragging) {

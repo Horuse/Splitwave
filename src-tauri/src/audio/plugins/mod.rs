@@ -6,6 +6,8 @@
 mod au_backend;
 #[cfg(target_os = "macos")]
 pub mod au_host;
+#[cfg(target_os = "windows")]
+pub mod bridge;
 mod clap_backend;
 pub mod clap_host;
 pub mod clap_registry;

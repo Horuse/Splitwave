@@ -42,6 +42,12 @@ pub struct PlugFrame {
     resize: ResizeRequest,
 }
 
+impl PlugFrame {
+    pub fn new(resize: ResizeRequest) -> Self {
+        Self { resize }
+    }
+}
+
 /// On X11 the plugin drives its editor from the host's event loop, so the frame
 /// it is given must also answer as `IRunLoop`.
 #[cfg(target_os = "linux")]
@@ -115,6 +121,17 @@ pub struct EditorView {
 }
 
 impl EditorView {
+    pub fn from_raw_parts(view: ComPtr<IPlugView>, frame: ComWrapper<PlugFrame>) -> Self {
+        Self {
+            view,
+            _frame: frame,
+        }
+    }
+
+    pub fn view(&self) -> &ComPtr<IPlugView> {
+        &self.view
+    }
+
     /// Builds the plugin's view into `parent` -- an `NSView` on macOS, an `HWND`
     /// on Windows, an X11 window id on Linux -- and returns the size the plugin
     /// asked for. `None` when the plugin has no editor at all, which is not an
@@ -143,15 +160,6 @@ impl EditorView {
                 ));
             }
 
-            let frame = ComWrapper::new(PlugFrame { resize });
-            let frame_ptr = frame
-                .as_com_ref::<IPlugFrame>()
-                .map(|r| r.as_ptr())
-                .ok_or("PlugFrame implements IPlugFrame")?;
-            // Before `attached`, so a plugin that resizes on open has somewhere
-            // to send the request.
-            view.setFrame(frame_ptr);
-
             let mut rect = ViewRect {
                 left: 0,
                 top: 0,
@@ -162,10 +170,21 @@ impl EditorView {
                 return Err("editor reported no size".into());
             }
 
+            let frame = ComWrapper::new(PlugFrame::new(resize));
+            let frame_ptr = frame
+                .as_com_ref::<IPlugFrame>()
+                .map(|r| r.as_ptr())
+                .ok_or("PlugFrame implements IPlugFrame")?;
+            // Before `attached`, so a plugin that resizes on open has somewhere
+            // to send the request.
+            view.setFrame(frame_ptr);
+
             if view.attached(parent, platform) != kResultOk {
-                view.setFrame(std::ptr::null_mut());
                 return Err("editor refused to attach to the window".into());
             }
+
+            // Inform the view of its initial size so it initializes layout.
+            let _ = view.onSize(&mut rect);
 
             #[cfg(target_os = "macos")]
             inset_below_titlebar(parent, titlebar);
@@ -189,11 +208,9 @@ impl EditorView {
 
 impl Drop for EditorView {
     fn drop(&mut self) {
-        // Order matters: the plugin must let go of the parent view before the
-        // window closes, and of our frame before it is freed.
         unsafe {
-            self.view.removed();
-            self.view.setFrame(std::ptr::null_mut());
+            let _ = self.view.removed();
+            let _ = self.view.setFrame(std::ptr::null_mut());
         }
     }
 }

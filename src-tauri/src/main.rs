@@ -12,5 +12,10 @@ fn main() {
     if let Some(exit_code) = splitwave_lib::run_windows_vb_cable_helper() {
         std::process::exit(exit_code);
     }
+
+    #[cfg(target_os = "windows")]
+    if let Some(exit_code) = splitwave_lib::run_windows_plugin_bridge_helper() {
+        std::process::exit(exit_code);
+    }
     splitwave_lib::run()
 }

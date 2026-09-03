@@ -158,6 +158,7 @@ pub struct Vst3Host;
 
 impl PluginHost for Vst3Host {
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
+        main_thread::ensure_ticker();
         let (node_id, path, plugin_id) = (
             req.node_id.to_string(),
             req.path.to_string(),

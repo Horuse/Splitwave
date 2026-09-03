@@ -29,6 +29,9 @@ pub struct Vst3Instance {
     separate: bool,
     /// Kept alive for the plugin, which holds only a borrowed reference to it.
     handler: Option<ComWrapper<ComponentHandler<Box<dyn EditListener>>>>,
+    /// Cached editor view so has_editor doesn't create and immediately destroy it,
+    /// which would corrupt internal static state in plugins (such as JUCE LookAndFeel).
+    cached_view: Option<ComPtr<vst3::Steinberg::IPlugView>>,
     /// The factory that made these lives in the module, so it outlives them.
     _module: Vst3Module,
 }
@@ -118,6 +121,7 @@ impl Vst3Instance {
                 controller,
                 separate,
                 handler: None,
+                cached_view: None,
                 _module: module,
             })
         }
@@ -232,14 +236,32 @@ impl Vst3Instance {
 
     /// Whether the plugin has an editor at all. Asked before offering the
     /// button, so the node can say "no editor" instead of opening a blank
-    /// window.
-    pub fn has_editor(&self) -> bool {
+    /// window. Caches the view so it is not created and immediately destroyed.
+    pub fn has_editor(&mut self) -> bool {
         use vst3::Steinberg::Vst::ViewType::kEditor;
-        // SAFETY: the view is created only to be counted and immediately
-        // released; it is never attached.
+        if self.cached_view.is_some() {
+            return true;
+        }
+        unsafe {
+            if let Some(view) =
+                ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
+            {
+                self.cached_view = Some(view);
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    /// Takes the cached editor view or creates a new one if not cached.
+    pub fn take_view(&mut self) -> Option<ComPtr<vst3::Steinberg::IPlugView>> {
+        use vst3::Steinberg::Vst::ViewType::kEditor;
+        if let Some(view) = self.cached_view.take() {
+            return Some(view);
+        }
         unsafe {
             ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
-                .is_some()
         }
     }
 

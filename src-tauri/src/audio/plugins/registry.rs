@@ -15,8 +15,12 @@ use std::sync::{Mutex, OnceLock};
 use super::au_host::AuHost;
 use super::clap_registry::ClapHost;
 use super::host_api::{ActivateRequest, HostedNode, PluginHost};
+#[cfg(not(target_os = "windows"))]
 use super::vst3_registry::Vst3Host;
 use super::PluginFormat;
+
+#[cfg(target_os = "windows")]
+static BRIDGE_HOST: super::bridge::BridgeHost = super::bridge::BridgeHost;
 
 fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
     match format {
@@ -25,6 +29,9 @@ fn host_for(format: PluginFormat) -> &'static dyn PluginHost {
         PluginFormat::Au => &AuHost,
         #[cfg(not(target_os = "macos"))]
         PluginFormat::Au => panic!("Audio Unit plugins are only supported on macOS"),
+        #[cfg(target_os = "windows")]
+        PluginFormat::Vst3 => &BRIDGE_HOST,
+        #[cfg(not(target_os = "windows"))]
         PluginFormat::Vst3 => &Vst3Host,
     }
 }
@@ -34,15 +41,16 @@ fn owners() -> &'static Mutex<HashMap<String, PluginFormat>> {
     OWNERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(target_os = "macos")]
+static ALL_HOSTS: &[&'static dyn PluginHost] = &[&ClapHost, &AuHost, &Vst3Host];
+#[cfg(target_os = "windows")]
+static ALL_HOSTS: &[&'static dyn PluginHost] = &[&ClapHost, &BRIDGE_HOST];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+static ALL_HOSTS: &[&'static dyn PluginHost] = &[&ClapHost, &Vst3Host];
+
 /// Every registered host, for work that is not tied to one node.
 pub fn hosts() -> impl Iterator<Item = &'static dyn PluginHost> {
-    [
-        &ClapHost as &'static dyn PluginHost,
-        #[cfg(target_os = "macos")]
-        &AuHost,
-        &Vst3Host,
-    ]
-    .into_iter()
+    ALL_HOSTS.iter().copied()
 }
 
 /// The host currently running this node, or `None` if it runs no plugin.

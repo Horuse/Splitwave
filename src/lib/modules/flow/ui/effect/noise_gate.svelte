@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseGateNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -33,14 +34,10 @@
 	let stateGain = $state(1);
 	let gateState = $derived(stateGain > 0.85 ? 'open' : stateGain > 0.15 ? 'hold' : 'closed');
 
-	let unlisten: UnlistenFn | undefined;
-	onMount(async () => {
-		unlisten = await listen<{ nodeId: string; grLin: number }>('audio://gr', (event) => {
-			if (event.payload.nodeId !== id) return;
-			stateGain = Math.max(0, Math.min(1, event.payload.grLin));
-		});
+	tauriListen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
+		if (p.nodeId !== id) return;
+		stateGain = Math.max(0, Math.min(1, p.grLin));
 	});
-	onDestroy(() => unlisten?.());
 
 	const W = 150,
 		H = 70;

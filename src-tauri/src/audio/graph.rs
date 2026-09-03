@@ -245,14 +245,31 @@ impl Default for RecordingFormat {
 }
 
 impl RecordingFormat {
-    /// LAME and the plain Opus encoder are two-channel; FLAC and AAC cap by spec.
+    /// LAME, the plain Opus encoder and Apple's AAC encoder are two-channel
+    /// (probed: CoreAudio's AAC rejects 3+ channels); FLAC caps by spec.
     pub fn max_channels(self) -> u16 {
         match self {
-            RecordingFormat::Mp3 { .. } | RecordingFormat::Opus { .. } => 2,
+            RecordingFormat::Mp3 { .. }
+            | RecordingFormat::Opus { .. }
+            | RecordingFormat::Aac { .. } => 2,
             RecordingFormat::Flac { .. } => 8,
-            RecordingFormat::Aac { .. } => 48,
             RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. } => 512,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RecordingMode {
+    New,
+    Overwrite,
+    Append,
+}
+
+impl Default for RecordingMode {
+    fn default() -> Self {
+        RecordingMode::New
     }
 }
 
@@ -264,9 +281,19 @@ pub struct FileRecordingData {
     #[serde(default)]
     pub format: RecordingFormat,
     #[serde(default)]
-    pub allow_overwrite: bool,
+    pub mode: RecordingMode,
     #[serde(default = "default_two")]
     pub channels: u16,
+    /// Pinned file sample rate; defaults to 48 kHz so the recorded rate is
+    /// always explicit. Ignored for Opus/Mp3, which are locked to 48 kHz.
+    #[serde(default = "default_rec_sample_rate")]
+    pub sample_rate: Option<u32>,
+    #[serde(default)]
+    pub waveform_hidden: bool,
+}
+
+fn default_rec_sample_rate() -> Option<u32> {
+    Some(48_000)
 }
 
 fn default_two() -> u16 {
@@ -559,6 +586,8 @@ pub enum OutputSpec {
         file_path: String,
         format: RecordingFormat,
         channels: u16,
+        mode: RecordingMode,
+        sample_rate: Option<u32>,
     },
     NetSender {
         node_id: String,
@@ -980,8 +1009,31 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                 if !parent.exists() {
                     return Err(choose_file_err(&n.id, "directory does not exist"));
                 }
-                if !data.allow_overwrite && path.exists() {
-                    return Err(choose_file_err(&n.id, "file already exists"));
+                match data.mode {
+                    RecordingMode::New => {
+                        if path.exists() {
+                            return Err(choose_file_err(&n.id, "file already exists"));
+                        }
+                    }
+                    RecordingMode::Overwrite => {}
+                    RecordingMode::Append => {
+                        if !matches!(
+                            data.format,
+                            RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. }
+                        ) {
+                            return Err(AppError::Validation(format!(
+                                "append recording is only supported for WAV/AIFF (node {})",
+                                n.id
+                            )));
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                if matches!(data.format, RecordingFormat::Aac { .. }) {
+                    return Err(AppError::Validation(format!(
+                        "AAC recording is only supported on macOS (node {})",
+                        n.id
+                    )));
                 }
                 let max = data.format.max_channels();
                 if data.channels == 0 || data.channels > max {
@@ -990,10 +1042,32 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                         n.id, data.channels
                     )));
                 }
+                if let Some(sr) = data.sample_rate {
+                    // FLAC's format tops out at 655350 Hz (20-bit rate field);
+                    // every other recording format caps at 384000.
+                    let max = if matches!(data.format, RecordingFormat::Flac { .. }) {
+                        655_350
+                    } else {
+                        384_000
+                    };
+                    if !(8000..=max).contains(&sr) {
+                        return Err(AppError::Validation(format!(
+                            "recording node {} pins sample rate {sr}; expected 8000..{max}",
+                            n.id
+                        )));
+                    }
+                }
                 OutputSpec::FileRecording {
                     file_path,
                     format: data.format,
                     channels: data.channels,
+                    mode: data.mode,
+                    sample_rate: data.sample_rate.filter(|_| {
+                        !matches!(
+                            data.format,
+                            RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. }
+                        )
+                    }),
                 }
             }
             NodeKind::NetSender => {

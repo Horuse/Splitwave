@@ -730,6 +730,19 @@ impl ActivePipeline {
                     format: RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. },
                     ..
                 } => Some(48_000),
+                OutputSpec::FileRecording {
+                    format: RecordingFormat::Aac { .. },
+                    ..
+                } => {
+                    let max_in = inputs_feeding_output(out.id.as_str(), graph)
+                        .into_iter()
+                        .filter_map(|input_id| input_native_sr.get(input_id).copied())
+                        .max();
+                    match max_in {
+                        Some(sr @ (32_000 | 44_100 | 48_000)) => Some(sr),
+                        _ => Some(48_000),
+                    }
+                }
                 OutputSpec::FileRecording { .. } => inputs_feeding_output(out.id.as_str(), graph)
                     .into_iter()
                     .filter_map(|input_id| input_native_sr.get(input_id).copied())
@@ -1090,6 +1103,8 @@ impl ActivePipeline {
                     sample_rate,
                     format,
                     channels,
+                    append,
+                    base_frames,
                 } => {
                     og.set_out_channels(channels as usize);
                     if let Some(state) = self.recorders.get_mut(&out.id) {
@@ -1104,15 +1119,20 @@ impl ActivePipeline {
                         dropped.worker.stop.store(true, Ordering::SeqCst);
                         drop(dropped);
                     }
-                    let (worker, ctrl) = start_recorder_worker(
+                    let (worker, ctrl, wave) = start_recorder_worker(
                         out.id.clone(),
                         path,
                         sample_rate,
                         format,
                         channels,
+                        append,
+                        base_frames,
                         og,
                         app.clone(),
                     )?;
+                    // Scope the recorder's waveform so the meter tick thread
+                    // publishes it alongside the effect nodes' scopes.
+                    self.scopes.insert(out.id.clone(), wave);
                     self.recorders.insert(
                         out.id.clone(),
                         RecorderState {

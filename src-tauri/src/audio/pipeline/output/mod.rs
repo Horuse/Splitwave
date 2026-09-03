@@ -13,9 +13,9 @@ use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
 use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
-use crate::audio::effects::{update_meter, MeterHandle};
-use crate::audio::encoders::{build_encoder, AudioEncoder};
-use crate::audio::graph::{OutputSpec, RecordingFormat, ValidOutput};
+use crate::audio::effects::{update_meter, MeterHandle, WaveformHandle};
+use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
+use crate::audio::graph::{OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
@@ -63,6 +63,10 @@ pub(super) enum ResolvedOutput {
         sample_rate: u32,
         format: RecordingFormat,
         channels: u16,
+        append: bool,
+        /// Existing per-channel frame count when appending, so counters start
+        /// from the file's current length instead of zero.
+        base_frames: u64,
     },
     // The DAG produces at 48 kHz; the send rings are wired inside
     // `build_output_graph`, so nothing device-specific to resolve here. Covers
@@ -92,12 +96,70 @@ pub(super) fn resolve_output(
             file_path,
             format,
             channels,
-        } => Ok(ResolvedOutput::File {
-            path: PathBuf::from(file_path),
-            sample_rate: file_sr_hint.unwrap_or(RECORDER_DEFAULT_SR),
-            format: *format,
-            channels: *channels,
-        }),
+            mode,
+            sample_rate: pinned,
+        } => {
+            let path = PathBuf::from(file_path);
+            let sample_rate = pinned.or(file_sr_hint).unwrap_or(RECORDER_DEFAULT_SR);
+            let append = *mode == RecordingMode::Append;
+            // Overwrite erases the file up front -- the confirmed modal's
+            // contract -- so every encoder starts from a clean path: the FLAC
+            // writer refuses existing files, and CoreAudio's AAC rejects
+            // arbitrary sample rates, custom ones included.
+            if *mode == RecordingMode::Overwrite && path.exists() {
+                std::fs::remove_file(&path)
+                    .map_err(|e| AppError::Stream(format!("remove {}: {e}", path.display())))?;
+            }
+            if let RecordingFormat::Aac { bitrate } = format {
+                // Probed limits of Apple's AAC encoder (macOS 14): it encodes
+                // only 32/44.1/48 kHz, with bitrate bounds scaling by channel
+                // count under a 320 kbps absolute cap.
+                let channels = u32::from(*channels);
+                let (min_per_ch, max_per_ch) = match sample_rate {
+                    32_000 => (24_000, 96_000),
+                    44_100 | 48_000 => (32_000, 256_000),
+                    _ => {
+                        return Err(AppError::Validation(format!(
+                            "AAC supports only 32000, 44100 and 48000 Hz, {sample_rate} Hz requested"
+                        )));
+                    }
+                };
+                let bounds = (min_per_ch * channels, (max_per_ch * channels).min(320_000));
+                if *bitrate < bounds.0 || *bitrate > bounds.1 {
+                    return Err(AppError::Validation(format!(
+                        "AAC bitrate {bitrate} bps is out of {}..{} at {sample_rate} Hz",
+                        bounds.0, bounds.1
+                    )));
+                }
+            }
+            if let RecordingFormat::Mp3 { bitrate_kbps } = format {
+                // LAME CBR ranges track the MPEG layer of the sample rate.
+                let bounds = match sample_rate {
+                    32_000 | 44_100 | 48_000 => (32, 320),
+                    16_000 | 22_050 | 24_000 => (8, 160),
+                    _ => (8, 64),
+                };
+                if *bitrate_kbps < bounds.0 || *bitrate_kbps > bounds.1 {
+                    return Err(AppError::Validation(format!(
+                        "MP3 bitrate {bitrate_kbps} kbps is out of {}..{} at {sample_rate} Hz",
+                        bounds.0, bounds.1
+                    )));
+                }
+            }
+            let base_frames = if append && path.exists() {
+                validate_append_target(&path, sample_rate, *channels, *format)?
+            } else {
+                0
+            };
+            Ok(ResolvedOutput::File {
+                path,
+                sample_rate,
+                format: *format,
+                channels: *channels,
+                append,
+                base_frames,
+            })
+        }
         OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => {
             Ok(ResolvedOutput::WireSender)
         }
@@ -376,9 +438,11 @@ pub(super) fn start_recorder_worker(
     sample_rate: u32,
     format: RecordingFormat,
     channels: u16,
+    append: bool,
+    base_frames: u64,
     graph: OutputGraph,
     app: AppHandle,
-) -> AppResult<(RecorderWorker, WorkerCtrl)> {
+) -> AppResult<(RecorderWorker, WorkerCtrl, WaveformHandle)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
@@ -388,14 +452,20 @@ pub(super) fn start_recorder_worker(
     let clock: Box<dyn ClockSource> =
         Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
 
+    // Scope-style waveform feed, emitted to the UI by the meter tick thread.
+    let wave = WaveformHandle::for_recorder(node_id.clone(), sample_rate, base_frames);
+    let wave_thread = wave.clone();
+    let session = wave.session;
+
     // No real-time promotion: this worker blocks on encoder file I/O.
+    let channels_usize = channels as usize;
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
             // Inside the worker thread so slow encoder init (libopus,
             // libmp3lame, AVAudioFile) doesn't stagger recorder starts.
             let encoder: Box<dyn AudioEncoder> =
-                match build_encoder(&path, sample_rate, channels, format) {
+                match build_encoder(&path, sample_rate, channels, format, append) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!(node = %node_id, error = %e, "recorder init failed");
@@ -406,6 +476,8 @@ pub(super) fn start_recorder_worker(
                                 "frames": 0u64,
                                 "sampleRate": sample_rate,
                                 "stopped": true,
+                                "session": session,
+                                "baseFrames": base_frames,
                                 "error": e.to_string(),
                             }),
                         );
@@ -418,12 +490,15 @@ pub(super) fn start_recorder_worker(
             const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
             let mut last_flush = std::time::Instant::now();
             let mut last_progress = std::time::Instant::now();
-            let mut frames_written: u64 = 0;
+            // Append starts from the file's existing length, so the readouts
+            // reflect total content, not just this session's bytes.
+            let mut frames_written: u64 = base_frames;
             let mut encoder = encoder;
 
             worker.run(stop_thread, clock, |block| {
                 encoder.write_interleaved(block)?;
-                frames_written += (block.len() / channels as usize) as u64;
+                frames_written += (block.len() / channels_usize) as u64;
+                wave_thread.push_interleaved(block, block.len() / channels_usize, base_frames);
 
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
                     if let Err(e) = encoder.flush() {
@@ -438,6 +513,8 @@ pub(super) fn start_recorder_worker(
                             "nodeId": node_id,
                             "frames": frames_written,
                             "sampleRate": sample_rate,
+                            "session": session,
+                            "baseFrames": base_frames,
                         }),
                     );
                     last_progress = std::time::Instant::now();
@@ -452,6 +529,8 @@ pub(super) fn start_recorder_worker(
                     "frames": frames_written,
                     "sampleRate": sample_rate,
                     "stopped": true,
+                    "session": session,
+                    "baseFrames": base_frames,
                 }),
             );
 
@@ -467,5 +546,6 @@ pub(super) fn start_recorder_worker(
             join: Some(join),
         },
         ctrl,
+        wave,
     ))
 }

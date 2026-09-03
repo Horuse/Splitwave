@@ -1,6 +1,7 @@
 import type { Pipeline } from '../types';
 import { PIPELINE_VERSION, versionOf } from '../version';
 import { migrateChannelRouting } from './v1_channel_routing';
+import { migrateFileRecordingMode } from './v2_file_recording_mode';
 
 export interface Migration {
 	/** Version this step produces; steps run in ascending order. */
@@ -8,7 +9,10 @@ export interface Migration {
 	migrate: (pipeline: Pipeline) => Pipeline;
 }
 
-export const MIGRATIONS: Migration[] = [{ to: 1, migrate: migrateChannelRouting }];
+export const MIGRATIONS: Migration[] = [
+	{ to: 1, migrate: migrateChannelRouting },
+	{ to: 2, migrate: migrateFileRecordingMode }
+];
 
 /** Runs every step above the pipeline's own version. Additive field changes
  * need no step at all -- `withDefaults` covers those on read. */

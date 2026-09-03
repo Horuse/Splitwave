@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onMount, onDestroy } from 'svelte';
+	import { tauriListen } from '$lib/utils/tauri_event';
 
 	let { nodeId, horizontal = false }: { nodeId: string; horizontal?: boolean } = $props();
 
@@ -10,7 +10,6 @@
 	let targetGrDb = 0;
 	let displayGrDb = $state(0);
 
-	let unlisten: UnlistenFn | undefined;
 	let rafId: number | undefined;
 	let lastFrame = 0;
 
@@ -25,18 +24,17 @@
 		rafId = requestAnimationFrame(tick);
 	}
 
-	onMount(async () => {
-		unlisten = await listen<{ nodeId: string; grLin: number }>('audio://gr', (event) => {
-			const p = event.payload;
-			if (p.nodeId !== nodeId) return;
-			const lin = Math.max(1e-6, Math.min(1, p.grLin));
-			targetGrDb = -20 * Math.log10(lin);
-		});
+	tauriListen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
+		if (p.nodeId !== nodeId) return;
+		const lin = Math.max(1e-6, Math.min(1, p.grLin));
+		targetGrDb = -20 * Math.log10(lin);
+	});
+
+	onMount(() => {
 		rafId = requestAnimationFrame(tick);
 	});
 
 	onDestroy(() => {
-		unlisten?.();
 		if (rafId) cancelAnimationFrame(rafId);
 	});
 

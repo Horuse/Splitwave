@@ -12,6 +12,7 @@ mod dither;
 mod flac;
 mod mp3;
 mod opus;
+mod peaks;
 mod wav;
 
 #[cfg(target_os = "macos")]
@@ -20,6 +21,7 @@ pub use aiff::AiffRecorder;
 pub use flac::FlacRecorder;
 pub use mp3::Mp3Recorder;
 pub use opus::OpusRecorder;
+pub use peaks::{read_peaks, FilePeaks};
 pub use wav::WavRecorder;
 
 pub trait AudioEncoder: Send {
@@ -33,6 +35,7 @@ pub fn build_encoder(
     sample_rate: u32,
     channels: u16,
     format: RecordingFormat,
+    append: bool,
 ) -> AppResult<Box<dyn AudioEncoder>> {
     let max = format.max_channels();
     if channels == 0 || channels > max {
@@ -41,12 +44,14 @@ pub fn build_encoder(
         )));
     }
     match format {
-        RecordingFormat::Wav { bit_depth } => Ok(Box::new(WavRecorder::create(
-            path,
-            sample_rate,
-            channels,
-            bit_depth,
-        )?)),
+        RecordingFormat::Wav { bit_depth } => {
+            let rec = if append {
+                WavRecorder::create_append(path, sample_rate, channels, bit_depth)?
+            } else {
+                WavRecorder::create(path, sample_rate, channels, bit_depth)?
+            };
+            Ok(Box::new(rec))
+        }
         RecordingFormat::Flac {
             bit_depth,
             compression,
@@ -84,17 +89,43 @@ pub fn build_encoder(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                let _ = (path, sample_rate, channels, bitrate);
+                let _ = (path, sample_rate, channels, bitrate, append);
                 Err(crate::error::AppError::Stream(
                     "AAC recording is macOS-only".into(),
                 ))
             }
         }
-        RecordingFormat::Aiff { bit_depth } => Ok(Box::new(AiffRecorder::create(
-            path,
-            sample_rate,
-            channels,
-            bit_depth,
-        )?)),
+        RecordingFormat::Aiff { bit_depth } => {
+            let rec = if append {
+                AiffRecorder::create_append(path, sample_rate, channels, bit_depth)?
+            } else {
+                AiffRecorder::create(path, sample_rate, channels, bit_depth)?
+            };
+            Ok(Box::new(rec))
+        }
+    }
+}
+
+/// Early, synchronous validation of an append target: reads the existing WAV or
+/// AIFF header and checks it against the resolved sample rate, channel count and
+/// bit depth. Compressed formats are rejected outright. Returns the file's
+/// current per-channel sample count, which the recorder adds to its counters so
+/// duration/size readouts start from the existing content, not zero.
+pub(crate) fn validate_append_target(
+    path: &Path,
+    sample_rate: u32,
+    channels: u16,
+    format: RecordingFormat,
+) -> AppResult<u64> {
+    match format {
+        RecordingFormat::Wav { bit_depth } => {
+            wav::validate_append(path, sample_rate, channels, bit_depth)
+        }
+        RecordingFormat::Aiff { bit_depth } => {
+            aiff::validate_append(path, sample_rate, channels, bit_depth)
+        }
+        _ => Err(crate::error::AppError::Validation(
+            "append is only supported for WAV/AIFF".into(),
+        )),
     }
 }

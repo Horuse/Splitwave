@@ -124,13 +124,15 @@
 
 	function addNodeWithData(kind: NodeKind, data: Record<string, unknown>, position?: { x: number; y: number }) {
 		const fallback = { x: 100 + nodes.length * 40, y: 100 + nodes.length * 40 };
+		const size = registry[kind].defaultSize;
 		nodes = [
 			...nodes,
 			{
 				id: createId(),
 				type: kind,
 				position: position ?? fallback,
-				data
+				data,
+				...(size ? { style: `width: ${size.width}px; height: ${size.height}px;` } : {})
 			}
 		];
 	}

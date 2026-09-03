@@ -243,6 +243,7 @@ pub fn run() {
             commands::device_info,
             commands::check_capture_permission,
             commands::path_exists,
+            commands::read_file_peaks,
             commands::is_pipeline_running,
             commands::output_latency_ms,
             commands::start_pipeline,

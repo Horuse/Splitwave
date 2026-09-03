@@ -7,6 +7,7 @@
 	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
+	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
@@ -189,29 +190,13 @@
 								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 									<div class="flex items-center gap-2">
 										<span class="text-xs text-neutral-900">Channels</span>
-										<div class="flex items-center overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100">
-											<button
-												class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
-												disabled={(d.channels ?? 2) <= 1}
-												onclick={() => setChannels(d.id, (d.channels ?? 2) - 1)}
-												aria-label="Fewer channels">
-												&minus;
-											</button>
-											<input
-												class="h-7 w-14 [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-sm tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-												type="number"
-												min="1"
-												max="256"
-												value={d.channels ?? 2}
-												onchange={(e) => setChannels(d.id, (e.currentTarget as HTMLInputElement).valueAsNumber)} />
-											<button
-												class="flex h-7 w-7 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:opacity-40"
-												disabled={(d.channels ?? 2) >= 256}
-												onclick={() => setChannels(d.id, (d.channels ?? 2) + 1)}
-												aria-label="More channels">
-												+
-											</button>
-										</div>
+										<NumberStepper
+											value={d.channels ?? 2}
+											min={1}
+											max={256}
+											step={1}
+											label="Channels"
+											onchange={(v) => setChannels(d.id, v)} />
 									</div>
 									<div class="flex items-center gap-1">
 										{#each [2, 8, 16, 32, 64] as preset (preset)}

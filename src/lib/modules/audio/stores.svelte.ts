@@ -1,6 +1,6 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import toast from 'svelte-french-toast';
-import { save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { methods } from './methods';
 import type { AudioApplication, AudioDevice, StartPipelinePayload } from './types';
 import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
@@ -148,15 +148,30 @@ class AudioStore {
 
 	/** Opens the save dialog for a recording node and returns the graph with the
 	 * chosen path applied, or `null` when the user cancels. Persists the path so
-	 * a later activation from the list won't prompt again. */
+	 * a later activation from the list won't prompt again. Append mode picks an
+	 * existing file instead of asking for a new one. */
 	private async promptRecordingFile(pipelineId: string, graph: StartPipelinePayload, nodeId: string): Promise<StartPipelinePayload | null> {
 		const node = graph.nodes.find((n) => n.id === nodeId);
 		if (!node) return null;
 		const data = node.data as FileRecordingNodeData;
 		const ext = recordingExtension(data.format);
-		const path = await save({ title: 'Save recording', filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+		const append = data.mode === 'append';
+		let path: string | null;
+		if (append) {
+			const picked = await open({
+				title: 'Choose recording to append to',
+				multiple: false,
+				filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
+			});
+			path = typeof picked === 'string' ? picked : null;
+		} else {
+			path = await save({ title: 'Save recording', filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+		}
 		if (!path) return null;
-		const patchNode = (n: PipelineNode): PipelineNode => (n.id === nodeId ? { ...n, data: { ...n.data, filePath: path, allowOverwrite: true } } : n);
+		// A fresh path can be written unconditionally; only append keeps the
+		// "extend this file" intent, everything else lands as a plain overwrite.
+		const mode = append ? 'append' : 'overwrite';
+		const patchNode = (n: PipelineNode): PipelineNode => (n.id === nodeId ? { ...n, data: { ...n.data, filePath: path, mode } } : n);
 		void pipelineMethods
 			.get(pipelineId)
 			.then((p) => {

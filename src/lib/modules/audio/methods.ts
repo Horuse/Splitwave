@@ -37,6 +37,20 @@ export const methods = {
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
 	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
+	/** Min/max peak bins read from a WAV/AIFF file for a requested frame range. */
+	readFilePeaks: (
+		path: string,
+		startFrame: number,
+		framesPerBin: number,
+		binCount: number
+	): Promise<{
+		sampleRate: number;
+		channels: number;
+		totalFrames: number;
+		startFrame: number;
+		mins: number[][];
+		maxs: number[][];
+	}> => invoke('read_file_peaks', { path, startFrame, framesPerBin, binCount }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	getOutputLatency: (): Promise<number> => invoke<number>('output_latency_ms'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> => invoke('start_pipeline', { graph }),

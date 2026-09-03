@@ -3,9 +3,12 @@
 //! ours, the view inside it is the plugin's, and `PluginHost::embed_editor` is
 //! the only seam between them.
 
+#[cfg(not(target_os = "windows"))]
 use std::collections::HashMap;
+#[cfg(not(target_os = "windows"))]
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(not(target_os = "windows"))]
 use tauri::Emitter;
 
 use super::host_api::EditorSize;
@@ -23,6 +26,7 @@ const TITLEBAR_LOGICAL: f64 = 32.0;
 /// Native host windows that plugin editors are embedded into, keyed by node id.
 /// `tauri::Window` is `Send + Sync`, so this lives outside any main-thread state
 /// and can be created/closed from the command thread.
+#[cfg(not(target_os = "windows"))]
 fn windows() -> &'static Mutex<HashMap<String, tauri::Window>> {
     static WINDOWS: OnceLock<Mutex<HashMap<String, tauri::Window>>> = OnceLock::new();
     WINDOWS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -30,16 +34,34 @@ fn windows() -> &'static Mutex<HashMap<String, tauri::Window>> {
 
 /// The window hosting this node's editor, if one is open.
 pub fn window_for(node_id: &str) -> Option<tauri::Window> {
-    windows().lock().unwrap().get(node_id).cloned()
+    #[cfg(target_os = "windows")]
+    {
+        let _ = node_id;
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        windows().lock().unwrap().get(node_id).cloned()
+    }
 }
 
 /// Closes a node's editor window if one is open. Shared with the format hosts,
 /// which have to take the window down alongside the instance it belongs to.
 pub fn close_window(node_id: &str) {
-    if let Some(w) = windows().lock().unwrap().remove(node_id) {
-        let _ = w.close();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(host) = super::registry::for_node(node_id) {
+            host.destroy_editor(node_id);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(w) = windows().lock().unwrap().remove(node_id) {
+            let _ = w.close();
+        }
     }
 }
+
 
 /// Rejects the degenerate sizes plugins report before their view exists (0x0)
 /// or absurd values, so the window is never opened invisibly small or huge.
@@ -69,18 +91,65 @@ pub fn decoration_overhead(window: &tauri::Window) -> (f64, f64) {
     (dw, dh)
 }
 
-/// Sizes the window so its content area (below the title bar) is `w` x `h`
-/// logical px. The plugin view fills the content area, so the title bar's
-/// height is added -- otherwise the bar overlaps the top of the plugin and the
-/// bottom gets clipped.
+/// Sizes the window so its content area is `w` x `h` logical px.
 pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
-    let (dw, dh) = decoration_overhead(window);
-    let _ = window.set_size(tauri::LogicalSize::new(w + dw, h + dh));
+    #[cfg(target_os = "macos")]
+    {
+        let (dw, dh) = decoration_overhead(window);
+        let _ = window.set_size(tauri::LogicalSize::new(w + dw, h + dh));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = window.set_size(tauri::LogicalSize::new(w, h));
+    }
 }
 
 /// Opens the plugin editor embedded in a native host window. The tested plugins
 /// only support embedded GUIs, so the host must own the window and hand its
 /// native handle to the plugin.
+#[cfg(target_os = "windows")]
+pub fn open(node_id: &str, title: &str) -> Result<(), String> {
+    tracing::debug!(node_id, title, "opening plugin editor via bridge");
+    let (cmd_tx, reply_rx) = super::bridge::bridge_host::with_slot(node_id, |slot| {
+        (slot.cmd_tx.clone(), slot.reply_rx.clone())
+    })
+    .ok_or_else(|| format!("{node_id}: no plugin is running on this node"))?;
+
+    cmd_tx
+        .send(super::bridge::protocol::HostCommand::OpenEditor {
+            title: if title.is_empty() {
+                "Plugin Editor".to_string()
+            } else {
+                title.to_string()
+            },
+        })
+        .map_err(|e| format!("failed to send OpenEditor: {e}"))?;
+
+    let rx = reply_rx.lock().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(super::bridge::protocol::HelperEvent::EditorOpened { .. })
+            | Ok(super::bridge::protocol::HelperEvent::Ok) => return Ok(()),
+            Ok(super::bridge::protocol::HelperEvent::Error { message }) => return Err(message),
+            Ok(_) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("helper process disconnected".to_string());
+            }
+        }
+    }
+    Err("timed out waiting for plugin editor to open".to_string())
+}
+
+/// Opens the plugin editor embedded in a native host window. The tested plugins
+/// only support embedded GUIs, so the host must own the window and hand its
+/// native handle to the plugin.
+#[cfg(not(target_os = "windows"))]
 pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, title, "opening plugin editor");
     let app = crate::app_handle().ok_or("app handle not ready")?;
@@ -88,61 +157,87 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
-    let window = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
-        .title(if title.is_empty() { "Plugin" } else { title })
-        .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
-        // Always resizable with a small floor: even when a plugin reports a bad
-        // size or does not reflow, the user can enlarge the window to reveal it.
-        .resizable(true)
-        .min_inner_size(200.0, 150.0)
-        .build()
-        .map_err(|e| format!("editor window for {node_id}: {e}"))?;
 
     let nid = node_id.to_string();
-    window.on_window_event(move |ev| {
-        // The plugin's view is a child of this window: tear the GUI down before
-        // the window goes away, and tell the FE node its editor button is stale.
-        if matches!(ev, tauri::WindowEvent::CloseRequested { .. }) {
-            // Already the main thread, which is where `destroy_editor` belongs.
-            if let Some(host) = super::registry::for_node(&nid) {
-                host.destroy_editor(&nid);
-            }
-            windows().lock().unwrap().remove(&nid);
-            if let Some(app) = crate::app_handle() {
-                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &nid);
-            }
-        }
-    });
+    let title = if title.is_empty() { "Plugin" } else { title }.to_string();
+    let app_handle = app.clone();
+
+    // The host window and its embedded plugin GUI must be created and parented on
+    // the UI thread so their event handling and teardown belong to the same thread.
+    let (window, size) =
+        super::main_thread::run(move || -> Result<(tauri::Window, EditorSize), String> {
+            let window = tauri::WindowBuilder::new(&app_handle, format!("plugin-editor-{nid}"))
+            .title(&title)
+            .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
+            // Always resizable with a small floor: even when a plugin reports a bad
+            // size or does not reflow, the user can enlarge the window to reveal it.
+            .resizable(true)
+            .min_inner_size(200.0, 150.0)
+            .build()
+            .map_err(|e| format!("editor window for {nid}: {e}"))?;
+
+            let event_nid = nid.clone();
+            window.on_window_event(move |ev| {
+                // The plugin's view is a child of this window: tear the GUI down before
+                // the window goes away, and tell the FE node its editor button is stale.
+                if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                    api.prevent_close();
+                    if let Some(host) = super::registry::for_node(&event_nid) {
+                        host.destroy_editor(&event_nid);
+                    }
+                    if let Some(w) = windows().lock().unwrap().remove(&event_nid) {
+                        let _ = w.destroy();
+                    }
+                    if let Some(app) = crate::app_handle() {
+                        let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &event_nid);
+                    }
+                }
+            });
+
+            let embedded = match super::registry::for_node(&nid) {
+                Some(host) => host.embed_editor(&nid, &window),
+                None => Err(format!("{nid}: no plugin is running on this node")),
+            };
+
+            // The window exists before the plugin view does, so a failed embed would
+            // otherwise leave an empty one on screen and the caller none the wiser.
+            let size = match embedded {
+                Ok(size) => size,
+                Err(e) => {
+                    tracing::error!(nid, error = %e, "plugin editor embed failed");
+                    let _ = window.close();
+                    return Err(e);
+                }
+            };
+
+            let (width, height) = valid_gui_size(size.0, size.1).unwrap_or(FALLBACK_EDITOR_SIZE);
+            set_content_size(&window, width as f64, height as f64);
+
+            Ok((window, size))
+        })??;
+
     windows()
         .lock()
         .unwrap()
         .insert(node_id.to_string(), window.clone());
 
-    let embedded = match super::registry::for_node(node_id) {
-        Some(host) => host.embed_editor(node_id, &window),
-        None => Err(format!("{node_id}: no plugin is running on this node")),
-    };
-
-    // The window exists before the plugin view does, so a failed embed would
-    // otherwise leave an empty one on screen and the caller none the wiser.
-    let size = match embedded {
-        Ok(size) => size,
-        Err(e) => {
-            tracing::error!(node_id, error = %e, "plugin editor embed failed");
-            close_window(node_id);
-            return Err(e);
-        }
-    };
-    // Sanitised once, here, rather than by each host: a size is a size whoever
-    // reported it.
     let (width, height) = valid_gui_size(size.0, size.1).unwrap_or(FALLBACK_EDITOR_SIZE);
     tracing::debug!(node_id, width, height, "plugin editor embedded");
 
-    set_content_size(&window, width as f64, height as f64);
     Ok(())
 }
 
 /// Tears down the plugin editor and closes its native window.
+#[cfg(target_os = "windows")]
+pub fn close(node_id: &str) -> Result<(), String> {
+    if let Some(host) = super::registry::for_node(node_id) {
+        host.destroy_editor(node_id);
+    }
+    Ok(())
+}
+
+/// Tears down the plugin editor and closes its native window.
+#[cfg(not(target_os = "windows"))]
 pub fn close(node_id: &str) -> Result<(), String> {
     // The plugin's view is a child of this window, so it goes first -- and it
     // goes on the main thread, which is the one place AppKit and every format

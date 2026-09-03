@@ -25,7 +25,7 @@ use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
 pub const EDITOR_CLOSED_EVENT: &str = "plugin://editor-closed";
 
 /// One automatable plugin parameter, sent to the frontend for the node UI.
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginParamInfo {
     pub id: u32,
@@ -86,6 +86,8 @@ pub enum HostedNode {
     #[cfg(target_os = "macos")]
     Au(super::AuNode),
     Vst3(super::vst3_node::Vst3Node),
+    #[cfg(target_os = "windows")]
+    Bridge(super::bridge::BridgeNode),
 }
 
 impl HostedNode {
@@ -97,6 +99,8 @@ impl HostedNode {
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.channels(),
             HostedNode::Vst3(n) => n.channels(),
+            #[cfg(target_os = "windows")]
+            HostedNode::Bridge(n) => n.channels(),
         }
     }
 }
@@ -109,6 +113,8 @@ impl Effect for HostedNode {
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.process(samples, frames),
             HostedNode::Vst3(n) => n.process(samples, frames),
+            #[cfg(target_os = "windows")]
+            HostedNode::Bridge(n) => n.process(samples, frames),
         }
     }
 
@@ -119,6 +125,8 @@ impl Effect for HostedNode {
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.latency_frames(),
             HostedNode::Vst3(n) => n.latency_frames(),
+            #[cfg(target_os = "windows")]
+            HostedNode::Bridge(n) => n.latency_frames(),
         }
     }
 }

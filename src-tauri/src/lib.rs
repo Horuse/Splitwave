@@ -30,6 +30,18 @@ pub fn run_windows_vb_cable_helper() -> Option<i32> {
     audio::virtual_device::windows_cable::run_helper()
 }
 
+#[cfg(target_os = "windows")]
+pub fn run_windows_plugin_bridge_helper() -> Option<i32> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--plugin-bridge" {
+            let session_id = args.next().unwrap_or_default();
+            return Some(audio::plugins::bridge::helper_main::run_helper(&session_id));
+        }
+    }
+    None
+}
+
 pub fn app_handle() -> Option<&'static AppHandle> {
     APP_HANDLE.get()
 }
@@ -182,6 +194,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             info!("app started");
+            crate::audio::plugins::main_thread::register_main_thread();
             let handle = app.handle().clone();
             let _ = APP_HANDLE.set(handle.clone());
 

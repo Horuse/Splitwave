@@ -5,17 +5,32 @@
 //! on the mechanism, so it lives here rather than three times over.
 
 use std::sync::mpsc;
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
+use std::thread::ThreadId;
 use std::time::Duration;
+
+static MAIN_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+
+/// Records the current thread as the main UI thread.
+pub fn register_main_thread() {
+    let _ = MAIN_THREAD_ID.set(std::thread::current().id());
+}
+
+/// Returns true if the calling thread is the main UI thread.
+pub fn is_main_thread() -> bool {
+    MAIN_THREAD_ID.get().copied() == Some(std::thread::current().id())
+}
 
 /// How long a main-thread call may take before the caller gives up. A plugin
 /// that blocks the UI thread longer than this has already broken the app; the
 /// timeout keeps the calling thread from hanging with it.
 const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Runs `f` on the Tauri main thread and blocks for its result. Callers must
-/// not be the main thread themselves, or this deadlocks.
+/// Runs `f` on the Tauri main thread and blocks for its result.
 pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> Result<R, String> {
+    if is_main_thread() {
+        return Ok(f());
+    }
     let app = crate::app_handle().ok_or_else(|| "app handle not ready".to_string())?;
     let (tx, rx) = mpsc::channel();
     app.run_on_main_thread(move || {

@@ -43,7 +43,8 @@
 	// Fixed zoom steps; the 0.1 floor bounds per-column aggregation cost.
 	const ZOOM_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 7.5, 10, 15, 20];
 	const MAX_FILE_CACHE_SEGS = 200_000;
-	const TIME_H = 18;
+	const TIME_H = 22;
+	const SCROLL_H = 14;
 	const SCALE_W = 30;
 	const VERT_PAD = 10;
 	// Many lanes must not collapse to a sliver; the widget grows to fit.
@@ -53,7 +54,7 @@
 	// Extra view-widths of disk cache warmed around the visible range; point
 	// fetches only -- a whole-file pre-pass would read gigabytes.
 	const PREFETCH_PLOTS = 1;
-	const SCROLLBAR_HIT = 10;
+	const SCROLLBAR_HIT = SCROLL_H;
 	// Live-only formats (MP3/Opus/FLAC/AAC) have no disk peak source: their
 	// browsable history is the binned scope stream, kept per node id so it
 	// survives remounts. Cleared when a new session rewrites the timeline.
@@ -293,7 +294,8 @@
 	let rafScheduled = false;
 	let dirty = true;
 	let dragging = $state(false);
-	let scrollbarDragging = false;
+	let scrollbarDragging = $state(false);
+	let scrollbarHover = $state(false);
 	let zoomLabel = $state('×1');
 	let lastX = 0;
 
@@ -610,12 +612,13 @@
 		const availStart = dataStart();
 		const totalScroll = totalSegs - availStart;
 		const visibleSegs = plotW * segsPerCol;
-		const trackX = SCALE_W;
-		const trackW = plotW;
-		const thumbW = totalScroll > 0 ? Math.max(10, trackW * Math.min(1, visibleSegs / totalScroll)) : trackW;
+		const trackX = 4;
+		const trackW = Math.max(1, W - 8);
+		const thumbW = 24;
 		const scrollable = Math.max(1, trackW - thumbW);
-		const denom = Math.max(0, totalScroll - visibleSegs);
-		const posFrac = denom > 0 ? Math.min(1, Math.max(0, (viewEndSeg - visibleSegs - availStart) / denom)) : 0;
+		const minViewEnd = availStart + visibleSegs;
+		const denom = Math.max(0, totalSegs - minViewEnd);
+		const posFrac = denom > 0 ? Math.min(1, Math.max(0, (viewEndSeg - minViewEnd) / denom)) : 0;
 		return {
 			plotW,
 			availStart,
@@ -630,13 +633,27 @@
 		};
 	}
 
-	function scrollbarPanByPx(dx: number) {
-		// Thumb pans 1:1 with the cursor, like the body.
-		viewEndSeg -= dx * segsPerCol;
+	function scrollbarPanByThumbPx(dx: number) {
+		const m = scrollbarMetrics();
+		if (m.scrollable <= 0 || m.denom <= 0) return;
+		viewEndSeg += (dx / m.scrollable) * m.denom;
 		clampView();
 		following = viewEndSeg >= totalSegs;
-		if (dx > 0) lastPanDir = 1;
-		else if (dx < 0) lastPanDir = -1;
+		if (dx > 0) lastPanDir = -1;
+		else if (dx < 0) lastPanDir = 1;
+		markDirty();
+	}
+
+	function scrollbarJumpToPx(canvasX: number) {
+		const m = scrollbarMetrics();
+		if (m.scrollable <= 0 || m.denom <= 0) return;
+		const trackRelX = canvasX - m.trackX;
+		const targetThumbStart = trackRelX - m.thumbW / 2;
+		const frac = Math.min(1, Math.max(0, targetThumbStart / m.scrollable));
+		const minViewEnd = m.availStart + m.visibleSegs;
+		viewEndSeg = minViewEnd + frac * m.denom;
+		clampView();
+		following = viewEndSeg >= totalSegs;
 		markDirty();
 	}
 
@@ -751,13 +768,15 @@
 	// floor.
 	function applyMinHeight() {
 		if (fill) return;
-		const need = TIME_H + channels * MIN_LANE_H;
+		const sbH = canScroll() ? SCROLL_H : 0;
+		const need = TIME_H + channels * MIN_LANE_H + sbH;
 		const next = Math.max(height, need);
 		if (next !== H) H = next;
 	}
 
 	function laneMetrics() {
-		const laneH = (H - TIME_H) / channels;
+		const sbH = canScroll() ? SCROLL_H : 0;
+		const laneH = (H - TIME_H - sbH) / channels;
 		const halfH = Math.max(3, laneH / 2 - Math.min(VERT_PAD, laneH * 0.25));
 		return { laneH, halfH };
 	}
@@ -853,7 +872,7 @@
 			c.strokeStyle = 'rgba(255,255,255,0.14)';
 			c.lineWidth = 1;
 			c.beginPath();
-			c.moveTo(SCALE_W, TIME_H - 1);
+			c.moveTo(0, TIME_H - 1);
 			c.lineTo(W, TIME_H - 1);
 			c.stroke();
 
@@ -926,13 +945,28 @@
 
 			if (canScroll()) {
 				const m = scrollbarMetrics();
-				const sbTop = H - 8;
-				c.fillStyle = 'rgba(0,0,0,0.85)';
-				c.fillRect(m.trackX, sbTop, m.trackW, 8);
-				c.fillStyle = 'rgba(255,255,255,0.12)';
-				c.fillRect(m.trackX, H - 4, m.trackW, 2);
-				c.fillStyle = 'rgba(255,255,255,0.45)';
-				roundRect(c, m.thumbX, sbTop + 1, m.thumbW, 5, 2.5);
+				const sbTop = H - SCROLL_H;
+
+				// Subtle divider separating waveform lanes from scrollbar area
+				c.strokeStyle = 'rgba(255,255,255,0.12)';
+				c.lineWidth = 1;
+				c.beginPath();
+				c.moveTo(0, sbTop);
+				c.lineTo(W, sbTop);
+				c.stroke();
+
+				// Soft track background
+				const trackH = 4;
+				const trackY = sbTop + (SCROLL_H - trackH) / 2;
+				c.fillStyle = 'rgba(255,255,255,0.06)';
+				roundRect(c, m.trackX, trackY, m.trackW, trackH, 2);
+				c.fill();
+
+				// Matching rounded thumb; highlights on hover or drag
+				const thumbH = 6;
+				const thumbY = sbTop + (SCROLL_H - thumbH) / 2;
+				c.fillStyle = scrollbarDragging || scrollbarHover ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.35)';
+				roundRect(c, m.thumbX, thumbY, m.thumbW, thumbH, 3);
 				c.fill();
 			}
 		}
@@ -1109,7 +1143,8 @@
 	function onWheel(e: WheelEvent) {
 		e.preventDefault();
 		const rect = wrap.getBoundingClientRect();
-		const x = e.clientX - rect.left;
+		const scaleX = rect.width > 0 ? W / rect.width : 1;
+		const x = (e.clientX - rect.left) * scaleX;
 		if (pan && e.shiftKey) {
 			panByPx(e.deltaY);
 		} else {
@@ -1123,13 +1158,23 @@
 			return;
 		}
 		const rect = wrap.getBoundingClientRect();
-		const y = e.clientY - rect.top;
-		// Pressing the track starts a thumb drag, not a jump.
-		if (y >= H - SCROLLBAR_HIT && canScroll()) {
-			scrollbarDragging = true;
-			lastX = e.clientX;
-			e.preventDefault();
-			return;
+		const scaleX = rect.width > 0 ? W / rect.width : 1;
+		const scaleY = rect.height > 0 ? H / rect.height : 1;
+		const x = (e.clientX - rect.left) * scaleX;
+		const y = (e.clientY - rect.top) * scaleY;
+
+		if (canScroll() && y >= H - SCROLL_H && y <= H) {
+			const m = scrollbarMetrics();
+			// Click anywhere in the bottom scrollbar block
+			if (x >= m.trackX && x <= m.trackX + m.trackW) {
+				if (x < m.thumbX || x > m.thumbX + m.thumbW) {
+					scrollbarJumpToPx(x);
+				}
+				scrollbarDragging = true;
+				lastX = e.clientX;
+				e.preventDefault();
+				return;
+			}
 		}
 		dragging = true;
 		lastX = e.clientX;
@@ -1137,14 +1182,30 @@
 	}
 
 	function onMove(e: MouseEvent) {
+		const rect = wrap?.getBoundingClientRect();
+		const scaleX = rect && rect.width > 0 ? W / rect.width : 1;
+		const scaleY = rect && rect.height > 0 ? H / rect.height : 1;
+
+		if (rect) {
+			const x = (e.clientX - rect.left) * scaleX;
+			const y = (e.clientY - rect.top) * scaleY;
+			const m = scrollbarMetrics();
+			scrollbarHover =
+				canScroll() &&
+				y >= H - SCROLL_H &&
+				y <= H &&
+				x >= m.trackX &&
+				x <= m.trackX + m.trackW;
+		}
+
 		if (scrollbarDragging) {
-			const dx = e.clientX - lastX;
+			const dx = (e.clientX - lastX) * scaleX;
 			lastX = e.clientX;
-			scrollbarPanByPx(dx);
+			scrollbarPanByThumbPx(dx);
 			return;
 		}
 		if (!dragging) return;
-		const dx = e.clientX - lastX;
+		const dx = (e.clientX - lastX) * scaleX;
 		lastX = e.clientX;
 		panByPx(dx);
 	}
@@ -1283,8 +1344,9 @@
 <div
 	bind:this={wrap}
 	class="nodrag nopan nowheel relative w-full overflow-hidden"
-	class:cursor-grab={pan && !dragging}
-	class:cursor-grabbing={pan && dragging}
+	class:cursor-pointer={scrollbarHover && !scrollbarDragging}
+	class:cursor-grabbing={dragging || scrollbarDragging}
+	class:cursor-grab={pan && !dragging && !scrollbarDragging && !scrollbarHover}
 	style={fill ? 'height:100%' : `height:${H}px`}
 	role="img"
 	aria-label="Live waveform"
@@ -1299,7 +1361,7 @@
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="nodrag nopan absolute top-1 right-1 flex items-center gap-1"
+		class="nodrag nopan absolute top-1.5 right-1.5 flex items-center gap-1"
 		onmousedown={(e) => e.stopPropagation()}
 		onwheel={(e) => e.stopPropagation()}
 		ondblclick={(e) => e.stopPropagation()}>

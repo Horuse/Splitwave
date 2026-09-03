@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { blur } from 'svelte/transition';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { methods } from '$lib/modules/audio/methods';
@@ -223,8 +224,8 @@
 
 	function dataStart(): number {
 		if (fileMode) return 0;
-		// Live-only: with binned history present the whole session is
-		// browsable, not just the ring's recent window.
+		// Live-only: bounded by the oldest segment retained in the live store.
+		if (liveStore.low >= 0) return liveStore.low;
 		if (liveStore.bins.size > 0) return 0;
 		return Math.max(0, totalSegs - capSegs);
 	}
@@ -489,7 +490,11 @@
 		liveLastEnd = p.startFrame !== undefined ? p.startFrame + frames : Math.max(0, liveLastEnd) + frames;
 		for (let s = 0; s < segs; s++) storeLiveBin(first + s, (head + s) % capSegs, channels);
 		ringFrom = ringFrom < 0 ? first : Math.max(ringFrom, totalSegs - capSegs);
-		if (following) viewEndSeg = totalSegs;
+		if (following) {
+			viewEndSeg = totalSegs;
+		} else {
+			clampView();
+		}
 		markDirty();
 	}
 
@@ -851,6 +856,53 @@
 			c.moveTo(SCALE_W, TIME_H - 1);
 			c.lineTo(W, TIME_H - 1);
 			c.stroke();
+
+			if (!fileMode) {
+				const availStart = dataStart();
+				const plotW = Math.max(1, W - SCALE_W);
+				const viewStartSeg = viewEndSeg - plotW * segsPerCol;
+				const boundX = SCALE_W + (availStart - viewStartSeg) / segsPerCol;
+
+				// Boundary line is visible on screen
+				if (boundX >= SCALE_W && boundX <= W) {
+					c.save();
+					c.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+					c.lineWidth = 1;
+					c.setLineDash([3, 3]);
+					c.beginPath();
+					c.moveTo(boundX, TIME_H);
+					c.lineTo(boundX, H);
+					c.stroke();
+					c.restore();
+
+					if (totalSegs > 0) {
+						c.save();
+						c.font = '6.5px monospace';
+						const line1 = 'Live view · Buffer limit';
+						const line2 = 'Earlier audio not cached on disk';
+						const w1 = c.measureText(line1).width;
+						const w2 = c.measureText(line2).width;
+						const bw = Math.max(w1, w2) + 12;
+						const bh = 22;
+						const by = TIME_H + (H - TIME_H - bh) / 2;
+						let bx = boundX + 4;
+						if (bx + bw > W - 4) bx = boundX - bw - 4;
+						bx = Math.max(SCALE_W + 4, bx);
+
+						c.fillStyle = 'rgba(0, 0, 0, 0.8)';
+						roundRect(c, bx, by, bw, bh, 3);
+						c.fill();
+
+						c.fillStyle = 'rgba(255, 255, 255, 0.8)';
+						c.textBaseline = 'top';
+						c.textAlign = 'left';
+						c.fillText(line1, bx + 6, by + 3.5);
+						c.fillStyle = 'rgba(255, 255, 255, 0.5)';
+						c.fillText(line2, bx + 6, by + 12);
+						c.restore();
+					}
+				}
+			}
 
 			// Clip to the plot area so boundary labels slice, not vanish.
 			c.save();
@@ -1247,30 +1299,32 @@
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="nodrag nopan absolute top-0.5 right-0.5 flex items-center gap-0 rounded bg-neutral-900/40 px-0.5 py-0.5"
+		class="nodrag nopan absolute top-1 right-1 flex items-center gap-1"
 		onmousedown={(e) => e.stopPropagation()}
 		onwheel={(e) => e.stopPropagation()}
 		ondblclick={(e) => e.stopPropagation()}>
-		<button
-			type="button"
-			class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
-			onclick={zoomOut}
-			title="Zoom out"><Minus class="size-2.5" /></button>
-		<span class="min-w-7 text-center font-mono text-[8px] text-white/70 tabular-nums">{zoomLabel}</span>
-		<button
-			type="button"
-			class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
-			onclick={zoomIn}
-			title="Zoom in"><Add class="size-2.5" /></button>
+		{#if pan && !following}
+			<button
+				type="button"
+				class="flex h-4.5 items-center justify-center gap-0.5 rounded-md bg-neutral-900/40 px-1 text-white/70 backdrop-blur-[2px] hover:bg-neutral-900/60 hover:text-white"
+				onclick={jumpToEnd}
+				transition:blur={{ amount: 1 }}
+				title="Jump to live edge">
+				<ChevronDoubleRight class="size-2.5" />
+			</button>
+		{/if}
+		<div class="flex h-4.5 items-center gap-0 rounded-md bg-neutral-900/40 px-0.5 backdrop-blur-[2px]">
+			<button
+				type="button"
+				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
+				onclick={zoomOut}
+				title="Zoom out"><Minus class="size-2.5" /></button>
+			<span class="min-w-7 text-center font-mono text-[8px] text-white/70 tabular-nums">{zoomLabel}</span>
+			<button
+				type="button"
+				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
+				onclick={zoomIn}
+				title="Zoom in"><Add class="size-2.5" /></button>
+		</div>
 	</div>
-	{#if pan && !following}
-		<button
-			type="button"
-			class="nodrag nopan absolute top-7 right-1 flex size-5 items-center justify-center rounded-full bg-neutral-900/40 text-white/70 hover:bg-neutral-900/60 hover:text-white"
-			onmousedown={(e) => e.stopPropagation()}
-			onwheel={(e) => e.stopPropagation()}
-			ondblclick={(e) => e.stopPropagation()}
-			onclick={jumpToEnd}
-			title="Jump to live edge"><ChevronDoubleRight class="size-3" /></button>
-	{/if}
 </div>

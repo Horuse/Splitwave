@@ -730,6 +730,19 @@ impl ActivePipeline {
                     format: RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. },
                     ..
                 } => Some(48_000),
+                OutputSpec::FileRecording {
+                    format: RecordingFormat::Aac { .. },
+                    ..
+                } => {
+                    let max_in = inputs_feeding_output(out.id.as_str(), graph)
+                        .into_iter()
+                        .filter_map(|input_id| input_native_sr.get(input_id).copied())
+                        .max();
+                    match max_in {
+                        Some(sr @ (32_000 | 44_100 | 48_000)) => Some(sr),
+                        _ => Some(48_000),
+                    }
+                }
                 OutputSpec::FileRecording { .. } => inputs_feeding_output(out.id.as_str(), graph)
                     .into_iter()
                     .filter_map(|input_id| input_native_sr.get(input_id).copied())

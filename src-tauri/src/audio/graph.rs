@@ -1028,6 +1028,13 @@ fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Ve
                         }
                     }
                 }
+                #[cfg(not(target_os = "macos"))]
+                if matches!(data.format, RecordingFormat::Aac { .. }) {
+                    return Err(AppError::Validation(format!(
+                        "AAC recording is only supported on macOS (node {})",
+                        n.id
+                    )));
+                }
                 let max = data.format.max_channels();
                 if data.channels == 0 || data.channels > max {
                     return Err(AppError::Validation(format!(

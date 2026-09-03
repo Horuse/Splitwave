@@ -129,7 +129,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		kind: 'fileRecording',
 		category: 'output',
 		label: 'File Recording',
-		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy).',
+		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy; AAC macOS-only).',
 		component: FileRecording,
 		icon: FileRecordIcon,
 		defaultData: DEFAULT_NODE_DATA['fileRecording']

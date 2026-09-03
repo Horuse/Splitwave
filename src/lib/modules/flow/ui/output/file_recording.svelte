@@ -28,6 +28,13 @@
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui';
+	import { platform } from '@tauri-apps/plugin-os';
+	import { getContext } from 'svelte';
+	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const isMac = isPreview || platform() === 'macos';
+	const isWindows = platform() === 'windows';
 
 	type FileRecordingNodeType = Node<FileRecordingNodeData, 'fileRecording'>;
 	let { id, data }: NodeProps<FileRecordingNodeType> = $props();
@@ -126,7 +133,7 @@
 		return fmt.kind === 'wav' || fmt.kind === 'aiff';
 	}
 
-	const FORMATS = [
+	const ALL_FORMATS = [
 		{ value: 'wav' as const, label: 'WAV' },
 		{ value: 'flac' as const, label: 'FLAC' },
 		{ value: 'aiff' as const, label: 'AIFF' },
@@ -134,6 +141,19 @@
 		{ value: 'mp3' as const, label: 'MP3' },
 		{ value: 'aac' as const, label: 'AAC' }
 	];
+
+	const FORMATS = isMac ? ALL_FORMATS : ALL_FORMATS.filter((f) => f.value !== 'aac');
+
+	$effect(() => {
+		if (!isMac && data.format.kind === 'aac') {
+			untrack(() => {
+				flow.updateNodeData(id, {
+					format: { kind: 'wav', bitDepth: 'f32' },
+					...(data.filePath ? { filePath: replaceExtension(data.filePath, 'wav') } : {})
+				});
+			});
+		}
+	});
 
 	const MODES = [
 		{ value: 'new' as const, label: 'New' },
@@ -653,7 +673,7 @@
 				<Folder class="size-3.5" />
 				Choose file
 			</button>
-			<Tooltip text="Reveal the recording in Finder">
+			<Tooltip text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
 				<button type="button" class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
 				</button>

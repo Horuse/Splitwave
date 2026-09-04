@@ -266,10 +266,14 @@ impl Vst3Instance {
     pub fn take_view(&mut self) -> Option<ComPtr<vst3::Steinberg::IPlugView>> {
         use vst3::Steinberg::Vst::ViewType::kEditor;
         if let Some(view) = self.cached_view.take() {
+            self.has_editor_cache = Some(true);
             return Some(view);
         }
         unsafe {
-            ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
+            let view =
+                ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor));
+            self.has_editor_cache = Some(view.is_some());
+            view
         }
     }
 

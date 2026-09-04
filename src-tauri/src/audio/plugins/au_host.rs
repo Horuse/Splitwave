@@ -317,6 +317,14 @@ fn activate(
         None
     };
     if let Some(old) = retired {
+        if let Some(view) = old.view {
+            unsafe { drop_view(view) };
+            editor::close_window(node_id);
+            if let Some(app) = crate::app_handle() {
+                use tauri::Emitter;
+                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+            }
+        }
         graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
@@ -1281,6 +1289,26 @@ impl PluginHost for AuHost {
         let (width, height) =
             main_thread::run(move || embed_editor(&id, view_addr as *mut c_void, titlebar))??;
         Ok((width as u32, height as u32))
+    }
+
+    fn show_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            use objc2::msg_send;
+            use objc2::runtime::AnyObject;
+            if let Some(slot) = instances().lock().unwrap().get(&id) {
+                if let Some(view) = slot.view {
+                    unsafe {
+                        let _: () = msg_send![view as *mut AnyObject, setNeedsDisplay: true];
+                    }
+                }
+            }
+            Ok(())
+        })?
+    }
+
+    fn hide_editor(&self, _node_id: &str) -> Result<(), String> {
+        Ok(())
     }
 
     fn destroy_editor(&self, node_id: &str) {

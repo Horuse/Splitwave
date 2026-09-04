@@ -369,7 +369,7 @@ impl PluginHost for Vst3Host {
                             use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
                             if let Ok(addr) = parent_handle(&window) {
                                 let hwnd = HWND(addr as _);
-                                let _ = InvalidateRect(hwnd, None, true);
+                                let _ = InvalidateRect(Some(hwnd), None, true);
                                 let _ = UpdateWindow(hwnd);
                             }
                         }

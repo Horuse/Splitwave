@@ -39,7 +39,9 @@
 		void disableAutostart();
 	}
 
-	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges'>(
+	function setApp<
+		K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges' | 'keepRunningOnDisconnect'
+	>(
 		key: K,
 		value: (typeof appSettings)[K]
 	) {
@@ -212,6 +214,19 @@
 				label="Confirm changes in Overwrite mode"
 				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
 				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Device disconnection</h2>
+				<p class="text-xs text-neutral-900">What happens when an audio device disconnects while a pipeline is running.</p>
+			</div>
+
+			<Toggle
+				checked={appSettings.keepRunningOnDisconnect}
+				label="Keep pipeline running on disconnect"
+				hint="Streams silence to outputs and waits for the device to reconnect. When disabled, disconnecting a device stops the pipeline immediately."
+				onChange={() => setApp('keepRunningOnDisconnect', !appSettings.keepRunningOnDisconnect)} />
 		</section>
 
 		<section class="flex flex-col gap-2">

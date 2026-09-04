@@ -40,6 +40,10 @@ const K_AUDIO_DEVICE_PROPERTY_VOLUME_DECIBELS: AudioObjectPropertySelector = fou
 const K_AUDIO_DEVICE_PROPERTY_MUTE: AudioObjectPropertySelector = fourcc(b"mute");
 const K_AUDIO_OBJECT_PROPERTY_NAME: AudioObjectPropertySelector = fourcc(b"lnam");
 const K_AUDIO_DEVICE_PROPERTY_DEVICE_UID: AudioObjectPropertySelector = fourcc(b"uid ");
+const K_AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE: AudioObjectPropertySelector = fourcc(b"trpt");
+const K_AUDIO_DEVICE_PROPERTY_DEVICE_IS_ALIVE: AudioObjectPropertySelector = fourcc(b"livn");
+const K_AUDIO_DEVICE_TRANSPORT_TYPE_BLUETOOTH: u32 = fourcc(b"blue");
+const K_AUDIO_DEVICE_TRANSPORT_TYPE_BLUETOOTH_LE: u32 = fourcc(b"blea");
 
 /// UID prefix of the private aggregate we create for CATap app-audio capture
 /// (see `native/CATapCapture.swift`). CoreAudio still lists a process's own
@@ -330,6 +334,51 @@ unsafe fn nominal_sample_rate(device_id: AudioObjectID) -> Option<u32> {
     }
 }
 
+unsafe fn is_bluetooth_device(device_id: AudioObjectID) -> bool {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_TRANSPORT_TYPE,
+        scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut transport: u32 = 0;
+    let mut size: u32 = mem::size_of::<u32>() as u32;
+    if AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut size,
+        &mut transport as *mut _ as *mut c_void,
+    ) != 0
+    {
+        return false;
+    }
+    transport == K_AUDIO_DEVICE_TRANSPORT_TYPE_BLUETOOTH
+        || transport == K_AUDIO_DEVICE_TRANSPORT_TYPE_BLUETOOTH_LE
+}
+
+unsafe fn is_device_alive(device_id: AudioObjectID) -> bool {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_DEVICE_IS_ALIVE,
+        scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut alive: u32 = 0;
+    let mut size: u32 = mem::size_of::<u32>() as u32;
+    if AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut size,
+        &mut alive as *mut _ as *mut c_void,
+    ) != 0
+    {
+        return false;
+    }
+    alive != 0
+}
+
 fn list_by_scope(scope: AudioObjectPropertyScope) -> Vec<HalDevice> {
     let mut out = Vec::new();
     unsafe {
@@ -340,16 +389,29 @@ fn list_by_scope(scope: AudioObjectPropertyScope) -> Vec<HalDevice> {
             if !has_streams_in_scope(id, scope) {
                 continue;
             }
-            let channels = channel_count_in_scope(id, scope);
-            if channels == 0 {
+            let is_bt = is_bluetooth_device(id);
+            if is_bt && !is_device_alive(id) {
                 continue;
+            }
+
+            let mut channels = channel_count_in_scope(id, scope);
+            if channels == 0 {
+                if is_bt {
+                    // Inactive Bluetooth headsets default to stereo output or mono input.
+                    channels = match scope {
+                        K_AUDIO_OBJECT_PROPERTY_SCOPE_OUTPUT => 2,
+                        K_AUDIO_OBJECT_PROPERTY_SCOPE_INPUT => 1,
+                        _ => 0,
+                    };
+                }
+                if channels == 0 {
+                    continue;
+                }
             }
             let Some(name) = device_name(id) else {
                 continue;
             };
-            let Some(sample_rate) = nominal_sample_rate(id) else {
-                continue;
-            };
+            let sample_rate = nominal_sample_rate(id).unwrap_or(48_000);
             out.push(HalDevice {
                 name,
                 sample_rate,
@@ -390,6 +452,10 @@ fn find_device_id(name: &str, scope: AudioObjectPropertyScope) -> Option<AudioOb
                 continue;
             }
             if !has_streams_in_scope(id, scope) {
+                continue;
+            }
+            let is_bt = is_bluetooth_device(id);
+            if is_bt && !is_device_alive(id) {
                 continue;
             }
             if device_name(id).as_deref() == Some(name) {

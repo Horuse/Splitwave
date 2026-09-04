@@ -864,9 +864,10 @@ impl GraphSpec {
             .intersection(&reachable_from_terminals)
             .copied()
             .collect();
-        // Keep unrouted input nodes too, so their capture + level meter run
-        // before they're wired anywhere; unresolvable ones drop in resolve_inputs.
-        let mut keep = routed.clone();
+        // Keep unrouted input nodes (so their capture + level meter run)
+        // as well as nodes reachable from terminals (outputs, analyzers, and
+        // their upstream effect chains, which stream silence if inputs disconnect).
+        let mut keep = reachable_from_terminals;
         for n in &nodes {
             if n.role == NodeCategory::Input {
                 keep.insert(n.id.as_str());
@@ -874,7 +875,7 @@ impl GraphSpec {
         }
 
         let inputs = resolve_inputs(&nodes, &keep, &routed)?;
-        let outputs = resolve_outputs(&nodes, &keep)?;
+        let outputs = resolve_outputs(&nodes, &keep, &routed)?;
         let effects = resolve_effects(&nodes, &keep)?;
 
         let edges: Vec<ValidEdge> = edges
@@ -984,129 +985,139 @@ fn resolve_inputs(
     Ok(result)
 }
 
-fn resolve_outputs(nodes: &[RoleNode<'_>], keep: &HashSet<&str>) -> AppResult<Vec<ValidOutput>> {
+fn resolve_outputs(
+    nodes: &[RoleNode<'_>],
+    keep: &HashSet<&str>,
+    routed: &HashSet<&str>,
+) -> AppResult<Vec<ValidOutput>> {
     let mut result = Vec::new();
     for n in nodes {
         if n.role != NodeCategory::Output || !keep.contains(n.id.as_str()) {
             continue;
         }
-        let spec = match n.kind {
-            NodeKind::Speaker => {
-                let data: SpeakerData = parse(n.data, "Speaker")?;
-                OutputSpec::Speaker {
-                    device_id: data
-                        .device_id
-                        .ok_or_else(|| miss(&n.id, "Speaker has no device selected"))?,
+        let resolved = (|| -> AppResult<OutputSpec> {
+            Ok(match n.kind {
+                NodeKind::Speaker => {
+                    let data: SpeakerData = parse(n.data, "Speaker")?;
+                    OutputSpec::Speaker {
+                        device_id: data
+                            .device_id
+                            .ok_or_else(|| miss(&n.id, "Speaker has no device selected"))?,
+                    }
                 }
-            }
-            NodeKind::FileRecording => {
-                let data: FileRecordingData = parse(n.data, "FileRecording")?;
-                let file_path = data
-                    .file_path
-                    .ok_or_else(|| miss(&n.id, "File Recording has no path"))?;
-                let path = std::path::Path::new(&file_path);
-                let parent = path.parent().unwrap_or(std::path::Path::new("."));
-                if !parent.exists() {
-                    return Err(choose_file_err(&n.id, "directory does not exist"));
-                }
-                match data.mode {
-                    RecordingMode::New => {
-                        if path.exists() {
-                            return Err(choose_file_err(&n.id, "file already exists"));
+                NodeKind::FileRecording => {
+                    let data: FileRecordingData = parse(n.data, "FileRecording")?;
+                    let file_path = data
+                        .file_path
+                        .ok_or_else(|| miss(&n.id, "File Recording has no path"))?;
+                    let path = std::path::Path::new(&file_path);
+                    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+                    if !parent.exists() {
+                        return Err(choose_file_err(&n.id, "directory does not exist"));
+                    }
+                    match data.mode {
+                        RecordingMode::New => {
+                            if path.exists() {
+                                return Err(choose_file_err(&n.id, "file already exists"));
+                            }
+                        }
+                        RecordingMode::Overwrite => {}
+                        RecordingMode::Append => {
+                            if !matches!(
+                                data.format,
+                                RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. }
+                            ) {
+                                return Err(AppError::Validation(format!(
+                                    "append recording is only supported for WAV/AIFF (node {})",
+                                    n.id
+                                )));
+                            }
                         }
                     }
-                    RecordingMode::Overwrite => {}
-                    RecordingMode::Append => {
-                        if !matches!(
-                            data.format,
-                            RecordingFormat::Wav { .. } | RecordingFormat::Aiff { .. }
-                        ) {
+                    #[cfg(not(target_os = "macos"))]
+                    if matches!(data.format, RecordingFormat::Aac { .. }) {
+                        return Err(AppError::Validation(format!(
+                            "AAC recording is only supported on macOS (node {})",
+                            n.id
+                        )));
+                    }
+                    let max = data.format.max_channels();
+                    if data.channels == 0 || data.channels > max {
+                        return Err(AppError::Validation(format!(
+                            "recording node {} asks for {} channels; format allows 1..{max}",
+                            n.id, data.channels
+                        )));
+                    }
+                    if let Some(sr) = data.sample_rate {
+                        // FLAC's format tops out at 655350 Hz (20-bit rate field);
+                        // every other recording format caps at 384000.
+                        let max = if matches!(data.format, RecordingFormat::Flac { .. }) {
+                            655_350
+                        } else {
+                            384_000
+                        };
+                        if !(8000..=max).contains(&sr) {
                             return Err(AppError::Validation(format!(
-                                "append recording is only supported for WAV/AIFF (node {})",
+                                "recording node {} pins sample rate {sr}; expected 8000..{max}",
                                 n.id
                             )));
                         }
                     }
-                }
-                #[cfg(not(target_os = "macos"))]
-                if matches!(data.format, RecordingFormat::Aac { .. }) {
-                    return Err(AppError::Validation(format!(
-                        "AAC recording is only supported on macOS (node {})",
-                        n.id
-                    )));
-                }
-                let max = data.format.max_channels();
-                if data.channels == 0 || data.channels > max {
-                    return Err(AppError::Validation(format!(
-                        "recording node {} asks for {} channels; format allows 1..{max}",
-                        n.id, data.channels
-                    )));
-                }
-                if let Some(sr) = data.sample_rate {
-                    // FLAC's format tops out at 655350 Hz (20-bit rate field);
-                    // every other recording format caps at 384000.
-                    let max = if matches!(data.format, RecordingFormat::Flac { .. }) {
-                        655_350
-                    } else {
-                        384_000
-                    };
-                    if !(8000..=max).contains(&sr) {
-                        return Err(AppError::Validation(format!(
-                            "recording node {} pins sample rate {sr}; expected 8000..{max}",
-                            n.id
-                        )));
+                    OutputSpec::FileRecording {
+                        file_path,
+                        format: data.format,
+                        channels: data.channels,
+                        mode: data.mode,
+                        sample_rate: data.sample_rate.filter(|_| {
+                            !matches!(
+                                data.format,
+                                RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. }
+                            )
+                        }),
                     }
                 }
-                OutputSpec::FileRecording {
-                    file_path,
-                    format: data.format,
-                    channels: data.channels,
-                    mode: data.mode,
-                    sample_rate: data.sample_rate.filter(|_| {
-                        !matches!(
-                            data.format,
-                            RecordingFormat::Opus { .. } | RecordingFormat::Mp3 { .. }
-                        )
-                    }),
+                NodeKind::NetSender => {
+                    let data: NetSenderData = parse(n.data, "NetSender")?;
+                    let ip: IpAddr = data
+                        .target_ip
+                        .trim()
+                        .parse()
+                        .map_err(|_| miss(&n.id, "Net Sender has an invalid target IP"))?;
+                    OutputSpec::NetSender {
+                        node_id: n.id.clone(),
+                        target: SocketAddr::new(ip, data.port),
+                        channels: data
+                            .channels
+                            .clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
+                        codec: data.codec,
+                        opus_bitrate: data.opus_bitrate,
+                        opus_application: data.opus_application,
+                    }
                 }
-            }
-            NodeKind::NetSender => {
-                let data: NetSenderData = parse(n.data, "NetSender")?;
-                let ip: IpAddr = data
-                    .target_ip
-                    .trim()
-                    .parse()
-                    .map_err(|_| miss(&n.id, "Net Sender has an invalid target IP"))?;
-                OutputSpec::NetSender {
-                    node_id: n.id.clone(),
-                    target: SocketAddr::new(ip, data.port),
-                    channels: data
-                        .channels
-                        .clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
-                    codec: data.codec,
-                    opus_bitrate: data.opus_bitrate,
-                    opus_application: data.opus_application,
+                // Send half of a collaborator: audio wired in goes to peers,
+                // which is a destination like any other sender.
+                NodeKind::WebRtcCollaborator => {
+                    let data: WebRtcCollaboratorData = parse(n.data, "WebRtcCollaborator")?;
+                    OutputSpec::WebRtcSend {
+                        node_id: n.id.clone(),
+                        channels: data
+                            .channels
+                            .clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
+                        opus_bitrate: data.opus_bitrate,
+                        opus_application: data.opus_application,
+                    }
                 }
-            }
-            // Send half of a collaborator: audio wired in goes to peers,
-            // which is a destination like any other sender.
-            NodeKind::WebRtcCollaborator => {
-                let data: WebRtcCollaboratorData = parse(n.data, "WebRtcCollaborator")?;
-                OutputSpec::WebRtcSend {
-                    node_id: n.id.clone(),
-                    channels: data
-                        .channels
-                        .clamp(1, crate::audio::netaudio::MAX_CHANNELS as u32),
-                    opus_bitrate: data.opus_bitrate,
-                    opus_application: data.opus_application,
-                }
-            }
-            _ => unreachable!(),
-        };
-        result.push(ValidOutput {
-            id: n.id.clone(),
-            spec,
-        });
+                _ => unreachable!(),
+            })
+        })();
+        match resolved {
+            Ok(spec) => result.push(ValidOutput {
+                id: n.id.clone(),
+                spec,
+            }),
+            Err(e) if routed.contains(n.id.as_str()) => return Err(e),
+            Err(_) => continue,
+        }
     }
     Ok(result)
 }
@@ -1384,5 +1395,36 @@ mod tests {
             .expect("an unwired collaborator is a destination in waiting");
         assert!(v.inputs.is_empty());
         assert!(v.outputs.is_empty());
+    }
+
+    #[test]
+    fn unrouted_output_is_valid_and_streams_silence() {
+        let g = GraphSpec {
+            nodes: vec![speaker("s")],
+            edges: vec![],
+        };
+        let v = g.validate().expect("unrouted output is valid");
+        assert!(v.inputs.is_empty());
+        assert_eq!(v.outputs.len(), 1);
+        assert_eq!(v.outputs[0].id, "s");
+    }
+
+    #[test]
+    fn effect_leading_to_output_survives_when_input_disconnects() {
+        fn gain(id: &str) -> NodeSpec {
+            node(id, NodeKind::Gain, serde_json::json!({ "gainDb": 0.0 }))
+        }
+
+        let g = GraphSpec {
+            nodes: vec![gain("g"), speaker("s")],
+            edges: vec![edge("e", "g", None, "s", None)],
+        };
+        let v = g.validate().expect("effect + output without inputs is valid");
+        assert!(v.inputs.is_empty());
+        assert_eq!(v.effects.len(), 1);
+        assert_eq!(v.effects[0].id, "g");
+        assert_eq!(v.outputs.len(), 1);
+        assert_eq!(v.outputs[0].id, "s");
+        assert_eq!(v.edges.len(), 1);
     }
 }

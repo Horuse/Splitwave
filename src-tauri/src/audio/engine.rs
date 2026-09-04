@@ -6,12 +6,14 @@
 
 use std::sync::mpsc::{Receiver, Sender};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 use crate::audio::graph::ValidGraph;
 use crate::audio::pipeline::{self, ActivePipeline};
 use crate::error::{AppError, AppResult};
+
+const STATE_EVENT: &str = "audio://state";
 
 pub enum Command {
     Start {
@@ -98,21 +100,22 @@ pub fn run(rx: Receiver<Command>) {
             }
             Command::Stop { reply } => {
                 if active.take().is_none() {
-                    warn!("stop ignored: pipeline not running");
-                    let _ = reply.send(Err(AppError::NotRunning));
+                    info!("stop: pipeline was already idle");
                 } else {
                     info!("pipeline torn down");
-                    let _ = reply.send(Ok(()));
                 }
+                let _ = reply.send(Ok(()));
             }
             Command::Reconcile { graph, app, reply } => match active.as_mut() {
                 None => {
                     let _ = reply.send(Err(AppError::NotRunning));
                 }
                 Some(p) => {
-                    let r = p.reconcile(&graph, app);
+                    let r = p.reconcile(&graph, app.clone());
                     if let Err(e) = &r {
-                        error!(error = %e, "reconcile failed");
+                        error!(error = %e, "reconcile failed, clearing active pipeline");
+                        active = None;
+                        let _ = app.emit(STATE_EVENT, serde_json::json!({ "kind": "stopped" }));
                     }
                     let _ = reply.send(r);
                 }

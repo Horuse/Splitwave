@@ -77,7 +77,10 @@ export const methods = {
 	/** Throws when not settable. */
 	setDeviceVolume: (kind: 'input' | 'output', name: string, scalar: number): Promise<void> => invoke('set_device_volume', { kind, name, scalar }),
 	onState: (cb: (e: AudioStateEvent) => void): Promise<UnlistenFn> => listen<AudioStateEvent>(AUDIO_STATE_EVENT, (evt) => cb(evt.payload)),
-	onSpeakerError: (cb: () => void): Promise<UnlistenFn> => listen('audio://speaker_error', () => cb()),
+	onInputError: (cb: (e: { nodeId: string; error: string }) => void): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; error: string }>('audio://input_error', (evt) => cb(evt.payload)),
+	onSpeakerError: (cb: (e: { nodeId: string; error?: string }) => void): Promise<UnlistenFn> =>
+		listen<{ nodeId: string; error?: string }>('audio://speaker_error', (evt) => cb(evt.payload)),
 	virtualDriverStatus: (): Promise<VirtualDriverStatus> => invoke<VirtualDriverStatus>('virtual_driver_status'),
 	windowsVirtualCableStatus: (): Promise<WindowsVirtualCableStatus> => invoke<WindowsVirtualCableStatus>('windows_virtual_cable_status'),
 	installWindowsVirtualCable: (): Promise<WindowsVirtualCableStatus> => invoke<WindowsVirtualCableStatus>('install_windows_virtual_cable'),

@@ -121,10 +121,15 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
         let err_cb = move |e: cpal::StreamError| {
-            dead_cb.store(true, Ordering::Relaxed);
+            if dead_cb.swap(true, Ordering::Relaxed) {
+                return;
+            }
             health::bump(&health::STREAM_ERRORS, 1);
             error!(node_id = %node_id_cb, error = %e, "speaker stream error");
-            let _ = app_err.emit("audio://speaker_error", json!({ "nodeId": node_id_cb }));
+            let _ = app_err.emit(
+                "audio://speaker_error",
+                json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
+            );
         };
         match streams::build_output_stream(
             &spec.device,

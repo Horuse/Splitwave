@@ -29,6 +29,10 @@ pub struct Vst3Instance {
     separate: bool,
     /// Kept alive for the plugin, which holds only a borrowed reference to it.
     handler: Option<ComWrapper<ComponentHandler<Box<dyn EditListener>>>>,
+    /// Cached editor view so has_editor doesn't create and immediately destroy it,
+    /// which would corrupt internal static state in plugins (such as JUCE LookAndFeel).
+    cached_view: Option<ComPtr<vst3::Steinberg::IPlugView>>,
+    has_editor_cache: Option<bool>,
     /// The factory that made these lives in the module, so it outlives them.
     _module: Vst3Module,
 }
@@ -118,6 +122,8 @@ impl Vst3Instance {
                 controller,
                 separate,
                 handler: None,
+                cached_view: None,
+                has_editor_cache: None,
                 _module: module,
             })
         }
@@ -232,14 +238,38 @@ impl Vst3Instance {
 
     /// Whether the plugin has an editor at all. Asked before offering the
     /// button, so the node can say "no editor" instead of opening a blank
-    /// window.
-    pub fn has_editor(&self) -> bool {
+    /// window. Caches the view so it is not created and immediately destroyed.
+    pub fn has_editor(&mut self) -> bool {
+        if let Some(has) = self.has_editor_cache {
+            return has;
+        }
         use vst3::Steinberg::Vst::ViewType::kEditor;
-        // SAFETY: the view is created only to be counted and immediately
-        // released; it is never attached.
+        if self.cached_view.is_some() {
+            self.has_editor_cache = Some(true);
+            return true;
+        }
+        unsafe {
+            if let Some(view) =
+                ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
+            {
+                self.cached_view = Some(view);
+                self.has_editor_cache = Some(true);
+                true
+            } else {
+                self.has_editor_cache = Some(false);
+                false
+            }
+        }
+    }
+
+    /// Takes the cached editor view or creates a new one if not cached.
+    pub fn take_view(&mut self) -> Option<ComPtr<vst3::Steinberg::IPlugView>> {
+        use vst3::Steinberg::Vst::ViewType::kEditor;
+        if let Some(view) = self.cached_view.take() {
+            return Some(view);
+        }
         unsafe {
             ComPtr::<vst3::Steinberg::IPlugView>::from_raw(self.controller.createView(kEditor))
-                .is_some()
         }
     }
 
@@ -471,10 +501,12 @@ impl Drop for Vst3Instance {
     fn drop(&mut self) {
         use vst3::Steinberg::Vst::{IConnectionPoint, IConnectionPointTrait};
 
-        // Unwind the setup in reverse: stop processing, deactivate, disconnect,
-        // then terminate each half. Terminating a running or still-connected
-        // plugin leaves the other side holding a reference to a dead object.
         unsafe {
+            self.cached_view = None;
+            if self.handler.is_some() {
+                self.controller.setComponentHandler(std::ptr::null_mut());
+                self.handler = None;
+            }
             use vst3::Steinberg::Vst::{IAudioProcessor, IAudioProcessorTrait};
             if let Some(processor) = self.component.cast::<IAudioProcessor>() {
                 processor.setProcessing(0);

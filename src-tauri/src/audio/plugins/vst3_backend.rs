@@ -65,7 +65,18 @@ impl PluginBackend for Vst3Backend {
     }
 
     fn scan_bundle(&self, path: &Path) -> Vec<PluginDescriptor> {
-        let module = match Vst3Module::open(path) {
+        let p = path.to_path_buf();
+        let open_res = if crate::audio::plugins::main_thread::is_main_thread() {
+            Vst3Module::open(&p)
+        } else if let Ok(res) =
+            crate::audio::plugins::main_thread::run(move || Vst3Module::open(&p))
+        {
+            res
+        } else {
+            Vst3Module::open(path)
+        };
+
+        let module = match open_res {
             Ok(module) => module,
             Err(err) => {
                 tracing::warn!("vst3: {err}");

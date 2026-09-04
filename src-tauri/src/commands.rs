@@ -57,11 +57,10 @@ pub async fn scan_plugins() -> AppResult<Vec<crate::audio::plugins::PluginDescri
 #[tauri::command]
 pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()> {
     let id = node_id.clone();
-    let r = tauri::async_runtime::spawn_blocking(move || {
+    let r = crate::audio::plugins::main_thread::run(move || {
         crate::audio::plugins::editor::open(&id, &title)
     })
-    .await
-    .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
+    .map_err(|e| AppError::Plugin(format!("editor task for {node_id} failed: {e}")))?
     .map_err(AppError::Plugin);
     if let Err(e) = &r {
         // The node id has to be re-supplied here: it was moved into the task.
@@ -75,7 +74,7 @@ pub async fn open_plugin_editor(node_id: String, title: String) -> AppResult<()>
 #[tauri::command]
 pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
     let id = node_id.clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
+    let res = crate::audio::plugins::main_thread::run(move || {
         // A format without state persistence reports it; the node then has
         // nothing to store, which is not the same as an empty state.
         crate::audio::plugins::registry::for_node(&id).and_then(|h| match h.save_state(&id) {
@@ -89,27 +88,28 @@ pub async fn get_plugin_state(node_id: String) -> AppResult<Option<String>> {
                 None
             }
         })
-    })
-    .await
-    .unwrap_or_else(|_| {
-        error!(node_id, "get_plugin_state task failed");
-        None
-    }))
+    });
+    match res {
+        Ok(state) => Ok(state),
+        Err(e) => {
+            error!(node_id, error = %e, "get_plugin_state task failed");
+            Ok(None)
+        }
+    }
 }
 
 /// Automatable parameters of a running plugin for the node UI. Empty when the
-/// plugin isn't running or exposes no parameters.
+/// plugin is not running, does not advertise parameters, or on error.
 #[tauri::command]
 pub async fn get_plugin_params(
     node_id: String,
 ) -> AppResult<Vec<crate::audio::plugins::PluginParamInfo>> {
     let id = node_id.clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
+    Ok(crate::audio::plugins::main_thread::run(move || {
         crate::audio::plugins::registry::for_node(&id)
             .map(|h| h.params(&id))
             .unwrap_or_default()
     })
-    .await
     .unwrap_or_else(|_| {
         error!(node_id, "get_plugin_params task failed");
         Vec::new()
@@ -122,12 +122,11 @@ pub async fn get_plugin_params(
 #[tauri::command]
 pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::PluginStatus> {
     let id = node_id.clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
+    Ok(crate::audio::plugins::main_thread::run(move || {
         crate::audio::plugins::registry::for_node(&id)
             .map(|h| h.status(&id))
             .unwrap_or_default()
     })
-    .await
     .unwrap_or_else(|_| {
         error!(node_id, "plugin_status task failed");
         Default::default()
@@ -162,9 +161,8 @@ pub fn debug_panic(app: AppHandle) {
 #[tauri::command]
 pub async fn close_plugin_editor(node_id: String) -> AppResult<()> {
     let id = node_id.clone();
-    tauri::async_runtime::spawn_blocking(move || crate::audio::plugins::editor::close(&id))
-        .await
-        .map_err(|_| AppError::Plugin(format!("editor task for {node_id} failed")))?
+    crate::audio::plugins::main_thread::run(move || crate::audio::plugins::editor::close(&id))
+        .map_err(|e| AppError::Plugin(format!("editor close task for {node_id} failed: {e}")))?
         .map_err(AppError::Plugin)
 }
 

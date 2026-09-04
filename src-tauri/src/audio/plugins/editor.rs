@@ -87,7 +87,8 @@ pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
 pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, title, "opening plugin editor");
     let app = crate::app_handle().ok_or("app handle not ready")?;
-    if let Some(w) = windows().lock().unwrap().get(node_id) {
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
         if let Some(host) = super::registry::for_node(node_id) {
             let _ = host.show_editor(node_id);
         }
@@ -112,15 +113,12 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         // notify the FE node that its editor is closed.
         if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
             api.prevent_close();
-            if let Some(host) = super::registry::for_node(&nid) {
-                let _ = host.hide_editor(&nid);
-            }
-            if let Some(w) = windows().lock().unwrap().get(&nid) {
-                let _ = w.hide();
-            }
-            if let Some(app) = crate::app_handle() {
-                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &nid);
-            }
+            let nid = nid.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::audio::plugins::main_thread::run(move || {
+                    let _ = close(&nid);
+                });
+            });
         }
     });
     windows()
@@ -159,7 +157,8 @@ pub fn close(node_id: &str) -> Result<(), String> {
     if let Some(host) = super::registry::for_node(node_id) {
         let _ = host.hide_editor(node_id);
     }
-    if let Some(w) = windows().lock().unwrap().get(node_id) {
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
         let _ = w.hide();
     }
     if let Some(app) = crate::app_handle() {

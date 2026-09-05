@@ -13,9 +13,41 @@ use std::time::Duration;
 /// timeout keeps the calling thread from hanging with it.
 const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Runs `f` on the Tauri main thread and blocks for its result. Callers must
-/// not be the main thread themselves, or this deadlocks.
+use std::sync::OnceLock;
+use std::thread::ThreadId;
+
+static MAIN_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+
+/// Registers the current thread as the main thread.
+pub fn register_main_thread() {
+    MAIN_THREAD_ID.get_or_init(|| std::thread::current().id());
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn pthread_main_np() -> i32;
+}
+
+/// Returns whether the caller is currently on the main thread.
+pub fn is_main_thread() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        pthread_main_np() != 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        MAIN_THREAD_ID
+            .get()
+            .is_some_and(|&id| id == std::thread::current().id())
+    }
+}
+
+/// Runs `f` on the Tauri main thread and blocks for its result. If already on
+/// the main thread, runs `f` directly to prevent deadlock.
 pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> Result<R, String> {
+    if is_main_thread() {
+        return Ok(f());
+    }
     let app = crate::app_handle().ok_or_else(|| "app handle not ready".to_string())?;
     let (tx, rx) = mpsc::channel();
     app.run_on_main_thread(move || {

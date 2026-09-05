@@ -336,6 +336,12 @@ pub trait PluginHost: Sync {
     /// the caller can fit the window to it.
     fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String>;
 
+    /// Notifies the plugin that its editor window was shown (unhidden) or focused.
+    fn show_editor(&self, node_id: &str) -> Result<(), String>;
+
+    /// Notifies the plugin that its editor window was hidden.
+    fn hide_editor(&self, node_id: &str) -> Result<(), String>;
+
     /// Tears the view down. Must run before the host window closes, since the
     /// plugin's view is a child of it.
     ///

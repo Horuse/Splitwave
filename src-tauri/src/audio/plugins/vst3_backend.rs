@@ -65,14 +65,33 @@ impl PluginBackend for Vst3Backend {
     }
 
     fn scan_bundle(&self, path: &Path) -> Vec<PluginDescriptor> {
-        let module = match Vst3Module::open(path) {
-            Ok(module) => module,
-            Err(err) => {
-                tracing::warn!("vst3: {err}");
-                return Vec::new();
-            }
+        let p = path.to_path_buf();
+        let scan_op = move || {
+            let module = match Vst3Module::open(&p) {
+                Ok(module) => module,
+                Err(err) => {
+                    tracing::warn!("vst3: {err}");
+                    return Vec::new();
+                }
+            };
+            let descriptors = module.descriptors();
+            // Drop module here on the main thread so ExitDll/bundleExit and dlclose/FreeLibrary
+            // execute on Thread 0.
+            drop(module);
+            descriptors
         };
-        module.descriptors()
+
+        if crate::audio::plugins::main_thread::is_main_thread() || crate::app_handle().is_none() {
+            scan_op()
+        } else {
+            match crate::audio::plugins::main_thread::run(scan_op) {
+                Ok(descriptors) => descriptors,
+                Err(err) => {
+                    tracing::warn!("vst3 {}: main thread scan failed: {err}", path.display());
+                    Vec::new()
+                }
+            }
+        }
     }
 }
 

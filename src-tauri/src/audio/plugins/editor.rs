@@ -36,8 +36,11 @@ pub fn window_for(node_id: &str) -> Option<tauri::Window> {
 /// Closes a node's editor window if one is open. Shared with the format hosts,
 /// which have to take the window down alongside the instance it belongs to.
 pub fn close_window(node_id: &str) {
+    if let Some(host) = super::registry::for_node(node_id) {
+        host.destroy_editor(node_id);
+    }
     if let Some(w) = windows().lock().unwrap().remove(node_id) {
-        let _ = w.close();
+        let _ = w.destroy();
     }
 }
 
@@ -84,7 +87,12 @@ pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
 pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, title, "opening plugin editor");
     let app = crate::app_handle().ok_or("app handle not ready")?;
-    if let Some(w) = windows().lock().unwrap().get(node_id) {
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
+        if let Some(host) = super::registry::for_node(node_id) {
+            let _ = host.show_editor(node_id);
+        }
+        let _ = w.show();
         let _ = w.set_focus();
         return Ok(());
     }
@@ -100,17 +108,17 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
 
     let nid = node_id.to_string();
     window.on_window_event(move |ev| {
-        // The plugin's view is a child of this window: tear the GUI down before
-        // the window goes away, and tell the FE node its editor button is stale.
-        if matches!(ev, tauri::WindowEvent::CloseRequested { .. }) {
-            // Already the main thread, which is where `destroy_editor` belongs.
-            if let Some(host) = super::registry::for_node(&nid) {
-                host.destroy_editor(&nid);
-            }
-            windows().lock().unwrap().remove(&nid);
-            if let Some(app) = crate::app_handle() {
-                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &nid);
-            }
+        // The user closed the window: keep the native view parented to avoid
+        // COM/lifecycle destruction churn in plugins, just hide the window and
+        // notify the FE node that its editor is closed.
+        if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+            api.prevent_close();
+            let nid = nid.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::audio::plugins::main_thread::run(move || {
+                    let _ = close(&nid);
+                });
+            });
         }
     });
     windows()
@@ -139,21 +147,23 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, width, height, "plugin editor embedded");
 
     set_content_size(&window, width as f64, height as f64);
+    let _ = window.show();
+    let _ = window.set_focus();
     Ok(())
 }
 
-/// Tears down the plugin editor and closes its native window.
+/// Hides the plugin editor window (or tears it down if requested).
 pub fn close(node_id: &str) -> Result<(), String> {
-    // The plugin's view is a child of this window, so it goes first -- and it
-    // goes on the main thread, which is the one place AppKit and every format
-    // agree on.
-    let nid = node_id.to_string();
-    let _ = super::main_thread::run(move || {
-        if let Some(host) = super::registry::for_node(&nid) {
-            host.destroy_editor(&nid);
-        }
-    });
-    close_window(node_id);
+    if let Some(host) = super::registry::for_node(node_id) {
+        let _ = host.hide_editor(node_id);
+    }
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
+        let _ = w.hide();
+    }
+    if let Some(app) = crate::app_handle() {
+        let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+    }
     Ok(())
 }
 

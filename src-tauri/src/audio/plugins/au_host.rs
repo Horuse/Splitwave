@@ -317,6 +317,14 @@ fn activate(
         None
     };
     if let Some(old) = retired {
+        if let Some(view) = old.view {
+            unsafe { drop_view(view) };
+            editor::close_window(node_id);
+            if let Some(app) = crate::app_handle() {
+                use tauri::Emitter;
+                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+            }
+        }
         graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
@@ -1217,21 +1225,45 @@ pub struct AuHost;
 
 impl PluginHost for AuHost {
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
-        activate(
-            req.node_id,
-            req.path,
+        main_thread::ensure_ticker();
+        let (node_id, path) = (req.node_id.to_string(), req.path.to_string());
+        let state = req.state.map(str::to_string);
+        let (sample_rate, max_frames, channels, primary, params) = (
             req.sample_rate,
             req.max_frames,
             req.channels,
-            req.state,
             req.primary,
             req.params,
-        )
-        .map(HostedNode::Au)
+        );
+
+        let act = move || {
+            activate(
+                &node_id,
+                &path,
+                sample_rate,
+                max_frames,
+                channels,
+                state.as_deref(),
+                primary,
+                params,
+            )
+            .map(HostedNode::Au)
+        };
+
+        if main_thread::is_main_thread() {
+            act()
+        } else {
+            main_thread::run(act).map_err(|e| format!("main thread error: {e}"))?
+        }
     }
 
     fn forget(&self, node_id: &str) {
-        forget(node_id);
+        let id = node_id.to_string();
+        if main_thread::is_main_thread() {
+            forget(&id);
+        } else {
+            let _ = main_thread::run(move || forget(&id));
+        }
     }
 
     fn status(&self, node_id: &str) -> PluginStatus {
@@ -1283,16 +1315,44 @@ impl PluginHost for AuHost {
         Ok((width as u32, height as u32))
     }
 
+    fn show_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            use objc2::msg_send;
+            use objc2::runtime::AnyObject;
+            if let Some(slot) = instances().lock().unwrap().get(&id) {
+                if let Some(view) = slot.view {
+                    unsafe {
+                        let _: () = msg_send![view as *mut AnyObject, setNeedsDisplay: true];
+                    }
+                }
+            }
+            Ok(())
+        })?
+    }
+
+    fn hide_editor(&self, _node_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     fn destroy_editor(&self, node_id: &str) {
-        let Some(view) = instances()
-            .lock()
-            .unwrap()
-            .get_mut(node_id)
-            .and_then(|s| s.view.take())
-        else {
-            return;
+        let id = node_id.to_string();
+        let destroy = move || {
+            let Some(view) = instances()
+                .lock()
+                .unwrap()
+                .get_mut(&id)
+                .and_then(|s| s.view.take())
+            else {
+                return;
+            };
+            unsafe { drop_view(view) };
         };
-        unsafe { drop_view(view) };
+        if main_thread::is_main_thread() {
+            destroy();
+        } else {
+            let _ = main_thread::run(destroy);
+        }
     }
 
     /// Frees units whose RT node has left the graph. The host holds a reference

@@ -517,6 +517,28 @@ impl ClapInstance {
         }
     }
 
+    /// Shows an already-created editor when its window is unhidden.
+    pub fn show_editor(&mut self) -> Result<(), String> {
+        if !self.gui_open {
+            return Ok(());
+        }
+        if let Some(gui) = self.instance.plugin_handle().get_extension::<PluginGui>() {
+            let _ = gui.show(&mut self.instance.plugin_handle());
+        }
+        Ok(())
+    }
+
+    /// Hides the editor when its window is hidden.
+    pub fn hide_editor(&mut self) -> Result<(), String> {
+        if !self.gui_open {
+            return Ok(());
+        }
+        if let Some(gui) = self.instance.plugin_handle().get_extension::<PluginGui>() {
+            let _ = gui.hide(&mut self.instance.plugin_handle());
+        }
+        Ok(())
+    }
+
     /// Tears the editor down. Destroying a GUI that was never created is
     /// undefined per the CLAP spec, hence the flag.
     pub fn destroy_editor(&mut self) {

@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use tauri::Emitter;
+
 use super::host_api::{
     alive_flag, tag_state, untag_state, ActivateRequest, AliveFlag, EditorSize, Graveyard,
     HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
@@ -103,18 +105,66 @@ fn activate_on_main(
         // and let `tick_and_reclaim` free it once its `alive` flag is clear.
         let old = SLOTS.with(|s| {
             s.borrow_mut().insert(
-                node_id,
+                node_id.clone(),
                 Slot {
                     instance,
                     alive,
-                    path,
-                    plugin_id,
+                    path: path.clone(),
+                    plugin_id: plugin_id.clone(),
                     editor: None,
                 },
             )
         });
-        if let Some(old) = old {
+        if let Some(mut old) = old {
+            let same_plugin = old.path == path && old.plugin_id == plugin_id;
             GRAVEYARD.with(|g| g.borrow_mut().bury(old.instance, old.alive));
+
+            if same_plugin {
+                // Same plugin, pipeline rebuilt: re-attach to existing window!
+                if let Some(window) = editor::window_for(&node_id) {
+                    // IMPORTANT: Drop the old editor view first so its removed() and
+                    // peer teardown happen BEFORE the new view calls attached()!
+                    old.editor = None;
+
+                    let attached = SLOTS.with(|s| {
+                        if let Some(slot) = s.borrow_mut().get_mut(&node_id) {
+                            attach_slot_editor(slot, &node_id, &window)
+                        } else {
+                            Err("slot missing".into())
+                        }
+                    });
+
+                    match attached {
+                        Ok(size) => {
+                            let (width, height) = editor::valid_gui_size(size.0, size.1)
+                                .unwrap_or(editor::FALLBACK_EDITOR_SIZE);
+                            editor::set_content_size(&window, width as f64, height as f64);
+                            SLOTS.with(|s| {
+                                if let Some(slot) = s.borrow().get(&node_id) {
+                                    if let Some(ref ed) = slot.editor {
+                                        ed.on_size(width, height);
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(node_id, error = %e, "failed to re-attach VST3 editor on rebuild; closing window");
+                            editor::close_window(&node_id);
+                            if let Some(app) = crate::app_handle() {
+                                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &node_id);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Different plugin chosen on this node: close the previous editor
+                // window so the new one opens cleanly with its own UI and geometry.
+                old.editor = None;
+                editor::close_window(&node_id);
+                if let Some(app) = crate::app_handle() {
+                    let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &node_id);
+                }
+            }
         }
     } else {
         // A metering duplicate has no editor and no parameters to answer for;
@@ -122,6 +172,46 @@ fn activate_on_main(
         GRAVEYARD.with(|g| g.borrow_mut().bury(instance, alive));
     }
     Ok(node)
+}
+
+fn attach_slot_editor(
+    slot: &mut Slot,
+    node_id: &str,
+    window: &tauri::Window,
+) -> Result<EditorSize, String> {
+    let view_addr = parent_handle(window).map_err(|e| format!("vst3 {node_id}: {e}"))?;
+    let (_, titlebar) = editor::decoration_overhead(window);
+    let resize_target = window.clone();
+
+    // Cleanly drop any previous editor view before attaching the new one.
+    slot.editor = None;
+
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let parent_obj = view_addr as *mut AnyObject;
+        let subviews: *mut AnyObject = msg_send![parent_obj, subviews];
+        let count: usize = msg_send![subviews, count];
+        for i in (0..count).rev() {
+            let sv: *mut AnyObject = msg_send![subviews, objectAtIndex: i];
+            let _: () = msg_send![sv, removeFromSuperview];
+        }
+    }
+
+    let view = slot
+        .instance
+        .take_view()
+        .ok_or_else(|| format!("vst3 {node_id}: plugin has no editor"))?;
+
+    let resize = Box::new(move |w: u32, h: u32| {
+        let _ = resize_target.set_size(tauri::LogicalSize::new(w as f64, h as f64));
+    });
+    let (view, size) = EditorView::attach(view, view_addr as *mut c_void, titlebar, resize)
+        .map_err(|e| format!("vst3 {node_id}: {e}"))?;
+
+    slot.editor = Some(view);
+    Ok(size)
 }
 
 /// The window a plugin view is parented to, as the address VST3 expects for
@@ -234,12 +324,8 @@ impl PluginHost for Vst3Host {
     }
 
     fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
-        // A raw pointer is not `Send`; the address is, and the window outlives
-        // the editor it hosts.
-        let view_addr = parent_handle(window).map_err(|e| format!("vst3 {node_id}: {e}"))?;
-        let (_, titlebar) = editor::decoration_overhead(window);
         let id = node_id.to_string();
-        let resize_target = window.clone();
+        let win = window.clone();
 
         main_thread::run(move || {
             SLOTS.with(|slots| {
@@ -248,22 +334,63 @@ impl PluginHost for Vst3Host {
                     .get_mut(&id)
                     .ok_or_else(|| format!("vst3 {id}: no plugin loaded"))?;
 
-                let resize = Box::new(move |w: u32, h: u32| {
-                    let _ = resize_target.set_size(tauri::LogicalSize::new(w as f64, h as f64));
-                });
-                let attached = EditorView::attach(
-                    &slot.instance.controller,
-                    view_addr as *mut c_void,
-                    titlebar,
-                    resize,
-                )
-                .map_err(|e| format!("vst3 {id}: {e}"))?;
+                attach_slot_editor(slot, &id, &win)
+            })
+        })?
+    }
 
-                let Some((view, size)) = attached else {
-                    return Err(format!("vst3 {id}: plugin has no editor"));
+    fn show_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            SLOTS.with(|slots| {
+                let slots = slots.borrow();
+                let Some(slot) = slots.get(&id) else {
+                    return Ok(());
                 };
-                slot.editor = Some(view);
-                Ok(size)
+                if let Some(ref editor) = slot.editor {
+                    editor.on_focus(true);
+                    if let Some(window) = editor::window_for(&id) {
+                        #[cfg(target_os = "macos")]
+                        unsafe {
+                            use objc2::msg_send;
+                            use objc2::runtime::AnyObject;
+                            if let Ok(addr) = parent_handle(&window) {
+                                let parent_obj = addr as *mut AnyObject;
+                                let _: () = msg_send![parent_obj, setNeedsDisplay: true];
+                                if let Some(v) = editor::last_subview(addr as *mut std::ffi::c_void)
+                                {
+                                    let _: () = msg_send![v, setNeedsDisplay: true];
+                                }
+                            }
+                        }
+                        #[cfg(target_os = "windows")]
+                        unsafe {
+                            use windows::Win32::Foundation::HWND;
+                            use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
+                            if let Ok(addr) = parent_handle(&window) {
+                                let hwnd = HWND(addr as _);
+                                let _ = InvalidateRect(Some(hwnd), None, true);
+                                let _ = UpdateWindow(hwnd);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })
+        })?
+    }
+
+    fn hide_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            SLOTS.with(|slots| {
+                let slots = slots.borrow();
+                if let Some(slot) = slots.get(&id) {
+                    if let Some(ref editor) = slot.editor {
+                        editor.on_focus(false);
+                    }
+                }
+                Ok(())
             })
         })?
     }

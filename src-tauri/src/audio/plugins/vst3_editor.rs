@@ -8,8 +8,6 @@
 
 use std::ffi::c_void;
 
-use vst3::Steinberg::Vst::ViewType::kEditor;
-use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait};
 use vst3::Steinberg::{
     kResultOk, kResultTrue, tresult, FIDString, IPlugFrame, IPlugFrameTrait, IPlugView,
     IPlugViewTrait, ViewRect,
@@ -117,24 +115,18 @@ pub struct EditorView {
 impl EditorView {
     /// Builds the plugin's view into `parent` -- an `NSView` on macOS, an `HWND`
     /// on Windows, an X11 window id on Linux -- and returns the size the plugin
-    /// asked for. `None` when the plugin has no editor at all, which is not an
-    /// error.
+    /// asked for.
     ///
     /// Must run on the main thread.
     pub fn attach(
-        controller: &ComPtr<IEditController>,
+        view: ComPtr<IPlugView>,
         parent: *mut c_void,
         titlebar: f64,
         resize: ResizeRequest,
-    ) -> Result<Option<(Self, EditorSize)>, String> {
+    ) -> Result<(Self, EditorSize), String> {
         // SAFETY: main thread, and `parent` is a live window handle owned by a
         // window that outlives this editor.
         unsafe {
-            let raw = controller.createView(kEditor);
-            let Some(view) = ComPtr::from_raw(raw) else {
-                return Ok(None);
-            };
-
             let platform = platform_type();
             if view.isPlatformTypeSupported(platform) != kResultTrue {
                 return Err(format!(
@@ -143,13 +135,22 @@ impl EditorView {
                 ));
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::msg_send;
+                use objc2::runtime::AnyObject;
+                let parent_obj = parent as *mut AnyObject;
+                let _: () = msg_send![parent_obj, setWantsLayer: true];
+            }
+
             let frame = ComWrapper::new(PlugFrame { resize });
             let frame_ptr = frame
                 .as_com_ref::<IPlugFrame>()
                 .map(|r| r.as_ptr())
                 .ok_or("PlugFrame implements IPlugFrame")?;
             // Before `attached`, so a plugin that resizes on open has somewhere
-            // to send the request.
+            // to send the request, and plugins that inspect frame metrics during
+            // size calculations have an initialized frame pointer.
             view.setFrame(frame_ptr);
 
             let mut rect = ViewRect {
@@ -158,31 +159,99 @@ impl EditorView {
                 right: 0,
                 bottom: 0,
             };
-            if view.getSize(&mut rect) != kResultOk {
-                return Err("editor reported no size".into());
-            }
+
+            // Query initial size before attached (succeeds for most plugins)
+            let mut got_size = view.getSize(&mut rect) == kResultOk
+                && (rect.right > rect.left && rect.bottom > rect.top);
 
             if view.attached(parent, platform) != kResultOk {
                 view.setFrame(std::ptr::null_mut());
                 return Err("editor refused to attach to the window".into());
             }
 
+            // Many plugins (e.g. Native Instruments) only report valid size
+            // after attached() has parented the view hierarchy.
+            if !got_size {
+                if view.getSize(&mut rect) == kResultOk
+                    && (rect.right > rect.left && rect.bottom > rect.top)
+                {
+                    got_size = true;
+                }
+            }
+
+            // If the plugin still hasn't reported a valid size via getSize(),
+            // measure the native subview that the plugin attached to the parent.
             #[cfg(target_os = "macos")]
-            inset_below_titlebar(parent, titlebar);
-            #[cfg(not(target_os = "macos"))]
+            if !got_size {
+                if let Some(subview) = editor::last_subview(parent) {
+                    use objc2::msg_send;
+                    use objc2_foundation::NSRect;
+                    let f: NSRect = msg_send![subview, frame];
+                    if f.size.width > 0.0 && f.size.height > 0.0 {
+                        rect.left = 0;
+                        rect.top = 0;
+                        rect.right = f.size.width.round() as i32;
+                        rect.bottom = f.size.height.round() as i32;
+                        got_size = true;
+                    }
+                }
+            }
+
+            // Fallback default size (800x600) so the editor window still opens and renders.
+            if !got_size || rect.right <= rect.left || rect.bottom <= rect.top {
+                rect.left = 0;
+                rect.top = 0;
+                rect.right = 800;
+                rect.bottom = 600;
+            }
+
+            // Inform the view of its initial size so it initializes layout and rendering.
+            let _ = view.onSize(&mut rect);
+
+            // Notify the view that it has focus so timers and render loops start.
+            let _ = view.onFocus(1);
+
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::msg_send;
+                use objc2::runtime::AnyObject;
+                let parent_obj = parent as *mut AnyObject;
+                let _: () = msg_send![parent_obj, setNeedsDisplay: true];
+                if let Some(view) = editor::last_subview(parent) {
+                    let _: () = msg_send![view, setNeedsDisplay: true];
+                }
+            }
             let _ = titlebar;
 
             let size = (
                 (rect.right - rect.left).max(1) as u32,
                 (rect.bottom - rect.top).max(1) as u32,
             );
-            Ok(Some((
+            Ok((
                 Self {
                     view,
                     _frame: frame,
                 },
                 size,
-            )))
+            ))
+        }
+    }
+
+    pub fn on_focus(&self, state: bool) {
+        unsafe {
+            let _ = self.view.onFocus(if state { 1 } else { 0 });
+        }
+    }
+
+    pub fn on_size(&self, width: u32, height: u32) {
+        unsafe {
+            let mut rect = ViewRect {
+                left: 0,
+                top: 0,
+                right: width as i32,
+                bottom: height as i32,
+            };
+            let _ = self.view.onSize(&mut rect);
         }
     }
 }
@@ -192,23 +261,8 @@ impl Drop for EditorView {
         // Order matters: the plugin must let go of the parent view before the
         // window closes, and of our frame before it is freed.
         unsafe {
-            self.view.removed();
-            self.view.setFrame(std::ptr::null_mut());
-        }
-    }
-}
-
-/// Lays the view the plugin just parented under the title bar rather than at
-/// the window's bottom-left corner, where an unflipped `NSView` origin puts it.
-/// Win32 and X11 children are placed from the top-left of the client area, so
-/// they need no equivalent.
-#[cfg(target_os = "macos")]
-fn inset_below_titlebar(parent: *mut c_void, titlebar: f64) {
-    // SAFETY: `parent` is the window's content view, and the plugin has just
-    // added its own view as the last subview of it.
-    unsafe {
-        if let Some(view) = editor::last_subview(parent) {
-            editor::inset_below_titlebar(parent, view, titlebar);
+            let _ = self.view.removed();
+            let _ = self.view.setFrame(std::ptr::null_mut());
         }
     }
 }
@@ -219,6 +273,8 @@ mod tests {
     use crate::audio::plugins::vst3_backend::{Vst3Backend, Vst3Module};
     use crate::audio::plugins::vst3_host::Vst3Instance;
     use crate::audio::plugins::PluginBackend;
+    use vst3::Steinberg::Vst::IEditControllerTrait;
+    use vst3::Steinberg::Vst::ViewType::kEditor;
 
     fn skipped(what: &str) {
         println!("SKIPPED: no vst3 plugins installed, cannot check {what}");

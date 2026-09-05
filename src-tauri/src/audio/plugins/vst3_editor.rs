@@ -135,16 +135,6 @@ impl EditorView {
                 ));
             }
 
-            let mut rect = ViewRect {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            };
-            if view.getSize(&mut rect) != kResultOk {
-                return Err("editor reported no size".into());
-            }
-
             #[cfg(target_os = "macos")]
             {
                 use objc2::msg_send;
@@ -159,12 +149,60 @@ impl EditorView {
                 .map(|r| r.as_ptr())
                 .ok_or("PlugFrame implements IPlugFrame")?;
             // Before `attached`, so a plugin that resizes on open has somewhere
-            // to send the request.
+            // to send the request, and plugins that inspect frame metrics during
+            // size calculations have an initialized frame pointer.
             view.setFrame(frame_ptr);
+
+            let mut rect = ViewRect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+
+            // Query initial size before attached (succeeds for most plugins)
+            let mut got_size = view.getSize(&mut rect) == kResultOk
+                && (rect.right > rect.left && rect.bottom > rect.top);
 
             if view.attached(parent, platform) != kResultOk {
                 view.setFrame(std::ptr::null_mut());
                 return Err("editor refused to attach to the window".into());
+            }
+
+            // Many plugins (e.g. Native Instruments) only report valid size
+            // after attached() has parented the view hierarchy.
+            if !got_size {
+                if view.getSize(&mut rect) == kResultOk
+                    && (rect.right > rect.left && rect.bottom > rect.top)
+                {
+                    got_size = true;
+                }
+            }
+
+            // If the plugin still hasn't reported a valid size via getSize(),
+            // measure the native subview that the plugin attached to the parent.
+            #[cfg(target_os = "macos")]
+            if !got_size {
+                if let Some(subview) = editor::last_subview(parent) {
+                    use objc2::msg_send;
+                    use objc2_foundation::NSRect;
+                    let f: NSRect = msg_send![subview, frame];
+                    if f.size.width > 0.0 && f.size.height > 0.0 {
+                        rect.left = 0;
+                        rect.top = 0;
+                        rect.right = f.size.width.round() as i32;
+                        rect.bottom = f.size.height.round() as i32;
+                        got_size = true;
+                    }
+                }
+            }
+
+            // Fallback default size (800x600) so the editor window still opens and renders.
+            if !got_size || rect.right <= rect.left || rect.bottom <= rect.top {
+                rect.left = 0;
+                rect.top = 0;
+                rect.right = 800;
+                rect.bottom = 600;
             }
 
             // Inform the view of its initial size so it initializes layout and rendering.

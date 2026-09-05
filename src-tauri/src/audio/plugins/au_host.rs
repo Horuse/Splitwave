@@ -1225,21 +1225,45 @@ pub struct AuHost;
 
 impl PluginHost for AuHost {
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
-        activate(
-            req.node_id,
-            req.path,
+        main_thread::ensure_ticker();
+        let (node_id, path) = (req.node_id.to_string(), req.path.to_string());
+        let state = req.state.map(str::to_string);
+        let (sample_rate, max_frames, channels, primary, params) = (
             req.sample_rate,
             req.max_frames,
             req.channels,
-            req.state,
             req.primary,
             req.params,
-        )
-        .map(HostedNode::Au)
+        );
+
+        let act = move || {
+            activate(
+                &node_id,
+                &path,
+                sample_rate,
+                max_frames,
+                channels,
+                state.as_deref(),
+                primary,
+                params,
+            )
+            .map(HostedNode::Au)
+        };
+
+        if main_thread::is_main_thread() {
+            act()
+        } else {
+            main_thread::run(act).map_err(|e| format!("main thread error: {e}"))?
+        }
     }
 
     fn forget(&self, node_id: &str) {
-        forget(node_id);
+        let id = node_id.to_string();
+        if main_thread::is_main_thread() {
+            forget(&id);
+        } else {
+            let _ = main_thread::run(move || forget(&id));
+        }
     }
 
     fn status(&self, node_id: &str) -> PluginStatus {
@@ -1312,15 +1336,23 @@ impl PluginHost for AuHost {
     }
 
     fn destroy_editor(&self, node_id: &str) {
-        let Some(view) = instances()
-            .lock()
-            .unwrap()
-            .get_mut(node_id)
-            .and_then(|s| s.view.take())
-        else {
-            return;
+        let id = node_id.to_string();
+        let destroy = move || {
+            let Some(view) = instances()
+                .lock()
+                .unwrap()
+                .get_mut(&id)
+                .and_then(|s| s.view.take())
+            else {
+                return;
+            };
+            unsafe { drop_view(view) };
         };
-        unsafe { drop_view(view) };
+        if main_thread::is_main_thread() {
+            destroy();
+        } else {
+            let _ = main_thread::run(destroy);
+        }
     }
 
     /// Frees units whose RT node has left the graph. The host holds a reference

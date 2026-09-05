@@ -1,4 +1,5 @@
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplitwave.app%2Fapi%2Fdownloads&query=downloads&label=downloads&color=brightgreen)](https://github.com/Horuse/Splitwave/releases/latest)
+[![Patreon](https://img.shields.io/badge/Patreon-support-FF424D?logo=patreon&logoColor=white)](https://www.patreon.com/cw/splitwave/membership)
 [![Support](https://img.shields.io/badge/Support-donate-yellow)](https://github.com/Horuse/Splitwave#donate)
 
 # Splitwave
@@ -129,6 +130,16 @@ Want to build the app or contribute? See [CONTRIBUTING.md](CONTRIBUTING.md).
 Splitwave is licensed under [MIT](LICENSE).  
 Third-party component notices (LGPL, MPL-2.0, etc.) are in [NOTICE](NOTICE).
 
+## Sponsors
+
+Support the ongoing development of Splitwave on [Patreon](https://www.patreon.com/cw/splitwave/membership) to have your avatar and link featured here!
+
+<p align="center">
+  <a href="https://www.patreon.com/cw/splitwave/membership">
+    <img src="https://splitwave.app/api/sponsors.svg" alt="Splitwave Sponsors" />
+  </a>
+</p>
+
 ## Support
 
 Questions, bug reports, and feature requests go through the
@@ -137,9 +148,10 @@ else, email [support@splitwave.app](mailto:support@splitwave.app).
 
 ## Donate
 
-If you find this app useful and want to help keep it going, consider a small
-donation:
+If you find this app useful and want to help keep it going, consider supporting us:
 
-- Tether USDT (TRC20): `TLhTvnn8CtVuQZruLXmRurGhR9GWd7DrWZ`
-- TON: (TON) `UQCpokpaZfwmVTjKDj0LrAbEPO-65c81-MiuBQOa7lTXbMGR`
-- Bitcoin (BTC): `bc1q6tusr5rht7dgmw8gqzkx7rwdg4q8932lwn2rsy`
+- **Patreon**: [patreon.com/cw/splitwave](https://www.patreon.com/cw/splitwave/membership)
+- or crypto donation:
+  - Tether USDT (TRC20): `TLhTvnn8CtVuQZruLXmRurGhR9GWd7DrWZ`
+  - TON: `UQCpokpaZfwmVTjKDj0LrAbEPO-65c81-MiuBQOa7lTXbMGR`
+  - Bitcoin (BTC): `bc1q6tusr5rht7dgmw8gqzkx7rwdg4q8932lwn2rsy`

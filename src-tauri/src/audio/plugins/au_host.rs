@@ -102,6 +102,54 @@ impl Drop for AuInstance {
     }
 }
 
+use objc2::{AnyThread, DefinedClass};
+
+objc2::define_class!(
+    #[unsafe(super(objc2::runtime::NSObject))]
+    #[name = "SplitwaveAuFrameObserver"]
+    #[ivars = String]
+    struct AuFrameObserver;
+
+    impl AuFrameObserver {
+        #[unsafe(method(onFrameChanged:))]
+        unsafe fn on_frame_changed(&self, notification: *mut objc2::runtime::AnyObject) {
+            let node_id = self.ivars();
+            if let Some(win) = editor::window_for(node_id) {
+                let view: *mut objc2::runtime::AnyObject = objc2::msg_send![notification, object];
+                if !view.is_null() {
+                    let frame: objc2_foundation::NSRect = objc2::msg_send![view, frame];
+                    let w = frame.size.width.round() as u32;
+                    let h = frame.size.height.round() as u32;
+                    if let Some((valid_w, valid_h)) = editor::valid_gui_size(w, h) {
+                        editor::request_resize(&win, node_id, valid_w, valid_h);
+                        if frame.origin.x != 0.0 || frame.origin.y != 0.0 {
+                            let _: () = objc2::msg_send![
+                                view,
+                                setFrameOrigin: objc2_foundation::NSPoint::new(0.0, 0.0)
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+    }
+);
+
+unsafe impl Send for AuFrameObserver {}
+unsafe impl Sync for AuFrameObserver {}
+
+impl Drop for AuFrameObserver {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(center_class) = objc2::runtime::AnyClass::get(c"NSNotificationCenter") {
+                let center: *mut objc2::runtime::AnyObject =
+                    objc2::msg_send![center_class, defaultCenter];
+                let _: () = objc2::msg_send![center, removeObserver: &*self];
+            }
+        }
+    }
+}
+
 /// The editor/parameter target for a node, held by the host rather than by the
 /// RT node alone. Holding it here is what guarantees the registry drops the
 /// last reference, and therefore that the unit is disposed on the main thread.
@@ -112,6 +160,8 @@ struct AuSlot {
     alive: AliveFlag,
     /// The plugin's Cocoa view while its editor is open. Main thread only.
     view: Option<usize>,
+    /// Frame observer for internal plugin resizes (e.g. TDR Nova, BattleFX).
+    observer: Option<objc2::rc::Retained<AuFrameObserver>>,
 }
 
 fn instances() -> &'static Mutex<HashMap<String, AuSlot>> {
@@ -305,6 +355,7 @@ fn activate(
                 instance: node.instance.clone(),
                 alive,
                 view: None,
+                observer: None,
             },
         )
     } else {
@@ -317,6 +368,14 @@ fn activate(
         None
     };
     if let Some(old) = retired {
+        if let Some(view) = old.view {
+            unsafe { drop_view(view) };
+            editor::close_window(node_id);
+            if let Some(app) = crate::app_handle() {
+                use tauri::Emitter;
+                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+            }
+        }
         graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
@@ -718,11 +777,11 @@ fn param_name(info: &AudioUnitParameterInfo) -> String {
 pub(super) fn embed_editor(
     node_id: &str,
     parent_view: *mut c_void,
-    titlebar: f64,
+    _titlebar: f64,
 ) -> Result<(f64, f64), String> {
     use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSRect, NSSize};
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
     let view = create_view(node_id)?;
 
@@ -733,10 +792,72 @@ pub(super) fn embed_editor(
         // Apple's generic views build their content lazily, so the frame is
         // still degenerate right after `addSubview`.
         let _: () = msg_send![view, layoutSubtreeIfNeeded];
-        let measured = (msg_send![view, frame], msg_send![view, fittingSize]);
-        editor::inset_below_titlebar(parent_view, view, titlebar);
-        measured
+        (msg_send![view, frame], msg_send![view, fittingSize])
     };
+
+    let is_apple = instances()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .map(|s| s.instance.url.ends_with("/appl"))
+        .unwrap_or(false);
+
+    if is_apple {
+        let bounds: NSRect = unsafe { msg_send![parent_view as *mut AnyObject, bounds] };
+        let frame = NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(bounds.size.width, bounds.size.height),
+        );
+        unsafe {
+            let _: () = msg_send![view, setFrame: frame];
+            let _: () = msg_send![
+                view,
+                setAutoresizingMask: (1 << 1) | (1 << 4) // NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE
+            ];
+            let _: () = msg_send![view, setNeedsDisplay: true];
+        }
+        if let Some(slot) = instances().lock().unwrap().get_mut(node_id) {
+            slot.view = Some(view as usize);
+            slot.observer = None;
+        }
+        return Ok((bounds.size.width, bounds.size.height));
+    }
+
+    let measured_w = frame.size.width.max(fitting.width);
+    let measured_h = frame.size.height.max(fitting.height);
+
+    let (width, height) = if let Some((w, h)) =
+        editor::valid_gui_size(measured_w.round() as u32, measured_h.round() as u32)
+    {
+        (w as f64, h as f64)
+    } else {
+        (
+            editor::FALLBACK_EDITOR_SIZE.0 as f64,
+            editor::FALLBACK_EDITOR_SIZE.1 as f64,
+        )
+    };
+
+    let observer = AuFrameObserver::alloc().set_ivars(node_id.to_string());
+    let observer: objc2::rc::Retained<AuFrameObserver> =
+        unsafe { msg_send![super(observer), init] };
+
+    unsafe {
+        let initial_frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
+        let _: () = msg_send![view, setFrame: initial_frame];
+        let _: () = msg_send![view, setPostsFrameChangedNotifications: true];
+
+        if let Some(center_class) = AnyClass::get(c"NSNotificationCenter") {
+            let center: *mut AnyObject = msg_send![center_class, defaultCenter];
+            let notif_name = NSString::from_str("NSViewFrameDidChangeNotification");
+            let _: () = msg_send![
+                center,
+                addObserver: &*observer,
+                selector: objc2::sel!(onFrameChanged:),
+                name: &*notif_name,
+                object: view
+            ];
+        }
+    }
 
     tracing::debug!(
         node_id,
@@ -744,6 +865,8 @@ pub(super) fn embed_editor(
         frame_h = frame.size.height,
         fitting_w = fitting.width,
         fitting_h = fitting.height,
+        width,
+        height,
         "au editor view measured"
     );
     // A view whose content is laid out by constraints reports its real content
@@ -752,11 +875,9 @@ pub(super) fn embed_editor(
     // is the one rule that sizes each kind correctly.
     if let Some(slot) = instances().lock().unwrap().get_mut(node_id) {
         slot.view = Some(view as usize);
+        slot.observer = Some(observer);
     }
-    let size = (
-        frame.size.width.max(fitting.width),
-        frame.size.height.max(fitting.height),
-    );
+    let size = (width, height);
     Ok(size)
 }
 
@@ -1217,21 +1338,45 @@ pub struct AuHost;
 
 impl PluginHost for AuHost {
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
-        activate(
-            req.node_id,
-            req.path,
+        main_thread::ensure_ticker();
+        let (node_id, path) = (req.node_id.to_string(), req.path.to_string());
+        let state = req.state.map(str::to_string);
+        let (sample_rate, max_frames, channels, primary, params) = (
             req.sample_rate,
             req.max_frames,
             req.channels,
-            req.state,
             req.primary,
             req.params,
-        )
-        .map(HostedNode::Au)
+        );
+
+        let act = move || {
+            activate(
+                &node_id,
+                &path,
+                sample_rate,
+                max_frames,
+                channels,
+                state.as_deref(),
+                primary,
+                params,
+            )
+            .map(HostedNode::Au)
+        };
+
+        if main_thread::is_main_thread() {
+            act()
+        } else {
+            main_thread::run(act).map_err(|e| format!("main thread error: {e}"))?
+        }
     }
 
     fn forget(&self, node_id: &str) {
-        forget(node_id);
+        let id = node_id.to_string();
+        if main_thread::is_main_thread() {
+            forget(&id);
+        } else {
+            let _ = main_thread::run(move || forget(&id));
+        }
     }
 
     fn status(&self, node_id: &str) -> PluginStatus {
@@ -1283,16 +1428,44 @@ impl PluginHost for AuHost {
         Ok((width as u32, height as u32))
     }
 
+    fn show_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            use objc2::msg_send;
+            use objc2::runtime::AnyObject;
+            if let Some(slot) = instances().lock().unwrap().get(&id) {
+                if let Some(view) = slot.view {
+                    unsafe {
+                        let _: () = msg_send![view as *mut AnyObject, setNeedsDisplay: true];
+                    }
+                }
+            }
+            Ok(())
+        })?
+    }
+
+    fn hide_editor(&self, _node_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     fn destroy_editor(&self, node_id: &str) {
-        let Some(view) = instances()
-            .lock()
-            .unwrap()
-            .get_mut(node_id)
-            .and_then(|s| s.view.take())
-        else {
-            return;
+        let id = node_id.to_string();
+        let destroy = move || {
+            let mut guard = instances().lock().unwrap();
+            let Some(slot) = guard.get_mut(&id) else {
+                return;
+            };
+            slot.observer = None;
+            let Some(view) = slot.view.take() else {
+                return;
+            };
+            unsafe { drop_view(view) };
         };
-        unsafe { drop_view(view) };
+        if main_thread::is_main_thread() {
+            destroy();
+        } else {
+            let _ = main_thread::run(destroy);
+        }
     }
 
     /// Frees units whose RT node has left the graph. The host holds a reference
@@ -1304,7 +1477,8 @@ impl PluginHost for AuHost {
         let mut freed = graveyard().lock().unwrap().reclaim();
 
         let dead = super::host_api::take_dead(&mut instances().lock().unwrap(), |s| &s.alive);
-        for (node_id, slot) in dead {
+        for (node_id, mut slot) in dead {
+            slot.observer = None;
             // The view is a child of the editor window and points at the unit;
             // both go before the unit itself does.
             if let Some(view) = slot.view {

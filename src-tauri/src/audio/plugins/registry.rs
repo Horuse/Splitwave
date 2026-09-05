@@ -58,8 +58,12 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
 
     let previous = owners().lock().unwrap().get(&node_id).copied();
     if previous.is_some_and(|p| p != format) {
-        // Only the outgoing host can release its own hold; the instance itself
-        // survives until its RT node leaves the old graph.
+        // Format changed: close previous editor window and release outgoing hold.
+        super::editor::close_window(&node_id);
+        if let Some(app) = crate::app_handle() {
+            use tauri::Emitter;
+            let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &node_id);
+        }
         host_for(previous.expect("checked")).forget(&node_id);
         owners().lock().unwrap().remove(&node_id);
     }
@@ -74,6 +78,11 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
 /// Releases a node entirely: used when its plugin is cleared, when a rebuild
 /// fails to load one, and when the pipeline that owned it goes away.
 pub fn forget(node_id: &str) {
+    super::editor::close_window(node_id);
+    if let Some(app) = crate::app_handle() {
+        use tauri::Emitter;
+        let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+    }
     let owner = owners().lock().unwrap().remove(node_id);
     if let Some(format) = owner {
         host_for(format).forget(node_id);

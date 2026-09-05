@@ -182,6 +182,32 @@ impl PluginHost for ClapHost {
         })?
     }
 
+    fn show_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            SLOTS.with(|slots| {
+                if let Some(slot) = slots.borrow_mut().get_mut(&id) {
+                    slot.instance.show_editor()
+                } else {
+                    Ok(())
+                }
+            })
+        })?
+    }
+
+    fn hide_editor(&self, node_id: &str) -> Result<(), String> {
+        let id = node_id.to_string();
+        main_thread::run(move || {
+            SLOTS.with(|slots| {
+                if let Some(slot) = slots.borrow_mut().get_mut(&id) {
+                    slot.instance.hide_editor()
+                } else {
+                    Ok(())
+                }
+            })
+        })?
+    }
+
     /// Already on the main thread by contract, so the view is dropped here
     /// rather than marshalled: the window's own close handler calls this, and
     /// marshalling would deadlock.

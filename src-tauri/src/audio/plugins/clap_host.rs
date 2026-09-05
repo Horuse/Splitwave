@@ -83,7 +83,7 @@ impl HostGuiImpl for SplitwaveShared {
             return Ok(());
         };
         if let Some(win) = editor::window_for(&self.node_id) {
-            editor::set_content_size(&win, w as f64, h as f64);
+            editor::request_resize(&win, &self.node_id, w, h);
         }
         Ok(())
     }
@@ -515,6 +515,28 @@ impl ClapInstance {
                 GuiSize { width, height },
             );
         }
+    }
+
+    /// Shows an already-created editor when its window is unhidden.
+    pub fn show_editor(&mut self) -> Result<(), String> {
+        if !self.gui_open {
+            return Ok(());
+        }
+        if let Some(gui) = self.instance.plugin_handle().get_extension::<PluginGui>() {
+            let _ = gui.show(&mut self.instance.plugin_handle());
+        }
+        Ok(())
+    }
+
+    /// Hides the editor when its window is hidden.
+    pub fn hide_editor(&mut self) -> Result<(), String> {
+        if !self.gui_open {
+            return Ok(());
+        }
+        if let Some(gui) = self.instance.plugin_handle().get_extension::<PluginGui>() {
+            let _ = gui.hide(&mut self.instance.plugin_handle());
+        }
+        Ok(())
     }
 
     /// Tears the editor down. Destroying a GUI that was never created is

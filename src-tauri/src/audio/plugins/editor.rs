@@ -13,13 +13,6 @@ use super::host_api::EditorSize;
 /// Fallback editor size for plugins that report a nonsensical one.
 pub const FALLBACK_EDITOR_SIZE: EditorSize = (800, 600);
 
-/// Standard title-bar height (logical px) used when the window reports no
-/// decoration overhead, which tao does on macOS (`outer_size == inner_size`).
-#[cfg(target_os = "macos")]
-const TITLEBAR_LOGICAL: f64 = 28.0;
-#[cfg(not(target_os = "macos"))]
-const TITLEBAR_LOGICAL: f64 = 32.0;
-
 /// Native host windows that plugin editors are embedded into, keyed by node id.
 /// `tauri::Window` is `Send + Sync`, so this lives outside any main-thread state
 /// and can be created/closed from the command thread.
@@ -36,8 +29,11 @@ pub fn window_for(node_id: &str) -> Option<tauri::Window> {
 /// Closes a node's editor window if one is open. Shared with the format hosts,
 /// which have to take the window down alongside the instance it belongs to.
 pub fn close_window(node_id: &str) {
+    if let Some(host) = super::registry::for_node(node_id) {
+        host.destroy_editor(node_id);
+    }
     if let Some(w) = windows().lock().unwrap().remove(node_id) {
-        let _ = w.close();
+        let _ = w.destroy();
     }
 }
 
@@ -47,35 +43,34 @@ pub fn valid_gui_size(w: u32, h: u32) -> Option<EditorSize> {
     (w >= 100 && h >= 100 && w <= 8000 && h <= 8000).then_some((w, h))
 }
 
-/// Logical px the window decoration takes beyond its content, as (width,
-/// height). The content view runs the full height of the window, under the
-/// title bar, so this is also how far down a child view must start to clear it.
-pub fn decoration_overhead(window: &tauri::Window) -> (f64, f64) {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let (dw, measured_dh) = match (window.inner_size(), window.outer_size()) {
-        (Ok(inner), Ok(outer)) => (
-            outer.width.saturating_sub(inner.width) as f64 / scale,
-            outer.height.saturating_sub(inner.height) as f64 / scale,
-        ),
-        _ => (0.0, 0.0),
-    };
-    // tao returns outer == inner on macOS, so the measurement is 0; fall back to
-    // the platform title-bar height so the plugin renders below the bar.
-    let dh = if measured_dh > 0.5 {
-        measured_dh
-    } else {
-        TITLEBAR_LOGICAL
-    };
-    (dw, dh)
+/// Returns window decoration overhead. Because `window.set_size` in Tauri 2
+/// sets the inner (client) size directly across all platforms, content area
+/// matches the requested dimensions 1:1 without adding synthetic padding.
+pub fn decoration_overhead(_window: &tauri::Window) -> (f64, f64) {
+    (0.0, 0.0)
 }
 
-/// Sizes the window so its content area (below the title bar) is `w` x `h`
-/// logical px. The plugin view fills the content area, so the title bar's
-/// height is added -- otherwise the bar overlaps the top of the plugin and the
-/// bottom gets clipped.
+/// Sizes the window so its content area is `w` x `h` logical px.
 pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
-    let (dw, dh) = decoration_overhead(window);
-    let _ = window.set_size(tauri::LogicalSize::new(w + dw, h + dh));
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+/// Requests a window resize from a plugin. If the window's content area already
+/// matches the requested dimensions, this is a no-op, preventing redundant OS
+/// resizing calls and feedback loops. When dimensions differ, the window is
+/// resized synchronously on the main thread so plugin internal layout engines
+/// (JUCE, VST3, AU) immediately see the updated parent bounds without frame
+/// tearing or asynchronous jitter.
+pub fn request_resize(window: &tauri::Window, _node_id: &str, w: u32, h: u32) {
+    if let Ok(inner) = window.inner_size() {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let cur_w = (inner.width as f64 / scale).round() as u32;
+        let cur_h = (inner.height as f64 / scale).round() as u32;
+        if cur_w == w && cur_h == h {
+            return;
+        }
+    }
+    let _ = window.set_size(tauri::LogicalSize::new(w as f64, h as f64));
 }
 
 /// Opens the plugin editor embedded in a native host window. The tested plugins
@@ -84,33 +79,60 @@ pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
 pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, title, "opening plugin editor");
     let app = crate::app_handle().ok_or("app handle not ready")?;
-    if let Some(w) = windows().lock().unwrap().get(node_id) {
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
+        if let Some(host) = super::registry::for_node(node_id) {
+            let _ = host.show_editor(node_id);
+        }
+        let _ = w.show();
         let _ = w.set_focus();
         return Ok(());
     }
-    let window = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
+    let builder = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
         .title(if title.is_empty() { "Plugin" } else { title })
         .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
+        .visible(false)
         // Always resizable with a small floor: even when a plugin reports a bad
         // size or does not reflow, the user can enlarge the window to reveal it.
         .resizable(true)
-        .min_inner_size(200.0, 150.0)
+        .min_inner_size(200.0, 150.0);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Visible);
+
+    let window = builder
         .build()
         .map_err(|e| format!("editor window for {node_id}: {e}"))?;
 
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        if let Ok(ns_window) = window.ns_window() {
+            let nsw = ns_window as *mut AnyObject;
+            let mut mask: usize = msg_send![nsw, styleMask];
+            // Clear NSWindowStyleMaskFullSizeContentView (1 << 15 = 32768) so
+            // the content view stays strictly below the titlebar and plugin
+            // headers never overlap window controls.
+            mask &= !(1 << 15);
+            let _: () = msg_send![nsw, setStyleMask: mask];
+            let _: () = msg_send![nsw, setTitlebarAppearsTransparent: false];
+        }
+    }
+
     let nid = node_id.to_string();
     window.on_window_event(move |ev| {
-        // The plugin's view is a child of this window: tear the GUI down before
-        // the window goes away, and tell the FE node its editor button is stale.
-        if matches!(ev, tauri::WindowEvent::CloseRequested { .. }) {
-            // Already the main thread, which is where `destroy_editor` belongs.
-            if let Some(host) = super::registry::for_node(&nid) {
-                host.destroy_editor(&nid);
-            }
-            windows().lock().unwrap().remove(&nid);
-            if let Some(app) = crate::app_handle() {
-                let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, &nid);
-            }
+        // The user closed the window: keep the native view parented to avoid
+        // COM/lifecycle destruction churn in plugins, just hide the window and
+        // notify the FE node that its editor is closed.
+        if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+            api.prevent_close();
+            let nid = nid.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::audio::plugins::main_thread::run(move || {
+                    let _ = close(&nid);
+                });
+            });
         }
     });
     windows()
@@ -139,63 +161,41 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     tracing::debug!(node_id, width, height, "plugin editor embedded");
 
     set_content_size(&window, width as f64, height as f64);
-    Ok(())
-}
 
-/// Tears down the plugin editor and closes its native window.
-pub fn close(node_id: &str) -> Result<(), String> {
-    // The plugin's view is a child of this window, so it goes first -- and it
-    // goes on the main thread, which is the one place AppKit and every format
-    // agree on.
-    let nid = node_id.to_string();
-    let _ = super::main_thread::run(move || {
-        if let Some(host) = super::registry::for_node(&nid) {
-            host.destroy_editor(&nid);
-        }
-    });
-    close_window(node_id);
-    Ok(())
-}
-
-/// `NSViewWidthSizable` / `NSViewHeightSizable`: the plugin view follows the
-/// editor window's content area instead of staying pinned at its initial size.
-#[cfg(target_os = "macos")]
-const NS_VIEW_WIDTH_SIZABLE: usize = 1 << 1;
-#[cfg(target_os = "macos")]
-const NS_VIEW_HEIGHT_SIZABLE: usize = 1 << 4;
-
-/// Frames `view` into the content view it was just added to, leaving `titlebar`
-/// px clear at the top.
-///
-/// The content view runs the full window height, under the title bar, so
-/// filling its bounds outright would put the top of the editor behind the bar.
-/// Starting at the bottom-left origin of an unflipped NSView and stopping short
-/// of the top is the arrangement a plugin ends up in when it parents its own
-/// view. Margins stay fixed by default, so the mask preserves that gap through
-/// every later resize.
-///
-/// SAFETY: `parent` is a live window content view and `view` one of its
-/// subviews; main thread only.
-#[cfg(target_os = "macos")]
-pub unsafe fn inset_below_titlebar(
-    parent: *mut std::ffi::c_void,
-    view: *mut objc2::runtime::AnyObject,
-    titlebar: f64,
-) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
+    #[cfg(target_os = "macos")]
     unsafe {
-        let bounds: NSRect = msg_send![parent as *mut AnyObject, bounds];
-        let frame = NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(bounds.size.width, (bounds.size.height - titlebar).max(1.0)),
-        );
-        let _: () = msg_send![view, setFrame: frame];
-        let _: () =
-            msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
+        use objc2::msg_send;
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+        if let Ok(parent) = window.ns_view() {
+            if let Some(view) = last_subview(parent) {
+                let frame = NSRect::new(
+                    NSPoint::new(0.0, 0.0),
+                    NSSize::new(width as f64, height as f64),
+                );
+                let _: () = msg_send![view, setFrame: frame];
+                let _: () = msg_send![view, setNeedsDisplay: true];
+            }
+        }
     }
+
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// Hides the plugin editor window (or tears it down if requested).
+pub fn close(node_id: &str) -> Result<(), String> {
+    if let Some(host) = super::registry::for_node(node_id) {
+        let _ = host.hide_editor(node_id);
+    }
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
+        let _ = w.hide();
+    }
+    if let Some(app) = crate::app_handle() {
+        let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+    }
+    Ok(())
 }
 
 /// The last subview of `parent`, which is the one a plugin just added.

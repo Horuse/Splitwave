@@ -143,16 +143,6 @@ impl EditorView {
                 let _: () = msg_send![parent_obj, setWantsLayer: true];
             }
 
-            let frame = ComWrapper::new(PlugFrame { resize });
-            let frame_ptr = frame
-                .as_com_ref::<IPlugFrame>()
-                .map(|r| r.as_ptr())
-                .ok_or("PlugFrame implements IPlugFrame")?;
-            // Before `attached`, so a plugin that resizes on open has somewhere
-            // to send the request, and plugins that inspect frame metrics during
-            // size calculations have an initialized frame pointer.
-            view.setFrame(frame_ptr);
-
             let mut rect = ViewRect {
                 left: 0,
                 top: 0,
@@ -163,6 +153,24 @@ impl EditorView {
             // Query initial size before attached (succeeds for most plugins)
             let mut got_size = view.getSize(&mut rect) == kResultOk
                 && (rect.right > rect.left && rect.bottom > rect.top);
+
+            if got_size {
+                let init_w = (rect.right - rect.left).max(1) as u32;
+                let init_h = (rect.bottom - rect.top).max(1) as u32;
+                if let Some((valid_w, valid_h)) = editor::valid_gui_size(init_w, init_h) {
+                    resize(valid_w, valid_h);
+                }
+            }
+
+            let frame = ComWrapper::new(PlugFrame { resize });
+            let frame_ptr = frame
+                .as_com_ref::<IPlugFrame>()
+                .map(|r| r.as_ptr())
+                .ok_or("PlugFrame implements IPlugFrame")?;
+            // Before `attached`, so a plugin that resizes on open has somewhere
+            // to send the request, and plugins that inspect frame metrics during
+            // size calculations have an initialized frame pointer.
+            view.setFrame(frame_ptr);
 
             if view.attached(parent, platform) != kResultOk {
                 view.setFrame(std::ptr::null_mut());

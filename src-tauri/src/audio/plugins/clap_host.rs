@@ -83,7 +83,7 @@ impl HostGuiImpl for SplitwaveShared {
             return Ok(());
         };
         if let Some(win) = editor::window_for(&self.node_id) {
-            editor::set_content_size(&win, w as f64, h as f64);
+            editor::request_resize(&win, &self.node_id, w, h);
         }
         Ok(())
     }

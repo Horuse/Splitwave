@@ -204,8 +204,9 @@ fn attach_slot_editor(
         .take_view()
         .ok_or_else(|| format!("vst3 {node_id}: plugin has no editor"))?;
 
+    let nid = node_id.to_string();
     let resize = Box::new(move |w: u32, h: u32| {
-        let _ = resize_target.set_size(tauri::LogicalSize::new(w as f64, h as f64));
+        editor::request_resize(&resize_target, &nid, w, h);
     });
     let (view, size) = EditorView::attach(view, view_addr as *mut c_void, titlebar, resize)
         .map_err(|e| format!("vst3 {node_id}: {e}"))?;

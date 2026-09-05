@@ -1419,7 +1419,9 @@ mod tests {
             nodes: vec![gain("g"), speaker("s")],
             edges: vec![edge("e", "g", None, "s", None)],
         };
-        let v = g.validate().expect("effect + output without inputs is valid");
+        let v = g
+            .validate()
+            .expect("effect + output without inputs is valid");
         assert!(v.inputs.is_empty());
         assert_eq!(v.effects.len(), 1);
         assert_eq!(v.effects[0].id, "g");

@@ -191,9 +191,7 @@ class AudioStore {
 	async activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
 		this.lastGraph = graph;
 		this.fullGraph = graph;
-		const excluded = appSettings.keepRunningOnDisconnect
-			? await this.unresolvedInputIds(graph)
-			: new Set<string>();
+		const excluded = appSettings.keepRunningOnDisconnect ? await this.unresolvedInputIds(graph) : new Set<string>();
 		this.pendingNodeIds = excluded;
 		const toStart = excluded.size > 0 ? this.buildReducedGraph(graph, excluded) : graph;
 		try {
@@ -300,9 +298,7 @@ class AudioStore {
 		if (!p || isFromFuture(p)) return;
 		const full: StartPipelinePayload = { nodes: p.nodes, edges: p.edges };
 		this.fullGraph = full;
-		const excluded = appSettings.keepRunningOnDisconnect
-			? await this.unresolvedInputIds(full)
-			: new Set<string>();
+		const excluded = appSettings.keepRunningOnDisconnect ? await this.unresolvedInputIds(full) : new Set<string>();
 		this.pendingNodeIds = excluded;
 		const reduced = this.buildReducedGraph(full, excluded);
 		try {
@@ -323,11 +319,7 @@ class AudioStore {
 	 * doesn't exist on disk. Building this list also refreshes the app list,
 	 * since a stale snapshot would wrongly exclude/include nodes. */
 	private async unresolvedInputIds(full: StartPipelinePayload): Promise<Set<string>> {
-		await Promise.all([
-			this.refreshInputDevices(),
-			this.refreshOutputDevices(),
-			this.refreshAudioApplications()
-		]);
+		await Promise.all([this.refreshInputDevices(), this.refreshOutputDevices(), this.refreshAudioApplications()]);
 		const running = new Set(this.audioApplications.map((a) => a.bundleId));
 		const inputIds = new Set(this.inputDevices.map((d) => d.id));
 		const outputIds = new Set(this.outputDevices.map((d) => d.id));
@@ -391,9 +383,7 @@ class AudioStore {
 			return;
 		}
 		const stillUnresolved = await this.unresolvedInputIds(this.fullGraph);
-		const isUnchanged =
-			stillUnresolved.size === this.pendingNodeIds.size &&
-			[...stillUnresolved].every((id) => this.pendingNodeIds.has(id));
+		const isUnchanged = stillUnresolved.size === this.pendingNodeIds.size && [...stillUnresolved].every((id) => this.pendingNodeIds.has(id));
 		if (isUnchanged) return;
 		this.pendingNodeIds = stillUnresolved;
 		const reduced = this.buildReducedGraph(this.fullGraph, stillUnresolved);
@@ -430,9 +420,7 @@ class AudioStore {
 		if (this.pendingNodeIds.size === 0) {
 			this.stopPendingReconnectLoop();
 		}
-		const toRun = appSettings.keepRunningOnDisconnect && this.pendingNodeIds.size > 0
-			? this.buildReducedGraph(graph, this.pendingNodeIds)
-			: graph;
+		const toRun = appSettings.keepRunningOnDisconnect && this.pendingNodeIds.size > 0 ? this.buildReducedGraph(graph, this.pendingNodeIds) : graph;
 		this.lastGraph = toRun;
 		let reconcileErr: unknown;
 		try {

@@ -39,9 +39,7 @@
 		void disableAutostart();
 	}
 
-	function setApp<
-		K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges' | 'keepRunningOnDisconnect'
-	>(
+	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges' | 'keepRunningOnDisconnect'>(
 		key: K,
 		value: (typeof appSettings)[K]
 	) {

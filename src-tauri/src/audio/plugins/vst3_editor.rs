@@ -14,7 +14,6 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComWrapper};
 
-#[cfg(target_os = "macos")]
 use crate::audio::plugins::editor;
 use crate::audio::plugins::host_api::EditorSize;
 #[cfg(target_os = "linux")]

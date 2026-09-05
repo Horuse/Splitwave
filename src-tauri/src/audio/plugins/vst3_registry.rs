@@ -350,12 +350,12 @@ impl PluginHost for Vst3Host {
                 };
                 if let Some(ref editor) = slot.editor {
                     editor.on_focus(true);
-                    if let Some(window) = editor::window_for(&id) {
+                    if let Some(_window) = editor::window_for(&id) {
                         #[cfg(target_os = "macos")]
                         unsafe {
                             use objc2::msg_send;
                             use objc2::runtime::AnyObject;
-                            if let Ok(addr) = parent_handle(&window) {
+                            if let Ok(addr) = parent_handle(&_window) {
                                 let parent_obj = addr as *mut AnyObject;
                                 let _: () = msg_send![parent_obj, setNeedsDisplay: true];
                                 if let Some(v) = editor::last_subview(addr as *mut std::ffi::c_void)
@@ -368,7 +368,7 @@ impl PluginHost for Vst3Host {
                         unsafe {
                             use windows::Win32::Foundation::HWND;
                             use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
-                            if let Ok(addr) = parent_handle(&window) {
+                            if let Ok(addr) = parent_handle(&_window) {
                                 let hwnd = HWND(addr as _);
                                 let _ = InvalidateRect(Some(hwnd), None, true);
                                 let _ = UpdateWindow(hwnd);

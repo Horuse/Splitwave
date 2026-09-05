@@ -88,7 +88,7 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         let _ = w.set_focus();
         return Ok(());
     }
-    let mut builder = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
+    let builder = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
         .title(if title.is_empty() { "Plugin" } else { title })
         .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
         .visible(false)
@@ -98,9 +98,7 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         .min_inner_size(200.0, 150.0);
 
     #[cfg(target_os = "macos")]
-    {
-        builder = builder.title_bar_style(tauri::TitleBarStyle::Visible);
-    }
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Visible);
 
     let window = builder
         .build()

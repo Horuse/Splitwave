@@ -149,6 +149,10 @@ export const methods = {
 		lost: number;
 		channels: number;
 		bufferMs: number;
+		sampleRate: number;
+		format: 'pcm-f32' | 'pcm-i16' | 'opus' | null;
+		opusBitrate: number | null;
+		opusApp: 'voip' | 'audio' | 'low-delay' | null;
 	} | null> => invoke('net_receiver_stats', { nodeId }),
 	/** Direct-IP send stats, or null when the node isn't running. */
 	netSenderStats: (nodeId: string): Promise<{ bytes: number; packets: number } | null> => invoke('net_sender_stats', { nodeId }),

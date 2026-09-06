@@ -14,7 +14,7 @@
 	import { PeopleTeam } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
-	import { formatRate } from '$lib/components/format';
+	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
@@ -24,7 +24,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `WebRTC audio operates at 48 kHz (resampled from ${formatRate(appSettings.pipelineSampleRate)} and back)`;
+		return `WebRTC audio operates at 48 kHz (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
 	});
 
 	const MAX_CHANNELS = 255;

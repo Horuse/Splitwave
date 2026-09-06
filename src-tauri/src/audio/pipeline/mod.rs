@@ -23,7 +23,9 @@ use tracing::{info, warn};
 use crate::audio::effects::{
     EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
 };
-use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
+use crate::audio::graph::{
+    EffectSpec, InputSpec, NetCodec, OutputSpec, RecordingFormat, ValidGraph,
+};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats};
 use crate::error::{AppError, AppResult};
 
@@ -301,6 +303,18 @@ impl ActivePipeline {
     }
 
     fn teardown(&mut self) {
+        if let Some(current) = &self.current {
+            for inp in &current.inputs {
+                if matches!(inp.spec, InputSpec::NetReceiver { .. }) {
+                    crate::audio::netaudio::receiver::release(&inp.id);
+                }
+            }
+            for out in &current.outputs {
+                if matches!(out.spec, OutputSpec::NetSender { .. }) {
+                    crate::audio::netaudio::sender::release(&out.id);
+                }
+            }
+        }
         self.tear_down_outputs();
         self.stale_bridges.clear();
         self.inputs.clear();
@@ -442,6 +456,7 @@ impl ActivePipeline {
                 drop(state);
             } else if let Some(state) = self.wire_senders.remove(id) {
                 state.worker.stop.store(true, Ordering::SeqCst);
+                crate::audio::netaudio::sender::release(id);
                 drop(state);
             } else {
                 self.speakers.remove(id);
@@ -487,6 +502,11 @@ impl ActivePipeline {
             .cloned()
             .collect();
         for id in to_drop {
+            if let Some(spec) = old_input_specs.get(id.as_str()) {
+                if matches!(spec, InputSpec::NetReceiver { .. }) {
+                    crate::audio::netaudio::receiver::release(&id);
+                }
+            }
             self.inputs.remove(&id);
             self.meters.remove(&id);
         }
@@ -779,7 +799,15 @@ impl ActivePipeline {
                     .get(&out.id)
                     .map(|o| o.sample_rate())
                     .unwrap_or(pipeline_sr),
-                OutputSpec::NetSender { .. } => crate::audio::netaudio::SR,
+                OutputSpec::NetSender {
+                    codec, sample_rate, ..
+                } => {
+                    if *codec == NetCodec::Opus {
+                        crate::audio::netaudio::SR
+                    } else {
+                        sample_rate.unwrap_or(pipeline_sr)
+                    }
+                }
                 OutputSpec::WebRtcSend { .. } => pipeline_sr,
             };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
@@ -1156,7 +1184,7 @@ impl ActivePipeline {
                         },
                     );
                 }
-                ResolvedOutput::WireSender => {
+                ResolvedOutput::WireSender(_) => {
                     let sample_rate = og.sample_rate();
                     if let Some(state) = self.wire_senders.get_mut(&out.id) {
                         state.ctrl.send_graph(og)?;

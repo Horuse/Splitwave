@@ -518,6 +518,8 @@ pub struct NetSenderData {
     pub codec: NetCodec,
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -598,6 +600,7 @@ pub enum OutputSpec {
         codec: NetCodec,
         opus_bitrate: u32,
         opus_application: OpusApplication,
+        sample_rate: Option<u32>,
     },
     /// Send half of a WebRTC collaborator: per-channel audio handed to the
     /// session's encode task. The wire codec is set by the UI, not the graph.
@@ -1106,6 +1109,7 @@ fn resolve_outputs(
                         codec: data.codec,
                         opus_bitrate: data.opus_bitrate,
                         opus_application: data.opus_application,
+                        sample_rate: data.sample_rate.filter(|_| data.codec != NetCodec::Opus),
                     }
                 }
                 // Send half of a collaborator: audio wired in goes to peers,

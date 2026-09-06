@@ -45,3 +45,10 @@ export function formatRate(bytesPerSec: number): string {
 	if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} kB/s`;
 	return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
 }
+
+/** Human-readable audio sample rate / frequency, e.g. `48 kHz`, `44.1 kHz`, `96 kHz`, `440 Hz`. */
+export function formatHz(hz: number): string {
+	if (hz < 1000) return `${hz} Hz`;
+	const k = hz / 1000;
+	return `${Number(k.toFixed(k % 1 === 0 ? 0 : 1))} kHz`;
+}

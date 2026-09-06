@@ -74,9 +74,7 @@
 		await volume.set(pct / 100);
 	}
 
-	function formatRate(hz: number): string {
-		return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)} kHz` : `${hz} Hz`;
-	}
+	import { formatHz } from '$lib/components/format';
 
 	function formatPct(p: number): string {
 		return `${Math.round(p)}%`;
@@ -91,7 +89,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatRate(appSettings.pipelineSampleRate)} → ${formatRate(info.sampleRate)}`;
+		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(info.sampleRate)}`;
 	});
 </script>
 
@@ -112,8 +110,8 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<span class="font-mono text-[10px] text-neutral-900">
-				{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
+			<span class="font-mono text-[9px] text-neutral-500">
+				{formatHz(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
 			</span>
 		{/if}
 

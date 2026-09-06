@@ -72,10 +72,11 @@
 	// System Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
 
+	import { formatHz } from '$lib/components/format';
+
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
-		return `Resampling: 48 kHz → ${targetK}`;
+		return `Resampling: 48 kHz → ${formatHz(appSettings.pipelineSampleRate)}`;
 	});
 </script>
 
@@ -129,6 +130,7 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
+		<span class="font-mono text-[9px] text-neutral-500">48 kHz · 2 ch · f32</span>
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>

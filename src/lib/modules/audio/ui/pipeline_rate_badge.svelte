@@ -1,12 +1,9 @@
 <script lang="ts">
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { Pulse } from '$lib/components/icons';
+	import { formatHz } from '$lib/components/format';
 
-	function formatRate(hz: number): string {
-		return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)} kHz` : `${hz} Hz`;
-	}
-
-	let rateFormatted = $derived(formatRate(appSettings.pipelineSampleRate));
+	let rateFormatted = $derived(formatHz(appSettings.pipelineSampleRate));
 </script>
 
 <span

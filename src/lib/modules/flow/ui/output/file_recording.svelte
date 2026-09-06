@@ -808,13 +808,13 @@
 			</span>
 			<span class="text-neutral-1000 tabular-nums">{formatDuration(durationSec)}</span>
 		</div>
-		<div class="flex justify-between text-[10px] text-neutral-900">
+		<div class="flex justify-between font-mono text-[9px] text-neutral-500">
 			<span class="truncate">
 				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
 				· {data.format.kind === 'opus' || data.format.kind === 'mp3' ? '48 kHz' : `${(data.sampleRate ?? 48_000) / 1000} kHz`}
 				· {channelLabel}
 			</span>
-			<span class="font-mono tabular-nums">{formatSize(estSize)}</span>
+			<span class="tabular-nums">{formatSize(estSize)}</span>
 		</div>
 		{#if dirty}
 			<div class="text-[9px] text-amber-600">changes pending - restart or choose new file</div>

@@ -35,31 +35,83 @@ impl Format {
     }
 }
 
+pub const HEADER_LEN_EXT: usize = 12;
+
 pub struct Parsed<'a> {
     pub format: Format,
     pub channel: u8,
     pub seq: u16,
+    pub sample_rate: u32,
+    pub opus_bitrate_kbps: Option<u16>,
+    pub opus_app: Option<u8>,
     pub payload: &'a [u8],
 }
 
-/// Writes the header into `buf` (cleared first); the caller appends the payload.
-pub fn write_header(buf: &mut Vec<u8>, format: Format, channel: u8, seq: u16) {
+/// Writes the extended self-describing header into `buf` (cleared first); the caller appends the payload.
+pub fn write_header(
+    buf: &mut Vec<u8>,
+    format: Format,
+    channel: u8,
+    seq: u16,
+    sample_rate: u32,
+    opus_bitrate_kbps: u16,
+    opus_app: u8,
+) {
     buf.clear();
-    buf.push(format.to_byte());
+    buf.push(0x80 | format.to_byte());
     buf.push(channel);
     buf.extend_from_slice(&seq.to_be_bytes());
+    buf.extend_from_slice(&sample_rate.to_be_bytes());
+    buf.extend_from_slice(&opus_bitrate_kbps.to_be_bytes());
+    buf.push(opus_app);
+    buf.push(0); // reserved
 }
 
 pub fn parse(data: &[u8]) -> Option<Parsed<'_>> {
     if data.len() < HEADER_LEN {
         return None;
     }
-    Some(Parsed {
-        format: Format::from_byte(data[0])?,
-        channel: data[1],
-        seq: u16::from_be_bytes([data[2], data[3]]),
-        payload: &data[HEADER_LEN..],
-    })
+    let b0 = data[0];
+    if b0 & 0x80 != 0 {
+        if data.len() < 8 {
+            return None;
+        }
+        let format = Format::from_byte(b0 & 0x7F)?;
+        let channel = data[1];
+        let seq = u16::from_be_bytes([data[2], data[3]]);
+        let sample_rate = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let (opus_bitrate_kbps, opus_app, header_len) = if data.len() >= HEADER_LEN_EXT {
+            let kbps = u16::from_be_bytes([data[8], data[9]]);
+            let app = data[10];
+            let kbps_opt = if kbps > 0 { Some(kbps) } else { None };
+            let app_opt = if app > 0 { Some(app) } else { None };
+            (kbps_opt, app_opt, HEADER_LEN_EXT)
+        } else {
+            (None, None, 8)
+        };
+        Some(Parsed {
+            format,
+            channel,
+            seq,
+            sample_rate,
+            opus_bitrate_kbps,
+            opus_app,
+            payload: &data[header_len..],
+        })
+    } else {
+        let format = Format::from_byte(b0)?;
+        let channel = data[1];
+        let seq = u16::from_be_bytes([data[2], data[3]]);
+        Some(Parsed {
+            format,
+            channel,
+            seq,
+            sample_rate: 48_000,
+            opus_bitrate_kbps: None,
+            opus_app: None,
+            payload: &data[HEADER_LEN..],
+        })
+    }
 }
 
 /// Interleaved f32 samples -> little-endian bytes.

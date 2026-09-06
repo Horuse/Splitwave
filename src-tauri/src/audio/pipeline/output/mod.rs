@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle, WaveformHandle};
 use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
-use crate::audio::graph::{OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
+use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
 use crate::audio::resample::MultiResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
@@ -75,10 +75,10 @@ pub(super) enum ResolvedOutput {
         /// from the file's current length instead of zero.
         base_frames: u64,
     },
-    // The DAG produces at 48 kHz; the send rings are wired inside
+    // The DAG produces at its configured rate; the send rings are wired inside
     // `build_output_graph`, so nothing device-specific to resolve here. Covers
     // both direct-IP and WebRTC senders.
-    WireSender,
+    WireSender(u32),
 }
 
 impl ResolvedOutput {
@@ -86,7 +86,7 @@ impl ResolvedOutput {
         match self {
             ResolvedOutput::Speaker(s) => s.sample_rate,
             ResolvedOutput::File { sample_rate, .. } => *sample_rate,
-            ResolvedOutput::WireSender => crate::audio::netaudio::SR,
+            ResolvedOutput::WireSender(sr) => *sr,
         }
     }
 }
@@ -167,9 +167,21 @@ pub(super) fn resolve_output(
                 base_frames,
             })
         }
-        OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => {
-            Ok(ResolvedOutput::WireSender)
+        OutputSpec::NetSender {
+            codec, sample_rate, ..
+        } => {
+            let sr = if *codec == NetCodec::Opus {
+                crate::audio::netaudio::SR
+            } else {
+                sample_rate
+                    .or(file_sr_hint)
+                    .unwrap_or(crate::audio::netaudio::SR)
+            };
+            Ok(ResolvedOutput::WireSender(sr))
         }
+        OutputSpec::WebRtcSend { .. } => Ok(ResolvedOutput::WireSender(
+            file_sr_hint.unwrap_or(crate::audio::netaudio::SR),
+        )),
     }
 }
 

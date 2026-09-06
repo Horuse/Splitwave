@@ -2,4 +2,4 @@
 import type { NetCodec } from "./NetCodec";
 import type { OpusApplication } from "./OpusApplication";
 
-export type NetSenderData = { targetIp: string, port: number, channels: number, codec: NetCodec, opusBitrate: number, opusApplication: OpusApplication, };
+export type NetSenderData = { targetIp: string, port: number, channels: number, codec: NetCodec, opusBitrate: number, opusApplication: OpusApplication, sampleRate: number | null, };

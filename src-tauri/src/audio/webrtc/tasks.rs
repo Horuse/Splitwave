@@ -155,8 +155,16 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
                 let seq = &mut seqs[i];
                 let mut frames: Vec<Bytes> = Vec::new();
                 enc.encoder.push(&enc.out_acc, |payload| {
-                    let mut d = Vec::with_capacity(packet::HEADER_LEN + payload.len());
-                    packet::write_header(&mut d, format, channel, *seq);
+                    let mut d = Vec::with_capacity(packet::HEADER_LEN_EXT + payload.len());
+                    packet::write_header(
+                        &mut d,
+                        format,
+                        channel,
+                        *seq,
+                        OPUS_SR,
+                        (bitrate / 1000) as u16,
+                        1,
+                    );
                     *seq = seq.wrapping_add(1);
                     d.extend_from_slice(payload);
                     frames.push(Bytes::copy_from_slice(&d));
@@ -201,7 +209,8 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     let format = pkt.format;
     let channel = pkt.channel;
     let seq = pkt.seq;
-    let payload = data.slice(packet::HEADER_LEN..);
+    let header_len = data.len() - pkt.payload.len();
+    let payload = data.slice(header_len..);
 
     let peer = {
         let peers = session.peers.lock().await;

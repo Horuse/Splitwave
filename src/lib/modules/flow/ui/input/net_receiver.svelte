@@ -4,7 +4,7 @@
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';
-	import { formatRate, LossWindow } from '$lib/components/format';
+	import { formatHz, formatRate, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
@@ -15,9 +15,30 @@
 
 	const flow = useSvelteFlow();
 
+	let detectedSampleRate = $state<number | null>(null);
+	let detectedFormat = $state<'pcm-f32' | 'pcm-i16' | 'opus' | null>(null);
+	let detectedOpusBitrate = $state<number | null>(null);
+	let detectedOpusApp = $state<'voip' | 'audio' | 'low-delay' | null>(null);
+
+	let codecLabel = $derived.by(() => {
+		if (!detectedFormat) return null;
+		if (detectedFormat === 'pcm-f32') return 'PCM (f32)';
+		if (detectedFormat === 'pcm-i16') return 'PCM (i16)';
+		if (detectedFormat === 'opus') return 'Opus';
+		return detectedFormat;
+	});
+
+	let opusModeLabel = $derived.by(() => {
+		if (detectedFormat !== 'opus') return null;
+		const parts: string[] = [];
+		if (detectedOpusBitrate) parts.push(`${Math.round(detectedOpusBitrate / 1000)} kbps`);
+		if (detectedOpusApp) parts.push(detectedOpusApp);
+		return parts.length > 0 ? parts.join(' · ') : null;
+	});
+
 	let srcTooltip = $derived.by(() => {
-		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Resampling: 48 kHz → ${formatRate(appSettings.pipelineSampleRate)}`;
+		if (!detectedSampleRate || detectedSampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatHz(detectedSampleRate)} → ${formatHz(appSettings.pipelineSampleRate)}`;
 	});
 
 	let loss = $state<number | null>(null);
@@ -38,6 +59,10 @@
 			rate = 0;
 			bufferMs = 0;
 			received = 0;
+			detectedSampleRate = null;
+			detectedFormat = null;
+			detectedOpusBitrate = null;
+			detectedOpusApp = null;
 			prevBytes = 0;
 			prevAt = now;
 			lossWindow.reset();
@@ -51,8 +76,17 @@
 		prevAt = now;
 		bufferMs = s.bufferMs;
 		received = s.channels;
+		detectedSampleRate = s.sampleRate || null;
+		detectedFormat = s.format || null;
+		detectedOpusBitrate = s.opusBitrate || null;
+		detectedOpusApp = s.opusApp || null;
 	}, POLL_MS);
-	onDestroy(() => clearInterval(interval));
+
+	let isDestroyed = false;
+	onDestroy(() => {
+		isDestroyed = true;
+		clearInterval(interval);
+	});
 
 	const MAX_CHANNELS = 255;
 	// Highest wire index the sender has actually delivered.
@@ -62,7 +96,6 @@
 		audioMethods.netReceiverListen(id, data.port).catch(() => {});
 	});
 
-	onDestroy(() => audioMethods.netReceiverRelease(id).catch(() => {}));
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
@@ -75,6 +108,7 @@
 	let channelCount = $derived(Math.max(1, Math.min(Math.max(received, wiredChannels), MAX_CHANNELS)));
 
 	$effect(() => {
+		if (isDestroyed) return;
 		const next = channelCount;
 		if (next !== untrack(() => data.channels)) flow.updateNodeData(id, { channels: next });
 	});
@@ -96,7 +130,7 @@
 	maxChannels={MAX_CHANNELS}
 	minChannels={received}
 	selfGrowing>
-	<div class="nodrag nopan flex w-44 flex-col gap-2">
+	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
@@ -107,6 +141,30 @@
 				max="65535"
 				value={data.port}
 				onchange={(e) => setPort(e.currentTarget.value)} />
+		</div>
+
+		<!-- stream info -->
+		<div class="flex flex-col gap-1">
+			<div class="flex items-center justify-between">
+				<span class="font-mono text-[9px] text-neutral-500">codec</span>
+				<span class="font-mono text-[9px] text-neutral-500">
+					{codecLabel ?? 'waiting...'}
+				</span>
+			</div>
+			{#if opusModeLabel}
+				<div class="flex items-center justify-between">
+					<span class="font-mono text-[9px] text-neutral-500">mode</span>
+					<span class="font-mono text-[9px] text-neutral-500">
+						{opusModeLabel}
+					</span>
+				</div>
+			{/if}
+			<div class="flex items-center justify-between">
+				<span class="font-mono text-[9px] text-neutral-500">stream</span>
+				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
+					{detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${received} ch` : ''}` : '--'}
+				</span>
+			</div>
 		</div>
 
 		<!-- quality + throughput -->

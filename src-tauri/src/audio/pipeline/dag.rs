@@ -1527,6 +1527,7 @@ pub(super) fn build_output_graph(
                     format,
                     *opus_bitrate,
                     *opus_application,
+                    output_sr,
                 );
                 sender.set_send_consumers(send_consumers);
             }

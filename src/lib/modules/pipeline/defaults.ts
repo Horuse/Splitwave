@@ -70,7 +70,8 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 		channels: 1,
 		codec: 'opus',
 		opusBitrate: 96000,
-		opusApplication: 'audio'
+		opusApplication: 'audio',
+		sampleRate: null
 	}
 };
 

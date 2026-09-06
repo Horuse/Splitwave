@@ -11,6 +11,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatHz } from '$lib/components/format';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -28,9 +29,13 @@
 
 	let unlistenRefresh: (() => void) | undefined;
 	onMount(() => {
-		unlistenRefresh = onNodeAction(id, 'refresh', () => refresh());
+		unlistenRefresh = onNodeAction(id, 'refresh', () => {
+			refresh().catch(() => {});
+		});
 	});
-	onDestroy(() => unlistenRefresh?.());
+	onDestroy(() => {
+		unlistenRefresh?.();
+	});
 
 	let options = $derived(
 		audioStore.audioApplications.map((a) => ({
@@ -58,8 +63,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
-		return `Resampling: 48 kHz → ${targetK}`;
+		return `Resampling: 48 kHz → ${formatHz(appSettings.pipelineSampleRate)}`;
 	});
 </script>
 
@@ -79,6 +83,8 @@
 		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
+		{:else if data.bundleId}
+			<span class="font-mono text-[9px] text-neutral-500">48 kHz · 2 ch · f32</span>
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

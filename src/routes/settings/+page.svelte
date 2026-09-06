@@ -9,6 +9,7 @@
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
 	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS, PIPELINE_SAMPLE_RATE_PRESETS } from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
+	import { formatHz } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
@@ -246,7 +247,7 @@
 								? 'border-neutral-900 bg-neutral-200 text-theme'
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
 						]}>
-						{rate >= 1000 ? `${rate / 1000} kHz` : `${rate} Hz`}
+						{formatHz(rate)}
 					</button>
 				{/each}
 				<button

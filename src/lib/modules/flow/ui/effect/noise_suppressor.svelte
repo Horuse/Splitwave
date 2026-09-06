@@ -8,6 +8,7 @@
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatHz } from '$lib/components/format';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();
@@ -43,8 +44,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
-		return `Internal model runs at 48 kHz (resampled from ${targetK} and back)`;
+		return `Internal model runs at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
 	});
 </script>
 
@@ -62,7 +62,7 @@
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
-		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. 48 kHz only.</p>
+		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. {formatHz(48_000)} only.</p>
 		<Slider
 			label="Attenuation"
 			value={data.attenuationLimitDb}

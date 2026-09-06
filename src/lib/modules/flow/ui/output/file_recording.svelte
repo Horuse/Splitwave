@@ -22,7 +22,7 @@
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
 	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
@@ -436,18 +436,6 @@
 		return idx >= 0 ? p.slice(idx + 1) : p;
 	}
 
-	function formatDuration(sec: number): string {
-		const minutes = Math.floor(sec / 60);
-		const remainder = sec - minutes * 60;
-		return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
-	}
-
-	function formatSize(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-	}
 
 	const WAV_BIT_DEPTHS: { value: WavBitDepth; label: string; sub: string }[] = [
 		{ value: 'i16', label: '16-bit', sub: 'PCM' },
@@ -477,11 +465,6 @@
 		{ value: 'i24', label: '24-bit' }
 	];
 
-	function kHz(n: number): string {
-		const k = n / 1000;
-		return String(Number.isInteger(k) ? k : Number(k.toFixed(3)));
-	}
-
 	// Custom is a UI choice that only reveals the numeric input, so it cannot
 	// be derived from `sampleRate` alone.
 	let customRateSelected = $state(false);
@@ -491,7 +474,7 @@
 	let rateSelection = $derived(customRateSelected || !rateValues.has(String(data.sampleRate ?? 0)) ? 'custom' : String(data.sampleRate));
 	let rateOptions = $derived(
 		(cfg.rate.rates ?? [])
-			.map((r) => ({ value: String(r), label: kHz(r) }))
+			.map((r) => ({ value: String(r), label: formatKhzValue(r) }))
 			.concat(cfg.rate.mode === 'grid+custom' ? [{ value: 'custom', label: 'Custom' }] : [])
 			.map((r) => ({ ...r, disabled: locked }))
 	);
@@ -664,9 +647,7 @@
 	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? 48_000));
 	let srcTooltip = $derived.by(() => {
 		if (targetSampleRate === appSettings.pipelineSampleRate) return undefined;
-		const pK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
-		const tK = targetSampleRate >= 1000 ? `${targetSampleRate / 1000} kHz` : `${targetSampleRate} Hz`;
-		return `Resampling: ${pK} → ${tK}`;
+		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(targetSampleRate)}`;
 	});
 </script>
 
@@ -809,7 +790,7 @@
 				{recording ? '● REC' : '○'}
 			</span>
 			<div class="flex items-baseline gap-1.5 tabular-nums">
-				<span class="text-neutral-1000">{formatDuration(durationSec)}</span>
+				<span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
 				{#if estSize > 0}
 					<span class="node-spec">·</span>
 					<span class="node-spec">{formatSize(estSize)}</span>

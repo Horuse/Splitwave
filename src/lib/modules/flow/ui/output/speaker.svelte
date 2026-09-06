@@ -74,11 +74,7 @@
 		await volume.set(pct / 100);
 	}
 
-	import { formatHz } from '$lib/components/format';
-
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
+	import { formatHz, formatPct } from '$lib/components/format';
 
 	let volumePct = $derived((volume.scalar ?? 0) * 100);
 	// The graph mix is metered before the device attenuates it; without the

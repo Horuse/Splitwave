@@ -24,7 +24,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `WebRTC audio operates at 48 kHz (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
+		return `WebRTC audio operates at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
 	});
 
 	const MAX_CHANNELS = 255;

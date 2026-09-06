@@ -4,7 +4,7 @@
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import SignalBars from '$lib/components/signal_bars.svelte';
-	import { formatHz, formatRate, LossWindow } from '$lib/components/format';
+	import { formatHz, formatRate, formatPct, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
@@ -172,7 +172,7 @@
 			<div class="flex items-center gap-1">
 				<SignalBars {loss} />
 				<span class="tabular-nums">
-					{loss == null ? '--' : `${(loss * 100).toFixed(1)}%`}
+					{loss == null ? '--' : formatPct(loss * 100, 1)}
 				</span>
 			</div>
 			<span class="tabular-nums">{formatRate(rate)}</span>

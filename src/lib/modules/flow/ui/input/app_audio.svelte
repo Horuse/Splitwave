@@ -11,7 +11,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz, formatPct } from '$lib/components/format';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -52,10 +52,6 @@
 		audioMethods.setInputVolume(id, scalar).catch(() => {});
 	}
 
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
-
 	let volumePct = $derived((data.volume ?? 1) * 100);
 
 	// App Audio capture is stereo; expose one output handle per channel.
@@ -63,7 +59,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Resampling: 48 kHz → ${formatHz(appSettings.pipelineSampleRate)}`;
+		return `Resampling: ${formatHz(48_000)} → ${formatHz(appSettings.pipelineSampleRate)}`;
 	});
 </script>
 
@@ -84,7 +80,7 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{:else if data.bundleId}
-			<span class="node-spec">48 kHz · 2 ch · f32</span>
+			<span class="node-spec">{formatHz(48_000)} · 2 ch · f32</span>
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

@@ -70,11 +70,7 @@
 		await gain.set(pct / 100);
 	}
 
-	import { formatHz } from '$lib/components/format';
-
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
+	import { formatHz, formatPct } from '$lib/components/format';
 
 	let gainPct = $derived((gain.scalar ?? 0) * 100);
 

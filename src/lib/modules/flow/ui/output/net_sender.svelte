@@ -3,7 +3,7 @@
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { formatHz, formatRate } from '$lib/components/format';
+	import { formatHz, formatRate, formatKhzValue } from '$lib/components/format';
 	import { parseHandle } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import { ArrowUpload } from '$lib/components/icons';
@@ -19,7 +19,7 @@
 	let srcTooltip = $derived.by(() => {
 		if (data.codec === 'opus') {
 			if (appSettings.pipelineSampleRate === 48_000) return undefined;
-			return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → 48 kHz`;
+			return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(48_000)}`;
 		}
 		const targetSr = data.sampleRate ?? appSettings.pipelineSampleRate;
 		if (targetSr === appSettings.pipelineSampleRate) return undefined;
@@ -108,11 +108,6 @@
 		flow.updateNodeData(id, { opusApplication: app });
 	}
 
-	function kHz(n: number): string {
-		const k = n / 1000;
-		return String(Number.isInteger(k) ? k : Number(k.toFixed(3)));
-	}
-
 	const PRESET_RATES = [44_100, 48_000, 88_200, 96_000];
 	const rateValues = new Set(PRESET_RATES.map(String));
 
@@ -126,7 +121,7 @@
 
 	let rateOptions = $derived([
 		{ value: 'auto', label: 'Auto' },
-		...PRESET_RATES.map((r) => ({ value: String(r), label: kHz(r) })),
+		...PRESET_RATES.map((r) => ({ value: String(r), label: formatKhzValue(r) })),
 		{ value: 'custom', label: 'Custom' }
 	]);
 

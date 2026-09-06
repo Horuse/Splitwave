@@ -9,6 +9,7 @@
 	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { formatHz } from '$lib/components/format';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
 	const isLinux = platform() === 'linux';
@@ -247,7 +248,7 @@
 														: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
 												]}
 												onclick={() => setSampleRate(d.id, preset)}>
-												{preset >= 1000 ? `${preset / 1000}k` : preset}
+												{formatHz(preset)}
 											</button>
 										{/each}
 									</div>

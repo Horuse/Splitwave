@@ -6,6 +6,7 @@
 	import Markdown from '$lib/components/markdown.svelte';
 	import { Checkmark } from '$lib/components/icons';
 	import { getCachedAppInfo } from '$lib/modules/app_info';
+	import { formatBytes } from '$lib/components/format';
 
 	const info = getCachedAppInfo();
 
@@ -27,9 +28,6 @@
 		return Math.min(100, Math.round((s.downloaded / s.total) * 100));
 	}
 
-	function mb(bytes: number): string {
-		return `${(bytes / 1_000_000).toFixed(1)} MB`;
-	}
 
 	function dismiss() {
 		updaterStore.state = { phase: 'idle' };
@@ -76,10 +74,10 @@
 				<div class="flex flex-col gap-3">
 					<div class="flex items-baseline justify-between">
 						<span class="font-mono text-3xl text-theme tabular-nums">
-							{s.total ? `${progressPct()}%` : mb(s.downloaded)}
+							{s.total ? `${progressPct()}%` : formatBytes(s.downloaded)}
 						</span>
 						<span class="font-mono text-xs text-neutral-900 tabular-nums">
-							{s.total ? `${mb(s.downloaded)} of ${mb(s.total)}` : 'Size unknown'}
+							{s.total ? `${formatBytes(s.downloaded)} of ${formatBytes(s.total)}` : 'Size unknown'}
 						</span>
 					</div>
 

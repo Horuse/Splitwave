@@ -10,6 +10,7 @@ interface Stored {
 	gridSize: number;
 	launchOnStartup: boolean;
 	confirmOverwriteChanges: boolean;
+	keepRunningOnDisconnect: boolean;
 }
 
 const DEFAULTS: Stored = {
@@ -18,7 +19,8 @@ const DEFAULTS: Stored = {
 	snapToGrid: false,
 	gridSize: 20,
 	launchOnStartup: false,
-	confirmOverwriteChanges: true
+	confirmOverwriteChanges: true,
+	keepRunningOnDisconnect: true
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
@@ -41,13 +43,14 @@ class AppSettings {
 	gridSize = $state(this.#initial.gridSize);
 	launchOnStartup = $state(this.#initial.launchOnStartup);
 	confirmOverwriteChanges = $state(this.#initial.confirmOverwriteChanges);
+	keepRunningOnDisconnect = $state(this.#initial.keepRunningOnDisconnect);
 
 	persist(): void {
 		if (!browser) return;
-		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges } = this;
+		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges, keepRunningOnDisconnect } = this;
 		window.localStorage.setItem(
 			KEY,
-			JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges })
+			JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges, keepRunningOnDisconnect })
 		);
 	}
 

@@ -54,9 +54,6 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(super) const STATE_EVENT: &str = "audio://state";
-
 /// Overlap between a hot-swapped output's old and new bridges: one DSP block at
 /// 48 kHz plus slack, so the incoming sub-graph starts with its rings primed.
 const SWAP_PREFILL: std::time::Duration = std::time::Duration::from_millis(25);

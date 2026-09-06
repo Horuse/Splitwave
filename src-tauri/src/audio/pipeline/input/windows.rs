@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
@@ -13,7 +13,6 @@ use crate::audio::streams;
 use crate::error::AppResult;
 
 use super::super::native::native_config;
-use super::super::STATE_EVENT;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
 
 const LOOPBACK_CHANNELS: usize = 2;
@@ -64,13 +63,19 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             src_channels,
             ..
         } => {
+            let dead = Arc::new(AtomicBool::new(false));
+            let dead_cb = dead.clone();
             let app_err = app.clone();
+            let node_id_cb = node_id.to_string();
             let err_cb = move |e: cpal::StreamError| {
+                if dead_cb.swap(true, Ordering::Relaxed) {
+                    return;
+                }
                 health::bump(&health::STREAM_ERRORS, 1);
-                error!(error = %e, "input stream error");
+                error!(node_id = %node_id_cb, error = %e, "input stream error");
                 let _ = app_err.emit(
-                    STATE_EVENT,
-                    json!({ "kind": "error", "message": format!("input: {e}") }),
+                    "audio://input_error",
+                    json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
                 );
             };
             let stream = streams::build_input_stream(

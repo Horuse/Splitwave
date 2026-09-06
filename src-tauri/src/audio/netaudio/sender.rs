@@ -193,28 +193,29 @@ impl NetSender {
 
             let mut packets: Vec<Vec<u8>> = Vec::new();
             let sample_rate = self.config.sample_rate;
-            let codec_param = if format == Format::Opus {
+            let (opus_bitrate_kbps, opus_app_byte) = if format == Format::Opus {
                 let app = match self.config.opus_application {
                     OpusApplication::Voip => 1,
                     OpusApplication::Audio => 2,
                     OpusApplication::LowDelay => 3,
                 };
-                Some(((self.config.opus_bitrate / 1000) as u16, app))
+                ((self.config.opus_bitrate / 1000) as u16, app)
             } else {
-                None
+                (0, 0)
             };
             for i in 0..encoders.len() {
                 let channel = i as u8;
                 let seq = &mut seqs[i];
                 encoders[i].push(&ins[i], |payload| {
-                    let mut d = Vec::with_capacity(packet::HEADER_LEN_EXT + payload.len());
+                    let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
                     packet::write_header(
                         &mut d,
                         format,
                         channel,
                         *seq,
                         sample_rate,
-                        codec_param,
+                        opus_bitrate_kbps,
+                        opus_app_byte,
                     );
                     *seq = seq.wrapping_add(1);
                     d.extend_from_slice(payload);

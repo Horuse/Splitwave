@@ -144,38 +144,38 @@
 		</div>
 
 		<!-- stream info -->
-		<div class="flex flex-col gap-1">
+		<div class="flex flex-col gap-1 node-spec">
 			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">codec</span>
-				<span class="font-mono text-[9px] text-neutral-500">
+				<span>codec</span>
+				<span>
 					{codecLabel ?? 'waiting...'}
 				</span>
 			</div>
 			{#if opusModeLabel}
 				<div class="flex items-center justify-between">
-					<span class="font-mono text-[9px] text-neutral-500">mode</span>
-					<span class="font-mono text-[9px] text-neutral-500">
+					<span>mode</span>
+					<span>
 						{opusModeLabel}
 					</span>
 				</div>
 			{/if}
 			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">stream</span>
-				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
+				<span>stream</span>
+				<span class="tabular-nums">
 					{detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${received} ch` : ''}` : '--'}
 				</span>
 			</div>
 		</div>
 
 		<!-- quality + throughput -->
-		<div class="flex items-center justify-between">
+		<div class="flex items-center justify-between node-spec">
 			<div class="flex items-center gap-1">
 				<SignalBars {loss} />
-				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
+				<span class="tabular-nums">
 					{loss == null ? '--' : `${(loss * 100).toFixed(1)}%`}
 				</span>
 			</div>
-			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">{formatRate(rate)}</span>
+			<span class="tabular-nums">{formatRate(rate)}</span>
 		</div>
 
 		<!-- added latency -->

@@ -209,7 +209,7 @@
 	minChannels={channels}
 	maxChannels={channels || undefined}
 	selfGrowing>
-	<div class="flex w-64 flex-col gap-3">
+	<div class="flex w-64 flex-col gap-2">
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
 		</div>

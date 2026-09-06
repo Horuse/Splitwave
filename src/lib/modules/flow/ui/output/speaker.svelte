@@ -110,7 +110,7 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<span class="font-mono text-[9px] text-neutral-500">
+			<span class="node-spec">
 				{formatHz(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
 			</span>
 		{/if}

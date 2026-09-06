@@ -81,7 +81,7 @@
 </script>
 
 <Wrapper label="System Audio" accent="input" icon={SoundWave} {srcTooltip}>
-	<div class="flex w-64 flex-col gap-3">
+	<div class="flex w-64 flex-col gap-2">
 		{#if showBanner}
 			<div
 				class={[
@@ -130,7 +130,7 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
-		<span class="font-mono text-[9px] text-neutral-500">48 kHz · 2 ch · f32</span>
+		<span class="node-spec">48 kHz · 2 ch · f32</span>
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>

@@ -87,7 +87,7 @@
 </script>
 
 <Wrapper label="Microphone" accent="input" icon={Mic} {srcTooltip}>
-	<div class="flex w-50 flex-col gap-3">
+	<div class="flex w-50 flex-col gap-2">
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
@@ -105,7 +105,7 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<span class="font-mono text-[9px] text-neutral-500">
+			<span class="node-spec">
 				{formatHz(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
 			</span>
 		{/if}

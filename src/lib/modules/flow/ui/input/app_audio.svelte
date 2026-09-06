@@ -68,7 +68,7 @@
 </script>
 
 <Wrapper label="App Audio" accent="input" icon={Apps} {srcTooltip}>
-	<div class="flex w-64 flex-col gap-3">
+	<div class="flex w-64 flex-col gap-2">
 		<Combobox
 			class="w-full"
 			{options}
@@ -84,7 +84,7 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
 		{:else if data.bundleId}
-			<span class="font-mono text-[9px] text-neutral-500">48 kHz · 2 ch · f32</span>
+			<span class="node-spec">48 kHz · 2 ch · f32</span>
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

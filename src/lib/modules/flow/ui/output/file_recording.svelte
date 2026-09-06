@@ -22,6 +22,7 @@
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
+	import { formatHz } from '$lib/components/format';
 	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
@@ -628,21 +629,22 @@
 	function formatLabelFor(fmt: RecordingFormat): string {
 		if (fmt.kind === 'wav') {
 			const bd = fmt.bitDepth;
-			return bd === 'i16' ? 'WAV PCM 16-bit' : bd === 'i24' ? 'WAV PCM 24-bit' : 'WAV 32-bit float';
+			return bd === 'i16' ? 'WAV 16-bit' : bd === 'i24' ? 'WAV 24-bit' : 'WAV 32-bit float';
 		}
 		if (fmt.kind === 'flac') {
-			return `FLAC ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'} · ${fmt.compression}`;
+			return `FLAC ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
 		}
 		if (fmt.kind === 'opus') {
-			return `Opus ${Math.round(fmt.bitrate / 1000)} kbps · ${fmt.application}`;
+			const app = fmt.application === 'audio' ? '' : ` · ${fmt.application}`;
+			return `Opus ${Math.round(fmt.bitrate / 1000)} kbps${app}`;
 		}
 		if (fmt.kind === 'mp3') {
 			return `MP3 ${fmt.bitrateKbps} kbps`;
 		}
 		if (fmt.kind === 'aac') {
-			return `AAC ${Math.round(fmt.bitrate / 1000)} kbps · M4A`;
+			return `AAC ${Math.round(fmt.bitrate / 1000)} kbps`;
 		}
-		return `AIFF PCM ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
+		return `AIFF ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
 	}
 
 	let estSize = $derived(estimatedSize());
@@ -806,22 +808,28 @@
 			<span class={recording ? 'text-red-500' : 'text-neutral-900'}>
 				{recording ? '● REC' : '○'}
 			</span>
-			<span class="text-neutral-1000 tabular-nums">{formatDuration(durationSec)}</span>
+			<div class="flex items-baseline gap-1.5 tabular-nums">
+				<span class="text-neutral-1000">{formatDuration(durationSec)}</span>
+				{#if estSize > 0}
+					<span class="node-spec">·</span>
+					<span class="node-spec">{formatSize(estSize)}</span>
+				{/if}
+			</div>
 		</div>
-		<div class="flex justify-between font-mono text-[9px] text-neutral-500">
+		<div class="flex items-center justify-between node-spec">
 			<span class="truncate">
 				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
-				· {data.format.kind === 'opus' || data.format.kind === 'mp3' ? '48 kHz' : `${(data.sampleRate ?? 48_000) / 1000} kHz`}
-				· {channelLabel}
 			</span>
-			<span class="tabular-nums">{formatSize(estSize)}</span>
+			<span class="shrink-0 pl-2">
+				{formatHz(targetSampleRate)} · {channelLabel}
+			</span>
 		</div>
 		{#if dirty}
 			<div class="text-[9px] text-amber-600">changes pending - restart or choose new file</div>
 		{/if}
 
 		<div class="flex items-center justify-between border-t border-neutral-200 pt-1">
-			<span class="flex items-center gap-1 font-mono text-[9px] text-neutral-500">
+			<span class="flex items-center gap-1 node-spec">
 				<Pulse class="size-3" />
 				Waveform
 				{#if !isAppendable(data.format)}

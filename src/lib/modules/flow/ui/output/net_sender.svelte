@@ -175,9 +175,9 @@
 		</div>
 
 		<!-- throughput -->
-		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">Sending</span>
-			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">{formatRate(rate)}</span>
+		<div class="flex items-center justify-between node-spec">
+			<span>Sending</span>
+			<span class="tabular-nums">{formatRate(rate)}</span>
 		</div>
 
 		<hr class="border-neutral-300" />

@@ -111,10 +111,18 @@ impl Capture {
         }
     }
 
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         match self {
             Capture::Tap(tap) => tap.sample_rate(),
             Capture::Sck(_) => SCK_RATE,
+        }
+    }
+
+    pub fn tap_rate_probe(&self) -> Option<macos_tap::TapRateProbe> {
+        match self {
+            Capture::Tap(tap) => Some(tap.rate_probe()),
+            Capture::Sck(_) => None,
         }
     }
 }

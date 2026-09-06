@@ -7,7 +7,8 @@
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
-	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS } from '$lib/modules/settings/stores.svelte';
+	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS, PIPELINE_SAMPLE_RATE_PRESETS } from '$lib/modules/settings/stores.svelte';
+	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import PresetsSection from './_presets_section.svelte';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
@@ -39,10 +40,18 @@
 		void disableAutostart();
 	}
 
-	function setApp<K extends 'checkUpdatesOnLaunch' | 'maxSnapshots' | 'snapToGrid' | 'gridSize' | 'confirmOverwriteChanges' | 'keepRunningOnDisconnect'>(
-		key: K,
-		value: (typeof appSettings)[K]
-	) {
+	let customRateSelected = $state(false);
+
+	function setApp<
+		K extends
+			| 'checkUpdatesOnLaunch'
+			| 'maxSnapshots'
+			| 'snapToGrid'
+			| 'gridSize'
+			| 'confirmOverwriteChanges'
+			| 'keepRunningOnDisconnect'
+			| 'pipelineSampleRate'
+	>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
 	}
@@ -212,6 +221,60 @@
 				label="Confirm changes in Overwrite mode"
 				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
 				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Pipeline sample rate</h2>
+				<p class="text-xs text-neutral-900">
+					Working sample rate for mixing and DSP. Matching this rate across your input and output devices ensures bit-transparent audio with zero
+					resampling artifacts, preserving low-level details and preventing intersample clipping.
+				</p>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2">
+				{#each PIPELINE_SAMPLE_RATE_PRESETS as rate (rate)}
+					<button
+						type="button"
+						onclick={() => {
+							customRateSelected = false;
+							setApp('pipelineSampleRate', rate);
+						}}
+						class={[
+							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
+							!customRateSelected && appSettings.pipelineSampleRate === rate
+								? 'border-neutral-900 bg-neutral-200 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+						]}>
+						{rate >= 1000 ? `${rate / 1000} kHz` : `${rate} Hz`}
+					</button>
+				{/each}
+				<button
+					type="button"
+					onclick={() => (customRateSelected = true)}
+					class={[
+						'rounded-lg border px-3 py-1 text-[11px] font-medium transition-colors',
+						customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)
+							? 'border-neutral-900 bg-neutral-200 text-theme'
+							: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+					]}>
+					Custom
+				</button>
+			</div>
+
+			{#if customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
+				<div class="flex items-center gap-2 pt-1 pl-1">
+					<span class="text-xs text-neutral-900">Custom frequency</span>
+					<NumberStepper
+						value={appSettings.pipelineSampleRate}
+						min={8000}
+						max={384000}
+						step={1}
+						label="Custom sample rate"
+						onchange={(v) => setApp('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
+					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
+				</div>
+			{/if}
 		</section>
 
 		<section class="flex flex-col gap-2">

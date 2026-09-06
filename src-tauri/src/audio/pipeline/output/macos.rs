@@ -115,8 +115,12 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let mut io_holder: Option<SpeakerIo> = None;
     let mut stream_holder: Option<cpal::Stream> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, fill, level, target, io) =
-            speaker_ring(spec.out_channels, graph.latency_frames());
+        let (producer, fill, level, target, io) = speaker_ring(
+            spec.out_channels,
+            graph.sample_rate(),
+            spec.sample_rate,
+            graph.latency_frames(),
+        );
         let app_err = app.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
@@ -168,7 +172,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         producer,
         level,
         target,
-        spec.sample_rate,
+        io.sample_rate.clone(),
         spec.out_channels,
         graph,
         meter,

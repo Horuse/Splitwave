@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -16,10 +16,11 @@ use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle, WaveformHandle};
 use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
 use crate::audio::graph::{OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
+use crate::audio::resample::MultiResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::{OutputGraph, DSP_BLOCK_FRAMES, RESAMPLE_CHUNK};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -55,6 +56,12 @@ pub(super) const SPEAKER_TARGET_FILL_BLOCKS: usize = 3;
 // Extra frames held beyond the device's own callback buffer so the ring never
 // sits exactly empty when the next callback lands.
 const SPEAKER_TARGET_MARGIN_BLOCKS: usize = 2;
+
+#[inline]
+fn pipeline_frames_to_device_frames(frames: usize, pipeline_rate: u32, device_rate: u32) -> usize {
+    ((frames as u64 * device_rate.max(1) as u64 + pipeline_rate.max(1) as u64 / 2)
+        / pipeline_rate.max(1) as u64) as usize
+}
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
@@ -201,6 +208,9 @@ impl Drop for RecorderWorker {
 // `Ordering::Relaxed`, no allocation, no other sync.
 #[derive(Clone)]
 pub(super) struct SpeakerIo {
+    /// Native clock rate of the physical output stream. This differs from the
+    /// graph's pipeline rate when the output resampler is active.
+    pub sample_rate: Arc<AtomicU32>,
     /// Samples cpal's `fill` was asked for (`out.len()`), summed across callbacks.
     pub requested: Arc<AtomicU64>,
     /// Samples actually popped off the ring (`bulk_pop`'s return), summed across callbacks.
@@ -217,8 +227,9 @@ pub(super) struct SpeakerIo {
 }
 
 impl SpeakerIo {
-    fn new(target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
+    fn new(sample_rate: u32, target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
         Self {
+            sample_rate: Arc::new(AtomicU32::new(sample_rate)),
             requested: Arc::new(AtomicU64::new(0)),
             read: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
@@ -256,6 +267,8 @@ impl Drop for StreamGuard {
 // worker's clock steers toward -- one ring shape for all platforms.
 pub(super) fn speaker_ring(
     out_channels: usize,
+    pipeline_rate: u32,
+    device_rate: u32,
     graph_latency_frames: usize,
 ) -> (
     Producer<f32>,
@@ -268,11 +281,13 @@ pub(super) fn speaker_ring(
         RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
-    let target = Arc::new(AtomicI64::new(
-        (SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES) as i64,
-    ));
+    let target = Arc::new(AtomicI64::new(pipeline_frames_to_device_frames(
+        SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
+        pipeline_rate,
+        device_rate,
+    ) as i64));
     let target_cb = target.clone();
-    let io = SpeakerIo::new(target.clone(), graph_latency_frames);
+    let io = SpeakerIo::new(device_rate, target.clone(), graph_latency_frames);
     let io_cb = io.clone();
     let fill = move |out: &mut [f32], _frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);
@@ -282,8 +297,16 @@ pub(super) fn speaker_ring(
         // blocks and the floor holds; a large-buffer device (PipeWire handing
         // out ~250 ms buffers) grows the target and runs at that latency instead
         // of underrunning at a fraction of real time.
-        let min = SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES;
-        let margin = SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES;
+        let min = pipeline_frames_to_device_frames(
+            SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
+            pipeline_rate,
+            device_rate,
+        );
+        let margin = pipeline_frames_to_device_frames(
+            SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES,
+            pipeline_rate,
+            device_rate,
+        );
         let dev_frames = out.len() / out_channels;
         let max = SPEAKER_RING_CAPACITY_FRAMES
             .saturating_sub(dev_frames + margin)
@@ -336,29 +359,59 @@ pub(super) fn spawn_speaker_worker(
     mut producer: Producer<f32>,
     level: Arc<AtomicI64>,
     target: Arc<AtomicI64>,
-    sample_rate: u32,
+    device_sample_rate: Arc<AtomicU32>,
     channels: usize,
     graph: OutputGraph,
     meter: MeterHandle,
 ) -> AppResult<(SpeakerWorker, WorkerCtrl)> {
+    let pipeline_rate = graph.sample_rate();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let (worker, ctrl) = dsp_worker(graph);
     let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
-        sample_rate,
+        pipeline_rate,
+        device_sample_rate.clone(),
         DSP_BLOCK_FRAMES,
         level.clone(),
         target,
     ));
+    let initial_device_rate = device_sample_rate.load(Ordering::Relaxed);
+    let mut resampler = if initial_device_rate == pipeline_rate {
+        None
+    } else {
+        Some(MultiResampler::new(
+            pipeline_rate,
+            initial_device_rate,
+            RESAMPLE_CHUNK,
+            channels,
+        )?)
+    };
+    let mut resampled = vec![
+        0.0_f32;
+        resampler
+            .as_ref()
+            .map(|r| r.out_max() * channels * (DSP_BLOCK_FRAMES / RESAMPLE_CHUNK))
+            .unwrap_or(DSP_BLOCK_FRAMES * channels)
+    ];
     let join = thread::Builder::new()
-        .name(format!("speaker:{sample_rate}"))
+        .name(format!("speaker:{initial_device_rate}"))
         .spawn(move || {
-            let _rt = RtThread::promote("speaker", sample_rate);
+            let _rt = RtThread::promote("speaker", initial_device_rate);
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
+                let device_block = if let Some(resampler) = &mut resampler {
+                    let mut written = 0;
+                    for chunk in block.chunks_exact(RESAMPLE_CHUNK * channels) {
+                        written +=
+                            resampler.process_chunk_into(chunk, &mut resampled[written..])?;
+                    }
+                    &resampled[..written]
+                } else {
+                    block
+                };
                 let written = streams::bulk_push_counted(
                     &mut producer,
-                    block,
+                    device_block,
                     &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
                 );
                 level.fetch_add((written / channels) as i64, Ordering::Relaxed);

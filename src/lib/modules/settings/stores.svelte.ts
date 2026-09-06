@@ -11,6 +11,7 @@ interface Stored {
 	launchOnStartup: boolean;
 	confirmOverwriteChanges: boolean;
 	keepRunningOnDisconnect: boolean;
+	pipelineSampleRate: number;
 }
 
 const DEFAULTS: Stored = {
@@ -20,11 +21,13 @@ const DEFAULTS: Stored = {
 	gridSize: 20,
 	launchOnStartup: false,
 	confirmOverwriteChanges: true,
-	keepRunningOnDisconnect: true
+	keepRunningOnDisconnect: true,
+	pipelineSampleRate: 48_000
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
 export const GRID_SIZES = [10, 20, 40] as const;
+export const PIPELINE_SAMPLE_RATE_PRESETS = [44100, 48000, 88200, 96000, 176400, 192000] as const;
 
 function load(): Stored {
 	if (!browser) return DEFAULTS;
@@ -44,13 +47,32 @@ class AppSettings {
 	launchOnStartup = $state(this.#initial.launchOnStartup);
 	confirmOverwriteChanges = $state(this.#initial.confirmOverwriteChanges);
 	keepRunningOnDisconnect = $state(this.#initial.keepRunningOnDisconnect);
+	pipelineSampleRate = $state(this.#initial.pipelineSampleRate ?? 48_000);
 
 	persist(): void {
 		if (!browser) return;
-		const { checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges, keepRunningOnDisconnect } = this;
+		const {
+			checkUpdatesOnLaunch,
+			maxSnapshots,
+			snapToGrid,
+			gridSize,
+			launchOnStartup,
+			confirmOverwriteChanges,
+			keepRunningOnDisconnect,
+			pipelineSampleRate
+		} = this;
 		window.localStorage.setItem(
 			KEY,
-			JSON.stringify({ checkUpdatesOnLaunch, maxSnapshots, snapToGrid, gridSize, launchOnStartup, confirmOverwriteChanges, keepRunningOnDisconnect })
+			JSON.stringify({
+				checkUpdatesOnLaunch,
+				maxSnapshots,
+				snapToGrid,
+				gridSize,
+				launchOnStartup,
+				confirmOverwriteChanges,
+				keepRunningOnDisconnect,
+				pipelineSampleRate
+			})
 		);
 	}
 

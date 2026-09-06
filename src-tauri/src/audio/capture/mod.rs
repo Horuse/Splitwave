@@ -3,7 +3,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 mod macos_backend;
 #[cfg(target_os = "macos")]
-mod macos_tap;
+pub(crate) mod macos_tap;
 #[cfg(target_os = "macos")]
 pub use macos_backend::{capture_rate, uses_taps, Capture};
 

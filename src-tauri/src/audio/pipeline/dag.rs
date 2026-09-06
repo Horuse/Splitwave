@@ -1883,6 +1883,7 @@ pub(super) fn reachable_backward(output_id: &str, valid: &ValidGraph) -> HashSet
     seen
 }
 
+#[allow(dead_code)]
 pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) -> Vec<&'a str> {
     let reachable = reachable_backward(output_id, valid);
     valid

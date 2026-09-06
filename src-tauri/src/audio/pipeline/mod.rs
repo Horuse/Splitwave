@@ -41,10 +41,7 @@ pub(crate) use output::RtThread;
 mod sig;
 mod worker;
 
-use dag::{
-    build_output_graph, inputs_feeding_output, OutputGraph, OutputMeta, SourceMeta,
-    RING_CAPACITY_FRAMES,
-};
+use dag::{build_output_graph, OutputGraph, OutputMeta, SourceMeta, RING_CAPACITY_FRAMES};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
@@ -236,7 +233,7 @@ impl ActivePipeline {
     /// no-op when the node isn't an AudioFile or the pipeline is stopped.
     pub fn seek_audio_file(&self, node_id: &str, frame: i64) {
         if let Some(state) = self.inputs.get(node_id) {
-            if let InputHandle::AudioFile(reader) = &state._handle {
+            if let Some(reader) = state._handle.audio_file_reader() {
                 reader.seek_to().store(frame.max(0), Ordering::SeqCst);
             }
             if let Some(d) = &state.drain {
@@ -250,7 +247,7 @@ impl ActivePipeline {
     /// stopped.
     pub fn set_audio_file_loop(&self, node_id: &str, enabled: bool) {
         if let Some(state) = self.inputs.get(node_id) {
-            if let InputHandle::AudioFile(reader) = &state._handle {
+            if let Some(reader) = state._handle.audio_file_reader() {
                 reader.loop_enabled().store(enabled, Ordering::SeqCst);
             }
         }
@@ -369,12 +366,20 @@ impl ActivePipeline {
             GraphSwap,
             Drop,
         }
+        let sample_rate_changed = self
+            .current
+            .as_ref()
+            .map_or(false, |c| c.sample_rate != new_graph.sample_rate);
         let mut cats: HashMap<String, Cat> = HashMap::new();
         for (id, new_sig) in &new_sigs {
-            let cat = match self.current_output_sig(id) {
-                Some(old) if old == new_sig => Cat::Full,
-                Some(old) if old.output_spec == new_sig.output_spec => Cat::GraphSwap,
-                _ => Cat::Drop,
+            let cat = if sample_rate_changed {
+                Cat::Drop
+            } else {
+                match self.current_output_sig(id) {
+                    Some(old) if old == new_sig => Cat::Full,
+                    Some(old) if old.output_spec == new_sig.output_spec => Cat::GraphSwap,
+                    _ => Cat::Drop,
+                }
             };
             cats.insert(id.clone(), cat);
         }
@@ -468,6 +473,9 @@ impl ActivePipeline {
             .inputs
             .keys()
             .filter(|id| {
+                if sample_rate_changed {
+                    return true;
+                }
                 match (
                     old_input_specs.get(id.as_str()),
                     new_input_specs.get(id.as_str()),
@@ -494,6 +502,9 @@ impl ActivePipeline {
         let Some(current) = &self.current else {
             return false;
         };
+        if current.sample_rate != graph.sample_rate {
+            return false;
+        }
         let cur_inputs: HashMap<&str, &InputSpec> = current
             .inputs
             .iter()
@@ -589,6 +600,7 @@ impl ActivePipeline {
     /// state -- the caller is responsible for calling `teardown`.
     fn apply_full(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
         let monitor_mode = monitor_mode(graph);
+        let pipeline_sr = graph.sample_rate;
 
         let mut input_native_sr: HashMap<String, u32> = HashMap::new();
         let mut input_native_channels: HashMap<String, u32> = HashMap::new();
@@ -607,7 +619,7 @@ impl ActivePipeline {
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
                 let resolved = resolve_input(inp)?;
-                input_native_sr.insert(inp.id.clone(), resolved.sample_rate());
+                input_native_sr.insert(inp.id.clone(), pipeline_sr);
                 input_native_channels.insert(inp.id.clone(), resolved.native_channels());
                 input_runtime.insert(inp.id.clone(), resolved);
             }
@@ -730,20 +742,11 @@ impl ActivePipeline {
                 OutputSpec::FileRecording {
                     format: RecordingFormat::Aac { .. },
                     ..
-                } => {
-                    let max_in = inputs_feeding_output(out.id.as_str(), graph)
-                        .into_iter()
-                        .filter_map(|input_id| input_native_sr.get(input_id).copied())
-                        .max();
-                    match max_in {
-                        Some(sr @ (32_000 | 44_100 | 48_000)) => Some(sr),
-                        _ => Some(48_000),
-                    }
-                }
-                OutputSpec::FileRecording { .. } => inputs_feeding_output(out.id.as_str(), graph)
-                    .into_iter()
-                    .filter_map(|input_id| input_native_sr.get(input_id).copied())
-                    .max(),
+                } => match pipeline_sr {
+                    sr @ (32_000 | 44_100 | 48_000) => Some(sr),
+                    _ => Some(48_000),
+                },
+                OutputSpec::FileRecording { .. } => Some(pipeline_sr),
                 _ => None,
             };
             let resolved = resolve_output(out, file_sr_hint)?;
@@ -770,10 +773,14 @@ impl ActivePipeline {
             if !output_runtime.contains_key(&out.id) {
                 continue;
             }
-            let output_sr = output_runtime
-                .get(&out.id)
-                .map(|o| o.sample_rate())
-                .ok_or_else(|| AppError::Validation("missing output runtime".into()))?;
+            let output_sr = match &out.spec {
+                OutputSpec::Speaker { .. } => pipeline_sr,
+                OutputSpec::FileRecording { .. } => output_runtime
+                    .get(&out.id)
+                    .map(|o| o.sample_rate())
+                    .unwrap_or(pipeline_sr),
+                OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => pipeline_sr,
+            };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
             let mut built = build_output_graph(
@@ -847,7 +854,7 @@ impl ActivePipeline {
             let needs_build =
                 monitor_forced || self.monitor.as_ref().map_or(true, |m| m.sig != new_sig);
             if needs_build {
-                let monitor_sr = input_native_sr.values().copied().max().unwrap_or(48_000);
+                let monitor_sr = pipeline_sr;
                 let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
                 // Realtime: the monitor consumes live sources forever, so it must
                 // drop backlog like any other live path. Without this its ring
@@ -938,7 +945,7 @@ impl ActivePipeline {
                 let resolved = input_runtime.remove(&input_id).ok_or_else(|| {
                     AppError::Validation(format!("input runtime missing for {input_id}"))
                 })?;
-                let sample_rate = resolved.sample_rate();
+                let sample_rate = pipeline_sr;
                 let channels = resolved.native_channels();
                 let meter = new_input_meters
                     .remove(&input_id)
@@ -957,8 +964,15 @@ impl ActivePipeline {
                     captured.push((input_id.clone(), out_id.clone(), capture));
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
-                let handle =
-                    start_input_stream(&input_id, resolved, bridge_rx, paused.clone(), None, &app)?;
+                let handle = start_input_stream(
+                    &input_id,
+                    resolved,
+                    bridge_rx,
+                    pipeline_sr,
+                    paused.clone(),
+                    None,
+                    &app,
+                )?;
                 self.inputs.insert(
                     input_id,
                     InputState {
@@ -997,7 +1011,7 @@ impl ActivePipeline {
             if matches!(resolved, ResolvedInput::AudioFile { .. }) {
                 continue;
             }
-            let sample_rate = resolved.sample_rate();
+            let sample_rate = pipeline_sr;
             let channels = resolved.native_channels();
             let meter = new_input_meters
                 .remove(&input_id)
@@ -1013,6 +1027,7 @@ impl ActivePipeline {
                 &input_id,
                 resolved,
                 bridge_rx,
+                pipeline_sr,
                 paused.clone(),
                 Some(meter),
                 &app,

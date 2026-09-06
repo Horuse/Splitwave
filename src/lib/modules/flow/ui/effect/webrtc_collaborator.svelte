@@ -14,11 +14,18 @@
 	import { PeopleTeam } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
+	import { formatRate } from '$lib/components/format';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
 	let { id, data }: NodeProps<WebRtcNodeType> = $props();
 
 	const flow = useSvelteFlow();
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		return `WebRTC audio operates at 48 kHz (resampled from ${formatRate(appSettings.pipelineSampleRate)} and back)`;
+	});
 
 	const MAX_CHANNELS = 255;
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'target' });
@@ -269,7 +276,7 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" icon={PeopleTeam} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="WebRTC" icon={PeopleTeam} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">

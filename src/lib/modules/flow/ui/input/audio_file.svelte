@@ -11,6 +11,7 @@
 	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();
@@ -190,12 +191,18 @@
 	}
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	let srcTooltip = $derived.by(() => {
+		if (sampleRate <= 0 || sampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatRate(sampleRate)} → ${formatRate(appSettings.pipelineSampleRate)}`;
+	});
 </script>
 
 <Wrapper
 	label="Audio File"
 	accent="input"
 	icon={MusicNote}
+	{srcTooltip}
 	hasOutput
 	channelIo
 	nodeId={id}

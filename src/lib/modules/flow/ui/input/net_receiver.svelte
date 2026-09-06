@@ -8,11 +8,17 @@
 	import Wrapper from '../node.svelte';
 	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
 	let { id, data }: NodeProps<NetReceiverNodeType> = $props();
 
 	const flow = useSvelteFlow();
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		return `Resampling: 48 kHz → ${formatRate(appSettings.pipelineSampleRate)}`;
+	});
 
 	let loss = $state<number | null>(null);
 	let rate = $state(0); // bytes/sec
@@ -83,6 +89,7 @@
 	label="Net Receiver"
 	icon={ArrowDownload}
 	accent="network"
+	{srcTooltip}
 	hasOutput
 	channelIo
 	nodeId={id}

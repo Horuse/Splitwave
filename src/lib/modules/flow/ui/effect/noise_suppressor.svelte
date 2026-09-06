@@ -7,6 +7,7 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();
@@ -39,9 +40,25 @@
 	function threshFmt(v: number): string {
 		return `${Math.round(v)} dB`;
 	}
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
+		return `Internal model runs at 48 kHz (resampled from ${targetK} and back)`;
+	});
 </script>
 
-<Wrapper label="Noise Suppressor" icon={Wand} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Noise Suppressor"
+	icon={Wand}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	{srcTooltip}>
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 

@@ -12,6 +12,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
 	// loopback) need it neither.
@@ -70,9 +71,15 @@
 
 	// System Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
+		return `Resampling: 48 kHz → ${targetK}`;
+	});
 </script>
 
-<Wrapper label="System Audio" accent="input" icon={SoundWave}>
+<Wrapper label="System Audio" accent="input" icon={SoundWave} {srcTooltip}>
 	<div class="flex w-64 flex-col gap-3">
 		{#if showBanner}
 			<div

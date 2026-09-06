@@ -4,7 +4,7 @@
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { ActivationButton, LatencyBadge, RunningTimer } from '$lib/modules/audio/ui';
+	import { ActivationButton, LatencyBadge, PipelineRateBadge, RunningTimer } from '$lib/modules/audio/ui';
 	import Header from '$lib/components/layout/header.svelte';
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
@@ -105,6 +105,7 @@
 				<RunningTimer />
 				<LatencyBadge />
 			{/if}
+			<PipelineRateBadge />
 			{#if pipeline}
 				<UndoRedo />
 				<SavedIndicator />

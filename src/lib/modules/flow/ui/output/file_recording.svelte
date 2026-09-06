@@ -658,9 +658,17 @@
 	function toggleWaveform() {
 		flow.updateNodeData(id, { waveformHidden: !(data.waveformHidden ?? false) });
 	}
+
+	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? 48_000));
+	let srcTooltip = $derived.by(() => {
+		if (targetSampleRate === appSettings.pipelineSampleRate) return undefined;
+		const pK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
+		const tK = targetSampleRate >= 1000 ? `${targetSampleRate / 1000} kHz` : `${targetSampleRate} Hz`;
+		return `Resampling: ${pK} → ${tK}`;
+	});
 </script>
 
-<Wrapper label="File Recording" icon={FileRecord} accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
+<Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}

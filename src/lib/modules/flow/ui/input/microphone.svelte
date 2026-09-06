@@ -14,6 +14,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	const isWindows = platform() === 'windows';
 
@@ -80,9 +81,14 @@
 	let gainPct = $derived((gain.scalar ?? 0) * 100);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+
+	let srcTooltip = $derived.by(() => {
+		if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatRate(info.sampleRate)} → ${formatRate(appSettings.pipelineSampleRate)}`;
+	});
 </script>
 
-<Wrapper label="Microphone" accent="input" icon={Mic}>
+<Wrapper label="Microphone" accent="input" icon={Mic} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-3">
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}

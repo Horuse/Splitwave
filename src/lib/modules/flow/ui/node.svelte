@@ -5,6 +5,8 @@
 	import { PREVIEW_CTX } from '../utils';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
+	import { ArrowSwap } from '$lib/components/icons';
+	import { Tooltip } from '$lib/modules/overlay/ui';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
@@ -20,6 +22,7 @@
 		accent?: NodeCategory;
 		icon?: Component<{ class?: ClassValue; title?: string }>;
 		badge?: Snippet;
+		srcTooltip?: string;
 		hasInput?: boolean;
 		hasOutput?: boolean;
 		inputs?: InputHandleConfig[];
@@ -43,6 +46,7 @@
 		accent = 'effect',
 		icon: NodeIcon,
 		badge,
+		srcTooltip,
 		hasInput = false,
 		hasOutput = false,
 		inputs,
@@ -81,6 +85,13 @@
 				<NodeIcon class={['size-3 shrink-0', CATEGORY_TEXT[accent]]} />
 			{/if}
 			{label}
+			{#if srcTooltip}
+				<Tooltip text={srcTooltip}>
+					<span class="inline-flex cursor-help items-center text-amber-600 transition-colors hover:text-amber-700">
+						<ArrowSwap class="size-3" />
+					</span>
+				</Tooltip>
+			{/if}
 		</span>
 		<div class="flex items-center gap-1">
 			{#if badge}{@render badge()}{/if}

@@ -10,6 +10,7 @@
 	import { Apps } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -54,9 +55,15 @@
 
 	// App Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		const targetK = appSettings.pipelineSampleRate >= 1000 ? `${appSettings.pipelineSampleRate / 1000} kHz` : `${appSettings.pipelineSampleRate} Hz`;
+		return `Resampling: 48 kHz → ${targetK}`;
+	});
 </script>
 
-<Wrapper label="App Audio" accent="input" icon={Apps}>
+<Wrapper label="App Audio" accent="input" icon={Apps} {srcTooltip}>
 	<div class="flex w-64 flex-col gap-3">
 		<Combobox
 			class="w-full"

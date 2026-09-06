@@ -8,11 +8,17 @@
 	import Wrapper from '../node.svelte';
 	import { ArrowUpload } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
 	let { id, data }: NodeProps<NetSenderNodeType> = $props();
 
 	const flow = useSvelteFlow();
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		return `Resampling: ${formatRate(appSettings.pipelineSampleRate)} → 48 kHz`;
+	});
 
 	let rate = $state(0); // bytes/sec
 	let prevBytes = 0;
@@ -91,7 +97,7 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- target -->
 		<div class="flex flex-col gap-0.5">

@@ -779,7 +779,8 @@ impl ActivePipeline {
                     .get(&out.id)
                     .map(|o| o.sample_rate())
                     .unwrap_or(pipeline_sr),
-                OutputSpec::NetSender { .. } | OutputSpec::WebRtcSend { .. } => pipeline_sr,
+                OutputSpec::NetSender { .. } => crate::audio::netaudio::SR,
+                OutputSpec::WebRtcSend { .. } => pipeline_sr,
             };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();

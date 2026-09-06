@@ -14,6 +14,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	const isWindows = platform() === 'windows';
 	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
@@ -87,9 +88,14 @@
 	let meterOffsetDb = $derived(volume.db ?? 0);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+
+	let srcTooltip = $derived.by(() => {
+		if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatRate(appSettings.pipelineSampleRate)} → ${formatRate(info.sampleRate)}`;
+	});
 </script>
 
-<Wrapper label="Speaker" accent="output" icon={Speaker}>
+<Wrapper label="Speaker" accent="output" icon={Speaker} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-1">
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}

@@ -35,7 +35,13 @@ impl Format {
     }
 }
 
+pub const HEADER_LEN_BASE: usize = 8;
 pub const HEADER_LEN_EXT: usize = 12;
+
+/// Bit 7: set if packet includes the 8-byte base extended header (`sample_rate: u32`).
+pub const FLAG_EXTENDED: u8 = 0x80;
+/// Bit 6: set if packet includes the 4-byte codec metadata extension (`codec_param`).
+pub const FLAG_CODEC_META: u8 = 0x40;
 
 pub struct Parsed<'a> {
     pub format: Format,
@@ -47,24 +53,32 @@ pub struct Parsed<'a> {
     pub payload: &'a [u8],
 }
 
-/// Writes the extended self-describing header into `buf` (cleared first); the caller appends the payload.
+/// Writes the self-describing header into `buf` (cleared first); the caller appends the payload.
+/// If `codec_param` is provided (e.g. for Opus: bitrate + application mode), writes a 12-byte header with FLAG_CODEC_META.
+/// Otherwise (e.g. for PCM), writes a compact 8-byte header with only FLAG_EXTENDED.
 pub fn write_header(
     buf: &mut Vec<u8>,
     format: Format,
     channel: u8,
     seq: u16,
     sample_rate: u32,
-    opus_bitrate_kbps: u16,
-    opus_app: u8,
+    codec_param: Option<(u16, u8)>,
 ) {
     buf.clear();
-    buf.push(0x80 | format.to_byte());
+    let has_codec_meta = codec_param.is_some();
+    let mut b0 = FLAG_EXTENDED | format.to_byte();
+    if has_codec_meta {
+        b0 |= FLAG_CODEC_META;
+    }
+    buf.push(b0);
     buf.push(channel);
     buf.extend_from_slice(&seq.to_be_bytes());
     buf.extend_from_slice(&sample_rate.to_be_bytes());
-    buf.extend_from_slice(&opus_bitrate_kbps.to_be_bytes());
-    buf.push(opus_app);
-    buf.push(0); // reserved
+    if let Some((p16, p8)) = codec_param {
+        buf.extend_from_slice(&p16.to_be_bytes());
+        buf.push(p8);
+        buf.push(0); // reserved
+    }
 }
 
 pub fn parse(data: &[u8]) -> Option<Parsed<'_>> {
@@ -72,23 +86,28 @@ pub fn parse(data: &[u8]) -> Option<Parsed<'_>> {
         return None;
     }
     let b0 = data[0];
-    if b0 & 0x80 != 0 {
-        if data.len() < 8 {
+    if b0 & FLAG_EXTENDED != 0 {
+        if data.len() < HEADER_LEN_BASE {
             return None;
         }
-        let format = Format::from_byte(b0 & 0x7F)?;
+        let format = Format::from_byte(b0 & 0x3F)?;
         let channel = data[1];
         let seq = u16::from_be_bytes([data[2], data[3]]);
         let sample_rate = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        let (opus_bitrate_kbps, opus_app, header_len) = if data.len() >= HEADER_LEN_EXT {
+
+        let (opus_bitrate_kbps, opus_app, header_len) = if b0 & FLAG_CODEC_META != 0 {
+            if data.len() < HEADER_LEN_EXT {
+                return None;
+            }
             let kbps = u16::from_be_bytes([data[8], data[9]]);
             let app = data[10];
             let kbps_opt = if kbps > 0 { Some(kbps) } else { None };
             let app_opt = if app > 0 { Some(app) } else { None };
             (kbps_opt, app_opt, HEADER_LEN_EXT)
         } else {
-            (None, None, 8)
+            (None, None, HEADER_LEN_BASE)
         };
+
         Some(Parsed {
             format,
             channel,

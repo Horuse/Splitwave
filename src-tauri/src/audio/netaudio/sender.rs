@@ -193,15 +193,15 @@ impl NetSender {
 
             let mut packets: Vec<Vec<u8>> = Vec::new();
             let sample_rate = self.config.sample_rate;
-            let (opus_bitrate_kbps, opus_app_byte) = if format == Format::Opus {
+            let codec_param = if format == Format::Opus {
                 let app = match self.config.opus_application {
                     OpusApplication::Voip => 1,
                     OpusApplication::Audio => 2,
                     OpusApplication::LowDelay => 3,
                 };
-                ((self.config.opus_bitrate / 1000) as u16, app)
+                Some(((self.config.opus_bitrate / 1000) as u16, app))
             } else {
-                (0, 0)
+                None
             };
             for i in 0..encoders.len() {
                 let channel = i as u8;
@@ -214,8 +214,7 @@ impl NetSender {
                         channel,
                         *seq,
                         sample_rate,
-                        opus_bitrate_kbps,
-                        opus_app_byte,
+                        codec_param,
                     );
                     *seq = seq.wrapping_add(1);
                     d.extend_from_slice(payload);

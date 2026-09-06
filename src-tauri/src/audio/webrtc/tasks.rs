@@ -162,8 +162,7 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
                         channel,
                         *seq,
                         OPUS_SR,
-                        (bitrate / 1000) as u16,
-                        1,
+                        Some(((bitrate / 1000) as u16, 1)),
                     );
                     *seq = seq.wrapping_add(1);
                     d.extend_from_slice(payload);

@@ -1670,6 +1670,11 @@ fn ring_source(
             channels,
         )?)
     };
+    let out_max = resampler
+        .as_ref()
+        .map(|r| r.out_max())
+        .unwrap_or(RESAMPLE_CHUNK);
+    let staging_cap = (out_max * 4 + DSP_BLOCK_FRAMES) * channels;
     let input_frames_per_block =
         (DSP_BLOCK_FRAMES as u64 * owner_sr as u64 + output_sr as u64 - 1) / output_sr as u64;
     let input_samples_per_block = input_frames_per_block as usize * channels;
@@ -1698,10 +1703,8 @@ fn ring_source(
         resampler,
         input_staging: Vec::with_capacity((RESAMPLE_CHUNK + SPLICE_FADE_FRAMES) * channels + 8),
         splice_tmp: Vec::with_capacity(SPLICE_FADE_FRAMES * channels),
-        out_pending: StagingRing::with_capacity(
-            RESAMPLE_CHUNK * channels * 4 + DSP_BLOCK_FRAMES * channels,
-        ),
-        chunk_tmp: Vec::with_capacity(RESAMPLE_CHUNK * channels + 8),
+        out_pending: StagingRing::with_capacity(staging_cap),
+        chunk_tmp: Vec::with_capacity(out_max * channels),
         out_buf: vec![0.0; DSP_BLOCK_FRAMES * channels],
         input_samples_per_block,
         realtime,

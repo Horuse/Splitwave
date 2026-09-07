@@ -20,7 +20,7 @@ use crate::audio::resample::MultiResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES, RESAMPLE_CHUNK};
+use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -394,7 +394,7 @@ pub(super) fn spawn_speaker_worker(
         Some(MultiResampler::new(
             pipeline_rate,
             initial_device_rate,
-            RESAMPLE_CHUNK,
+            DSP_BLOCK_FRAMES,
             channels,
         )?)
     };
@@ -402,7 +402,7 @@ pub(super) fn spawn_speaker_worker(
         0.0_f32;
         resampler
             .as_ref()
-            .map(|r| r.out_max() * channels * (DSP_BLOCK_FRAMES / RESAMPLE_CHUNK))
+            .map(|r| r.out_max() * channels)
             .unwrap_or(DSP_BLOCK_FRAMES * channels)
     ];
     let join = thread::Builder::new()
@@ -412,11 +412,7 @@ pub(super) fn spawn_speaker_worker(
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let device_block = if let Some(resampler) = &mut resampler {
-                    let mut written = 0;
-                    for chunk in block.chunks_exact(RESAMPLE_CHUNK * channels) {
-                        written +=
-                            resampler.process_chunk_into(chunk, &mut resampled[written..])?;
-                    }
+                    let written = resampler.process_chunk_into(block, &mut resampled)?;
                     &resampled[..written]
                 } else {
                     block

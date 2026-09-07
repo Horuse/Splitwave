@@ -1213,7 +1213,7 @@ pub(super) fn build_output_graph(
                 .map(|r| r.out_max())
                 .unwrap_or(RESAMPLE_CHUNK);
             // x4 headroom: one chunk draining + one in-flight + alignment slack.
-            let staging_cap = out_max * 4 + DSP_BLOCK_FRAMES * source_channels;
+            let staging_cap = (out_max * 4 + DSP_BLOCK_FRAMES) * source_channels;
             let input_frames_per_block =
                 (DSP_BLOCK_FRAMES as u64 * input_sr as u64 + output_sr as u64 - 1)
                     / output_sr as u64;

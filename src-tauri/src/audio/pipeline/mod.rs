@@ -639,7 +639,11 @@ impl ActivePipeline {
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
                 let resolved = resolve_input(inp)?;
-                input_native_sr.insert(inp.id.clone(), pipeline_sr);
+                let sr = match &resolved {
+                    ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
+                    _ => pipeline_sr,
+                };
+                input_native_sr.insert(inp.id.clone(), sr);
                 input_native_channels.insert(inp.id.clone(), resolved.native_channels());
                 input_runtime.insert(inp.id.clone(), resolved);
             }
@@ -974,7 +978,10 @@ impl ActivePipeline {
                 let resolved = input_runtime.remove(&input_id).ok_or_else(|| {
                     AppError::Validation(format!("input runtime missing for {input_id}"))
                 })?;
-                let sample_rate = pipeline_sr;
+                let sample_rate = match &resolved {
+                    ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
+                    _ => pipeline_sr,
+                };
                 let channels = resolved.native_channels();
                 let meter = new_input_meters
                     .remove(&input_id)

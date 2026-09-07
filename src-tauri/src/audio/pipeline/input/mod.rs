@@ -204,6 +204,12 @@ pub(super) fn start_input_stream(
     meter: Option<MeterHandle>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
+    // Audio files are decoded offline and paced by downstream consumer backpressure.
+    // They must not be run through the capture normalizer thread (which drops frames
+    // on overflow and breaks backpressure). DAG nodes resample file audio directly.
+    if matches!(resolved, ResolvedInput::AudioFile { .. }) {
+        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+    }
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
     let (raw_producer, mut raw_consumer) =

@@ -95,8 +95,9 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
             let Some(registry) = registry_weak.upgrade() else {
                 return;
             };
-            let Ok(node) = registry.bind::<pw::node::Node>(global) else {
-                return;
+            let node: pw::node::Node = match registry.bind(global) {
+                Ok(node) => node,
+                Err(_) => return,
             };
             let node_id = global.id;
             let formats = nodes_cb.clone();

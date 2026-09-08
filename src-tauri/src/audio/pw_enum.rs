@@ -10,6 +10,28 @@ pub struct PwNode {
     pub id: u32,
     pub name: String,
     pub description: String,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u32>,
+}
+
+fn parse_rate(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if let Some((numerator, denominator)) = value.split_once('/') {
+        let numerator: u32 = numerator.trim().parse().ok()?;
+        let denominator: u32 = denominator.trim().parse().ok()?;
+        return (numerator == 1 && denominator > 0).then_some(denominator);
+    }
+    value.parse().ok().filter(|rate| *rate > 0)
+}
+
+fn parse_positions(value: &str) -> Option<u32> {
+    let brackets: &[char] = &['[', ']'];
+    let count = value
+        .trim_matches(brackets)
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|position| !position.is_empty())
+        .count();
+    u32::try_from(count).ok().filter(|channels| *channels > 0)
 }
 
 pub fn nodes_by_class(media_class: &'static str) -> AppResult<Vec<PwNode>> {
@@ -46,10 +68,21 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                 .filter(|d| !d.is_empty())
                 .unwrap_or(name)
                 .to_string();
+            let sample_rate = props
+                .get("audio.rate")
+                .and_then(parse_rate)
+                .or_else(|| props.get("node.rate").and_then(parse_rate));
+            let channels = props
+                .get("audio.channels")
+                .and_then(|value| value.parse().ok())
+                .filter(|channels| *channels > 0)
+                .or_else(|| props.get("audio.position").and_then(parse_positions));
             nodes_cb.borrow_mut().push(PwNode {
                 id: global.id,
                 name: name.to_string(),
                 description,
+                sample_rate,
+                channels,
             });
         })
         .register();
@@ -68,6 +101,23 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
     mainloop.run();
     let out = std::mem::take(&mut *nodes.borrow_mut());
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_positions, parse_rate};
+
+    #[test]
+    fn parses_node_rates() {
+        assert_eq!(parse_rate("44100"), Some(44_100));
+        assert_eq!(parse_rate("1/96000"), Some(96_000));
+    }
+
+    #[test]
+    fn counts_channel_positions() {
+        assert_eq!(parse_positions("[ FL FR ]"), Some(2));
+        assert_eq!(parse_positions("[ AUX0, AUX1, AUX2 ]"), Some(3));
+    }
 }
 
 fn pw_err(e: impl std::fmt::Display) -> AppError {

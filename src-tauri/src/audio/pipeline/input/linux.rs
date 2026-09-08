@@ -8,22 +8,32 @@ use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
 
-use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SCK_SR};
+use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
-pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
+pub(in crate::audio::pipeline) fn resolve_input(
+    inp: &ValidInput,
+    target_sample_rate: u32,
+) -> AppResult<ResolvedInput> {
     match &inp.spec {
-        InputSpec::Microphone { device_id } => Ok(ResolvedInput::PwSource {
-            node_id: device_id.clone(),
-            sample_rate: 48_000,
-        }),
+        InputSpec::Microphone { device_id } => {
+            let info = crate::audio::device::device_info(
+                crate::audio::device::DeviceKind::Input,
+                device_id,
+            )?;
+            Ok(ResolvedInput::PwSource {
+                node_id: device_id.clone(),
+                sample_rate: info.sample_rate,
+                channels: u32::from(info.channels),
+            })
+        }
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {
-            sample_rate: SCK_SR,
+            sample_rate: target_sample_rate,
             exclude_current_app: *exclude_current_app,
         }),
         InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
-            sample_rate: SCK_SR,
+            sample_rate: target_sample_rate,
             bundle_id: bundle_id.clone(),
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
@@ -42,41 +52,54 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
-        ResolvedInput::PwSource { node_id, .. } => {
+        ResolvedInput::PwSource {
+            node_id,
+            sample_rate,
+            channels,
+        } => {
             let mut bridge = bridge;
             let meter = meter;
             let cb = move |samples: &[f32]| {
                 bridge.apply_commands();
                 if let Some(m) = &meter {
-                    crate::audio::effects::update_meter(m, samples, 2);
+                    crate::audio::effects::update_meter(m, samples, channels as usize);
                 }
                 bridge.broadcast(samples);
             };
             let capture = if let Some(sink) = node_id.strip_prefix("monitor:") {
                 info!(sink, "starting microphone capture (PipeWire sink monitor)");
-                crate::audio::capture::Capture::start_sink_monitor(sink, cb)?
+                crate::audio::capture::Capture::start_sink_monitor(sink, sample_rate, channels, cb)?
             } else {
                 info!(%node_id, "starting microphone capture (PipeWire source)");
-                crate::audio::capture::Capture::start_source(&node_id, cb)?
+                crate::audio::capture::Capture::start_source(&node_id, sample_rate, channels, cb)?
             };
             Ok(InputHandle::Capture(capture))
         }
-        ResolvedInput::SystemAudio { .. } => {
+        ResolvedInput::SystemAudio { sample_rate, .. } => {
             info!("starting system-audio capture (PipeWire sink monitor)");
             let mut bridge = bridge;
-            let capture = crate::audio::capture::Capture::start_system(move |samples| {
-                bridge.apply_commands();
-                bridge.broadcast(samples);
-            })?;
+            let capture =
+                crate::audio::capture::Capture::start_system(sample_rate, 2, move |samples| {
+                    bridge.apply_commands();
+                    bridge.broadcast(samples);
+                })?;
             Ok(InputHandle::Capture(capture))
         }
-        ResolvedInput::AppAudio { bundle_id, .. } => {
+        ResolvedInput::AppAudio {
+            sample_rate,
+            bundle_id,
+        } => {
             info!(%bundle_id, "starting app-audio capture (PipeWire tap)");
             let mut bridge = bridge;
-            let capture = crate::audio::capture::Capture::start_app(&bundle_id, move |samples| {
-                bridge.apply_commands();
-                bridge.broadcast(samples);
-            })?;
+            let capture = crate::audio::capture::Capture::start_app(
+                &bundle_id,
+                sample_rate,
+                2,
+                move |samples| {
+                    bridge.apply_commands();
+                    bridge.broadcast(samples);
+                },
+            )?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {

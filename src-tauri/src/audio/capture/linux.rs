@@ -31,47 +31,84 @@ impl Drop for Capture {
 
 impl Capture {
     // Monitor of the default sink (whole-system audio).
-    pub fn start_system(callback: impl FnMut(&[f32]) + Send + 'static) -> AppResult<Self> {
-        spawn(None, true, Box::new(callback))
+    pub fn start_system(
+        sample_rate: u32,
+        channels: u32,
+        callback: impl FnMut(&[f32]) + Send + 'static,
+    ) -> AppResult<Self> {
+        spawn(None, true, sample_rate, channels, Box::new(callback))
     }
 
     // Tap a specific app's output stream, found by binary/name.
     pub fn start_app(
         binary: &str,
+        sample_rate: u32,
+        channels: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
         let serial = resolve_serial(binary)?
             .ok_or_else(|| AppError::Stream(format!("no audio stream found for {binary:?}")))?;
-        spawn(Some(serial.to_string()), false, Box::new(callback))
+        spawn(
+            Some(serial.to_string()),
+            false,
+            sample_rate,
+            channels,
+            Box::new(callback),
+        )
     }
 
     // Capture a real source node (microphone) by node.name.
     pub fn start_source(
         node_name: &str,
+        sample_rate: u32,
+        channels: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(node_name.to_string()), false, Box::new(callback))
+        spawn(
+            Some(node_name.to_string()),
+            false,
+            sample_rate,
+            channels,
+            Box::new(callback),
+        )
     }
 
     // Capture the monitor of a specific sink by its node.name.
     pub fn start_sink_monitor(
         sink_node_name: &str,
+        sample_rate: u32,
+        channels: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(Some(sink_node_name.to_string()), true, Box::new(callback))
+        spawn(
+            Some(sink_node_name.to_string()),
+            true,
+            sample_rate,
+            channels,
+            Box::new(callback),
+        )
     }
 }
 
 fn spawn(
     target: Option<String>,
     capture_sink: bool,
+    sample_rate: u32,
+    channels: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
     let thread = std::thread::spawn(move || {
         // Drain the PipeWire stream on a real-time thread so delivery keeps up.
-        let _rt = RtThread::promote("capture", 48_000);
-        if let Err(e) = run(receiver, target, capture_sink, callback) {
+        let _rt = RtThread::promote("capture", sample_rate);
+        if let Err(e) = run(
+            receiver,
+            target,
+            capture_sink,
+            sample_rate,
+            channels,
+            callback,
+        ) {
             tracing::error!("pipewire capture: {e:?}");
         }
     });
@@ -85,6 +122,8 @@ fn run(
     receiver: pw::channel::Receiver<Terminate>,
     target: Option<String>,
     capture_sink: bool,
+    sample_rate: u32,
+    channels: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
@@ -138,8 +177,8 @@ fn run(
 
     let mut audio_info = AudioInfoRaw::new();
     audio_info.set_format(AudioFormat::F32LE);
-    audio_info.set_rate(48_000);
-    audio_info.set_channels(2);
+    audio_info.set_rate(sample_rate);
+    audio_info.set_channels(channels);
 
     let obj = spa::pod::Object {
         type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),

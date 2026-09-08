@@ -13,7 +13,6 @@ use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, Stream
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
     pub sample_rate: u32,
-    // PipeWire null-sink playback is stereo.
     pub out_channels: usize,
 }
 
@@ -24,10 +23,12 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+    let info =
+        crate::audio::device::device_info(crate::audio::device::DeviceKind::Output, device_id)?;
     Ok(SpeakerResolved {
         node_id: device_id.to_string(),
-        sample_rate: 48_000,
-        out_channels: 2,
+        sample_rate: info.sample_rate,
+        out_channels: usize::from(info.channels),
     })
 }
 
@@ -51,7 +52,12 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         fill(out, 0);
         out.len()
     };
-    let playback = crate::audio::playback::Playback::start(&spec.node_id, fill_pw)?;
+    let playback = crate::audio::playback::Playback::start(
+        &spec.node_id,
+        spec.sample_rate,
+        spec.out_channels,
+        fill_pw,
+    )?;
 
     let (worker_handle, ctrl) = spawn_speaker_worker(
         producer,

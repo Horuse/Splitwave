@@ -35,9 +35,8 @@ use windows as platform;
 pub(super) use platform::resolve_input;
 use platform::start_input_stream as start_native_input_stream;
 
-/// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
-/// the device side so no resampling happens on capture delivery.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// ScreenCaptureKit delivers 48 kHz.
+#[cfg(target_os = "macos")]
 pub(super) const SCK_SR: u32 = 48_000;
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
@@ -115,6 +114,7 @@ pub(super) enum ResolvedInput {
     PwSource {
         node_id: String,
         sample_rate: u32,
+        channels: u32,
     },
     SystemAudio {
         sample_rate: u32,
@@ -152,6 +152,8 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
+            #[cfg(target_os = "linux")]
+            ResolvedInput::PwSource { channels, .. } => (*channels).max(1),
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
             _ => 2,
         }

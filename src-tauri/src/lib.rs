@@ -193,6 +193,11 @@ pub fn run() {
                 let _ = CRASH_FILE.set(file);
             }
 
+            #[cfg(target_os = "linux")]
+            if let Err(error) = audio::virtual_device::restore(&handle) {
+                tracing::error!(%error, "failed to restore PipeWire virtual devices");
+            }
+
             // Native menu only on macOS (top menu bar). On Linux GTK renders it
             // as an in-window bar that clashes with the custom titlebar, so the
             // menu actions live in the in-app header instead.

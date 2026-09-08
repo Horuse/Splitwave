@@ -64,11 +64,16 @@ pub fn play(device_id: &str, muted: bool, gain: f32, beep: bool) -> AppResult<()
     #[cfg(target_os = "linux")]
     let _playback = {
         let mut render = render;
-        crate::audio::playback::Playback::start(&spec.node_id, move |out| {
-            let frames = out.len() / channels;
-            render(out, frames);
-            out.len()
-        })?
+        crate::audio::playback::Playback::start(
+            &spec.node_id,
+            spec.sample_rate,
+            channels,
+            move |out| {
+                let frames = out.len() / channels;
+                render(out, frames);
+                out.len()
+            },
+        )?
     };
 
     thread::sleep(duration + DRAIN);

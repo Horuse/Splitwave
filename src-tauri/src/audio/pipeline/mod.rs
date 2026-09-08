@@ -638,6 +638,9 @@ impl ActivePipeline {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
+                #[cfg(target_os = "linux")]
+                let resolved = resolve_input(inp, pipeline_sr)?;
+                #[cfg(not(target_os = "linux"))]
                 let resolved = resolve_input(inp)?;
                 let sr = match &resolved {
                     ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,

@@ -43,7 +43,7 @@ pub use macos::{apply_virtual_devices, install, status, uninstall};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{apply_virtual_devices, install, status, uninstall};
+pub use linux::{apply_virtual_devices, config_for_node, install, restore, status, uninstall};
 
 #[cfg(target_os = "windows")]
 mod windows;

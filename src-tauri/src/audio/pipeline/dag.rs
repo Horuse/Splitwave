@@ -19,11 +19,10 @@ use crate::audio::stream_recv::ChannelReceiver;
 use crate::audio::streams::bulk_push_counted;
 use crate::error::{AppError, AppResult};
 
-/// Ring buffer length in frames per source; multiplied by the source's channel
-/// count at build time. ~500 ms at 96 kHz so the worker rides out longer source
-/// pauses (SCK silent gaps, scheduler hiccups, capture-clock drift) without
-/// overflowing the FAST source's ring while waiting on a SLOW one.
-pub(super) const RING_CAPACITY_FRAMES: usize = 48_000;
+/// One second of frames at the ring's own clock rate.
+pub(super) fn ring_capacity_frames(sample_rate: u32) -> usize {
+    sample_rate.max(1) as usize
+}
 
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
@@ -1180,7 +1179,7 @@ pub(super) fn build_output_graph(
             // Scale by channels to keep the buffered span constant in time; at
             // high channel counts a smaller cushion starves on capture-clock drift.
             let (producer, consumer) =
-                RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * source_channels);
+                RingBuffer::<f32>::new(ring_capacity_frames(input_sr) * source_channels);
             producer_pairs.push((id.clone(), producer));
             let mut ch_handles: Vec<String> = valid
                 .edges

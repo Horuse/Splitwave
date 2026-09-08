@@ -16,7 +16,7 @@ use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
 use crate::audio::resample::MultiResampler;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{RESAMPLE_CHUNK, RING_CAPACITY_FRAMES};
+use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 
 #[cfg(target_os = "macos")]
@@ -220,7 +220,7 @@ pub(super) fn start_input_stream(
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
     let (raw_producer, mut raw_consumer) =
-        RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * channels.max(1));
+        RingBuffer::<f32>::new(ring_capacity_frames(sample_rate) * channels.max(1));
     let (mut raw_tx, raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
     let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;

@@ -70,6 +70,11 @@ fn run(
         *pw::keys::MEDIA_ROLE => "Music",
     };
     props.insert(*pw::keys::TARGET_OBJECT, sink_node_name);
+    let latency_frames = (sample_rate / 100).max(1);
+    props.insert(
+        *pw::keys::NODE_LATENCY,
+        format!("{latency_frames}/{sample_rate}"),
+    );
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-playback", props)?;
     let user_data = UserData { fill };
@@ -81,20 +86,29 @@ fn run(
             let Some(mut buffer) = stream_ref.dequeue_buffer() else {
                 return;
             };
+            let requested_frames = buffer.requested() as usize;
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;
             }
             let data = &mut datas[0];
             let Some(raw) = data.data() else { return };
-            let capacity = raw.len() / F32_SIZE;
-            if capacity == 0 {
+            let capacity_samples = raw.len() / F32_SIZE;
+            let capacity_frames = capacity_samples / channels;
+            let frames = if requested_frames > 0 {
+                requested_frames.min(capacity_frames)
+            } else {
+                capacity_frames
+            };
+            let sample_count = frames * channels;
+            if sample_count == 0 {
                 return;
             }
             // F32LE is negotiated below and PipeWire aligns mapped buffers.
-            let samples =
-                unsafe { std::slice::from_raw_parts_mut(raw.as_mut_ptr() as *mut f32, capacity) };
-            let written = (user_data.fill)(samples).min(capacity);
+            let samples = unsafe {
+                std::slice::from_raw_parts_mut(raw.as_mut_ptr() as *mut f32, sample_count)
+            };
+            let written = (user_data.fill)(samples).min(sample_count);
             let chunk = data.chunk_mut();
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;

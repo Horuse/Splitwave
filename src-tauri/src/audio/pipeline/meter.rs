@@ -56,6 +56,7 @@ impl Drop for XrunTickThread {
 pub(super) fn spawn_xrun_thread(
     sources: Vec<SourceMeta>,
     outputs: Vec<OutputMeta>,
+    expected_speaker_streams: i64,
 ) -> XrunTickThread {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -290,11 +291,10 @@ pub(super) fn spawn_xrun_thread(
                 // draining a ring nobody fills, which shows up in the global
                 // underrun total but in no output's own counters.
                 let live_streams = LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed);
-                let speaker_outputs = outputs.iter().filter(|o| o.io.is_some()).count() as i64;
-                if live_streams != speaker_outputs {
+                if live_streams != expected_speaker_streams {
                     warn!(
                         live_speaker_streams = live_streams,
-                        speaker_outputs, "orphan speaker streams"
+                        expected_speaker_streams, "orphan speaker streams"
                     );
                 }
 

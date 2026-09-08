@@ -20,7 +20,7 @@ use crate::audio::resample::MultiResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::{ring_capacity_frames, OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -40,13 +40,6 @@ pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, 
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
-
-// Ring length in frames; multiplied by the device channel count at open. ~1 s
-// @ 48 kHz so the adaptive fill target (which follows the device's own buffer
-// size) has room to grow on setups that hand out large playback buffers
-// (~250 ms on some Linux/PipeWire sessions) while a healthy device still only
-// buffers a few blocks.
-pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 48_000;
 
 // Floor for the adaptive fill target: enough to absorb a DSP-side spike
 // without the device clock -- not the wall clock -- ever seeing an empty ring.
@@ -289,8 +282,10 @@ pub(super) fn speaker_ring(
     Arc<AtomicI64>,
     SpeakerIo,
 ) {
-    let (producer, mut consumer) =
-        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
+    // One second at the actual device rate, so high-rate and wide-channel
+    // streams have the same time capacity as 48 kHz stereo.
+    let capacity_frames = ring_capacity_frames(device_rate);
+    let (producer, mut consumer) = RingBuffer::<f32>::new(capacity_frames * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
     let target = Arc::new(AtomicI64::new(pipeline_frames_to_device_frames(
@@ -320,9 +315,7 @@ pub(super) fn speaker_ring(
             device_rate,
         );
         let dev_frames = out.len() / out_channels;
-        let max = SPEAKER_RING_CAPACITY_FRAMES
-            .saturating_sub(dev_frames + margin)
-            .max(min);
+        let max = capacity_frames.saturating_sub(dev_frames + margin).max(min);
         target_cb.store(
             (dev_frames + margin).clamp(min, max) as i64,
             Ordering::Relaxed,

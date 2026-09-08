@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pipewire as pw;
-use pw::spa::param::audio::AudioInfoRaw;
+use pw::spa::pod::deserialize::PodDeserializer;
+use pw::spa::pod::{ChoiceValue, Pod, Value};
+use pw::spa::utils::{Choice, ChoiceEnum};
 use pw::types::ObjectType;
 
 use crate::error::{AppError, AppResult};
@@ -36,6 +38,42 @@ fn parse_positions(value: &str) -> Option<u32> {
     u32::try_from(count).ok().filter(|channels| *channels > 0)
 }
 
+fn choice_default(choice: &Choice<i32>) -> i32 {
+    match &choice.1 {
+        ChoiceEnum::None(value) => *value,
+        ChoiceEnum::Range { default, .. }
+        | ChoiceEnum::Step { default, .. }
+        | ChoiceEnum::Enum { default, .. }
+        | ChoiceEnum::Flags { default, .. } => *default,
+    }
+}
+
+fn pod_int(value: &Value) -> Option<u32> {
+    let value = match value {
+        Value::Int(value) => *value,
+        Value::Choice(ChoiceValue::Int(choice)) => choice_default(choice),
+        _ => return None,
+    };
+    u32::try_from(value).ok().filter(|value| *value > 0)
+}
+
+fn parse_audio_format(param: &Pod) -> (Option<u32>, Option<u32>) {
+    let Ok((_, Value::Object(object))) = PodDeserializer::deserialize_any_from(param.as_bytes())
+    else {
+        return (None, None);
+    };
+    let mut rate = None;
+    let mut channels = None;
+    for property in &object.properties {
+        if property.key == pw::spa::param::format::FormatProperties::AudioRate.as_raw() {
+            rate = pod_int(&property.value);
+        } else if property.key == pw::spa::param::format::FormatProperties::AudioChannels.as_raw() {
+            channels = pod_int(&property.value);
+        }
+    }
+    (rate, channels)
+}
+
 pub fn nodes_by_class(media_class: &'static str) -> AppResult<Vec<PwNode>> {
     std::thread::spawn(move || snapshot(media_class))
         .join()
@@ -51,7 +89,8 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
 
     let nodes: Rc<RefCell<Vec<PwNode>>> = Rc::new(RefCell::new(Vec::new()));
     let nodes_cb = nodes.clone();
-    let proxies: Rc<RefCell<Vec<(pw::node::Node, pw::node::NodeListener)>>> =
+    // Listener must be dropped before its proxy.
+    let proxies: Rc<RefCell<Vec<(pw::node::NodeListener, pw::node::Node)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let proxies_cb = proxies.clone();
     let want = media_class.to_string();
@@ -110,29 +149,29 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                         _ => return,
                     };
                     let Some(param) = param else { return };
-                    let mut info = AudioInfoRaw::new();
-                    if info.parse(param).is_err() {
+                    let (rate, channels) = parse_audio_format(param);
+                    if rate.is_none() && channels.is_none() {
                         return;
                     }
                     let mut formats = formats.borrow_mut();
                     let Some(entry) = formats.iter_mut().find(|entry| entry.id == node_id) else {
                         return;
                     };
-                    if rank < entry.format_rank {
+                    if rank <= entry.format_rank {
                         return;
                     }
-                    if info.rate() > 0 {
-                        entry.sample_rate = Some(info.rate());
+                    if let Some(rate) = rate {
+                        entry.sample_rate = Some(rate);
                     }
-                    if info.channels() > 0 {
-                        entry.channels = Some(info.channels());
+                    if let Some(channels) = channels {
+                        entry.channels = Some(channels);
                     }
                     entry.format_rank = rank;
                 })
                 .register();
             node.enum_params(1, Some(pw::spa::param::ParamType::Format), 0, u32::MAX);
             node.enum_params(2, Some(pw::spa::param::ParamType::EnumFormat), 0, u32::MAX);
-            proxies_cb.borrow_mut().push((node, listener));
+            proxies_cb.borrow_mut().push((listener, node));
         })
         .register();
 

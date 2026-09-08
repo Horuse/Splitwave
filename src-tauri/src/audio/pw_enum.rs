@@ -175,9 +175,20 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
         })
         .register();
 
+    // The first round-trip delivers registry globals. enum_params() is issued
+    // from those callbacks, after this first sync request is already in flight,
+    // so a second round-trip is required to wait for the parameter replies.
+    roundtrip(&core, &mainloop)?;
+    roundtrip(&core, &mainloop)?;
+    let out = std::mem::take(&mut *nodes.borrow_mut());
+    drop(proxies);
+    Ok(out)
+}
+
+fn roundtrip(core: &pw::core::CoreRc, mainloop: &pw::main_loop::MainLoopRc) -> AppResult<()> {
     let pending = core.sync(0).map_err(pw_err)?;
     let ml = mainloop.clone();
-    let _core = core
+    let listener = core
         .add_listener_local()
         .done(move |id, seq| {
             if id == 0 && seq == pending {
@@ -185,11 +196,9 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
             }
         })
         .register();
-
     mainloop.run();
-    let out = std::mem::take(&mut *nodes.borrow_mut());
-    drop(proxies);
-    Ok(out)
+    drop(listener);
+    Ok(())
 }
 
 #[cfg(test)]

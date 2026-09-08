@@ -43,7 +43,13 @@ pub use macos::{apply_virtual_devices, install, status, uninstall};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{apply_virtual_devices, install, status, uninstall};
+pub use linux::{apply_virtual_devices, find_virtual_device, install, status, uninstall};
+
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+pub fn find_virtual_device(_id_or_name: &str) -> Option<VirtualDeviceConfig> {
+    None
+}
 
 #[cfg(target_os = "windows")]
 mod windows;

@@ -61,12 +61,86 @@ pub fn uninstall() -> Result<(), String> {
     Ok(())
 }
 
+use std::sync::Mutex;
+
+static CACHED_DEVICES: Mutex<Option<Vec<VirtualDeviceConfig>>> = Mutex::new(None);
+
+pub fn find_virtual_device(id_or_name: &str) -> Option<VirtualDeviceConfig> {
+    let clean = id_or_name.strip_prefix("monitor:").unwrap_or(id_or_name);
+    let mut guard = CACHED_DEVICES.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(load_devices_from_conf());
+    }
+    guard.as_ref()?.iter().find(|d| {
+        d.id == clean || format!("{NODE_PREFIX}.{}", d.id) == clean
+    }).cloned()
+}
+
+fn load_devices_from_conf() -> Vec<VirtualDeviceConfig> {
+    let Some(path) = conf_path() else { return Vec::new() };
+    let Ok(content) = std::fs::read_to_string(path) else { return Vec::new() };
+    parse_conf_devices(&content)
+}
+
+fn parse_conf_devices(content: &str) -> Vec<VirtualDeviceConfig> {
+    let mut devices = Vec::new();
+    let mut cur_id = None;
+    let mut cur_name = None;
+    let mut cur_channels = 2;
+    let mut cur_rate = 48_000;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("node.name") {
+            if let Some(val) = trimmed.split('=').nth(1) {
+                let name = val.trim().trim_matches('"');
+                if let Some(id) = name.strip_prefix(&format!("{NODE_PREFIX}.")) {
+                    cur_id = Some(id.to_string());
+                }
+            }
+        } else if trimmed.starts_with("node.description") {
+            if let Some(val) = trimmed.split('=').nth(1) {
+                cur_name = Some(val.trim().trim_matches('"').to_string());
+            }
+        } else if trimmed.starts_with("audio.channels") {
+            if let Some(val) = trimmed.split('=').nth(1) {
+                if let Ok(ch) = val.trim().parse::<u32>() {
+                    cur_channels = ch;
+                }
+            }
+        } else if trimmed.starts_with("audio.rate") {
+            if let Some(val) = trimmed.split('=').nth(1) {
+                if let Ok(r) = val.trim().parse::<u32>() {
+                    cur_rate = r;
+                }
+            }
+        } else if trimmed == "}" {
+            if let (Some(id), Some(name)) = (cur_id.take(), cur_name.take()) {
+                devices.push(VirtualDeviceConfig {
+                    id,
+                    name,
+                    channels: cur_channels,
+                    sample_rate: cur_rate,
+                });
+                cur_channels = 2;
+                cur_rate = 48_000;
+            }
+        }
+    }
+    devices
+}
+
 pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
+    *CACHED_DEVICES.lock().unwrap() = Some(devices.clone());
+
     unload_runtime_sinks();
 
     let conf = conf_path().ok_or("no config directory")?;
     if devices.is_empty() {
         let _ = std::fs::remove_file(&conf);
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "restart", "pipewire"])
+            .output();
         return Ok(());
     }
 
@@ -75,8 +149,18 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
     }
     std::fs::write(&conf, conf_contents(&devices)).map_err(|e| format!("write conf: {e}"))?;
 
-    for d in &devices {
-        create_runtime_sink(&d.id, &clean_label(&d.name), d.channels, d.sample_rate)?;
+    // Try restarting pipewire user service if systemd is available so that PipeWire
+    // recreates all sinks cleanly from the updated config file at the new sample rates.
+    let restarted = std::process::Command::new("systemctl")
+        .args(["--user", "restart", "pipewire"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !restarted {
+        for d in &devices {
+            create_runtime_sink(&d.id, &clean_label(&d.name), d.channels, d.sample_rate)?;
+        }
     }
     Ok(())
 }
@@ -96,11 +180,13 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
         ));
         out.push_str(&format!("      node.description = \"{desc}\"\n"));
         out.push_str("      media.class      = Audio/Sink\n");
+        out.push_str(&format!("      audio.channels   = {}\n", d.channels));
         out.push_str(&format!(
             "      audio.position   = [ {} ]\n",
             positions(d.channels)
         ));
         out.push_str(&format!("      audio.rate       = {}\n", d.sample_rate));
+        out.push_str(&format!("      node.rate        = 1/{}\n", d.sample_rate));
         out.push_str("      object.linger    = true\n");
         out.push_str("    }\n");
         out.push_str("  }\n");
@@ -159,8 +245,10 @@ fn create_runtime_sink(
         };
         props.insert(*pw::keys::NODE_NAME, format!("{NODE_PREFIX}.{id}"));
         props.insert(*pw::keys::NODE_DESCRIPTION, label.to_string());
-        props.insert("audio.position", positions(channels));
+        props.insert("audio.channels", channels.to_string());
+        props.insert("audio.position", format!("[ {} ]", positions(channels)));
         props.insert("audio.rate", sample_rate.to_string());
+        props.insert("node.rate", format!("1/{sample_rate}"));
         let _node: pw::node::Node = core
             .create_object("adapter", &props)
             .map_err(|e| format!("create null sink: {e}"))?;
@@ -193,4 +281,39 @@ fn unload_runtime_sinks() {
         }
         roundtrip(core, mainloop)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_conf_devices_correctly() {
+        let conf = r#"
+# Auto-generated by Splitwave. Do not edit.
+
+context.objects = [
+  {
+    factory = adapter
+    args = {
+      factory.name     = support.null-audio-sink
+      node.name        = "splitwave.test123"
+      node.description = "Test Virtual Device"
+      media.class      = Audio/Sink
+      audio.channels   = 6
+      audio.position   = [ FL FR FC LFE SL SR ]
+      audio.rate       = 96000
+      node.rate        = 1/96000
+      object.linger    = true
+    }
+  }
+]
+"#;
+        let devices = parse_conf_devices(conf);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "test123");
+        assert_eq!(devices[0].name, "Test Virtual Device");
+        assert_eq!(devices[0].channels, 6);
+        assert_eq!(devices[0].sample_rate, 96000);
+    }
 }

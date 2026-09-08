@@ -24,10 +24,11 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
+    let info = crate::audio::device::device_info(crate::audio::device::DeviceKind::Output, device_id)?;
     Ok(SpeakerResolved {
         node_id: device_id.to_string(),
-        sample_rate: 48_000,
-        out_channels: 2,
+        sample_rate: info.sample_rate,
+        out_channels: info.channels as usize,
     })
 }
 
@@ -38,7 +39,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     meter: crate::audio::effects::MeterHandle,
     _app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
-    info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
+    info!(node = %spec.node_id, sample_rate = spec.sample_rate, channels = spec.out_channels, "opening speaker stream (PipeWire)");
     let dead = Arc::new(AtomicBool::new(false));
 
     let (producer, mut fill, level, target, io) = speaker_ring(
@@ -51,7 +52,12 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         fill(out, 0);
         out.len()
     };
-    let playback = crate::audio::playback::Playback::start(&spec.node_id, fill_pw)?;
+    let playback = crate::audio::playback::Playback::start(
+        &spec.node_id,
+        spec.sample_rate,
+        spec.out_channels,
+        fill_pw,
+    )?;
 
     let (worker_handle, ctrl) = spawn_speaker_worker(
         producer,

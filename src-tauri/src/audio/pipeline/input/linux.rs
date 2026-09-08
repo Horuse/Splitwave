@@ -12,10 +12,17 @@ use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput, SC
 
 pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
     match &inp.spec {
-        InputSpec::Microphone { device_id } => Ok(ResolvedInput::PwSource {
-            node_id: device_id.clone(),
-            sample_rate: 48_000,
-        }),
+        InputSpec::Microphone { device_id } => {
+            let info = crate::audio::device::device_info(
+                crate::audio::device::DeviceKind::Input,
+                device_id,
+            )?;
+            Ok(ResolvedInput::PwSource {
+                node_id: device_id.clone(),
+                sample_rate: info.sample_rate,
+                channels: info.channels as u32,
+            })
+        }
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {
@@ -42,22 +49,27 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
-        ResolvedInput::PwSource { node_id, .. } => {
+        ResolvedInput::PwSource {
+            node_id,
+            sample_rate,
+            channels,
+        } => {
             let mut bridge = bridge;
             let meter = meter;
+            let ch = channels as usize;
             let cb = move |samples: &[f32]| {
                 bridge.apply_commands();
                 if let Some(m) = &meter {
-                    crate::audio::effects::update_meter(m, samples, 2);
+                    crate::audio::effects::update_meter(m, samples, ch);
                 }
                 bridge.broadcast(samples);
             };
             let capture = if let Some(sink) = node_id.strip_prefix("monitor:") {
-                info!(sink, "starting microphone capture (PipeWire sink monitor)");
-                crate::audio::capture::Capture::start_sink_monitor(sink, cb)?
+                info!(sink, sample_rate, channels, "starting microphone capture (PipeWire sink monitor)");
+                crate::audio::capture::Capture::start_sink_monitor(sink, sample_rate, channels, cb)?
             } else {
-                info!(%node_id, "starting microphone capture (PipeWire source)");
-                crate::audio::capture::Capture::start_source(&node_id, cb)?
+                info!(%node_id, sample_rate, channels, "starting microphone capture (PipeWire source)");
+                crate::audio::capture::Capture::start_source(&node_id, sample_rate, channels, cb)?
             };
             Ok(InputHandle::Capture(capture))
         }

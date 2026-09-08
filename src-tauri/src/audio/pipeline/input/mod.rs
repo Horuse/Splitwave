@@ -115,6 +115,7 @@ pub(super) enum ResolvedInput {
     PwSource {
         node_id: String,
         sample_rate: u32,
+        channels: u32,
     },
     SystemAudio {
         sample_rate: u32,
@@ -152,6 +153,8 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
+            #[cfg(target_os = "linux")]
+            ResolvedInput::PwSource { channels, .. } => (*channels).max(1),
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
             _ => 2,
         }

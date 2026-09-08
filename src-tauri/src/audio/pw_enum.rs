@@ -10,6 +10,8 @@ pub struct PwNode {
     pub id: u32,
     pub name: String,
     pub description: String,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u32>,
 }
 
 pub fn nodes_by_class(media_class: &'static str) -> AppResult<Vec<PwNode>> {
@@ -46,10 +48,33 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                 .filter(|d| !d.is_empty())
                 .unwrap_or(name)
                 .to_string();
+            let sample_rate = props
+                .get("audio.rate")
+                .or_else(|| props.get("node.rate"))
+                .and_then(|r| {
+                    if let Some((_, denom)) = r.split_once('/') {
+                        denom.trim().parse::<u32>().ok()
+                    } else {
+                        r.trim().parse::<u32>().ok()
+                    }
+                });
+            let channels = props
+                .get("audio.channels")
+                .and_then(|c| c.trim().parse::<u32>().ok())
+                .or_else(|| {
+                    props.get("audio.position").map(|p| {
+                        p.trim_matches(|c| c == '[' || c == ']')
+                            .split(|c| c == ',' || c == ' ')
+                            .filter(|s| !s.trim().is_empty())
+                            .count() as u32
+                    })
+                });
             nodes_cb.borrow_mut().push(PwNode {
                 id: global.id,
                 name: name.to_string(),
                 description,
+                sample_rate,
+                channels,
             });
         })
         .register();

@@ -12,11 +12,13 @@ pub enum PermissionState {
 /// use System Audio Recording; ScreenCaptureKit uses Screen Recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub enum PermissionKind {
+    #[cfg(target_os = "macos")]
     SystemAudio,
+    #[cfg(target_os = "macos")]
     ScreenRecording,
     /// Linux and Windows capture needs no separate grant.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     None,
 }
 

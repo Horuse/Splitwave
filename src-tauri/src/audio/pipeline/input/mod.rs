@@ -35,10 +35,6 @@ use windows as platform;
 pub(super) use platform::resolve_input;
 use platform::start_input_stream as start_native_input_stream;
 
-/// ScreenCaptureKit delivers 48 kHz.
-#[cfg(target_os = "macos")]
-pub(super) const SCK_SR: u32 = 48_000;
-
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
 /// down the capture, or signals + joins the file reader thread.
 #[allow(dead_code)]

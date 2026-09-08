@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pipewire as pw;
+use pw::spa::param::audio::AudioInfoRaw;
 use pw::types::ObjectType;
 
 use crate::error::{AppError, AppResult};
@@ -12,6 +13,7 @@ pub struct PwNode {
     pub description: String,
     pub sample_rate: Option<u32>,
     pub channels: Option<u32>,
+    format_rank: u8,
 }
 
 fn parse_rate(value: &str) -> Option<u32> {
@@ -45,9 +47,13 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
     let context = pw::context::ContextRc::new(&mainloop, None).map_err(pw_err)?;
     let core = context.connect_rc(None).map_err(pw_err)?;
     let registry = core.get_registry_rc().map_err(pw_err)?;
+    let registry_weak = registry.downgrade();
 
     let nodes: Rc<RefCell<Vec<PwNode>>> = Rc::new(RefCell::new(Vec::new()));
     let nodes_cb = nodes.clone();
+    let proxies: Rc<RefCell<Vec<(pw::node::Node, pw::node::NodeListener)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let proxies_cb = proxies.clone();
     let want = media_class.to_string();
 
     let _reg = registry
@@ -83,7 +89,49 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
                 description,
                 sample_rate,
                 channels,
+                format_rank: 0,
             });
+
+            let Some(registry) = registry_weak.upgrade() else {
+                return;
+            };
+            let Ok(node) = registry.bind::<pw::node::Node>(global) else {
+                return;
+            };
+            let node_id = global.id;
+            let formats = nodes_cb.clone();
+            let listener = node
+                .add_listener_local()
+                .param(move |_, id, _, _, param| {
+                    let rank = match id {
+                        spa_id if spa_id == pw::spa::param::ParamType::Format => 2,
+                        spa_id if spa_id == pw::spa::param::ParamType::EnumFormat => 1,
+                        _ => return,
+                    };
+                    let Some(param) = param else { return };
+                    let mut info = AudioInfoRaw::new();
+                    if info.parse(param).is_err() {
+                        return;
+                    }
+                    let mut formats = formats.borrow_mut();
+                    let Some(entry) = formats.iter_mut().find(|entry| entry.id == node_id) else {
+                        return;
+                    };
+                    if rank < entry.format_rank {
+                        return;
+                    }
+                    if info.rate() > 0 {
+                        entry.sample_rate = Some(info.rate());
+                    }
+                    if info.channels() > 0 {
+                        entry.channels = Some(info.channels());
+                    }
+                    entry.format_rank = rank;
+                })
+                .register();
+            node.enum_params(1, Some(pw::spa::param::ParamType::Format), 0, u32::MAX);
+            node.enum_params(2, Some(pw::spa::param::ParamType::EnumFormat), 0, u32::MAX);
+            proxies_cb.borrow_mut().push((node, listener));
         })
         .register();
 
@@ -100,6 +148,7 @@ fn snapshot(media_class: &str) -> AppResult<Vec<PwNode>> {
 
     mainloop.run();
     let out = std::mem::take(&mut *nodes.borrow_mut());
+    drop(proxies);
     Ok(out)
 }
 

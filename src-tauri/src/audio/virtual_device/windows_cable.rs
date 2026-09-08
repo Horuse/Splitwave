@@ -5,58 +5,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::{
+    WindowsVirtualCableError, WindowsVirtualCableOwnership, WindowsVirtualCableState,
+    WindowsVirtualCableStatus,
+};
+
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const PROVIDER_NAME: &str = "VB-Audio VB-CABLE";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum WindowsVirtualCableState {
-    NotInstalled,
-    InstalledExternal,
-    InstalledManaged,
-    Partial,
-    RebootRequired,
-    RemovalPendingReboot,
-    UnknownOwnership,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WindowsVirtualCableOwnership {
-    External,
-    Managed,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowsVirtualCableStatus {
-    pub state: WindowsVirtualCableState,
-    pub usable: bool,
-    pub provider: String,
-    pub installed_version: Option<String>,
-    pub render_endpoint_name: Option<String>,
-    pub capture_endpoint_name: Option<String>,
-    pub ownership: WindowsVirtualCableOwnership,
-    pub managed_by_splitwave: bool,
-    pub reboot_required: bool,
-    pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowsVirtualCableError {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub installer_exit_code: Option<i32>,
-}
-
 impl WindowsVirtualCableError {
-    pub fn operation_failed(message: impl Into<String>) -> Self {
-        Self::new("operationFailed", message)
-    }
-
     pub fn confirmation_required() -> Self {
         Self::new(
             "confirmationRequired",
@@ -64,27 +21,11 @@ impl WindowsVirtualCableError {
         )
     }
 
-    fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-            installer_exit_code: None,
-        }
-    }
-
     fn with_installer_exit_code(mut self, installer_exit_code: Option<i32>) -> Self {
         self.installer_exit_code = installer_exit_code;
         self
     }
 }
-
-impl std::fmt::Display for WindowsVirtualCableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for WindowsVirtualCableError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CablePackage {
@@ -451,33 +392,12 @@ fn verified_package_after_setup<'a>(
     })
 }
 
-#[cfg(target_os = "windows")]
 mod platform;
 
-#[cfg(target_os = "windows")]
 pub use platform::{install, status};
 
-#[cfg(target_os = "windows")]
 pub fn run_helper() -> Option<i32> {
     platform::run_helper()
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn status() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
-    Err(WindowsVirtualCableError::new(
-        "unsupportedPlatform",
-        "VB-CABLE integration is available only on Windows",
-    ))
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn install() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError> {
-    status()
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn run_helper() -> Option<i32> {
-    None
 }
 
 pub fn windows_virtual_cable_status() -> Result<WindowsVirtualCableStatus, WindowsVirtualCableError>

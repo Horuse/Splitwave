@@ -22,6 +22,7 @@
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
+	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
 	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
@@ -435,18 +436,6 @@
 		return idx >= 0 ? p.slice(idx + 1) : p;
 	}
 
-	function formatDuration(sec: number): string {
-		const minutes = Math.floor(sec / 60);
-		const remainder = sec - minutes * 60;
-		return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
-	}
-
-	function formatSize(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-	}
 
 	const WAV_BIT_DEPTHS: { value: WavBitDepth; label: string; sub: string }[] = [
 		{ value: 'i16', label: '16-bit', sub: 'PCM' },
@@ -476,11 +465,6 @@
 		{ value: 'i24', label: '24-bit' }
 	];
 
-	function kHz(n: number): string {
-		const k = n / 1000;
-		return String(Number.isInteger(k) ? k : Number(k.toFixed(3)));
-	}
-
 	// Custom is a UI choice that only reveals the numeric input, so it cannot
 	// be derived from `sampleRate` alone.
 	let customRateSelected = $state(false);
@@ -490,7 +474,7 @@
 	let rateSelection = $derived(customRateSelected || !rateValues.has(String(data.sampleRate ?? 0)) ? 'custom' : String(data.sampleRate));
 	let rateOptions = $derived(
 		(cfg.rate.rates ?? [])
-			.map((r) => ({ value: String(r), label: kHz(r) }))
+			.map((r) => ({ value: String(r), label: formatKhzValue(r) }))
 			.concat(cfg.rate.mode === 'grid+custom' ? [{ value: 'custom', label: 'Custom' }] : [])
 			.map((r) => ({ ...r, disabled: locked }))
 	);
@@ -628,21 +612,22 @@
 	function formatLabelFor(fmt: RecordingFormat): string {
 		if (fmt.kind === 'wav') {
 			const bd = fmt.bitDepth;
-			return bd === 'i16' ? 'WAV PCM 16-bit' : bd === 'i24' ? 'WAV PCM 24-bit' : 'WAV 32-bit float';
+			return bd === 'i16' ? 'WAV 16-bit' : bd === 'i24' ? 'WAV 24-bit' : 'WAV 32-bit float';
 		}
 		if (fmt.kind === 'flac') {
-			return `FLAC ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'} · ${fmt.compression}`;
+			return `FLAC ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
 		}
 		if (fmt.kind === 'opus') {
-			return `Opus ${Math.round(fmt.bitrate / 1000)} kbps · ${fmt.application}`;
+			const app = fmt.application === 'audio' ? '' : ` · ${fmt.application}`;
+			return `Opus ${Math.round(fmt.bitrate / 1000)} kbps${app}`;
 		}
 		if (fmt.kind === 'mp3') {
 			return `MP3 ${fmt.bitrateKbps} kbps`;
 		}
 		if (fmt.kind === 'aac') {
-			return `AAC ${Math.round(fmt.bitrate / 1000)} kbps · M4A`;
+			return `AAC ${Math.round(fmt.bitrate / 1000)} kbps`;
 		}
-		return `AIFF PCM ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
+		return `AIFF ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
 	}
 
 	let estSize = $derived(estimatedSize());
@@ -658,9 +643,15 @@
 	function toggleWaveform() {
 		flow.updateNodeData(id, { waveformHidden: !(data.waveformHidden ?? false) });
 	}
+
+	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? 48_000));
+	let srcTooltip = $derived.by(() => {
+		if (targetSampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(targetSampleRate)}`;
+	});
 </script>
 
-<Wrapper label="File Recording" icon={FileRecord} accent="output" hasInput channelIo nodeId={id} maxChannels={slotCap}>
+<Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
@@ -798,22 +789,28 @@
 			<span class={recording ? 'text-red-500' : 'text-neutral-900'}>
 				{recording ? '● REC' : '○'}
 			</span>
-			<span class="text-neutral-1000 tabular-nums">{formatDuration(durationSec)}</span>
+			<div class="flex items-baseline gap-1.5 tabular-nums">
+				<span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
+				{#if estSize > 0}
+					<span class="node-spec">·</span>
+					<span class="node-spec">{formatSize(estSize)}</span>
+				{/if}
+			</div>
 		</div>
-		<div class="flex justify-between text-[10px] text-neutral-900">
+		<div class="flex items-center justify-between node-spec">
 			<span class="truncate">
 				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
-				· {data.format.kind === 'opus' || data.format.kind === 'mp3' ? '48 kHz' : `${(data.sampleRate ?? 48_000) / 1000} kHz`}
-				· {channelLabel}
 			</span>
-			<span class="font-mono tabular-nums">{formatSize(estSize)}</span>
+			<span class="shrink-0 pl-2">
+				{formatHz(targetSampleRate)} · {channelLabel}
+			</span>
 		</div>
 		{#if dirty}
 			<div class="text-[9px] text-amber-600">changes pending - restart or choose new file</div>
 		{/if}
 
 		<div class="flex items-center justify-between border-t border-neutral-200 pt-1">
-			<span class="flex items-center gap-1 font-mono text-[9px] text-neutral-500">
+			<span class="flex items-center gap-1 node-spec">
 				<Pulse class="size-3" />
 				Waveform
 				{#if !isAppendable(data.format)}

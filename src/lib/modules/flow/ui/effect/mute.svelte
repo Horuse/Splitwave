@@ -11,6 +11,7 @@
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { onMount } from 'svelte';
 	import Slider from './_slider.svelte';
+	import { formatPct } from '$lib/components/format';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
 	let { id, data }: NodeProps<MuteNodeType> = $props();
@@ -119,9 +120,6 @@
 		flow.updateNodeData(id, { cueVolume: v });
 	}
 
-	function formatPct(v: number): string {
-		return `${Math.round(v)}%`;
-	}
 
 	function clearHotkey() {
 		bindError = '';

@@ -11,6 +11,8 @@
 	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatHz, formatDuration, formatPct } from '$lib/components/format';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();
@@ -156,16 +158,6 @@
 		return i >= 0 ? p.slice(i + 1) : p;
 	}
 
-	function formatTime(sec: number): string {
-		if (!Number.isFinite(sec) || sec < 0) sec = 0;
-		const minutes = Math.floor(sec / 60);
-		const remainder = sec - minutes * 60;
-		return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
-	}
-
-	function formatRate(hz: number): string {
-		return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)} kHz` : `${hz} Hz`;
-	}
 
 	function extension(p: string | null): string {
 		const i = p?.lastIndexOf('.') ?? -1;
@@ -185,24 +177,27 @@
 		audioMethods.setInputVolume(id, scalar).catch(() => {});
 	}
 
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	let srcTooltip = $derived.by(() => {
+		if (sampleRate <= 0 || sampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatHz(sampleRate)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+	});
 </script>
 
 <Wrapper
 	label="Audio File"
 	accent="input"
 	icon={MusicNote}
+	{srcTooltip}
 	hasOutput
 	channelIo
 	nodeId={id}
 	minChannels={channels}
 	maxChannels={channels || undefined}
 	selfGrowing>
-	<div class="flex w-64 flex-col gap-3">
+	<div class="flex w-64 flex-col gap-2">
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
 		</div>
@@ -212,9 +207,9 @@
 		{/if}
 
 		{#if sampleRate > 0}
-			<div class="flex justify-between text-[10px] text-neutral-900">
-				<span class="font-mono">{formatRate(sampleRate)} · {channelLabel}</span>
-				<span class="font-mono tabular-nums">{extension(data.filePath)}</span>
+			<div class="flex justify-between node-spec">
+				<span>{formatHz(sampleRate)} · {channelLabel}</span>
+				<span class="tabular-nums">{extension(data.filePath)}</span>
 			</div>
 		{/if}
 
@@ -249,7 +244,7 @@
 			onkeyup={clearScrub} />
 
 		<div class="flex items-center justify-between font-mono text-[11px]">
-			<span class="text-neutral-900 tabular-nums">{formatTime(currentSec)}</span>
+			<span class="text-neutral-900 tabular-nums">{formatDuration(currentSec, 1)}</span>
 			<div class="flex items-center justify-center gap-1">
 				<Tooltip text="Stop and rewind to start">
 					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={stop}>
@@ -281,7 +276,7 @@
 					</button>
 				</Tooltip>
 			</div>
-			<span class="text-neutral-900 tabular-nums">{formatTime(totalSec)}</span>
+			<span class="text-neutral-900 tabular-nums">{formatDuration(totalSec, 1)}</span>
 		</div>
 
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />

@@ -3,13 +3,13 @@
 //! decoded to 48 kHz and fanned out to every output subgraph via `FanoutRegistry`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
-use crate::audio::stream_recv::{broadcast_push, ChannelBroadcast, ConsumerHandle, FanoutRegistry};
+use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry};
 
 use super::codec::ChannelDecoder;
 use super::packet;
@@ -30,14 +30,26 @@ pub struct NetReceiver {
     bytes: AtomicU64,
     packets: AtomicU64,
     lost: AtomicU64,
+    sample_rate: AtomicU32,
+    format: AtomicU32,
+    opus_bitrate: AtomicU32,
+    opus_app: AtomicU32,
 }
 
-/// `(bytes, packets, lost, channels, buffer_ms)` since this receiver bound its
-/// socket. `channels` is the highest wire index seen plus one, so the UI can
-/// grow its handles to whatever the sender actually transmits; `buffer_ms` is
-/// the jitter buffer depth the network currently forces, and so the latency
-/// this node adds.
-pub fn stats(node_id: &str) -> Option<(u64, u64, u64, u32, u32)> {
+pub struct ReceiverStatsSnapshot {
+    pub bytes: u64,
+    pub packets: u64,
+    pub lost: u64,
+    pub channels: u32,
+    pub buffer_ms: u32,
+    pub sample_rate: u32,
+    pub format: Option<packet::Format>,
+    pub opus_bitrate: Option<u32>,
+    pub opus_app: Option<u8>,
+}
+
+/// Cumulative and link stats since this receiver bound its socket.
+pub fn stats(node_id: &str) -> Option<ReceiverStatsSnapshot> {
     let reg = registry().lock().unwrap();
     reg.get(node_id).map(|r| {
         let channels = r
@@ -48,18 +60,46 @@ pub fn stats(node_id: &str) -> Option<(u64, u64, u64, u32, u32)> {
             .max()
             .map(|&i| i as u32 + 1)
             .unwrap_or(0);
+        let sample_rate = r.sample_rate.load(Ordering::Relaxed);
+        let sr = if sample_rate > 0 {
+            sample_rate
+        } else {
+            super::SR
+        };
         let buffer_ms = r
             .fanout
             .buffer_depth()
-            .map(|samples| samples * 1000 / super::SR)
+            .map(|samples| samples * 1000 / sr)
             .unwrap_or(0);
-        (
-            r.bytes.load(Ordering::Relaxed),
-            r.packets.load(Ordering::Relaxed),
-            r.lost.load(Ordering::Relaxed),
+        let fmt_raw = r.format.load(Ordering::Relaxed);
+        let format = if fmt_raw <= 2 {
+            packet::Format::from_byte(fmt_raw as u8)
+        } else {
+            None
+        };
+        let opus_bitrate_raw = r.opus_bitrate.load(Ordering::Relaxed);
+        let opus_bitrate = if opus_bitrate_raw > 0 {
+            Some(opus_bitrate_raw)
+        } else {
+            None
+        };
+        let opus_app_raw = r.opus_app.load(Ordering::Relaxed);
+        let opus_app = if opus_app_raw > 0 {
+            Some(opus_app_raw as u8)
+        } else {
+            None
+        };
+        ReceiverStatsSnapshot {
+            bytes: r.bytes.load(Ordering::Relaxed),
+            packets: r.packets.load(Ordering::Relaxed),
+            lost: r.lost.load(Ordering::Relaxed),
             channels,
             buffer_ms,
-        )
+            sample_rate,
+            format,
+            opus_bitrate,
+            opus_app,
+        }
     })
 }
 
@@ -97,6 +137,10 @@ pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {
         bytes: AtomicU64::new(0),
         packets: AtomicU64::new(0),
         lost: AtomicU64::new(0),
+        sample_rate: AtomicU32::new(48_000),
+        format: AtomicU32::new(u32::MAX),
+        opus_bitrate: AtomicU32::new(0),
+        opus_app: AtomicU32::new(0),
     });
     receiver.clone().spawn_recv();
     reg.insert(node_id.to_string(), receiver.clone());
@@ -142,6 +186,16 @@ impl NetReceiver {
             };
             self.bytes.fetch_add(n as u64, Ordering::Relaxed);
             self.packets.fetch_add(1, Ordering::Relaxed);
+            self.sample_rate.store(pkt.sample_rate, Ordering::Relaxed);
+            self.format
+                .store(pkt.format.to_byte() as u32, Ordering::Relaxed);
+            if let Some(kbps) = pkt.opus_bitrate_kbps {
+                self.opus_bitrate
+                    .store(kbps as u32 * 1000, Ordering::Relaxed);
+            }
+            if let Some(app) = pkt.opus_app {
+                self.opus_app.store(app as u32, Ordering::Relaxed);
+            }
             let channel = self.channel(pkt.channel, pkt.seq);
             let step = channel.timeline.lock().unwrap().step(pkt.seq);
             match step {
@@ -171,7 +225,13 @@ impl NetReceiver {
                 decoder.decode(pkt.format, pkt.payload, &mut pcm);
             }
             if !pcm.is_empty() {
-                broadcast_push(&channel.broadcast, pkt.seq, packets, &pcm);
+                crate::audio::stream_recv::broadcast_push_sr(
+                    &channel.broadcast,
+                    pkt.seq,
+                    packets,
+                    &pcm,
+                    pkt.sample_rate,
+                );
             }
         }
     }

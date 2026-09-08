@@ -91,6 +91,7 @@ pub struct ChannelFeed {
     sync: Arc<Mutex<()>>,
     prods: Mutex<Vec<Producer<f32>>>,
     state: Mutex<FeedState>,
+    pub sample_rate: Arc<AtomicU32>,
 }
 
 #[derive(Default)]
@@ -122,10 +123,21 @@ pub struct ConsumerHandle {
 
 /// Push one channel's audio for the `packets` packets ending at `seq` (a lost
 /// packet is carried as its concealment, so a push always covers whole packets).
-/// Tracking where the samples sit on the timeline -- rather than when they
-/// arrived -- is what keeps a channel wired in mid-stream in phase with its
-/// siblings.
 pub fn broadcast_push(broadcast: &ChannelBroadcast, seq: u16, packets: u16, samples: &[f32]) {
+    broadcast_push_sr(broadcast, seq, packets, samples, SR);
+}
+
+/// Push one channel's audio with the sample rate the packet carried.
+pub fn broadcast_push_sr(
+    broadcast: &ChannelBroadcast,
+    seq: u16,
+    packets: u16,
+    samples: &[f32],
+    sample_rate: u32,
+) {
+    if sample_rate > 0 {
+        broadcast.sample_rate.store(sample_rate, Ordering::Relaxed);
+    }
     let _sync = broadcast.sync.lock().unwrap();
     let mut prods = broadcast.prods.lock().unwrap();
     prods.retain(|p| !p.is_abandoned());
@@ -154,12 +166,15 @@ fn group_id(key: &str) -> u64 {
     h
 }
 
-/// One channel's playback state for one consumer: a 48 kHz jitter ring plus a
-/// fixed-output resampler (48 kHz -> consumer rate) whose ratio tracks drift.
+/// One channel's playback state for one consumer: a jitter ring plus a
+/// fixed-output resampler (source rate -> consumer rate) whose ratio tracks drift.
 pub struct PlaybackTap {
     group: u64,
     consumer: Consumer<f32>,
     resampler: MultiResamplerOut,
+    rate: u32,
+    current_source_sr: u32,
+    source_sr: Arc<AtomicU32>,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
@@ -191,14 +206,19 @@ impl PlaybackTap {
         realtime: bool,
         primed: bool,
         drift: Arc<AtomicU32>,
+        source_sr: Arc<AtomicU32>,
     ) -> Self {
-        let base_ratio = rate as f64 / SR as f64;
+        let in_sr = source_sr.load(Ordering::Relaxed).max(1);
+        let base_ratio = rate as f64 / in_sr as f64;
         let resampler =
-            MultiResamplerOut::new(SR, rate, OUT_BLOCK_FRAMES, 1).expect("mono resampler init");
+            MultiResamplerOut::new(in_sr, rate, OUT_BLOCK_FRAMES, 1).expect("mono resampler init");
         Self {
             group,
             consumer,
             resampler,
+            rate,
+            current_source_sr: in_sr,
+            source_sr,
             base_ratio,
             last_ratio: base_ratio,
             realtime,
@@ -273,6 +293,15 @@ impl PlaybackTap {
     /// 48 kHz -> consumer rate at the drift-adjusted ratio. Returns the sample
     /// count (0 = emit silence after a sustained network underrun).
     fn fill_block(&mut self) -> usize {
+        let in_sr = self.source_sr.load(Ordering::Relaxed);
+        if in_sr != 0 && in_sr != self.current_source_sr {
+            self.current_source_sr = in_sr;
+            self.base_ratio = self.rate as f64 / in_sr as f64;
+            self.last_ratio = self.base_ratio;
+            if let Ok(r) = MultiResamplerOut::new(in_sr, self.rate, OUT_BLOCK_FRAMES, 1) {
+                self.resampler = r;
+            }
+        }
         // Track drift ratio for this block.
         if self.realtime {
             let d = f32::from_bits(self.drift.load(Ordering::Relaxed)) as f64;
@@ -430,7 +459,15 @@ impl FanoutRegistry {
                 bc.prods.lock().unwrap().push(prod);
                 map.lock().unwrap().insert(
                     key.clone(),
-                    PlaybackTap::new(gid, cons, output_sr, realtime, false, drift.clone()),
+                    PlaybackTap::new(
+                        gid,
+                        cons,
+                        output_sr,
+                        realtime,
+                        false,
+                        drift.clone(),
+                        bc.sample_rate.clone(),
+                    ),
                 );
             }
         }
@@ -460,6 +497,7 @@ impl FanoutRegistry {
             sync: sync.clone(),
             prods: Mutex::new(Vec::new()),
             state: Mutex::new(FeedState::default()),
+            sample_rate: Arc::new(AtomicU32::new(SR)),
         });
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
@@ -506,7 +544,15 @@ impl FanoutRegistry {
                 bc.prods.lock().unwrap().push(prod);
                 taps.insert(
                     key.clone(),
-                    PlaybackTap::new(gid, cons, c.rate, c.realtime, primed, c.drift.clone()),
+                    PlaybackTap::new(
+                        gid,
+                        cons,
+                        c.rate,
+                        c.realtime,
+                        primed,
+                        c.drift.clone(),
+                        bc.sample_rate.clone(),
+                    ),
                 );
             }
         }

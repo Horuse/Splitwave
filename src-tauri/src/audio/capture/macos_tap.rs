@@ -96,6 +96,7 @@ pub struct TapCapture {
     handle: *mut c_void,
     state: Arc<CallbackState>,
     channels: u32,
+    #[allow(dead_code)]
     sample_rate: u32,
 }
 
@@ -224,8 +225,36 @@ impl TapCapture {
         self.channels
     }
 
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    pub fn rate_probe(&self) -> TapRateProbe {
+        TapRateProbe {
+            handle: self.handle,
+        }
+    }
+}
+
+/// Non-owning format probe used only by the normalizer thread. `TapCapture`
+/// outlives that thread (NormalizedInput joins it before dropping capture), so
+/// the native handle remains valid for every query.
+#[derive(Clone, Copy)]
+pub struct TapRateProbe {
+    handle: *mut c_void,
+}
+
+unsafe impl Send for TapRateProbe {}
+
+impl TapRateProbe {
+    pub fn sample_rate(&self) -> Option<u32> {
+        let mut sample_rate = 0.0f64;
+        let mut channels = 0i32;
+        let rc = ResultCode::from_raw(unsafe {
+            ba_tap_format(self.handle, &mut sample_rate, &mut channels)
+        });
+        (rc == ResultCode::Ok && sample_rate > 0.0 && channels > 0).then_some(sample_rate as u32)
     }
 }
 

@@ -227,6 +227,11 @@ private final class Tap {
     var format: (rate: Double, channels: Int) {
         lock.lock()
         defer { lock.unlock() }
+        if aggregateID != 0,
+           let rate = readValue(aggregateID, kAudioDevicePropertyNominalSampleRate, Double(0)),
+           rate > 0 {
+            sampleRate = rate
+        }
         return (sampleRate, tapChannels)
     }
 

@@ -27,6 +27,7 @@ struct Config {
     format: Format,
     opus_bitrate: u32,
     opus_application: OpusApplication,
+    sample_rate: u32,
 }
 
 pub struct NetSender {
@@ -57,20 +58,30 @@ fn registry() -> &'static Mutex<HashMap<String, Arc<NetSender>>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Drops a sender and frees its socket/task.
+pub fn release(node_id: &str) {
+    let mut reg = registry().lock().unwrap();
+    if let Some(s) = reg.remove(node_id) {
+        s.stop();
+    }
+}
+
 /// Returns the sender for `node_id`, binding the send socket on first use. A
-/// config change (target / codec / bitrate) tears the old task down and rebuilds.
+/// config change (target / codec / bitrate / sample rate) tears the old task down and rebuilds.
 pub fn get_or_create(
     node_id: &str,
     target: SocketAddr,
     format: Format,
     opus_bitrate: u32,
     opus_application: OpusApplication,
+    sample_rate: u32,
 ) -> Arc<NetSender> {
     let config = Config {
         target,
         format,
         opus_bitrate,
         opus_application,
+        sample_rate,
     };
     let mut reg = registry().lock().unwrap();
     if let Some(s) = reg.get(node_id) {
@@ -181,12 +192,31 @@ impl NetSender {
             }
 
             let mut packets: Vec<Vec<u8>> = Vec::new();
+            let sample_rate = self.config.sample_rate;
+            let (opus_bitrate_kbps, opus_app_byte) = if format == Format::Opus {
+                let app = match self.config.opus_application {
+                    OpusApplication::Voip => 1,
+                    OpusApplication::Audio => 2,
+                    OpusApplication::LowDelay => 3,
+                };
+                ((self.config.opus_bitrate / 1000) as u16, app)
+            } else {
+                (0, 0)
+            };
             for i in 0..encoders.len() {
                 let channel = i as u8;
                 let seq = &mut seqs[i];
                 encoders[i].push(&ins[i], |payload| {
-                    let mut d = Vec::with_capacity(packet::HEADER_LEN + payload.len());
-                    packet::write_header(&mut d, format, channel, *seq);
+                    let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
+                    packet::write_header(
+                        &mut d,
+                        format,
+                        channel,
+                        *seq,
+                        sample_rate,
+                        opus_bitrate_kbps,
+                        opus_app_byte,
+                    );
                     *seq = seq.wrapping_add(1);
                     d.extend_from_slice(payload);
                     packets.push(d);

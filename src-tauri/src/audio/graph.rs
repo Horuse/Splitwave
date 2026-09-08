@@ -10,6 +10,8 @@ use crate::error::{AppError, AppResult};
 pub struct GraphSpec {
     pub nodes: Vec<NodeSpec>,
     pub edges: Vec<EdgeSpec>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -516,6 +518,8 @@ pub struct NetSenderData {
     pub codec: NetCodec,
     pub opus_bitrate: u32,
     pub opus_application: OpusApplication,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -596,6 +600,7 @@ pub enum OutputSpec {
         codec: NetCodec,
         opus_bitrate: u32,
         opus_application: OpusApplication,
+        sample_rate: Option<u32>,
     },
     /// Send half of a WebRTC collaborator: per-channel audio handed to the
     /// session's encode task. The wire codec is set by the UI, not the graph.
@@ -708,6 +713,7 @@ pub struct ValidGraph {
     pub outputs: Vec<ValidOutput>,
     pub effects: Vec<ValidEffect>,
     pub edges: Vec<ValidEdge>,
+    pub sample_rate: u32,
 }
 
 /// One node of the expanded graph. A dual-role UI node appears once per role it
@@ -893,11 +899,22 @@ impl GraphSpec {
             })
             .collect();
 
+        let sample_rate = match self.sample_rate {
+            Some(sr) if !(8_000..=384_000).contains(&sr) => {
+                return Err(AppError::Validation(format!(
+                    "pipeline sample rate {sr} out of bounds (8000..=384000)"
+                )));
+            }
+            Some(sr) => sr,
+            None => 48_000,
+        };
+
         Ok(ValidGraph {
             inputs,
             outputs,
             effects,
             edges,
+            sample_rate,
         })
     }
 }
@@ -1092,6 +1109,7 @@ fn resolve_outputs(
                         codec: data.codec,
                         opus_bitrate: data.opus_bitrate,
                         opus_application: data.opus_application,
+                        sample_rate: data.sample_rate.filter(|_| data.codec != NetCodec::Opus),
                     }
                 }
                 // Send half of a collaborator: audio wired in goes to peers,
@@ -1329,6 +1347,7 @@ mod tests {
     #[test]
     fn send_only_collaborator_is_an_output() {
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![mic("m"), collab("w")],
             edges: vec![edge("e", "m", None, "w", Some("ch1"))],
         };
@@ -1351,6 +1370,7 @@ mod tests {
     #[test]
     fn recv_only_collaborator_is_an_input() {
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![collab("w"), speaker("s")],
             edges: vec![edge("e", "w", Some("peer:p:0"), "s", None)],
         };
@@ -1371,6 +1391,7 @@ mod tests {
     #[test]
     fn duplex_collaborator_is_both() {
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![mic("m"), collab("w"), speaker("s")],
             edges: vec![
                 edge("e1", "m", None, "w", Some("ch1")),
@@ -1387,6 +1408,7 @@ mod tests {
     #[test]
     fn unwired_collaborator_is_not_a_routing_error() {
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![collab("w")],
             edges: vec![],
         };
@@ -1400,6 +1422,7 @@ mod tests {
     #[test]
     fn unrouted_output_is_valid_and_streams_silence() {
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![speaker("s")],
             edges: vec![],
         };
@@ -1416,6 +1439,7 @@ mod tests {
         }
 
         let g = GraphSpec {
+            sample_rate: None,
             nodes: vec![gain("g"), speaker("s")],
             edges: vec![edge("e", "g", None, "s", None)],
         };
@@ -1428,5 +1452,41 @@ mod tests {
         assert_eq!(v.outputs.len(), 1);
         assert_eq!(v.outputs[0].id, "s");
         assert_eq!(v.edges.len(), 1);
+    }
+
+    #[test]
+    fn default_sample_rate_is_48000() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![speaker("s")],
+            edges: vec![],
+        };
+        let v = g.validate().expect("graph valid");
+        assert_eq!(v.sample_rate, 48_000);
+    }
+
+    #[test]
+    fn custom_sample_rate_is_preserved() {
+        for sr in [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 384_000] {
+            let g = GraphSpec {
+                sample_rate: Some(sr),
+                nodes: vec![speaker("s")],
+                edges: vec![],
+            };
+            let v = g.validate().expect("graph valid");
+            assert_eq!(v.sample_rate, sr);
+        }
+    }
+
+    #[test]
+    fn out_of_bounds_sample_rate_is_rejected() {
+        for sr in [0, 4_000, 7_999, 384_001, 1_000_000] {
+            let g = GraphSpec {
+                sample_rate: Some(sr),
+                nodes: vec![speaker("s")],
+                edges: vec![],
+            };
+            assert!(g.validate().is_err());
+        }
     }
 }

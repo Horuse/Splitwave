@@ -7,6 +7,8 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatHz } from '$lib/components/format';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();
@@ -39,13 +41,28 @@
 	function threshFmt(v: number): string {
 		return `${Math.round(v)} dB`;
 	}
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		return `Internal model runs at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
+	});
 </script>
 
-<Wrapper label="Noise Suppressor" icon={Wand} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Noise Suppressor"
+	icon={Wand}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	{srcTooltip}>
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
-		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. 48 kHz only.</p>
+		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. {formatHz(48_000)} only.</p>
 		<Slider
 			label="Attenuation"
 			value={data.attenuationLimitDb}

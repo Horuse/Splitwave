@@ -1,16 +1,22 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
+use rtrb::RingBuffer;
 use tauri::AppHandle;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tracing::warn;
 
-use crate::audio::input_bridge::BroadcastRx;
-use crate::error::AppResult;
+use crate::audio::effects::{update_meter, MeterHandle};
+use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
+use crate::audio::resample::MultiResampler;
+use crate::error::{AppError, AppResult};
 
+use super::dag::{RESAMPLE_CHUNK, RING_CAPACITY_FRAMES};
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 
 #[cfg(target_os = "macos")]
@@ -26,7 +32,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::{resolve_input, start_input_stream};
+pub(super) use platform::resolve_input;
+use platform::start_input_stream as start_native_input_stream;
 
 /// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
 /// the device side so no resampling happens on capture delivery.
@@ -41,6 +48,41 @@ pub(super) enum InputHandle {
     Cpal(cpal::Stream),
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
+    Normalized(NormalizedInput),
+}
+
+pub(super) struct NormalizedInput {
+    _input: Box<InputHandle>,
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl Drop for NormalizedInput {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl InputHandle {
+    pub fn audio_file_reader(&self) -> Option<&AudioFileReader> {
+        match self {
+            InputHandle::AudioFile(r) => Some(r),
+            InputHandle::Normalized(n) => n._input.audio_file_reader(),
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn tap_rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
+        match self {
+            InputHandle::Capture(capture) => capture.tap_rate_probe(),
+            InputHandle::Normalized(n) => n._input.tap_rate_probe(),
+            _ => None,
+        }
+    }
 }
 
 // cpal's coreaudio backend never stops a non-default device's AudioUnit just
@@ -147,4 +189,126 @@ pub(super) fn start_audio_file(
         app.clone(),
     )?;
     Ok(InputHandle::AudioFile(reader))
+}
+
+/// Capture callbacks only enqueue native-rate samples. A dedicated worker
+/// normalizes each input once before the dynamic fan-out reaches the DSP graph.
+/// If `sample_rate == target_sample_rate`, NO RESAMPLING is performed (resampler is None),
+/// providing bit-transparent 1:1 passthrough.
+pub(super) fn start_input_stream(
+    node_id: &str,
+    resolved: ResolvedInput,
+    bridge: BroadcastRx,
+    target_sample_rate: u32,
+    paused: Option<Arc<AtomicBool>>,
+    meter: Option<MeterHandle>,
+    app: &AppHandle,
+) -> AppResult<InputHandle> {
+    // Audio files are decoded offline and paced by downstream consumer backpressure.
+    // They must not be run through the capture normalizer thread (which drops frames
+    // on overflow and breaks backpressure). DAG nodes resample file audio directly.
+    if matches!(resolved, ResolvedInput::AudioFile { .. }) {
+        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+    }
+    let sample_rate = resolved.sample_rate();
+    let channels = resolved.native_channels() as usize;
+    let (raw_producer, mut raw_consumer) =
+        RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * channels.max(1));
+    let (mut raw_tx, raw_rx) = broadcast_channel();
+    raw_tx.add(raw_producer)?;
+    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
+    #[cfg(target_os = "macos")]
+    let rate_probe = input.tap_rate_probe();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    let label = node_id.to_string();
+    let join = thread::Builder::new()
+        .name(format!("normalize:{label}"))
+        .spawn(move || {
+            let mut bridge = bridge;
+            let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            let mut native_rate = sample_rate;
+            let mut resampler = if native_rate == target_sample_rate {
+                None
+            } else {
+                match MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, channels)
+                {
+                    Ok(resampler) => Some(resampler),
+                    Err(_) => return,
+                }
+            };
+            let mut output_buf = Vec::with_capacity(
+                resampler
+                    .as_ref()
+                    .map(|r| r.out_max() * channels)
+                    .unwrap_or(input_buf.len()),
+            );
+            while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                bridge.apply_commands();
+                #[cfg(target_os = "macos")]
+                if let Some(rate) = rate_probe.and_then(|probe| probe.sample_rate()) {
+                    if rate == native_rate {
+                        // Nothing to do; avoid perturbing the sinc state.
+                    } else {
+                        // Raw samples on either side of a device-rate transition
+                        // cannot share a sinc state. Drop only this input's raw
+                        // backlog, then rebuild the non-RT normalizer; the tap and
+                        // every engine/output worker keep running.
+                        let pending = raw_consumer.slots();
+                        if pending > 0 {
+                            if let Ok(chunk) = raw_consumer.read_chunk(pending) {
+                                chunk.commit_all();
+                            }
+                        }
+                        native_rate = rate;
+                        resampler = if rate == target_sample_rate {
+                            None
+                        } else {
+                            MultiResampler::new(rate, target_sample_rate, RESAMPLE_CHUNK, channels)
+                                .ok()
+                        };
+                        output_buf = Vec::with_capacity(
+                            resampler
+                                .as_ref()
+                                .map(|r| r.out_max() * channels)
+                                .unwrap_or(input_buf.len()),
+                        );
+                    }
+                }
+                if raw_consumer.slots() < input_buf.len() {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                let Ok(chunk) = raw_consumer.read_chunk(input_buf.len()) else {
+                    continue;
+                };
+                let (first, second) = chunk.as_slices();
+                let n = first.len();
+                input_buf[..n].copy_from_slice(first);
+                input_buf[n..].copy_from_slice(second);
+                chunk.commit_all();
+                let normalized = if let Some(resampler) = &mut resampler {
+                    output_buf.clear();
+                    if resampler
+                        .process_chunk(&input_buf, &mut output_buf)
+                        .is_err()
+                    {
+                        break;
+                    }
+                    output_buf.as_slice()
+                } else {
+                    input_buf.as_slice()
+                };
+                if let Some(meter) = &meter {
+                    update_meter(meter, normalized, channels);
+                }
+                bridge.broadcast(normalized);
+            }
+        })
+        .map_err(|e| AppError::Stream(format!("spawn input normalizer: {e}")))?;
+    Ok(InputHandle::Normalized(NormalizedInput {
+        _input: Box::new(input),
+        stop,
+        join: Some(join),
+    }))
 }

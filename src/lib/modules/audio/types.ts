@@ -80,6 +80,7 @@ export interface VirtualDeviceConfig {
 	id: string;
 	name: string;
 	channels: number;
+	sampleRate?: number;
 }
 
 export type WindowsVirtualCableState =
@@ -117,4 +118,5 @@ export type AudioStateEvent = { kind: 'started' } | { kind: 'stopped' } | { kind
 export interface StartPipelinePayload {
 	nodes: PipelineNode[];
 	edges: PipelineEdge[];
+	sampleRate?: number;
 }

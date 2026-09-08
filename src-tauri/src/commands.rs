@@ -687,6 +687,10 @@ pub struct NetReceiverStats {
     pub lost: u64,
     pub channels: u32,
     pub buffer_ms: u32,
+    pub sample_rate: u32,
+    pub format: Option<String>,
+    pub opus_bitrate: Option<u32>,
+    pub opus_app: Option<String>,
 }
 
 /// The DAG only binds receivers reachable from an output, so an unrouted node
@@ -705,15 +709,30 @@ pub fn net_receiver_release(node_id: String) {
 /// (windowed into a recent loss ratio / rate on the frontend).
 #[tauri::command]
 pub fn net_receiver_stats(node_id: String) -> Option<NetReceiverStats> {
-    crate::audio::netaudio::receiver::stats(&node_id).map(
-        |(bytes, packets, lost, channels, buffer_ms)| NetReceiverStats {
-            bytes,
-            packets,
-            lost,
-            channels,
-            buffer_ms,
-        },
-    )
+    crate::audio::netaudio::receiver::stats(&node_id).map(|s| {
+        let format_str = s.format.map(|f| match f {
+            crate::audio::netaudio::packet::Format::PcmF32 => "pcm-f32".to_string(),
+            crate::audio::netaudio::packet::Format::PcmI16 => "pcm-i16".to_string(),
+            crate::audio::netaudio::packet::Format::Opus => "opus".to_string(),
+        });
+        let opus_app_str = s.opus_app.and_then(|a| match a {
+            1 => Some("voip".to_string()),
+            2 => Some("audio".to_string()),
+            3 => Some("low-delay".to_string()),
+            _ => None,
+        });
+        NetReceiverStats {
+            bytes: s.bytes,
+            packets: s.packets,
+            lost: s.lost,
+            channels: s.channels,
+            buffer_ms: s.buffer_ms,
+            sample_rate: s.sample_rate,
+            format: format_str,
+            opus_bitrate: s.opus_bitrate,
+            opus_app: opus_app_str,
+        }
+    })
 }
 
 #[derive(serde::Serialize)]

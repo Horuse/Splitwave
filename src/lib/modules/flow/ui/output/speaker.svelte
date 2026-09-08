@@ -14,6 +14,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	const isWindows = platform() === 'windows';
 	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
@@ -73,13 +74,7 @@
 		await volume.set(pct / 100);
 	}
 
-	function formatRate(hz: number): string {
-		return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)} kHz` : `${hz} Hz`;
-	}
-
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
+	import { formatHz, formatPct } from '$lib/components/format';
 
 	let volumePct = $derived((volume.scalar ?? 0) * 100);
 	// The graph mix is metered before the device attenuates it; without the
@@ -87,9 +82,14 @@
 	let meterOffsetDb = $derived(volume.db ?? 0);
 
 	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+
+	let srcTooltip = $derived.by(() => {
+		if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
+		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(info.sampleRate)}`;
+	});
 </script>
 
-<Wrapper label="Speaker" accent="output" icon={Speaker}>
+<Wrapper label="Speaker" accent="output" icon={Speaker} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-1">
 		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
@@ -106,8 +106,8 @@
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
 		{:else if info}
-			<span class="font-mono text-[10px] text-neutral-900">
-				{formatRate(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
+			<span class="node-spec">
+				{formatHz(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
 			</span>
 		{/if}
 

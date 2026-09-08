@@ -74,10 +74,11 @@ fn build_plist(devices: &[VirtualDeviceConfig]) -> String {
     );
     for d in devices {
         plist.push_str(&format!(
-            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t</dict>\n",
+            "\t<dict>\n\t\t<key>id</key><string>{}</string>\n\t\t<key>name</key><string>{}</string>\n\t\t<key>channels</key><integer>{}</integer>\n\t\t<key>sampleRate</key><integer>{}</integer>\n\t</dict>\n",
             xml_escape(&d.id),
             xml_escape(&d.name),
-            d.channels.clamp(1, 256)
+            d.channels.clamp(1, 256),
+            d.sample_rate.clamp(8_000, 384_000)
         ));
     }
     plist.push_str("</array>\n</plist>\n");

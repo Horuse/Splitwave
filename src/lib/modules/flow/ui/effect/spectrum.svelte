@@ -7,6 +7,7 @@
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
+	import { formatFreq } from '$lib/components/format';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -87,7 +88,7 @@
 			for (const m of [1, 2, 5]) {
 				const f = d * m;
 				if (f < F_MIN || f > fMax) continue;
-				out.push({ f, label: f >= 1000 ? `${f / 1000}k` : `${f}`, major: m === 1 });
+				out.push({ f, label: formatFreq(f), major: m === 1 });
 			}
 		}
 		return out;

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { appSettings } from '$lib/modules/settings/stores.svelte';
 import type {
 	AudioApplication,
 	AudioDevice,
@@ -53,11 +54,13 @@ export const methods = {
 	}> => invoke('read_file_peaks', { path, startFrame, framesPerBin, binCount }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	getOutputLatency: (): Promise<number> => invoke<number>('output_latency_ms'),
-	startPipeline: (graph: StartPipelinePayload): Promise<void> => invoke('start_pipeline', { graph }),
+	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
+		invoke('start_pipeline', { graph: { sampleRate: appSettings.pipelineSampleRate, ...graph } }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),
 	/** Hot-reconfigure a running pipeline. Errors with `NotRunning` if no
 	 *  pipeline is active — callers should fall back to `startPipeline`. */
-	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> => invoke('reconcile_pipeline', { graph }),
+	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> =>
+		invoke('reconcile_pipeline', { graph: { sampleRate: appSettings.pipelineSampleRate, ...graph } }),
 	/** No-op when the pipeline isn't running; callers can fire-and-forget. */
 	updateEffect: (nodeId: string, data: Record<string, unknown>): Promise<void> => invoke('update_effect', { nodeId, data }),
 	/** Seek an AudioFile input. No-op when not running. */
@@ -146,6 +149,10 @@ export const methods = {
 		lost: number;
 		channels: number;
 		bufferMs: number;
+		sampleRate: number;
+		format: 'pcm-f32' | 'pcm-i16' | 'opus' | null;
+		opusBitrate: number | null;
+		opusApp: 'voip' | 'audio' | 'low-delay' | null;
 	} | null> => invoke('net_receiver_stats', { nodeId }),
 	/** Direct-IP send stats, or null when the node isn't running. */
 	netSenderStats: (nodeId: string): Promise<{ bytes: number; packets: number } | null> => invoke('net_sender_stats', { nodeId }),

@@ -12,6 +12,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
 	// loopback) need it neither.
@@ -62,18 +63,21 @@
 		audioMethods.setInputVolume(id, scalar).catch(() => {});
 	}
 
-	function formatPct(p: number): string {
-		return `${Math.round(p)}%`;
-	}
+	import { formatHz, formatPct } from '$lib/components/format';
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
 
 	// System Audio capture is stereo; expose one output handle per channel.
 	const channelCount = 2;
+
+	let srcTooltip = $derived.by(() => {
+		if (appSettings.pipelineSampleRate === 48_000) return undefined;
+		return `Resampling: ${formatHz(48_000)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+	});
 </script>
 
-<Wrapper label="System Audio" accent="input" icon={SoundWave}>
-	<div class="flex w-64 flex-col gap-3">
+<Wrapper label="System Audio" accent="input" icon={SoundWave} {srcTooltip}>
+	<div class="flex w-64 flex-col gap-2">
 		{#if showBanner}
 			<div
 				class={[
@@ -122,6 +126,7 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
+		<span class="node-spec">{formatHz(48_000)} · 2 ch · f32</span>
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>

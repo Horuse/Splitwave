@@ -9,6 +9,7 @@
 	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { formatHz } from '$lib/components/format';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
 	const isLinux = platform() === 'linux';
@@ -30,7 +31,13 @@
 
 	function sameDevices(a: VirtualDeviceConfig[], b: VirtualDeviceConfig[]): boolean {
 		if (a.length !== b.length) return false;
-		return a.every((d, i) => d.id === b[i].id && d.name === b[i].name && (d.channels ?? 2) === (b[i].channels ?? 2));
+		return a.every(
+			(d, i) =>
+				d.id === b[i].id &&
+				d.name === b[i].name &&
+				(d.channels ?? 2) === (b[i].channels ?? 2) &&
+				(d.sampleRate ?? 48_000) === (b[i].sampleRate ?? 48_000)
+		);
 	}
 
 	let dirty = $derived(!sameDevices(devices, appliedDevices));
@@ -43,7 +50,7 @@
 	}
 
 	function addDevice() {
-		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2 }];
+		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2, sampleRate: 48_000 }];
 	}
 
 	function removeDevice(id: string) {
@@ -57,6 +64,11 @@
 	function setChannels(id: string, channels: number) {
 		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 256);
 		devices = devices.map((d) => (d.id === id ? { ...d, channels: clamped } : d));
+	}
+
+	function setSampleRate(id: string, sampleRate: number) {
+		const clamped = Math.min(Math.max(Math.round(sampleRate) || 48_000, 8_000), 384_000);
+		devices = devices.map((d) => (d.id === id ? { ...d, sampleRate: clamped } : d));
 	}
 
 	async function apply() {
@@ -213,6 +225,34 @@
 										{/each}
 									</div>
 									<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to 256 channels </span>
+								</div>
+								<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-300/40 pt-2">
+									<div class="flex items-center gap-2">
+										<span class="text-xs text-neutral-900">Sample rate</span>
+										<NumberStepper
+											value={d.sampleRate ?? 48_000}
+											min={8000}
+											max={384000}
+											step={1}
+											label="Sample rate"
+											onchange={(v) => setSampleRate(d.id, v)} />
+										<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz</span>
+									</div>
+									<div class="flex items-center gap-1">
+										{#each [44100, 48000, 88200, 96000, 192000] as preset (preset)}
+											<button
+												class={[
+													'rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums transition-colors',
+													(d.sampleRate ?? 48_000) === preset
+														? 'border-neutral-800 bg-neutral-600 text-theme'
+														: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
+												]}
+												onclick={() => setSampleRate(d.id, preset)}>
+												{formatHz(preset)}
+											</button>
+										{/each}
+									</div>
+									<span class="ml-auto text-[11px] text-neutral-800"> Matches project rate to avoid resampling </span>
 								</div>
 							</li>
 						{/each}

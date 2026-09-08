@@ -7,6 +7,7 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
+	import { formatHz } from '$lib/components/format';
 
 	type DeEsserNodeType = Node<DeEsserNodeData, 'deEsser'>;
 	let { id, data }: NodeProps<DeEsserNodeType> = $props();
@@ -26,10 +27,6 @@
 	function toggleBypass() {
 		set({ bypassed: !data.bypassed });
 	}
-
-	function fmtHz(v: number): string {
-		return v >= 1000 ? `${(v / 1000).toFixed(1)} k` : `${Math.round(v)} `;
-	}
 </script>
 
 <Wrapper label="De-esser" icon={SoundWave} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
@@ -44,7 +41,7 @@
 			step={50}
 			unit="Hz"
 			defaultValue={6500}
-			format={fmtHz}
+			format={formatHz}
 			ticks={[4000, 6500, 9000, 12000]}
 			onChange={(v) => set({ frequency: v })} />
 		<Slider

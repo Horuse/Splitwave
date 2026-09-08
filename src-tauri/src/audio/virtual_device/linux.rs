@@ -76,7 +76,7 @@ pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), St
     std::fs::write(&conf, conf_contents(&devices)).map_err(|e| format!("write conf: {e}"))?;
 
     for d in &devices {
-        create_runtime_sink(&d.id, &clean_label(&d.name), d.channels)?;
+        create_runtime_sink(&d.id, &clean_label(&d.name), d.channels, d.sample_rate)?;
     }
     Ok(())
 }
@@ -100,6 +100,7 @@ fn conf_contents(devices: &[VirtualDeviceConfig]) -> String {
             "      audio.position   = [ {} ]\n",
             positions(d.channels)
         ));
+        out.push_str(&format!("      audio.rate       = {}\n", d.sample_rate));
         out.push_str("      object.linger    = true\n");
         out.push_str("    }\n");
         out.push_str("  }\n");
@@ -144,7 +145,12 @@ fn roundtrip(core: &pw::core::CoreRc, mainloop: &pw::main_loop::MainLoopRc) -> R
 // Create the sink in the running session so it shows up immediately. The .conf
 // only takes effect on the next PipeWire start; object.linger keeps the node
 // alive after we disconnect.
-fn create_runtime_sink(id: &str, label: &str, channels: u32) -> Result<(), String> {
+fn create_runtime_sink(
+    id: &str,
+    label: &str,
+    channels: u32,
+    sample_rate: u32,
+) -> Result<(), String> {
     with_session(|core, mainloop| {
         let mut props = pw::properties::properties! {
             *pw::keys::FACTORY_NAME => "support.null-audio-sink",
@@ -154,6 +160,7 @@ fn create_runtime_sink(id: &str, label: &str, channels: u32) -> Result<(), Strin
         props.insert(*pw::keys::NODE_NAME, format!("{NODE_PREFIX}.{id}"));
         props.insert(*pw::keys::NODE_DESCRIPTION, label.to_string());
         props.insert("audio.position", positions(channels));
+        props.insert("audio.rate", sample_rate.to_string());
         let _node: pw::node::Node = core
             .create_object("adapter", &props)
             .map_err(|e| format!("create null sink: {e}"))?;

@@ -6,6 +6,7 @@
 	import { Sliders } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
+	import { formatFreq, formatGain } from '$lib/components/format';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();
@@ -161,14 +162,6 @@
 		}
 	}
 
-	function formatFreq(hz: number): string {
-		if (hz >= 1000) return `${hz / 1000}k`;
-		return String(hz);
-	}
-	function formatGain(g: number): string {
-		const v = g.toFixed(1);
-		return g > 0 ? `+${v}` : v;
-	}
 </script>
 
 <Wrapper label="EQ" icon={Sliders} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>

@@ -7,6 +7,7 @@
 	import { DataBar } from '$lib/components/icons';
 	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
+	import { formatDb } from '$lib/components/format';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
 	let { id, data }: NodeProps<LevelMeterNodeType> = $props();
@@ -62,9 +63,6 @@
 		return (pct / 100) * -DB_FLOOR + DB_FLOOR;
 	}
 
-	function formatDb(db: number): string {
-		return isFinite(db) && db > DB_FLOOR ? db.toFixed(1) : '−∞';
-	}
 
 	function hoverLabel(pct: number): string {
 		return pctToDb(pct).toFixed(1);
@@ -214,7 +212,7 @@
 			{#each barVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db)}</span>
+					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db, DB_FLOOR)}</span>
 				</div>
 			{/each}
 		</div>
@@ -229,7 +227,7 @@
 			{#each maxVals as db, i (i)}
 				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
 					<span class="text-[7px] leading-none text-neutral-500">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db)}</span>
+					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db, DB_FLOOR)}</span>
 				</div>
 			{/each}
 		</button>

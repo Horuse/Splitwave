@@ -4,7 +4,8 @@ use crate::error::{AppError, AppResult};
 use super::{DeviceInfo, DeviceKind, NativeDeviceInfo};
 
 pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> {
-    if let Some(config) = crate::audio::virtual_device::config_for_node(name) {
+    let config_name = name.strip_prefix("monitor:").unwrap_or(name);
+    if let Some(config) = crate::audio::virtual_device::config_for_node(config_name) {
         return Ok(NativeDeviceInfo {
             sample_rate: config.sample_rate,
             channels: u16::try_from(config.channels)
@@ -52,9 +53,14 @@ pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
         .collect();
     // Every sink exposes a monitor we can record; offer them as inputs too.
     for sink in nodes_by_class("Audio/Sink")? {
+        let owned = crate::audio::virtual_device::config_for_node(&sink.name).is_some();
         out.push(DeviceInfo {
             id: format!("monitor:{}", sink.name),
-            name: format!("{} (Monitor)", sink.description),
+            name: if owned {
+                sink.description
+            } else {
+                format!("{} (Monitor)", sink.description)
+            },
             kind: DeviceKind::Input,
         });
     }

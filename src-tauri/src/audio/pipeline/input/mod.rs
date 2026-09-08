@@ -260,7 +260,7 @@ pub(super) fn start_input_stream(
             while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
                 bridge.apply_commands();
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
-                if let Some(rate) = rate_probe.and_then(|probe| probe.sample_rate()) {
+                if let Some(rate) = rate_probe.as_ref().and_then(|probe| probe.sample_rate()) {
                     if rate == native_rate {
                         // Nothing to do; avoid perturbing the sinc state.
                     } else {

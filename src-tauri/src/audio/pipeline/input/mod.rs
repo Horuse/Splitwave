@@ -75,10 +75,19 @@ impl InputHandle {
     }
 
     #[cfg(target_os = "macos")]
-    fn tap_rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
+    fn rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
         match self {
             InputHandle::Capture(capture) => capture.tap_rate_probe(),
-            InputHandle::Normalized(n) => n._input.tap_rate_probe(),
+            InputHandle::Normalized(n) => n._input.rate_probe(),
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn rate_probe(&self) -> Option<crate::audio::capture::linux::RateProbe> {
+        match self {
+            InputHandle::Capture(capture) => Some(capture.rate_probe()),
+            InputHandle::Normalized(n) => n._input.rate_probe(),
             _ => None,
         }
     }
@@ -219,8 +228,8 @@ pub(super) fn start_input_stream(
     let (mut raw_tx, raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
     let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
-    #[cfg(target_os = "macos")]
-    let rate_probe = input.tap_rate_probe();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let label = node_id.to_string();
@@ -229,7 +238,10 @@ pub(super) fn start_input_stream(
         .spawn(move || {
             let mut bridge = bridge;
             let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let mut native_rate = sample_rate;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let native_rate = sample_rate;
             let mut resampler = if native_rate == target_sample_rate {
                 None
             } else {
@@ -247,7 +259,7 @@ pub(super) fn start_input_stream(
             );
             while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
                 bridge.apply_commands();
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 if let Some(rate) = rate_probe.and_then(|probe| probe.sample_rate()) {
                     if rate == native_rate {
                         // Nothing to do; avoid perturbing the sinc state.

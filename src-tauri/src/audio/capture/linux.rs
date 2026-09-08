@@ -1,10 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use pipewire as pw;
 use pw::spa;
 use pw::spa::param::audio::{AudioFormat, AudioInfoRaw};
-use pw::spa::pod::Pod;
+use pw::spa::pod::{ChoiceValue, Pod, Value};
+use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags};
 
 use crate::audio::pipeline::RtThread;
 use crate::error::{AppError, AppResult};
@@ -13,11 +16,28 @@ struct Terminate;
 
 struct UserData {
     callback: Box<dyn FnMut(&[f32])>,
+    format: AudioInfoRaw,
+    sample_rate: Arc<AtomicU32>,
 }
 
 pub struct Capture {
     sender: pw::channel::Sender<Terminate>,
     thread: Option<std::thread::JoinHandle<()>>,
+    sample_rate: Arc<AtomicU32>,
+}
+
+#[derive(Clone)]
+pub struct RateProbe {
+    sample_rate: Arc<AtomicU32>,
+}
+
+impl RateProbe {
+    pub fn sample_rate(&self) -> Option<u32> {
+        match self.sample_rate.load(Ordering::Relaxed) {
+            0 => None,
+            rate => Some(rate),
+        }
+    }
 }
 
 impl Drop for Capture {
@@ -30,6 +50,12 @@ impl Drop for Capture {
 }
 
 impl Capture {
+    pub fn rate_probe(&self) -> RateProbe {
+        RateProbe {
+            sample_rate: self.sample_rate.clone(),
+        }
+    }
+
     // Monitor of the default sink (whole-system audio).
     pub fn start_system(
         sample_rate: u32,
@@ -98,6 +124,8 @@ fn spawn(
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
+    let negotiated_rate = Arc::new(AtomicU32::new(sample_rate));
+    let thread_rate = negotiated_rate.clone();
     let thread = std::thread::spawn(move || {
         // Drain the PipeWire stream on a real-time thread so delivery keeps up.
         let _rt = RtThread::promote("capture", sample_rate);
@@ -108,6 +136,7 @@ fn spawn(
             sample_rate,
             channels,
             callback,
+            thread_rate,
         ) {
             tracing::error!("pipewire capture: {e:?}");
         }
@@ -115,6 +144,7 @@ fn spawn(
     Ok(Capture {
         sender,
         thread: Some(thread),
+        sample_rate: negotiated_rate,
     })
 }
 
@@ -125,6 +155,7 @@ fn run(
     sample_rate: u32,
     channels: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
+    negotiated_rate: Arc<AtomicU32>,
 ) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
@@ -148,10 +179,26 @@ fn run(
     }
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-capture", props)?;
-    let user_data = UserData { callback };
+    let user_data = UserData {
+        callback,
+        format: AudioInfoRaw::new(),
+        sample_rate: negotiated_rate,
+    };
 
     let _listener = stream
         .add_local_listener_with_user_data(user_data)
+        .param_changed(|_, user_data, id, param| {
+            if id != spa::param::ParamType::Format.as_raw() {
+                return;
+            }
+            let Some(param) = param else { return };
+            if user_data.format.parse(param).is_ok() {
+                let rate = user_data.format.rate();
+                if rate > 0 {
+                    user_data.sample_rate.store(rate, Ordering::Relaxed);
+                }
+            }
+        })
         .process(|stream, user_data| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
@@ -180,10 +227,24 @@ fn run(
     audio_info.set_rate(sample_rate);
     audio_info.set_channels(channels);
 
+    let mut properties: Vec<spa::pod::Property> = audio_info.into();
+    if let Some(rate) = properties
+        .iter_mut()
+        .find(|property| property.key == spa::param::format::FormatProperties::AudioRate.as_raw())
+    {
+        rate.value = Value::Choice(ChoiceValue::Int(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Range {
+                default: sample_rate as i32,
+                min: 1,
+                max: i32::MAX,
+            },
+        )));
+    }
     let obj = spa::pod::Object {
         type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
         id: spa::param::ParamType::EnumFormat.as_raw(),
-        properties: audio_info.into(),
+        properties,
     };
     let values: Vec<u8> = spa::pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),

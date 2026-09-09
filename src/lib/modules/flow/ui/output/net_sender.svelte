@@ -170,7 +170,7 @@
 		</div>
 
 		<!-- throughput -->
-		<div class="flex items-center justify-between node-spec">
+		<div class="node-spec flex items-center justify-between">
 			<span>Sending</span>
 			<span class="tabular-nums">{formatRate(rate)}</span>
 		</div>

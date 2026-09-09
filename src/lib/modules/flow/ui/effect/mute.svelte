@@ -120,7 +120,6 @@
 		flow.updateNodeData(id, { cueVolume: v });
 	}
 
-
 	function clearHotkey() {
 		bindError = '';
 		flow.updateNodeData(id, { hotkey: undefined });

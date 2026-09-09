@@ -63,7 +63,6 @@
 		return (pct / 100) * -DB_FLOOR + DB_FLOOR;
 	}
 
-
 	function hoverLabel(pct: number): string {
 		return pctToDb(pct).toFixed(1);
 	}

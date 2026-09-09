@@ -108,4 +108,3 @@ export function formatGain(db: number): string {
 export function formatDb(db: number, floor: number = -96): string {
 	return Number.isFinite(db) && db > floor ? db.toFixed(1) : '−∞';
 }
-

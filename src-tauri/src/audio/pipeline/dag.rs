@@ -851,6 +851,23 @@ impl OutputGraph {
         self.out_channels = channels;
     }
 
+    pub(super) fn active_output_channels(&self) -> usize {
+        self.terminals
+            .iter()
+            .map(|terminal| match terminal.route {
+                Some((offset, width)) => offset + width,
+                None => {
+                    self.nodes[terminal.src_idx]
+                        .out_buf_for_handle(terminal.source_handle.as_deref())
+                        .len()
+                        / DSP_BLOCK_FRAMES
+                }
+            })
+            .max()
+            .unwrap_or(1)
+            .clamp(1, self.out_channels)
+    }
+
     /// Attach a publish ring to a fan-out effect node; its `out_buf` is pushed
     /// there each block for another output's ring-source to read.
     pub(super) fn attach_tap(&mut self, node_idx: usize, prod: Producer<f32>) {

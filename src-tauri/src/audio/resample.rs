@@ -1,8 +1,8 @@
-//! High-quality sinc-based resampler for interleaved f32 streams of any channel count.
+//! High-quality resamplers for interleaved f32 streams of any channel count.
 
 use rubato::{
-    Resampler, SincFixedIn, SincFixedOut, SincInterpolationParameters, SincInterpolationType,
-    WindowFunction,
+    FftFixedIn, Resampler, SincFixedIn, SincFixedOut, SincInterpolationParameters,
+    SincInterpolationType, WindowFunction,
 };
 
 use crate::error::{AppError, AppResult};
@@ -98,6 +98,84 @@ pub struct MultiResampler {
     out_max: usize,
 }
 
+/// Fixed-rate conversion for device outputs. Unlike capture and network
+/// clock conversion, a speaker stream keeps the same rate for its lifetime.
+pub struct FixedRateResampler {
+    inner: FftFixedIn<f32>,
+    channels: usize,
+    in_planar: Vec<Vec<f32>>,
+    out_planar: Vec<Vec<f32>>,
+    active: Vec<bool>,
+    chunk_in: usize,
+    out_max: usize,
+}
+
+impl FixedRateResampler {
+    pub fn new(
+        from_rate: u32,
+        to_rate: u32,
+        chunk_size: usize,
+        channels: usize,
+    ) -> AppResult<Self> {
+        const FFT_SUB_CHUNKS: usize = 4;
+        let inner = FftFixedIn::<f32>::new(
+            from_rate as usize,
+            to_rate as usize,
+            chunk_size,
+            FFT_SUB_CHUNKS,
+            channels,
+        )
+        .map_err(|e| AppError::Stream(format!("fixed resampler init: {e}")))?;
+        let out_max = inner.output_frames_max();
+        Ok(Self {
+            inner,
+            channels,
+            in_planar: vec![vec![0.0; chunk_size]; channels],
+            out_planar: vec![vec![0.0; out_max]; channels],
+            active: vec![true; channels],
+            chunk_in: chunk_size,
+            out_max,
+        })
+    }
+
+    pub fn out_max(&self) -> usize {
+        self.out_max
+    }
+
+    pub fn process_chunk_into(
+        &mut self,
+        interleaved_in: &[f32],
+        active_channels: usize,
+        output: &mut [f32],
+    ) -> AppResult<usize> {
+        debug_assert_eq!(interleaved_in.len(), self.chunk_in * self.channels);
+        debug_assert!(output.len() >= self.out_max * self.channels);
+        let active_channels = active_channels.clamp(1, self.channels);
+        self.active.fill(false);
+        self.active[..active_channels].fill(true);
+
+        for (i, frame) in interleaved_in.chunks_exact(self.channels).enumerate() {
+            for c in 0..active_channels {
+                self.in_planar[c][i] = frame[c];
+            }
+        }
+        let (_, produced) = self
+            .inner
+            .process_into_buffer(&self.in_planar, &mut self.out_planar, Some(&self.active))
+            .map_err(|e| AppError::Stream(format!("fixed resampler process: {e}")))?;
+        for i in 0..produced {
+            for c in 0..self.channels {
+                output[i * self.channels + c] = if c < active_channels {
+                    self.out_planar[c][i]
+                } else {
+                    0.0
+                };
+            }
+        }
+        Ok(produced * self.channels)
+    }
+}
+
 impl MultiResampler {
     pub fn new(
         from_rate: u32,
@@ -171,7 +249,7 @@ impl MultiResampler {
 
 #[cfg(test)]
 mod tests {
-    use super::MultiResampler;
+    use super::{FixedRateResampler, MultiResampler};
 
     fn produced_frames(from_rate: u32, to_rate: u32) -> usize {
         const CHANNELS: usize = 2;
@@ -218,5 +296,25 @@ mod tests {
         let written = resampler.process_chunk_into(&input, &mut out).unwrap();
         assert!(written > 0);
         assert_eq!(written % 2, 0);
+    }
+
+    #[test]
+    fn fixed_rate_resampler_leaves_trailing_channels_silent() {
+        const CHANNELS: usize = 16;
+        let mut resampler = FixedRateResampler::new(48_000, 96_000, 1024, CHANNELS).unwrap();
+        let mut input = vec![0.0_f32; 1024 * CHANNELS];
+        for frame in input.chunks_exact_mut(CHANNELS) {
+            frame[0] = 0.25;
+            frame[1] = -0.25;
+        }
+        let mut output = vec![1.0_f32; resampler.out_max() * CHANNELS];
+        let written = resampler
+            .process_chunk_into(&input, 2, &mut output)
+            .unwrap();
+        assert!(written > 0);
+        assert_eq!(written % CHANNELS, 0);
+        for frame in output[..written].chunks_exact(CHANNELS) {
+            assert!(frame[2..].iter().all(|sample| *sample == 0.0));
+        }
     }
 }

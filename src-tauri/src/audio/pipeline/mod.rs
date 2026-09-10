@@ -39,7 +39,7 @@ mod meter;
 mod native;
 mod output;
 #[cfg(target_os = "linux")]
-pub(crate) use output::RtThread;
+pub(crate) use worker::RtThread;
 mod sig;
 mod worker;
 

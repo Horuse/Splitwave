@@ -128,7 +128,7 @@ fn spawn(
     let thread_rate = negotiated_rate.clone();
     let thread = std::thread::spawn(move || {
         // Drain the PipeWire stream on a real-time thread so delivery keeps up.
-        let _rt = RtThread::promote("capture", sample_rate);
+        let _rt = RtThread::promote("capture", 0, sample_rate);
         if let Err(e) = run(
             receiver,
             target,

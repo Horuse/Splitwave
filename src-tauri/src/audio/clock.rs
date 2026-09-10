@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use crate::audio::health;
 
 const LATE_REPORT_THRESHOLD: Duration = Duration::from_millis(2);
+#[cfg(target_os = "linux")]
+const RT_BUDGET_RESET_SLEEP: Duration = Duration::from_micros(50);
 
 pub trait ClockSource: Send + 'static {
     /// Returns `false` when `stop` is set; `true` on each tick.
@@ -16,6 +18,10 @@ pub trait ClockSource: Send + 'static {
     /// Nominal sample rate this clock targets.
     #[allow(dead_code)]
     fn sample_rate(&self) -> u32;
+
+    fn realtime_ready(&self) -> bool {
+        true
+    }
 }
 
 /// On overrun, the next deadline resets to "now" rather than bursting through
@@ -74,8 +80,12 @@ impl ClockSource for SystemClockTicker {
                     health::raise_max(&health::CLOCK_LATE_MAX_US, late.as_micros() as u64);
                 }
                 if late <= self.catchup_max {
+                    #[cfg(target_os = "linux")]
+                    thread::sleep(RT_BUDGET_RESET_SLEEP);
                     d
                 } else {
+                    #[cfg(target_os = "linux")]
+                    thread::sleep(RT_BUDGET_RESET_SLEEP);
                     now
                 }
             }
@@ -174,5 +184,9 @@ impl ClockSource for DeviceFillClock {
 
     fn sample_rate(&self) -> u32 {
         self.device_sample_rate.load(Ordering::Relaxed)
+    }
+
+    fn realtime_ready(&self) -> bool {
+        self.primed
     }
 }

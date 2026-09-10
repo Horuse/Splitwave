@@ -15,9 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
-# rubato's sinc resampler is unusable in dev without optimisation — a single
-# 1024-frame block takes ~16 ms vs ~500 µs at -O3, so the DSP worker can't
-# keep real time and input rings overflow. Optimise just the resampler stack;
+# rubato's resamplers are unusable in dev without optimisation — a single
+# block can miss its deadline at -O0, so the DSP worker cannot keep real time
+# and input rings overflow. Optimise just the resampler stack;
 # leaving the rest of the workspace (tauri, web stack, our crate) at -O0
 # keeps clean builds fast.
 [profile.dev.package.rubato]

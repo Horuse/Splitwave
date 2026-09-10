@@ -5,6 +5,7 @@ const KEY = 'app:settings';
 
 interface Stored {
 	checkUpdatesOnLaunch: boolean;
+	includePreReleases: boolean;
 	maxSnapshots: number;
 	snapToGrid: boolean;
 	gridSize: number;
@@ -16,6 +17,7 @@ interface Stored {
 
 const DEFAULTS: Stored = {
 	checkUpdatesOnLaunch: true,
+	includePreReleases: false,
 	maxSnapshots: 20,
 	snapToGrid: false,
 	gridSize: 20,
@@ -41,6 +43,7 @@ function load(): Stored {
 class AppSettings {
 	#initial = load();
 	checkUpdatesOnLaunch = $state(this.#initial.checkUpdatesOnLaunch);
+	includePreReleases = $state(this.#initial.includePreReleases ?? false);
 	maxSnapshots = $state(this.#initial.maxSnapshots);
 	snapToGrid = $state(this.#initial.snapToGrid);
 	gridSize = $state(this.#initial.gridSize);
@@ -53,6 +56,7 @@ class AppSettings {
 		if (!browser) return;
 		const {
 			checkUpdatesOnLaunch,
+			includePreReleases,
 			maxSnapshots,
 			snapToGrid,
 			gridSize,
@@ -65,6 +69,7 @@ class AppSettings {
 			KEY,
 			JSON.stringify({
 				checkUpdatesOnLaunch,
+				includePreReleases,
 				maxSnapshots,
 				snapToGrid,
 				gridSize,

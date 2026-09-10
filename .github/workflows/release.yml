@@ -52,7 +52,7 @@ jobs:
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true
-                  prerelease: false
+                  prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
                   args: ${{ matrix.args }}
 
     linux:
@@ -106,7 +106,7 @@ jobs:
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true
-                  prerelease: false
+                  prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
                   args: --bundles appimage,deb,rpm
 
             # linuxdeploy bundles libwayland/libpipewire/libspa; on newer Mesa they
@@ -211,5 +211,5 @@ jobs:
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true
-                  prerelease: false
+                  prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
                   args: --bundles nsis

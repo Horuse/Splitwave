@@ -4,7 +4,8 @@ import { errorStore } from './stores.svelte';
 
 const PANIC_EVENT = 'error://panic';
 
-interface PanicPayload {
+interface CrashPayload {
+	kind?: 'rustPanic' | 'nativeCrash' | 'unexpectedExit';
 	message: string;
 	backtrace: string;
 	thread: string;
@@ -19,7 +20,7 @@ export async function installErrorHandlers(): Promise<void> {
 	if (installed) return;
 	installed = true;
 
-	unlistenPanic = await listen<PanicPayload>(PANIC_EVENT, (e) => {
+	unlistenPanic = await listen<CrashPayload>(PANIC_EVENT, (e) => {
 		errorStore.report({
 			source: 'rustPanic',
 			message: e.payload.message,
@@ -29,13 +30,13 @@ export async function installErrorHandlers(): Promise<void> {
 		});
 	});
 
-	// A panic that killed the app last run never delivered its live event; the
-	// backend persisted it, so surface it now.
-	invoke<PanicPayload[]>('take_crash_reports')
+	// Fatal native failures cannot reach the live webview; replay every report
+	// persisted by the backend during the previous run.
+	invoke<CrashPayload[]>('take_crash_reports')
 		.then((reports) => {
 			for (const r of reports) {
 				errorStore.report({
-					source: 'rustPanic',
+					source: r.kind ?? 'rustPanic',
 					message: r.message,
 					stack: r.backtrace,
 					thread: r.thread,

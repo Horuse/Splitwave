@@ -63,6 +63,10 @@
 		switch (s) {
 			case 'rustPanic':
 				return 'Rust panic';
+			case 'nativeCrash':
+				return 'Native crash';
+			case 'unexpectedExit':
+				return 'Unexpected exit';
 			case 'jsError':
 				return 'JS error';
 			case 'unhandledRejection':

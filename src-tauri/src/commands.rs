@@ -184,9 +184,28 @@ pub fn clear_logs() {
 /// (a real panic, not a faked event). Crashes the app on purpose.
 #[tauri::command]
 pub fn debug_panic(app: AppHandle) {
-    let _ = app.run_on_main_thread(|| {
-        panic!("debug: intentional test panic");
-    });
+    #[cfg(debug_assertions)]
+    {
+        let _ = app.run_on_main_thread(|| {
+            panic!("debug: intentional test panic");
+        });
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = app;
+}
+
+/// Dev-only: exercises the platform native signal/exception crash reporter.
+#[tauri::command]
+pub fn debug_native_crash() {
+    #[cfg(debug_assertions)]
+    crate::native_crash::trigger();
+}
+
+/// Dev-only: exits without panic or a catchable signal to test the session marker.
+#[tauri::command]
+pub fn debug_unexpected_exit() {
+    #[cfg(debug_assertions)]
+    std::process::exit(86);
 }
 
 #[tauri::command]

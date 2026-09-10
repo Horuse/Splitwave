@@ -1,59 +1,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::traits::DeviceTrait;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-use crate::audio::device::{self, DeviceKind};
 use crate::audio::health;
 use crate::audio::streams;
 use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
-use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
-
-pub(in crate::audio::pipeline) struct SpeakerResolved {
-    pub device: cpal::Device,
-    pub config: cpal::StreamConfig,
-    pub sample_format: cpal::SampleFormat,
-    pub out_channels: usize,
-    pub sample_rate: u32,
-}
-
-// The stream drops before the worker so the audio callback stops before the
-// ring is freed.
-pub(in crate::audio::pipeline) struct SpeakerHandle {
-    _stream: cpal::Stream,
-    _worker: SpeakerWorker,
-    _alive: StreamGuard,
-}
-
-// `Stream::drop` isn't guaranteed to stop the underlying device (cpal's macOS
-// backend never does for a non-default device, see the macOS SpeakerHandle);
-// call `pause` explicitly so teardown doesn't depend on that guarantee here too.
-impl Drop for SpeakerHandle {
-    fn drop(&mut self) {
-        if let Err(e) = self._stream.pause() {
-            warn!(error = %e, "failed to pause speaker stream on teardown");
-        }
-    }
-}
-
-pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
-    let device = device::find(DeviceKind::Output, device_id)?;
-    let native = native_config(DeviceKind::Output, &device, device_id)?;
-    Ok(SpeakerResolved {
-        device,
-        config: native.config,
-        sample_format: native.sample_format,
-        out_channels: native.channels as usize,
-        sample_rate: native.sample_rate,
-    })
-}
+use super::{spawn_speaker_worker, speaker_ring, SpeakerIo};
+pub(in crate::audio::pipeline) use super::cpal_speaker::{resolve_speaker, SpeakerHandle, SpeakerResolved};
 
 pub(in crate::audio::pipeline) fn start_speaker_stream(
     node_id: &str,
@@ -113,11 +73,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         meter,
     )?;
     Ok((
-        SpeakerHandle {
-            _stream: stream,
-            _worker: worker_handle,
-            _alive: StreamGuard::new(),
-        },
+        SpeakerHandle::new(stream, worker_handle, super::StreamGuard::new()),
         ctrl,
         dead,
         io,

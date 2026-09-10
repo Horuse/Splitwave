@@ -9,20 +9,70 @@ pub struct AudioApplication {
     pub icon: Option<String>,
 }
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{list_audio_applications, load_app_icons};
+use macos as platform;
+#[cfg(target_os = "macos")]
+pub use macos::list_audio_applications;
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{list_audio_applications, load_app_icons};
+use linux as platform;
+#[cfg(target_os = "linux")]
+pub use linux::list_audio_applications;
 
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{list_audio_applications, load_app_icons, pid_for_exe};
+use windows as platform;
+#[cfg(target_os = "windows")]
+pub use windows::{list_audio_applications, pid_for_exe};
+
+fn icon_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static C: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Centralized cross-platform application icon loader with deduplicated memory caching.
+pub fn load_app_icons(bundle_ids: Vec<String>) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    let mut to_fetch = Vec::new();
+
+    {
+        let cache = icon_cache().lock().unwrap();
+        for id in &bundle_ids {
+            if let Some(cached) = cache.get(id) {
+                if let Some(icon) = cached {
+                    result.insert(id.clone(), icon.clone());
+                }
+            } else {
+                to_fetch.push(id.clone());
+            }
+        }
+    }
+
+    if to_fetch.is_empty() {
+        return result;
+    }
+
+    let fetched = platform::fetch_app_icons(&to_fetch);
+    {
+        let mut cache = icon_cache().lock().unwrap();
+        for (id, icon_opt) in fetched {
+            if let Some(ref icon) = icon_opt {
+                result.insert(id.clone(), icon.clone());
+            }
+            cache.insert(id, icon_opt);
+        }
+    }
+
+    result
+}
 
 #[cfg(test)]
 mod tests {

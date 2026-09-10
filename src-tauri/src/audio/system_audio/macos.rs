@@ -13,10 +13,6 @@ fn bundle_path_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn icon_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
-    static C: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
     let workspace = NSWorkspace::sharedWorkspace();
@@ -47,41 +43,15 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
     Ok(out)
 }
 
-pub fn load_app_icons(bundle_ids: Vec<String>) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-    let mut to_load: Vec<(String, PathBuf)> = Vec::new();
-
-    {
-        let paths = bundle_path_cache().lock().unwrap();
-        let icons = icon_cache().lock().unwrap();
-        for id in &bundle_ids {
-            if let Some(cached) = icons.get(id) {
-                if let Some(icon) = cached {
-                    result.insert(id.clone(), icon.clone());
-                }
-                continue;
-            }
-            if let Some(path) = paths.get(id) {
-                to_load.push((id.clone(), path.clone()));
-            }
-        }
-    }
-
-    let loaded: Vec<(String, Option<String>)> = to_load
+pub(super) fn fetch_app_icons(bundle_ids: &[String]) -> Vec<(String, Option<String>)> {
+    let paths = bundle_path_cache().lock().unwrap();
+    bundle_ids
         .iter()
-        .map(|(id, path)| (id.clone(), icon_from_bundle(path)))
-        .collect();
-
-    {
-        let mut icons = icon_cache().lock().unwrap();
-        for (id, icon) in loaded {
-            if let Some(ref png) = icon {
-                result.insert(id.clone(), png.clone());
-            }
-            icons.insert(id, icon);
-        }
-    }
-    result
+        .map(|id| {
+            let icon = paths.get(id).and_then(|path| icon_from_bundle(path));
+            (id.clone(), icon)
+        })
+        .collect()
 }
 
 fn bundle_path(app: &NSRunningApplication) -> Option<PathBuf> {

@@ -19,6 +19,8 @@ use crate::error::{AppError, AppResult};
 use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(super) mod cpal_input;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

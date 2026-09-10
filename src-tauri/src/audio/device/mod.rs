@@ -22,6 +22,22 @@ pub struct NativeDeviceInfo {
     pub sample_format: &'static str,
 }
 
+pub(crate) fn unique_named<I>(names: I, kind: DeviceKind) -> Vec<DeviceInfo>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut seen = std::collections::HashSet::new();
+    names
+        .into_iter()
+        .filter(|n| seen.insert(n.clone()))
+        .map(|name| DeviceInfo {
+            id: name.clone(),
+            name,
+            kind,
+        })
+        .collect()
+}
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

@@ -22,10 +22,13 @@ pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
         .map_err(|_| AppError::Host("pipewire enumeration thread panicked".into()))?
 }
 
-pub fn load_app_icons(bundle_ids: Vec<String>) -> HashMap<String, String> {
+pub(super) fn fetch_app_icons(bundle_ids: &[String]) -> Vec<(String, Option<String>)> {
     bundle_ids
-        .into_iter()
-        .filter_map(|binary| Some((binary.clone(), STANDARD.encode(resolve_icon(&binary)?))))
+        .iter()
+        .map(|binary| {
+            let icon = resolve_icon(binary).map(|bytes| STANDARD.encode(&bytes));
+            (binary.clone(), icon)
+        })
         .collect()
 }
 

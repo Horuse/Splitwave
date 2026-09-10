@@ -1,9 +1,9 @@
-mod audio;
+pub mod audio;
 mod commands;
-mod error;
-mod logs;
+pub mod error;
+pub mod logs;
 mod native_crash;
-mod state;
+pub mod state;
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

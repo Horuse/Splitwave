@@ -3,74 +3,27 @@ use std::sync::Arc;
 
 use crate::audio::graph::EqData;
 
-use super::biquad::{biquad_for, BandShape, Biquad};
-use super::util::{db_to_linear, load_f32};
+use super::biquad::{biquad_peaking, Biquad};
+use super::util::load_f32;
 use super::{Effect, EffectControl};
 
-/// Linkwitz-Riley 4th-order crossover points: geometric means between adjacent
-/// band centres. LR4 = two cascaded 2nd-order Butterworth biquads; sum of
-/// matched LPF/HPF at the same fc is allpass, so all 10 bands sum back to a
-/// magnitude-flat output when their gains are unity.
-const EQ_CROSSOVER_FREQS: [f32; 9] = [
-    45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085,
+/// Center frequencies for the 10 ISO 1-octave bands.
+pub const EQ_FREQUENCIES_HZ: [f32; 10] = [
+    32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
 ];
 
-const BUTTER_Q: f32 = std::f32::consts::FRAC_1_SQRT_2; // 1/√2 ≈ 0.7071
+/// Q factor for 1-octave bandwidth (BW = 1 octave -> Q = 1 / (2 * sinh(ln(2)/2)) ≈ 1.4142).
+pub const EQ_Q: f32 = 1.4142135;
 
-/// Cascaded pair of Butterworth biquads — a 4th-order Linkwitz-Riley section.
-#[derive(Clone, Copy, Default)]
-struct Lr4 {
-    a: Biquad,
-    b: Biquad,
-}
-
-impl Lr4 {
-    fn new(shape: BandShape, freq_hz: f32, sample_rate: u32) -> Self {
-        let c = biquad_for(shape, freq_hz, BUTTER_Q, sample_rate);
-        Lr4 { a: c, b: c }
-    }
-    #[inline]
-    fn process(&mut self, x: f32) -> f32 {
-        self.b.process(self.a.process(x))
-    }
-}
-
-/// Per-channel filter chain. The input cascades through 9 crossover splits:
-/// each split peels off one band's slice via LPF and forwards the HPF residual
-/// to the next stage. Band gains scale these slices and we sum.
-struct ChannelChain {
-    lpfs: [Lr4; 9],
-    hpfs: [Lr4; 9],
-}
-
-impl ChannelChain {
-    fn new(sample_rate: u32) -> Self {
-        Self {
-            lpfs: std::array::from_fn(|i| {
-                Lr4::new(BandShape::Lpf, EQ_CROSSOVER_FREQS[i], sample_rate)
-            }),
-            hpfs: std::array::from_fn(|i| {
-                Lr4::new(BandShape::Hpf, EQ_CROSSOVER_FREQS[i], sample_rate)
-            }),
-        }
-    }
-
-    #[inline]
-    fn process(&mut self, x: f32, gains_linear: &[f32; 10]) -> f32 {
-        let mut residual = x;
-        let mut sum = 0.0;
-        for i in 0..9 {
-            let band = self.lpfs[i].process(residual);
-            residual = self.hpfs[i].process(residual);
-            sum += band * gains_linear[i];
-        }
-        sum + residual * gains_linear[9]
-    }
-}
-
+/// 10-band graphic equalizer using cascaded second-order peaking biquads.
+/// Cascading peaking filters guarantees exact phase coherence and magnitude flatness
+/// (identity pass-through at 0 dB gain across all bands) without the destructive
+/// inter-band phase cancellations of crossover ladders.
 pub struct EqEffect {
-    channels: [ChannelChain; 2],
+    filters: [[Biquad; 10]; 2],
+    last_gains_db: [f32; 10],
     gains: [Arc<AtomicU32>; 10],
+    sample_rate: u32,
 }
 
 impl EqEffect {
@@ -80,37 +33,57 @@ impl EqEffect {
         let control = EffectControl::Eq {
             gains: gains.clone(),
         };
-        (
-            Self {
-                channels: [
-                    ChannelChain::new(sample_rate),
-                    ChannelChain::new(sample_rate),
-                ],
-                gains,
-            },
-            control,
-        )
+        let mut effect = Self {
+            filters: [[Biquad::identity(); 10]; 2],
+            last_gains_db: [0.0; 10],
+            gains,
+            sample_rate,
+        };
+        effect.update_coefficients(d.gains_db);
+        (effect, control)
     }
 
     pub fn from_state(gains: [Arc<AtomicU32>; 10], sample_rate: u32) -> Self {
-        Self {
-            channels: [
-                ChannelChain::new(sample_rate),
-                ChannelChain::new(sample_rate),
-            ],
+        let initial_gains = std::array::from_fn(|i| load_f32(&gains[i]));
+        let mut effect = Self {
+            filters: [[Biquad::identity(); 10]; 2],
+            last_gains_db: [0.0; 10],
             gains,
+            sample_rate,
+        };
+        effect.update_coefficients(initial_gains);
+        effect
+    }
+
+    #[inline]
+    fn update_coefficients(&mut self, gains_db: [f32; 10]) {
+        for i in 0..10 {
+            let gain = gains_db[i];
+            if (gain - self.last_gains_db[i]).abs() > 1e-4 {
+                let coeff = biquad_peaking(EQ_FREQUENCIES_HZ[i], EQ_Q, gain, self.sample_rate);
+                self.filters[0][i].retune(coeff);
+                self.filters[1][i].retune(coeff);
+                self.last_gains_db[i] = gain;
+            }
         }
     }
 }
 
 impl Effect for EqEffect {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let gains_linear: [f32; 10] =
-            std::array::from_fn(|i| db_to_linear(load_f32(&self.gains[i])));
+        let current_gains = std::array::from_fn(|i| load_f32(&self.gains[i]));
+        self.update_coefficients(current_gains);
+
         let stereo = &mut samples[..frames * 2];
         for frame in stereo.chunks_exact_mut(2) {
-            frame[0] = self.channels[0].process(frame[0], &gains_linear);
-            frame[1] = self.channels[1].process(frame[1], &gains_linear);
+            let mut l = frame[0];
+            let mut r = frame[1];
+            for i in 0..10 {
+                l = self.filters[0][i].process(l);
+                r = self.filters[1][i].process(r);
+            }
+            frame[0] = l;
+            frame[1] = r;
         }
     }
 }

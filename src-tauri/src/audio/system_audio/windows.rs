@@ -30,11 +30,6 @@ fn path_cache() -> &'static Mutex<HashMap<String, String>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn icon_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
-    static C: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn ensure_com() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -109,33 +104,15 @@ pub fn pid_for_exe(target: &str) -> Option<u32> {
     }
 }
 
-pub fn load_app_icons(bundle_ids: Vec<String>) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-    let mut to_load: Vec<(String, String)> = Vec::new();
-    {
-        let paths = path_cache().lock().unwrap();
-        let icons = icon_cache().lock().unwrap();
-        for id in &bundle_ids {
-            if let Some(cached) = icons.get(id) {
-                if let Some(png) = cached {
-                    result.insert(id.clone(), png.clone());
-                }
-                continue;
-            }
-            if let Some(path) = paths.get(id) {
-                to_load.push((id.clone(), path.clone()));
-            }
-        }
-    }
-
-    for (id, path) in to_load {
-        let icon = unsafe { icon_png_base64(&path) };
-        if let Some(ref png) = icon {
-            result.insert(id.clone(), png.clone());
-        }
-        icon_cache().lock().unwrap().insert(id, icon);
-    }
-    result
+pub(super) fn fetch_app_icons(bundle_ids: &[String]) -> Vec<(String, Option<String>)> {
+    let paths = path_cache().lock().unwrap();
+    bundle_ids
+        .iter()
+        .map(|id| {
+            let icon = paths.get(id).and_then(|p| unsafe { icon_png_base64(p) });
+            (id.clone(), icon)
+        })
+        .collect()
 }
 
 unsafe fn process_exe_path(pid: u32) -> Option<String> {

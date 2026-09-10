@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::error::{AppError, AppResult};
@@ -25,7 +23,10 @@ pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     let devices = host
         .input_devices()
         .map_err(|e| AppError::Host(e.to_string()))?;
-    Ok(unique_named(devices, DeviceKind::Input))
+    Ok(super::unique_named(
+        devices.filter_map(|d| d.name().ok()),
+        DeviceKind::Input,
+    ))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
@@ -33,7 +34,10 @@ pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     let devices = host
         .output_devices()
         .map_err(|e| AppError::Host(e.to_string()))?;
-    Ok(unique_named(devices, DeviceKind::Output))
+    Ok(super::unique_named(
+        devices.filter_map(|d| d.name().ok()),
+        DeviceKind::Output,
+    ))
 }
 
 pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
@@ -46,17 +50,4 @@ pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     devices
         .find(|d| d.name().map(|n| n == id).unwrap_or(false))
         .ok_or_else(|| AppError::Device(format!("device not found: {id}")))
-}
-
-fn unique_named(devices: impl Iterator<Item = cpal::Device>, kind: DeviceKind) -> Vec<DeviceInfo> {
-    let mut seen = HashSet::new();
-    devices
-        .filter_map(|d| d.name().ok())
-        .filter(|n| seen.insert(n.clone()))
-        .map(|name| DeviceInfo {
-            id: name.clone(),
-            name,
-            kind,
-        })
-        .collect()
 }

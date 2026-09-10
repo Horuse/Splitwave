@@ -79,9 +79,10 @@ underscore-prefixed (`_slider.svelte`).
 
 ## Frontend
 
+Detailed UI conventions and Svelte 5 runes architecture are documented in [UI.md](UI.md).
+
 - Svelte 5 runes only. No `export let`, no stores in component scope.
-- xyflow nodes wrap with `Wrapper` from `flow/ui/node.svelte`
-  (`accent`, `hasInput`, `hasOutput`).
+- xyflow nodes wrap with `Wrapper` from `flow/ui/node.svelte` (`accent`, `hasInput`, `hasOutput`).
 - Interactive elements inside nodes: `nodrag nopan` (+ `nowheel` if scrollable).
 - Numeric readouts: `font-mono tabular-nums`.
 - IDs: `@paralleldrive/cuid2`. Not nanoid, not uuid.

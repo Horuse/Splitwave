@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::audio::macos_hal;
@@ -25,36 +23,17 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
 }
 
 pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
-    Ok(unique_named(
-        macos_hal::list_input_devices()
-            .into_iter()
-            .map(|d| d.name)
-            .collect(),
+    Ok(super::unique_named(
+        macos_hal::list_input_devices().into_iter().map(|d| d.name),
         DeviceKind::Input,
     ))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
-    Ok(unique_named(
-        macos_hal::list_output_devices()
-            .into_iter()
-            .map(|d| d.name)
-            .collect(),
+    Ok(super::unique_named(
+        macos_hal::list_output_devices().into_iter().map(|d| d.name),
         DeviceKind::Output,
     ))
-}
-
-fn unique_named(names: Vec<String>, kind: DeviceKind) -> Vec<DeviceInfo> {
-    let mut seen = HashSet::new();
-    names
-        .into_iter()
-        .filter(|n| seen.insert(n.clone()))
-        .map(|name| DeviceInfo {
-            id: name.clone(),
-            name,
-            kind,
-        })
-        .collect()
 }
 
 // `host.devices()` returns is_default=false -> cpal uses HalOutput bound to a

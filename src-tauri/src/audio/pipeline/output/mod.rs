@@ -20,6 +20,8 @@ use crate::error::{AppError, AppResult};
 use super::dag::{ring_capacity_frames, OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl};
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod cpal_speaker;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

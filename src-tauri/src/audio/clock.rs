@@ -110,6 +110,9 @@ pub struct DeviceFillClock {
     /// The ring has reached its target at least once. Until then the empty
     /// ring is the startup prefill, not a worker that fell behind.
     primed: bool,
+    /// Prevents a sink that drains immediately (for example a PipeWire null
+    /// sink) from turning the real-time worker into an unbounded busy loop.
+    wall_clock: SystemClockTicker,
 }
 
 impl DeviceFillClock {
@@ -127,6 +130,7 @@ impl DeviceFillClock {
             level,
             target,
             primed: false,
+            wall_clock: SystemClockTicker::new(pipeline_sample_rate, engine_block_frames),
         }
     }
 }
@@ -149,7 +153,7 @@ impl ClockSource for DeviceFillClock {
                 if self.primed && queued < block_frames {
                     health::bump(&health::CLOCK_LATE_BLOCKS, 1);
                 }
-                return true;
+                return self.wall_clock.wait_for_tick(stop);
             }
             self.primed = true;
             let overshoot = queued + block_frames - target_frames;

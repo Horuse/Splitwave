@@ -401,7 +401,7 @@ pub(super) fn spawn_speaker_worker(
     let join = thread::Builder::new()
         .name(format!("speaker:{initial_device_rate}"))
         .spawn(move || {
-            let _rt = RtThread::promote("speaker", initial_device_rate);
+            let _rt = RtThread::promote("speaker", pipeline_rate);
             worker.run(stop_thread, clock, |block| {
                 update_meter(&meter, block, channels);
                 let device_block = if let Some(resampler) = &mut resampler {

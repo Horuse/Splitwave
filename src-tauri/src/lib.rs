@@ -26,37 +26,6 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 static CRASH_FILE: OnceLock<PathBuf> = OnceLock::new();
 static SESSION_FILE: OnceLock<PathBuf> = OnceLock::new();
 
-/// WebKitGTK's accelerated renderer requires an accessible DRM render node.
-/// In VMs and containers without one it can still enter the Mesa/EGL path and
-/// abort inside libgallium. Select WebKit's supported CPU renderer before any
-/// web process is spawned. An explicit user setting always wins.
-#[cfg(target_os = "linux")]
-fn configure_linux_webview_renderer() -> bool {
-    if std::env::var_os("WEBKIT_SKIA_ENABLE_CPU_RENDERING").is_some() {
-        return false;
-    }
-
-    let has_render_node = std::fs::read_dir("/dev/dri")
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
-        .any(|entry| {
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(entry.path())
-                .is_ok()
-        });
-    if has_render_node {
-        return false;
-    }
-
-    std::env::set_var("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1");
-    true
-}
-
 fn append_report(path: &std::path::Path, payload: &serde_json::Value) {
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
@@ -257,9 +226,6 @@ pub fn reinstall_panic_hook() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "linux")]
-    let webview_cpu_renderer = configure_linux_webview_renderer();
-
     install_panic_hook();
     audio::plugins::main_thread::register_main_thread();
 
@@ -275,11 +241,6 @@ pub fn run() {
         .with(logs::RingLayer)
         .try_init()
         .ok();
-
-    #[cfg(target_os = "linux")]
-    if webview_cpu_renderer {
-        tracing::warn!("no DRM render node is available; using the WebKitGTK CPU renderer");
-    }
 
     tauri::Builder::default()
         .setup(|app| {

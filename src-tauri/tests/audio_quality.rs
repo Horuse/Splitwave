@@ -25,7 +25,10 @@ use splitwave_lib::audio::resample::MultiResampler;
 /// introducing zero sample drift, zero noise, and bit-exact preservation.
 #[test]
 fn test_gain_unity_is_bit_exact() {
-    let (mut gain, _ctrl) = GainEffect::new(GainData { gain_db: 0.0, bypassed: false });
+    let (mut gain, _ctrl) = GainEffect::new(GainData {
+        gain_db: 0.0,
+        bypassed: false,
+    });
 
     let sample_rate = 48_000;
     let original = generators::sine_stereo(440.0, 880.0, sample_rate, 0.5, 0.7);
@@ -51,7 +54,10 @@ fn test_gain_db_scaling_linearity() {
     let in_rms = metrics::rms(&original);
 
     // Test +6.02 dB boost (double amplitude)
-    let (mut boost, _ctrl) = GainEffect::new(GainData { gain_db: 6.0206, bypassed: false });
+    let (mut boost, _ctrl) = GainEffect::new(GainData {
+        gain_db: 6.0206,
+        bypassed: false,
+    });
     let mut boosted = original.clone();
     let frames = boosted.len() / 2;
     boost.process(&mut boosted, frames);
@@ -64,7 +70,10 @@ fn test_gain_db_scaling_linearity() {
     );
 
     // Test -6.02 dB cut (half amplitude)
-    let (mut cut, _ctrl) = GainEffect::new(GainData { gain_db: -6.0206, bypassed: false });
+    let (mut cut, _ctrl) = GainEffect::new(GainData {
+        gain_db: -6.0206,
+        bypassed: false,
+    });
     let mut cut_sig = original.clone();
     let frames = cut_sig.len() / 2;
     cut.process(&mut cut_sig, frames);
@@ -93,10 +102,25 @@ fn test_channel_balance_hard_panning() {
     balance.process(&mut signal, frames);
 
     let left_rms = metrics::rms(&signal.iter().step_by(2).copied().collect::<Vec<_>>());
-    let right_rms = metrics::rms(&signal.iter().skip(1).step_by(2).copied().collect::<Vec<_>>());
+    let right_rms = metrics::rms(
+        &signal
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .copied()
+            .collect::<Vec<_>>(),
+    );
 
-    assert!(left_rms > 0.3, "Left channel was attenuated unexpectedly: {}", left_rms);
-    assert!(right_rms < 1e-4, "Right channel was not muted by balance: {}", right_rms);
+    assert!(
+        left_rms > 0.3,
+        "Left channel was attenuated unexpectedly: {}",
+        left_rms
+    );
+    assert!(
+        right_rms < 1e-4,
+        "Right channel was not muted by balance: {}",
+        right_rms
+    );
 }
 
 /// Verifies mute toggling: when muted, output is completely silenced (all zeros),
@@ -104,36 +128,46 @@ fn test_channel_balance_hard_panning() {
 #[test]
 fn test_mute_behavior_and_restoration() {
     let sample_rate = 48_000;
-    let (mut mute, _ctrl) = MuteEffect::new(MuteData { muted: true, bypassed: false });
+    let (mut mute, _ctrl) = MuteEffect::new(MuteData {
+        muted: true,
+        bypassed: false,
+    });
 
     let mut signal = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.2, 0.5);
     let frames = signal.len() / 2;
     mute.process(&mut signal, frames);
 
     let muted_peak = metrics::peak(&signal);
-    assert_eq!(muted_peak, 0.0, "Muted node did not output complete silence");
+    assert_eq!(
+        muted_peak, 0.0,
+        "Muted node did not output complete silence"
+    );
 }
 
 /// Verifies that the saturator introduces smooth soft-clipping on hot signals,
 /// rounding peaks gracefully without generating NaN or infinite floats.
 #[test]
 fn test_saturator_soft_clipping_and_harmonics() {
-    let (mut saturator, _ctrl) = SaturatorEffect::new(
-        SaturatorData {
-            threshold_db: -6.0,
-            drive_db: 12.0,
-            bypassed: false,
-        },
-    );
+    let (mut saturator, _ctrl) = SaturatorEffect::new(SaturatorData {
+        threshold_db: -6.0,
+        drive_db: 12.0,
+        bypassed: false,
+    });
 
     let sample_rate = 48_000;
     let mut hot_signal = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.3, 1.5);
     let frames = hot_signal.len() / 2;
     saturator.process(&mut hot_signal, frames);
 
-    assert!(hot_signal.iter().all(|s| s.is_finite()), "Saturator generated NaN or non-finite values");
+    assert!(
+        hot_signal.iter().all(|s| s.is_finite()),
+        "Saturator generated NaN or non-finite values"
+    );
     let peak = metrics::peak(&hot_signal);
-    assert!(peak < 1.6, "Saturator allowed uncontrolled signal expansion");
+    assert!(
+        peak < 1.6,
+        "Saturator allowed uncontrolled signal expansion"
+    );
 }
 
 /// Verifies that the brickwall limiter strictly clamps peaks at the defined ceiling,
@@ -166,8 +200,15 @@ fn test_limiter_brickwall_ceiling_guarantee() {
         ceiling_linear
     );
 
-    assert!(peak > 0.5, "Limiter output collapsed to silence: peak = {}", peak);
-    assert!(signal.iter().all(|s| s.is_finite()), "Limiter generated non-finite floats");
+    assert!(
+        peak > 0.5,
+        "Limiter output collapsed to silence: peak = {}",
+        peak
+    );
+    assert!(
+        signal.iter().all(|s| s.is_finite()),
+        "Limiter generated non-finite floats"
+    );
 }
 
 /// Verifies compressor dynamics: quiet signals below threshold pass uncompressed,
@@ -354,7 +395,9 @@ fn test_declick_impulse_spike_removal() {
     declick.process(&mut signal, frames);
 
     // Declick introduces a known latency lookahead; the repaired samples should not peak at 1.0
-    let max_peak = signal[4000..4500].iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
+    let max_peak = signal[4000..4500]
+        .iter()
+        .fold(0.0f32, |acc, &s| acc.max(s.abs()));
     assert!(
         max_peak < 0.6,
         "Declick failed to attenuate extreme transient click spike: peak = {}",
@@ -412,10 +455,16 @@ fn test_deesser_high_frequency_sibilance_reduction() {
 fn test_eq_frequency_band_isolation() {
     let sample_rate = 48_000;
     let mut gains = [0.0f32; 10];
-    gains[5] = 12.0;  // 1000 Hz boost (+12 dB)
+    gains[5] = 12.0; // 1000 Hz boost (+12 dB)
     gains[2] = -12.0; // 125 Hz cut (-12 dB)
 
-    let (mut eq, _ctrl) = EqEffect::new(EqData { gains_db: gains, bypassed: false }, sample_rate);
+    let (mut eq, _ctrl) = EqEffect::new(
+        EqData {
+            gains_db: gains,
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
     let tone_1k = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.3, 0.2);
     let mut out_1k = tone_1k.clone();
@@ -442,6 +491,53 @@ fn test_eq_frequency_band_isolation() {
         rms_in_125,
         rms_out_125
     );
+}
+
+/// Tests that when all 10 bands are set to 0 dB, the graphic equalizer guarantees an exactly flat
+/// magnitude response (within ±0.05 dB) and zero phase cancellation across the entire spectrum.
+#[test]
+fn test_eq_flat_response_at_zero_db() {
+    let sample_rate = 48_000;
+    let gains = [0.0f32; 10];
+    let (mut eq, _ctrl) = EqEffect::new(
+        EqData {
+            gains_db: gains,
+            bypassed: false,
+        },
+        sample_rate,
+    );
+
+    let test_freqs = [
+        32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+    ];
+    for &freq in &test_freqs {
+        let signal = generators::sine_stereo(freq, freq, sample_rate, 0.5, 0.1);
+        let mut processed = signal.clone();
+        let frames = processed.len() / 2;
+        eq.process(&mut processed, frames);
+
+        let steady_range = (sample_rate as usize / 20)..frames * 2;
+        let in_rms = metrics::rms(&signal[steady_range.clone()]);
+        let out_rms = metrics::rms(&processed[steady_range.clone()]);
+
+        let diff_db = 20.0 * (out_rms / in_rms).log10().abs();
+        assert!(
+            diff_db < 0.05,
+            "EQ with 0 dB gains altered magnitude at {} Hz by {} dB (expected < 0.05 dB)",
+            freq,
+            diff_db
+        );
+
+        for i in steady_range {
+            let sample_diff = (signal[i] - processed[i]).abs();
+            assert!(
+                sample_diff < 1e-4,
+                "EQ introduced phase delay or sample divergence at {} Hz: diff = {}",
+                freq,
+                sample_diff
+            );
+        }
+    }
 }
 
 /// Verifies delay buffer timing and feedback decay: delayed repeats appear after the delay interval
@@ -494,7 +590,9 @@ fn test_multiresampler_downsampling_fidelity() {
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
         chunk_out.clear();
-        resampler.process_chunk(chunk, &mut chunk_out).expect("resample chunk");
+        resampler
+            .process_chunk(chunk, &mut chunk_out)
+            .expect("resample chunk");
         output.extend_from_slice(&chunk_out);
         offset += chunk_size * channels;
     }
@@ -542,7 +640,9 @@ fn test_multiresampler_upsampling_fidelity() {
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
         chunk_out.clear();
-        resampler.process_chunk(chunk, &mut chunk_out).expect("resample chunk");
+        resampler
+            .process_chunk(chunk, &mut chunk_out)
+            .expect("resample chunk");
         output.extend_from_slice(&chunk_out);
         offset += chunk_size * channels;
     }
@@ -578,7 +678,9 @@ fn test_multiresampler_double_rate() {
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
         chunk_out.clear();
-        resampler.process_chunk(chunk, &mut chunk_out).expect("resample chunk");
+        resampler
+            .process_chunk(chunk, &mut chunk_out)
+            .expect("resample chunk");
         output.extend_from_slice(&chunk_out);
         offset += chunk_size * channels;
     }
@@ -598,19 +700,35 @@ fn test_multiresampler_double_rate() {
 #[test]
 fn test_dc_offset_rejection_and_signal_integrity() {
     let sample_rate = 48_000;
-    let (mut eq, _ctrl) = EqEffect::new(EqData { gains_db: [0.0; 10], bypassed: false }, sample_rate);
+    let (mut eq, _ctrl) = EqEffect::new(
+        EqData {
+            gains_db: [0.0; 10],
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
     let signal = generators::sine_stereo(100.0, 100.0, sample_rate, 0.5, 0.5);
     let mut processed = signal.clone();
     let frames = processed.len() / 2;
     eq.process(&mut processed, frames);
 
-    // Evaluate DC offset after the initial filter impulse settling transient (< -66 dBFS tolerance)
-    let dc = metrics::dc_offset(&processed[2048..]);
+    // Evaluate DC offset over complete wave cycles after initial filter settling transient (< -80 dBFS tolerance)
+    let period_samples = (sample_rate / 100) as usize * 2; // stereo samples per 100 Hz cycle
+    let start = 4 * period_samples; // 3840 samples (4 cycles settling)
+    let end = (processed.len() / period_samples) * period_samples; // integer number of cycles
+    let in_dc = metrics::dc_offset(&signal[start..end]);
+    let out_dc = metrics::dc_offset(&processed[start..end]);
     assert!(
-        dc.abs() < 5e-4,
+        out_dc.abs() < 1e-4,
         "Processing introduced non-zero DC offset in steady state: {}",
-        dc
+        out_dc
+    );
+    assert!(
+        (out_dc - in_dc).abs() < 1e-5,
+        "Processing drifted DC offset relative to input: in = {}, out = {}",
+        in_dc,
+        out_dc
     );
 }
 
@@ -620,7 +738,12 @@ fn test_dc_offset_rejection_and_signal_integrity() {
 fn test_limiter_recovery_after_overload() {
     let sample_rate = 48_000;
     let (mut limiter, _ctrl, _meter) = LimiterEffect::new(
-        LimiterData { ceiling_db: -1.0, release_ms: 20.0, lookahead_ms: 5.0, bypassed: false },
+        LimiterData {
+            ceiling_db: -1.0,
+            release_ms: 20.0,
+            lookahead_ms: 5.0,
+            bypassed: false,
+        },
         sample_rate,
     );
 
@@ -682,7 +805,13 @@ fn test_saturator_tanh_symmetry() {
 #[test]
 fn test_eq_runtime_gain_control_update() {
     let sample_rate = 48_000;
-    let (mut eq, ctrl) = EqEffect::new(EqData { gains_db: [0.0; 10], bypassed: false }, sample_rate);
+    let (mut eq, ctrl) = EqEffect::new(
+        EqData {
+            gains_db: [0.0; 10],
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
     let mut signal = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.4, 0.2);
     let half_frames = (signal.len() / 4) & !1;
@@ -845,7 +974,8 @@ fn test_multiresampler_stereo_phase_coherence() {
     let out_rate = 48_000;
     let channels = 2;
     let chunk_size = 1024;
-    let mut resampler = MultiResampler::new(in_rate, out_rate, channels, chunk_size).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(in_rate, out_rate, channels, chunk_size).expect("resampler");
 
     // Identical in-phase mono tone sent to both left and right channels
     let input = generators::sine_stereo(1000.0, 1000.0, in_rate, 0.2, 0.8);
@@ -855,7 +985,9 @@ fn test_multiresampler_stereo_phase_coherence() {
     let mut offset = 0;
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut chunk_out).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut chunk_out)
+            .expect("resample");
         output.extend_from_slice(&chunk_out);
         offset += chunk_size * channels;
     }
@@ -903,7 +1035,10 @@ fn test_channel_balance_center_is_unity() {
 /// Verifies that enabling mute instantly zeroes all audio samples without leaving trailing buffer artifacts.
 #[test]
 fn test_mute_immediate_silencing() {
-    let (mut mute, _ctrl) = MuteEffect::new(MuteData { muted: true, bypassed: false });
+    let (mut mute, _ctrl) = MuteEffect::new(MuteData {
+        muted: true,
+        bypassed: false,
+    });
 
     let sample_rate = 48_000;
     let mut signal = generators::sine_stereo(440.0, 880.0, sample_rate, 0.05, 0.9);
@@ -912,7 +1047,10 @@ fn test_mute_immediate_silencing() {
     mute.process(&mut signal, frames);
 
     let peak = metrics::peak(&signal);
-    assert_eq!(peak, 0.0, "Mute must produce absolute digital silence (0.0)");
+    assert_eq!(
+        peak, 0.0,
+        "Mute must produce absolute digital silence (0.0)"
+    );
 }
 
 /// Verifies that the declicker leaves clean non-click audio untouched with minimal distortion.
@@ -946,5 +1084,3 @@ fn test_declick_preserves_clean_music() {
         diff_db
     );
 }
-
-

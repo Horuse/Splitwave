@@ -25,7 +25,13 @@ use splitwave_lib::audio::resample::MultiResampler;
 #[test]
 fn test_bypass_is_bit_exact() {
     let sample_rate = 48_000;
-    let (mut eq, _ctrl) = EqEffect::new(EqData { gains_db: [6.0; 10], bypassed: true }, sample_rate);
+    let (mut eq, _ctrl) = EqEffect::new(
+        EqData {
+            gains_db: [6.0; 10],
+            bypassed: true,
+        },
+        sample_rate,
+    );
 
     let original = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.1, 0.5);
     let mut processed = original.clone();
@@ -49,10 +55,19 @@ fn test_bypass_is_bit_exact() {
 #[test]
 fn test_runtime_parameter_update() {
     let sample_rate = 48_000;
-    let (mut gain, ctrl) = GainEffect::new(GainData { gain_db: 0.0, bypassed: false });
+    let (mut gain, ctrl) = GainEffect::new(GainData {
+        gain_db: 0.0,
+        bypassed: false,
+    });
     let frames = 256;
 
-    let mut block = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.2);
+    let mut block = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.2,
+    );
 
     // Initial processing at 0 dB
     gain.process(&mut block, frames);
@@ -64,7 +79,13 @@ fn test_runtime_parameter_update() {
     gain.process(&mut block, frames);
 
     // Steady state block at new gain
-    let mut steady_block = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.2);
+    let mut steady_block = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.2,
+    );
     gain.process(&mut steady_block, frames);
     let updated_rms = metrics::rms(&steady_block);
 
@@ -81,17 +102,29 @@ fn test_runtime_parameter_update() {
 fn test_chunk_size_independence() {
     let sample_rate = 48_000;
     let total_frames = 1024;
-    let input = generators::sine_stereo(440.0, 880.0, sample_rate, total_frames as f32 / sample_rate as f32, 0.4);
+    let input = generators::sine_stereo(
+        440.0,
+        880.0,
+        sample_rate,
+        total_frames as f32 / sample_rate as f32,
+        0.4,
+    );
 
     // Stream A: Processed in 16 small chunks of 64 frames
-    let (mut gain_a, _ctrl_a) = GainEffect::new(GainData { gain_db: 3.0, bypassed: false });
+    let (mut gain_a, _ctrl_a) = GainEffect::new(GainData {
+        gain_db: 3.0,
+        bypassed: false,
+    });
     let mut stream_a = input.clone();
     for chunk in stream_a.chunks_exact_mut(64 * 2) {
         gain_a.process(chunk, 64);
     }
 
     // Stream B: Processed in 2 large chunks of 512 frames
-    let (mut gain_b, _ctrl_b) = GainEffect::new(GainData { gain_db: 3.0, bypassed: false });
+    let (mut gain_b, _ctrl_b) = GainEffect::new(GainData {
+        gain_db: 3.0,
+        bypassed: false,
+    });
     let mut stream_b = input.clone();
     for chunk in stream_b.chunks_exact_mut(512 * 2) {
         gain_b.process(chunk, 512);
@@ -110,15 +143,29 @@ fn test_chunk_size_independence() {
 fn test_multiple_process_calls_match_single_process_call() {
     let sample_rate = 48_000;
     let total_frames = 512;
-    let input = generators::sine_stereo(1000.0, 1000.0, sample_rate, total_frames as f32 / sample_rate as f32, 0.5);
+    let input = generators::sine_stereo(
+        1000.0,
+        1000.0,
+        sample_rate,
+        total_frames as f32 / sample_rate as f32,
+        0.5,
+    );
 
     // Single call of 512 frames
-    let (mut sat_single, _ctrl1) = SaturatorEffect::new(SaturatorData { drive_db: 6.0, threshold_db: -3.0, bypassed: false });
+    let (mut sat_single, _ctrl1) = SaturatorEffect::new(SaturatorData {
+        drive_db: 6.0,
+        threshold_db: -3.0,
+        bypassed: false,
+    });
     let mut out_single = input.clone();
     sat_single.process(&mut out_single, total_frames);
 
     // Two calls of 256 frames
-    let (mut sat_multi, _ctrl2) = SaturatorEffect::new(SaturatorData { drive_db: 6.0, threshold_db: -3.0, bypassed: false });
+    let (mut sat_multi, _ctrl2) = SaturatorEffect::new(SaturatorData {
+        drive_db: 6.0,
+        threshold_db: -3.0,
+        bypassed: false,
+    });
     let mut out_multi = input.clone();
     sat_multi.process(&mut out_multi[..256 * 2], 256);
     sat_multi.process(&mut out_multi[256 * 2..], 256);
@@ -138,17 +185,44 @@ fn test_stereo_channels_do_not_crosstalk() {
     let frames = 512;
 
     // Signal on Left channel ONLY, Right channel is digital silence (0.0)
-    let left_only = generators::sine_stereo(440.0, 0.0, sample_rate, frames as f32 / sample_rate as f32, 0.8);
+    let left_only = generators::sine_stereo(
+        440.0,
+        0.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.8,
+    );
     let mut audio = left_only.clone();
     for frame in audio.chunks_exact_mut(2) {
         frame[1] = 0.0;
     }
 
     // Process through Gain, Saturator, EQ, Limiter
-    let (mut gain, _g_c) = GainEffect::new(GainData { gain_db: 3.0, bypassed: false });
-    let (mut sat, _s_c) = SaturatorEffect::new(SaturatorData { drive_db: 6.0, threshold_db: -2.0, bypassed: false });
-    let (mut eq, _e_c) = EqEffect::new(EqData { gains_db: [2.0; 10], bypassed: false }, sample_rate);
-    let (mut limiter, _l_c, _l_m) = LimiterEffect::new(LimiterData { ceiling_db: -1.0, release_ms: 20.0, lookahead_ms: 5.0, bypassed: false }, sample_rate);
+    let (mut gain, _g_c) = GainEffect::new(GainData {
+        gain_db: 3.0,
+        bypassed: false,
+    });
+    let (mut sat, _s_c) = SaturatorEffect::new(SaturatorData {
+        drive_db: 6.0,
+        threshold_db: -2.0,
+        bypassed: false,
+    });
+    let (mut eq, _e_c) = EqEffect::new(
+        EqData {
+            gains_db: [2.0; 10],
+            bypassed: false,
+        },
+        sample_rate,
+    );
+    let (mut limiter, _l_c, _l_m) = LimiterEffect::new(
+        LimiterData {
+            ceiling_db: -1.0,
+            release_ms: 20.0,
+            lookahead_ms: 5.0,
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
     gain.process(&mut audio, frames);
     sat.process(&mut audio, frames);
@@ -174,8 +248,15 @@ fn test_no_nan_or_inf_for_extreme_parameters() {
     let sample_rate = 48_000;
     let frames = 256;
 
-    let (mut gain, _g) = GainEffect::new(GainData { gain_db: 60.0, bypassed: false });
-    let (mut sat, _s) = SaturatorEffect::new(SaturatorData { drive_db: 48.0, threshold_db: -30.0, bypassed: false });
+    let (mut gain, _g) = GainEffect::new(GainData {
+        gain_db: 60.0,
+        bypassed: false,
+    });
+    let (mut sat, _s) = SaturatorEffect::new(SaturatorData {
+        drive_db: 48.0,
+        threshold_db: -30.0,
+        bypassed: false,
+    });
     let (mut comp, _c, _cm) = CompressorEffect::new(
         CompressorData {
             threshold_db: -60.0,
@@ -223,11 +304,20 @@ fn test_no_nan_or_inf_for_extreme_parameters() {
 /// Verifies that toggling mute at runtime zeroes audio instantly and restoring mute un-zeroes audio cleanly.
 #[test]
 fn test_mute_runtime_toggle_restores_audio() {
-    let (mut mute, ctrl) = MuteEffect::new(MuteData { muted: false, bypassed: false });
+    let (mut mute, ctrl) = MuteEffect::new(MuteData {
+        muted: false,
+        bypassed: false,
+    });
     let sample_rate = 48_000;
     let frames = 256;
 
-    let original = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.5);
+    let original = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.5,
+    );
 
     // Block 1: Unmuted (normal signal)
     let mut block1 = original.clone();
@@ -243,7 +333,11 @@ fn test_mute_runtime_toggle_restores_audio() {
     // Block 3: Steady-state muted block (absolute digital silence)
     let mut block3 = original.clone();
     mute.process(&mut block3, frames);
-    assert_eq!(metrics::peak(&block3), 0.0, "Muted block must be digital silence");
+    assert_eq!(
+        metrics::peak(&block3),
+        0.0,
+        "Muted block must be digital silence"
+    );
 
     // Block 4: Toggle mute OFF -> ramps back up to full volume
     ctrl.apply_update(&json!({ "muted": false }));
@@ -528,7 +622,10 @@ fn test_delay_exact_delay_time() {
 
     // Expected delay in frames: 50ms at 48 kHz = 2400 frames
     let expected_frame = (sample_rate as f32 * delay_ms * 0.001) as usize;
-    let peak_frame = buffer.chunks_exact(2).position(|f| f[0].abs() > 0.5).unwrap_or(0);
+    let peak_frame = buffer
+        .chunks_exact(2)
+        .position(|f| f[0].abs() > 0.5)
+        .unwrap_or(0);
 
     assert_eq!(
         peak_frame, expected_frame,
@@ -629,7 +726,8 @@ fn test_resampler_identity_rate_is_transparent() {
     let sample_rate = 48_000;
     let channels = 2;
     let chunk_size = 512;
-    let mut resampler = MultiResampler::new(sample_rate, sample_rate, chunk_size, channels).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(sample_rate, sample_rate, chunk_size, channels).expect("resampler");
 
     let input = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.15, 0.5);
     let mut output = Vec::new();
@@ -637,7 +735,9 @@ fn test_resampler_identity_rate_is_transparent() {
     let mut offset = 0;
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut output).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut output)
+            .expect("resample");
         offset += chunk_size * channels;
     }
 
@@ -660,7 +760,8 @@ fn test_resampler_chunk_boundary_continuity() {
     let out_rate = 48_000;
     let channels = 2;
     let chunk_size = 256;
-    let mut resampler = MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
 
     let input = generators::sine_stereo(440.0, 440.0, in_rate, 0.15, 0.6);
     let mut output = Vec::new();
@@ -668,7 +769,9 @@ fn test_resampler_chunk_boundary_continuity() {
     let mut offset = 0;
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut output).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut output)
+            .expect("resample");
         offset += chunk_size * channels;
     }
 
@@ -698,14 +801,17 @@ fn test_resampler_alias_rejection() {
 
     // 1. Transition band attenuation: 48 kHz -> 44.1 kHz at 23.5 kHz (near Nyquist transition)
     {
-        let mut resampler = MultiResampler::new(48_000, 44_100, chunk_size, channels).expect("resampler");
+        let mut resampler =
+            MultiResampler::new(48_000, 44_100, chunk_size, channels).expect("resampler");
         let input = generators::sine_stereo(23_500.0, 23_500.0, 48_000, 0.15, 0.8);
         let mut output = Vec::new();
 
         let mut offset = 0;
         while offset + chunk_size * channels <= input.len() {
             let chunk = &input[offset..offset + chunk_size * channels];
-            resampler.process_chunk(chunk, &mut output).expect("resample");
+            resampler
+                .process_chunk(chunk, &mut output)
+                .expect("resample");
             offset += chunk_size * channels;
         }
 
@@ -720,14 +826,17 @@ fn test_resampler_alias_rejection() {
 
     // 2. Deep stopband alias rejection: 96 kHz -> 44.1 kHz at 35 kHz (output Nyquist = 22.05 kHz)
     {
-        let mut resampler = MultiResampler::new(96_000, 44_100, chunk_size, channels).expect("resampler");
+        let mut resampler =
+            MultiResampler::new(96_000, 44_100, chunk_size, channels).expect("resampler");
         let input = generators::sine_stereo(35_000.0, 35_000.0, 96_000, 0.15, 0.8);
         let mut output = Vec::new();
 
         let mut offset = 0;
         while offset + chunk_size * channels <= input.len() {
             let chunk = &input[offset..offset + chunk_size * channels];
-            resampler.process_chunk(chunk, &mut output).expect("resample");
+            resampler
+                .process_chunk(chunk, &mut output)
+                .expect("resample");
             offset += chunk_size * channels;
         }
 
@@ -748,7 +857,8 @@ fn test_resampler_frequency_preservation() {
     let out_rate = 48_000;
     let channels = 2;
     let chunk_size = 512;
-    let mut resampler = MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
 
     // Pure 1000 Hz tone
     let freq = 1000.0f32;
@@ -758,7 +868,9 @@ fn test_resampler_frequency_preservation() {
     let mut offset = 0;
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut output).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut output)
+            .expect("resample");
         offset += chunk_size * channels;
     }
 
@@ -791,7 +903,8 @@ fn test_resampler_long_stream_frame_count_accuracy() {
     let out_rate = 44_100;
     let channels = 2;
     let chunk_size = 512;
-    let mut resampler = MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(in_rate, out_rate, chunk_size, channels).expect("resampler");
 
     // Exactly 1 second of audio at 48 kHz = 48,000 frames
     let in_frames = 48_000;
@@ -801,12 +914,15 @@ fn test_resampler_long_stream_frame_count_accuracy() {
     let mut offset = 0;
     while offset + chunk_size * channels <= input.len() {
         let chunk = &input[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut output).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut output)
+            .expect("resample");
         offset += chunk_size * channels;
     }
 
     let produced_frames = output.len() / channels;
-    let expected_frames = (offset as f64 / channels as f64 * (out_rate as f64 / in_rate as f64)) as usize;
+    let expected_frames =
+        (offset as f64 / channels as f64 * (out_rate as f64 / in_rate as f64)) as usize;
 
     let diff = (produced_frames as isize - expected_frames as isize).abs();
     // The difference must be bounded within the sinc interpolation filter pipeline latency (128 frames)

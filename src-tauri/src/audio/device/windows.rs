@@ -23,7 +23,10 @@ pub fn list_inputs() -> AppResult<Vec<DeviceInfo>> {
     let devices = host
         .input_devices()
         .map_err(|e| AppError::Host(e.to_string()))?;
-    Ok(super::unique_named(devices.filter_map(|d| d.name().ok()), DeviceKind::Input))
+    Ok(super::unique_named(
+        devices.filter_map(|d| d.name().ok()),
+        DeviceKind::Input,
+    ))
 }
 
 pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
@@ -31,7 +34,10 @@ pub fn list_outputs() -> AppResult<Vec<DeviceInfo>> {
     let devices = host
         .output_devices()
         .map_err(|e| AppError::Host(e.to_string()))?;
-    Ok(super::unique_named(devices.filter_map(|d| d.name().ok()), DeviceKind::Output))
+    Ok(super::unique_named(
+        devices.filter_map(|d| d.name().ok()),
+        DeviceKind::Output,
+    ))
 }
 
 pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {

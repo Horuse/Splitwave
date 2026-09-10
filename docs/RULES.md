@@ -53,12 +53,14 @@ PR checklist and testing: [CONTRIBUTING.md](../CONTRIBUTING.md).
 The real-time path comprises all callbacks executed by cpal, ScreenCaptureKit, CoreAudio, PipeWire, WASAPI, and the inner loop of `DspWorker::run`.
 
 ### Forbidden inside RT Audio Path:
+
 - ❌ **Allocations**: Growing vectors (`Vec::push`, `Vec::resize`), strings (`String::from`), box allocations (`Box::new`), hash maps.
 - ❌ **System Locks**: `Mutex::lock`, `RwLock::write`. (Only lock-free atomic swaps or non-blocking `try_lock` if dropping a block is strictly acceptable).
 - ❌ **Syscalls and I/O**: File access, sockets, logging macros (`tracing::info!`, `println!`), IPC.
 - ❌ **Unbounded Loops**: Catch-up loops that iterate indefinitely without yielding to the transport clock.
 
 ### Permitted inside RT Audio Path:
+
 - ✅ **Preallocated Buffers**: Slices and arrays allocated during stream initialization.
 - ✅ **Lock-Free Rings**: `rtrb` SPSC ring buffers using bulk operations (`bulk_pop`, `bulk_push`).
 - ✅ **Atomics**: `Arc<AtomicU32>`, `Arc<AtomicBool>` with `Ordering::Relaxed` for runtime controls and meter telemetry.
@@ -71,13 +73,13 @@ The real-time path comprises all callbacks executed by cpal, ScreenCaptureKit, C
 - **Focus on the Non-Obvious WHY**: Comments explain hidden invariants, hardware workarounds, concurrency assumptions, and mathematical rationale. Naming handles WHAT.
 - **Terse and Timeless**: Describe the code as it currently exists.
 - **Forbidden Comments**:
-  - ❌ Never write conversational change logs ("now instead of", "was previously", "changed to fix bug", "old implementation").
-  - ❌ Never narrate trivial mechanics (`// return result`, `// increment counter`).
-  - ❌ Never leave abandoned `TODO` or `FIXME` without a tracking issue.
+    - ❌ Never write conversational change logs ("now instead of", "was previously", "changed to fix bug", "old implementation").
+    - ❌ Never narrate trivial mechanics (`// return result`, `// increment counter`).
+    - ❌ Never leave abandoned `TODO` or `FIXME` without a tracking issue.
 - **Mandatory Comments**:
-  - ✅ Invariants on memory ordering (`Ordering::Relaxed` vs `Ordering::SeqCst`).
-  - ✅ Hardware or OS quirks (e.g. CoreAudio reference cycles, Windows MTA COM initialization, PipeWire RTKit quantum semantics).
-  - ✅ Buffer sizing assumptions (e.g. ring buffer capacities, FFT chunk requirements).
+    - ✅ Invariants on memory ordering (`Ordering::Relaxed` vs `Ordering::SeqCst`).
+    - ✅ Hardware or OS quirks (e.g. CoreAudio reference cycles, Windows MTA COM initialization, PipeWire RTKit quantum semantics).
+    - ✅ Buffer sizing assumptions (e.g. ring buffer capacities, FFT chunk requirements).
 
 ---
 
@@ -93,9 +95,11 @@ The real-time path comprises all callbacks executed by cpal, ScreenCaptureKit, C
 ## Commits
 
 Format:
+
 ```
 type(scope): subject
 ```
+
 - Standard [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 - Valid types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `style`.
 - Keep formatting-only commits separate from behavioral changes to preserve clean `git blame`.
@@ -105,6 +109,7 @@ type(scope): subject
 ## Verification Checklist
 
 Before considering any refactoring complete:
+
 1. `cargo check --manifest-path src-tauri/Cargo.toml` passes.
 2. `cargo test --manifest-path src-tauri/Cargo.toml` passes all unit and integration tests.
 3. `bun run check` passes with 0 errors.

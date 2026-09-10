@@ -12,8 +12,10 @@ use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
+pub(in crate::audio::pipeline) use super::cpal_speaker::{
+    resolve_speaker, SpeakerHandle, SpeakerResolved,
+};
 use super::{spawn_speaker_worker, speaker_ring, SpeakerIo};
-pub(in crate::audio::pipeline) use super::cpal_speaker::{resolve_speaker, SpeakerHandle, SpeakerResolved};
 
 pub(in crate::audio::pipeline) fn start_speaker_stream(
     node_id: &str,

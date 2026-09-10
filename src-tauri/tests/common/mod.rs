@@ -19,7 +19,13 @@ pub mod generators {
     }
 
     /// Generates an interleaved stereo sine wave with independent left and right frequencies.
-    pub fn sine_stereo(freq_l: f32, freq_r: f32, sample_rate: u32, duration_secs: f32, amplitude: f32) -> Vec<f32> {
+    pub fn sine_stereo(
+        freq_l: f32,
+        freq_r: f32,
+        sample_rate: u32,
+        duration_secs: f32,
+        amplitude: f32,
+    ) -> Vec<f32> {
         let total_frames = (sample_rate as f32 * duration_secs) as usize;
         let mut out = Vec::with_capacity(total_frames * 2);
         let step_l = 2.0 * PI * freq_l / sample_rate as f32;
@@ -32,7 +38,13 @@ pub mod generators {
     }
 
     /// Generates a logarithmic sine sweep across a given frequency range (Chirp).
-    pub fn sweep(start_hz: f32, end_hz: f32, sample_rate: u32, duration_secs: f32, amplitude: f32) -> Vec<f32> {
+    pub fn sweep(
+        start_hz: f32,
+        end_hz: f32,
+        sample_rate: u32,
+        duration_secs: f32,
+        amplitude: f32,
+    ) -> Vec<f32> {
         let total_frames = (sample_rate as f32 * duration_secs) as usize;
         let mut out = Vec::with_capacity(total_frames);
         let sr = sample_rate as f32;
@@ -47,7 +59,12 @@ pub mod generators {
     }
 
     /// Generates a multi-tone signal composed of multiple harmonic frequencies.
-    pub fn multitone(freqs: &[f32], sample_rate: u32, duration_secs: f32, peak_amplitude: f32) -> Vec<f32> {
+    pub fn multitone(
+        freqs: &[f32],
+        sample_rate: u32,
+        duration_secs: f32,
+        peak_amplitude: f32,
+    ) -> Vec<f32> {
         let total_frames = (sample_rate as f32 * duration_secs) as usize;
         let mut out = vec![0.0f32; total_frames];
         let num_tones = freqs.len().max(1) as f32;
@@ -63,7 +80,14 @@ pub mod generators {
     }
 
     /// Generates a periodic tone burst (active tone alternating with silence).
-    pub fn tone_burst(freq_hz: f32, sample_rate: u32, active_ms: f32, silent_ms: f32, cycles: usize, amplitude: f32) -> Vec<f32> {
+    pub fn tone_burst(
+        freq_hz: f32,
+        sample_rate: u32,
+        active_ms: f32,
+        silent_ms: f32,
+        cycles: usize,
+        amplitude: f32,
+    ) -> Vec<f32> {
         let active_frames = (sample_rate as f32 * active_ms / 1000.0) as usize;
         let silent_frames = (sample_rate as f32 * silent_ms / 1000.0) as usize;
         let mut out = Vec::with_capacity((active_frames + silent_frames) * cycles);

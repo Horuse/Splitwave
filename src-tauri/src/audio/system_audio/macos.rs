@@ -13,7 +13,6 @@ fn bundle_path_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-
 pub fn list_audio_applications() -> AppResult<Vec<AudioApplication>> {
     let workspace = NSWorkspace::sharedWorkspace();
     let apps = workspace.runningApplications();

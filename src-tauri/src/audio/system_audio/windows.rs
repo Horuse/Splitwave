@@ -30,7 +30,6 @@ fn path_cache() -> &'static Mutex<HashMap<String, String>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-
 fn ensure_com() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);

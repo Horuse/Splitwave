@@ -4,15 +4,13 @@ use std::sync::Arc;
 
 use rtrb::Producer;
 
-use crate::audio::effects::{
-    EffectControl, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
-};
+use crate::audio::effects::{EffectControl, GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::health;
 use crate::audio::streams::bulk_push_counted;
 
 use super::nodes::{
-    add_block_at, add_mapped, add_to_channel, parse_ch, parse_stereo, target_route,
-    DagNode, OutputMeta, SourceMeta, TerminalEdge,
+    add_block_at, add_mapped, add_to_channel, parse_ch, parse_stereo, target_route, DagNode,
+    OutputMeta, SourceMeta, TerminalEdge,
 };
 use super::DSP_BLOCK_FRAMES;
 

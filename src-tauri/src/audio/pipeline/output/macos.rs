@@ -20,7 +20,9 @@ use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, StreamGuard};
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
 const SPEAKER_RETRY_DELAY: Duration = Duration::from_millis(300);
 
-pub(in crate::audio::pipeline) use super::cpal_speaker::{resolve_speaker, SpeakerHandle, SpeakerResolved};
+pub(in crate::audio::pipeline) use super::cpal_speaker::{
+    resolve_speaker, SpeakerHandle, SpeakerResolved,
+};
 
 // Substring match on cpal's stable Display -- AppError flattens the variant.
 fn is_device_not_available(e: &AppError) -> bool {

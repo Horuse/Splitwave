@@ -18,8 +18,8 @@ use splitwave_lib::audio::effects::reverb::ReverbEffect;
 use splitwave_lib::audio::effects::saturator::SaturatorEffect;
 use splitwave_lib::audio::effects::Effect;
 use splitwave_lib::audio::graph::{
-    CompressorData, DeEsserData, DeclickData, DelayData, EqData, GainData,
-    LevelMeterData, LimiterData, LufsMeterData, NoiseGateData, ReverbData, SaturatorData,
+    CompressorData, DeEsserData, DeclickData, DelayData, EqData, GainData, LevelMeterData,
+    LimiterData, LufsMeterData, NoiseGateData, ReverbData, SaturatorData,
 };
 use splitwave_lib::audio::resample::MultiResampler;
 
@@ -72,7 +72,13 @@ fn test_broadcast_vocal_chain() {
     // 4. EQ (adds gentle speech presence boost at 2 kHz)
     let mut eq_gains = [0.0f32; 10];
     eq_gains[6] = 3.0; // 2 kHz presence boost
-    let (mut eq, _eq_ctrl) = EqEffect::new(EqData { gains_db: eq_gains, bypassed: false }, sample_rate);
+    let (mut eq, _eq_ctrl) = EqEffect::new(
+        EqData {
+            gains_db: eq_gains,
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
     // 5. Compressor (evens dynamic speech volume)
     let (mut comp, _comp_ctrl, _comp_meter) = CompressorEffect::new(
@@ -248,14 +254,17 @@ fn test_streamer_dual_sample_rate_mix() {
     let discord_audio = generators::sine_stereo(500.0, 500.0, in_rate, duration, 0.4);
 
     // Resample Discord voice from 44.1 kHz to 48 kHz
-    let mut resampler = MultiResampler::new(in_rate, out_rate, channels, chunk_size).expect("resampler");
+    let mut resampler =
+        MultiResampler::new(in_rate, out_rate, channels, chunk_size).expect("resampler");
     let mut discord_resampled = Vec::new();
     let mut chunk_out = vec![0.0f32; chunk_size * 2 * channels];
 
     let mut offset = 0;
     while offset + chunk_size * channels <= discord_audio.len() {
         let chunk = &discord_audio[offset..offset + chunk_size * channels];
-        resampler.process_chunk(chunk, &mut chunk_out).expect("resample");
+        resampler
+            .process_chunk(chunk, &mut chunk_out)
+            .expect("resample");
         discord_resampled.extend_from_slice(&chunk_out);
         offset += chunk_size * channels;
     }
@@ -372,7 +381,13 @@ fn test_dance_music_sidechain_pumping() {
     // Kick drum track: two 30ms kick bursts (at t=0ms and t=200ms) with silence in between
     let kick_burst = generators::sine_stereo(60.0, 60.0, sample_rate, 0.03, 1.0);
     let kick_pause = vec![0.0f32; (sample_rate as f32 * 0.17) as usize * 2];
-    let kick_track = [kick_burst.clone(), kick_pause.clone(), kick_burst, kick_pause].concat();
+    let kick_track = [
+        kick_burst.clone(),
+        kick_pause.clone(),
+        kick_burst,
+        kick_pause,
+    ]
+    .concat();
 
     let frames = synth_bass.len() / 2;
     comp.process_with_sidechain(&mut synth_bass, Some(&kick_track), frames);
@@ -561,7 +576,8 @@ fn test_peak_metering_ballistics_and_decay() {
 #[test]
 fn test_lufs_metering_loudness_compliance() {
     let sample_rate = 48_000;
-    let (mut lufs, handle) = LufsMeterEffect::new(LufsMeterData {}, "lufs_test".into(), sample_rate);
+    let (mut lufs, handle) =
+        LufsMeterEffect::new(LufsMeterData {}, "lufs_test".into(), sample_rate);
 
     // Calibrated 1 kHz tone at -20 dBFS (amplitude = 0.1) for 400ms
     let mut tone = generators::sine_stereo(1000.0, 1000.0, sample_rate, 0.4, 0.1);
@@ -595,8 +611,18 @@ fn test_long_running_pipeline_dsp_stability() {
     let block_size = 512;
     let num_blocks = 100;
 
-    let (mut eq, _eq_c) = EqEffect::new(EqData { gains_db: [1.0; 10], bypassed: false }, sample_rate);
-    let (mut saturator, _sat_c) = SaturatorEffect::new(SaturatorData { drive_db: 3.0, threshold_db: -3.0, bypassed: false });
+    let (mut eq, _eq_c) = EqEffect::new(
+        EqData {
+            gains_db: [1.0; 10],
+            bypassed: false,
+        },
+        sample_rate,
+    );
+    let (mut saturator, _sat_c) = SaturatorEffect::new(SaturatorData {
+        drive_db: 3.0,
+        threshold_db: -3.0,
+        bypassed: false,
+    });
     let (mut comp, _comp_c, _comp_m) = CompressorEffect::new(
         CompressorData {
             threshold_db: -12.0,
@@ -609,11 +635,37 @@ fn test_long_running_pipeline_dsp_stability() {
         },
         sample_rate,
     );
-    let (mut deesser, _de_c) = DeEsserEffect::new(DeEsserData { frequency: 6000.0, threshold_db: -20.0, ratio: 3.0, bypassed: false }, sample_rate);
-    let (mut reverb, _rev_c) = ReverbEffect::new(ReverbData { room_size: 0.5, damping: 0.5, width: 1.0, mix: 0.3, bypassed: false }, sample_rate);
-    let (mut limiter, _lim_c, _lim_m) = LimiterEffect::new(LimiterData { ceiling_db: -1.0, release_ms: 20.0, lookahead_ms: 5.0, bypassed: false }, sample_rate);
+    let (mut deesser, _de_c) = DeEsserEffect::new(
+        DeEsserData {
+            frequency: 6000.0,
+            threshold_db: -20.0,
+            ratio: 3.0,
+            bypassed: false,
+        },
+        sample_rate,
+    );
+    let (mut reverb, _rev_c) = ReverbEffect::new(
+        ReverbData {
+            room_size: 0.5,
+            damping: 0.5,
+            width: 1.0,
+            mix: 0.3,
+            bypassed: false,
+        },
+        sample_rate,
+    );
+    let (mut limiter, _lim_c, _lim_m) = LimiterEffect::new(
+        LimiterData {
+            ceiling_db: -1.0,
+            release_ms: 20.0,
+            lookahead_ms: 5.0,
+            bypassed: false,
+        },
+        sample_rate,
+    );
 
-    let mut running_block = generators::sine_stereo(440.0, 880.0, sample_rate, 512.0 / 48000.0, 0.5);
+    let mut running_block =
+        generators::sine_stereo(440.0, 880.0, sample_rate, 512.0 / 48000.0, 0.5);
 
     for block_idx in 0..num_blocks {
         eq.process(&mut running_block, block_size);
@@ -650,11 +702,20 @@ fn test_long_running_pipeline_dsp_stability() {
 /// This test verifies instant dynamic parameter response via EffectControl.
 #[test]
 fn test_dynamic_gain_slider_parameter_modulation() {
-    let (mut gain, ctrl) = GainEffect::new(GainData { gain_db: 0.0, bypassed: false });
+    let (mut gain, ctrl) = GainEffect::new(GainData {
+        gain_db: 0.0,
+        bypassed: false,
+    });
     let sample_rate = 48_000;
     let frames = 256;
 
-    let mut audio_block = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.3);
+    let mut audio_block = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.3,
+    );
 
     // Step 1: Process at 0 dB (unity)
     gain.process(&mut audio_block, frames);
@@ -665,7 +726,13 @@ fn test_dynamic_gain_slider_parameter_modulation() {
     // Block 1 ramps gain smoothly from 1.0x to 2.0x (anti-click smoothing)
     gain.process(&mut audio_block, frames);
     // Block 2 achieves steady-state 2.0x gain
-    let mut steady_boosted = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.3);
+    let mut steady_boosted = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.3,
+    );
     gain.process(&mut steady_boosted, frames);
     let rms_boosted = metrics::rms(&steady_boosted);
 
@@ -674,7 +741,13 @@ fn test_dynamic_gain_slider_parameter_modulation() {
     // Block 1 ramps down smoothly
     gain.process(&mut audio_block, frames);
     // Block 2 achieves steady-state 0.5x unity gain (0.25x of boosted)
-    let mut steady_cut = generators::sine_stereo(440.0, 440.0, sample_rate, frames as f32 / sample_rate as f32, 0.3);
+    let mut steady_cut = generators::sine_stereo(
+        440.0,
+        440.0,
+        sample_rate,
+        frames as f32 / sample_rate as f32,
+        0.3,
+    );
     gain.process(&mut steady_cut, frames);
     let rms_attenuated = metrics::rms(&steady_cut);
 

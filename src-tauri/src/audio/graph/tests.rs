@@ -79,9 +79,7 @@ fn recv_only_collaborator_is_an_input() {
     let v = g.validate().expect("recv-only graph is valid");
     assert_eq!(v.inputs.len(), 1);
     assert_eq!(v.inputs[0].id, "w#recv");
-    assert!(
-        matches!(&v.inputs[0].spec, InputSpec::WebRtcRecv { node_id, .. } if node_id == "w")
-    );
+    assert!(matches!(&v.inputs[0].spec, InputSpec::WebRtcRecv { node_id, .. } if node_id == "w"));
     assert!(!v
         .outputs
         .iter()

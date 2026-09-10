@@ -259,6 +259,17 @@ pub fn run() {
                 }
             }
 
+            if let Ok(dir) = handle.path().app_data_dir() {
+                let current = dir.join("pipelines.json");
+                let backup = dir.join("pipelines.backup-v1.json");
+                if current.exists() && !backup.exists() {
+                    if let Ok(bytes) = std::fs::read(&current) {
+                        let _ = std::fs::write(&backup, bytes);
+                        info!(path = %backup.display(), "created automatic pre-1.2.0 pipeline backup");
+                    }
+                }
+            }
+
             #[cfg(target_os = "linux")]
             if let Err(error) = audio::virtual_device::restore(&handle) {
                 tracing::error!(%error, "failed to restore PipeWire virtual devices");

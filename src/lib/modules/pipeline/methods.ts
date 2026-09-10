@@ -35,7 +35,18 @@ export const methods = {
 
 	async save(p: Pipeline): Promise<void> {
 		const clean = pruneDanglingEdges(p);
-		await store.set(KEY_PREFIX + p.id, { ...clean, version: PIPELINE_VERSION });
+		const nodes = clean.nodes.map((n) => {
+			if (n.kind !== 'fileRecording') return n;
+			const data = n.data as Record<string, unknown>;
+			return {
+				...n,
+				data: {
+					...data,
+					allowOverwrite: data.mode === 'overwrite'
+				}
+			};
+		});
+		await store.set(KEY_PREFIX + p.id, { ...clean, nodes, version: PIPELINE_VERSION });
 		await store.save();
 	},
 

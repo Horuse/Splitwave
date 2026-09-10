@@ -96,15 +96,15 @@
 		logStore.open = !logStore.open;
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		logStore.installConsoleCapture();
 		window.addEventListener('keydown', onLogsHotkey);
-		installErrorHandlers().catch(() => {});
+		await installErrorHandlers().catch(() => {});
 		loadAppInfo().catch(() => {});
-		audioStore
-			.init()
-			.then(() => audioStore.autoActivateOnLaunch())
-			.catch(() => {});
+		try {
+			await audioStore.init();
+			await audioStore.autoActivateOnLaunch();
+		} catch {}
 		pipelineStore.refresh().catch(() => {});
 		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
@@ -131,7 +131,7 @@
 
 <UpdateBanner />
 
-<main>
+<main class="flex h-screen flex-col overflow-hidden">
 	{@render children()}
 </main>
 

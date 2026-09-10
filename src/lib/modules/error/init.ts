@@ -32,20 +32,19 @@ export async function installErrorHandlers(): Promise<void> {
 
 	// Fatal native failures cannot reach the live webview; replay every report
 	// persisted by the backend during the previous run.
-	invoke<CrashPayload[]>('take_crash_reports')
-		.then((reports) => {
-			for (const r of reports) {
-				errorStore.report({
-					source: r.kind ?? 'rustPanic',
-					message: r.message,
-					stack: r.backtrace,
-					thread: r.thread,
-					at: r.ts ?? Date.now(),
-					previousRun: true
-				});
-			}
-		})
-		.catch(() => {});
+	try {
+		const reports = await invoke<CrashPayload[]>('take_crash_reports');
+		for (const r of reports) {
+			errorStore.report({
+				source: r.kind ?? 'rustPanic',
+				message: r.message,
+				stack: r.backtrace,
+				thread: r.thread,
+				at: r.ts ?? Date.now(),
+				previousRun: true
+			});
+		}
+	} catch {}
 
 	window.addEventListener('error', (e) => {
 		errorStore.report({

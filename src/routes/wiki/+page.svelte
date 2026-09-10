@@ -32,7 +32,7 @@
 	{/snippet}
 </Header>
 
-<div class="h-[calc(100vh-40px)] overflow-y-auto p-8">
+<div class="flex-1 min-h-0 overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">
 		{#each ENTRIES as entry (entry.title)}
 			<section class="flex flex-col gap-3">

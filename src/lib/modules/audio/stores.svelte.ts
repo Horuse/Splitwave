@@ -1,4 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { browser } from '$app/environment';
 import toast from 'svelte-french-toast';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { methods } from './methods';
@@ -8,6 +9,7 @@ import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 import { isFromFuture } from '$lib/modules/pipeline/migrations';
 import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '$lib/modules/pipeline/types';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
+import { errorStore } from '$lib/modules/error';
 
 // Mirrors `extension()` in the File Recording node: the dialog filter must
 // match the encoder the node will actually write.
@@ -37,6 +39,7 @@ class AudioStore {
 	pendingRetryPipelineId = $state<string | null>(null);
 	pendingNodeIds = $state<Set<string>>(new Set());
 	missingFilePaths = $state<Set<string>>(new Set());
+	safeMode = $state(false);
 
 	private lastGraph: StartPipelinePayload | null = null;
 	private fullGraph: StartPipelinePayload | null = null;
@@ -189,6 +192,7 @@ class AudioStore {
 	}
 
 	async activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+		this.safeMode = false;
 		this.lastGraph = graph;
 		this.fullGraph = graph;
 		const excluded = appSettings.keepRunningOnDisconnect ? await this.unresolvedInputIds(graph) : new Set<string>();
@@ -292,6 +296,16 @@ class AudioStore {
 	 * is left out of the initial start and reconnected later by the polling
 	 * loop once it becomes available. */
 	async autoActivateOnLaunch(): Promise<void> {
+		const crashGuard = browser && window.localStorage.getItem('splitwave:boot_audio_crash_guard') === 'true';
+		if (errorStore.hadPreviousCrash || crashGuard) {
+			this.safeMode = true;
+			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
+			this.reportError(
+				new Error('Safe Mode: Auto-starting previous pipeline was skipped because Splitwave crashed last time.')
+			);
+			return;
+		}
+
 		const id = await pipelineMethods.getActivePipelineId().catch(() => null);
 		if (!id) return;
 		const p = await pipelineMethods.get(id).catch(() => null);
@@ -301,12 +315,17 @@ class AudioStore {
 		const excluded = appSettings.keepRunningOnDisconnect ? await this.unresolvedInputIds(full) : new Set<string>();
 		this.pendingNodeIds = excluded;
 		const reduced = this.buildReducedGraph(full, excluded);
+		if (browser) window.localStorage.setItem('splitwave:boot_audio_crash_guard', 'true');
 		try {
 			await methods.startPipeline(reduced);
 		} catch (e) {
+			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
 			this.reportError(e);
 			return;
 		}
+		setTimeout(() => {
+			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
+		}, 4000);
 		this.lastGraph = reduced;
 		this.runningPipelineId = id;
 		if (excluded.size > 0) {

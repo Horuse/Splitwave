@@ -23,9 +23,9 @@ fn clean_label(name: &str) -> String {
 }
 
 // PipeWire channel map. Standard names for mono/stereo; generic AUX for wider
-// layouts so any channel count is accepted.
+// layouts.
 fn positions(channels: u32) -> String {
-    let list: Vec<String> = match channels.clamp(1, 256) {
+    let list: Vec<String> = match channels.clamp(1, pw::spa::param::audio::MAX_CHANNELS as u32) {
         1 => vec!["MONO".into()],
         2 => vec!["FL".into(), "FR".into()],
         n => (0..n).map(|i| format!("AUX{i}")).collect(),
@@ -61,7 +61,7 @@ pub fn uninstall() -> Result<(), String> {
 
 pub fn apply_virtual_devices(devices: Vec<VirtualDeviceConfig>) -> Result<(), String> {
     for device in &devices {
-        if !(1..=256).contains(&device.channels) {
+        if !(1..=pw::spa::param::audio::MAX_CHANNELS as u32).contains(&device.channels) {
             return Err(format!("invalid channel count for {:?}", device.name));
         }
         if device.sample_rate == 0 {

@@ -248,6 +248,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let _ = APP_HANDLE.set(handle.clone());
 
+            #[cfg(target_os = "linux")]
+            pipewire::init();
+
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 initialize_crash_reporting(&dir);

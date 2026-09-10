@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { Position } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
@@ -43,7 +42,6 @@
 		rms: number[];
 	}
 
-	let targets: number[] = [];
 	let displays = $state<number[]>([]);
 	let holds = $state<number[]>([]);
 	let holdTimes: number[] = [];
@@ -59,12 +57,22 @@
 		return Math.max(0, Math.min(100, ((db - DB_FLOOR) / -DB_FLOOR) * 100));
 	}
 
-	let rafId: number | undefined;
-	let lastFrame = 0;
+	let lastTick = 0;
 
-	function tick(now: number) {
-		const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.1) : 0;
-		lastFrame = now;
+	function update(targets: number[], now: number) {
+		const silent = targets.every((value) => value <= 1e-6);
+		const visible = displays.some((value) => value > DB_FLOOR) || holds.some((value) => value > DB_FLOOR);
+		if (silent && !visible) {
+			if (displays.length > 0 || holds.length > 0) {
+				displays = [];
+				holds = [];
+				holdTimes = [];
+			}
+			lastTick = now;
+			return;
+		}
+		const dt = lastTick ? Math.min((now - lastTick) / 1000, 0.1) : 0;
+		lastTick = now;
 		const n = targets.length;
 		const nextDisplays = new Array(n);
 		const nextHolds = new Array(n);
@@ -85,20 +93,11 @@
 		}
 		displays = nextDisplays;
 		holds = nextHolds;
-		rafId = requestAnimationFrame(tick);
 	}
 
 	tauriListen<MeterTick>('audio://meter', (p) => {
 		if (p.nodeId !== nodeId) return;
-		targets = p.peaks;
-	});
-
-	onMount(() => {
-		rafId = requestAnimationFrame(tick);
-	});
-
-	onDestroy(() => {
-		if (rafId) cancelAnimationFrame(rafId);
+		update(p.peaks, performance.now());
 	});
 </script>
 

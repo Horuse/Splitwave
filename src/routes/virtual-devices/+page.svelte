@@ -14,6 +14,7 @@
 
 	const isLinux = platform() === 'linux';
 	const isWindows = platform() === 'windows';
+	const maxChannels = isLinux ? 64 : 256;
 
 	const store = new LazyStore('virtual-devices.json');
 	const STORE_KEY = 'devices';
@@ -62,7 +63,7 @@
 	}
 
 	function setChannels(id: string, channels: number) {
-		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), 256);
+		const clamped = Math.min(Math.max(Math.round(channels) || 2, 1), maxChannels);
 		devices = devices.map((d) => (d.id === id ? { ...d, channels: clamped } : d));
 	}
 
@@ -205,7 +206,7 @@
 										<NumberStepper
 											value={d.channels ?? 2}
 											min={1}
-											max={256}
+											max={maxChannels}
 											step={1}
 											label="Channels"
 											onchange={(v) => setChannels(d.id, v)} />
@@ -224,7 +225,7 @@
 											</button>
 										{/each}
 									</div>
-									<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to 256 channels </span>
+									<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to {maxChannels} channels </span>
 								</div>
 								<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-300/40 pt-2">
 									<div class="flex items-center gap-2">

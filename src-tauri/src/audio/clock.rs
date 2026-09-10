@@ -107,9 +107,10 @@ pub struct DeviceFillClock {
     /// (see `speaker_ring`). Read here every tick so the ring always bridges
     /// one full callback whatever buffer the device negotiated.
     target: Arc<AtomicI64>,
-    /// The ring has reached its target at least once. Until then the empty
-    /// ring is the startup prefill, not a worker that fell behind.
+    /// The startup fill budget has been produced. Until then an empty ring is
+    /// startup prefill, not a worker that fell behind.
     primed: bool,
+    startup_frames: usize,
     /// Prevents a sink that drains immediately (for example a PipeWire null
     /// sink) from turning the real-time worker into an unbounded busy loop.
     wall_clock: SystemClockTicker,
@@ -130,7 +131,12 @@ impl DeviceFillClock {
             level,
             target,
             primed: false,
-            wall_clock: SystemClockTicker::new(pipeline_sample_rate, engine_block_frames),
+            startup_frames: 0,
+            wall_clock: SystemClockTicker::with_catchup(
+                pipeline_sample_rate,
+                engine_block_frames,
+                2,
+            ),
         }
     }
 }
@@ -147,6 +153,11 @@ impl ClockSource for DeviceFillClock {
             let pipe_sr = self.pipeline_sample_rate.max(1) as u64;
             let block_frames = ((self.engine_block_frames as u64 * dev_sr as u64 + pipe_sr / 2)
                 / pipe_sr) as usize;
+            if !self.primed {
+                self.startup_frames = self.startup_frames.saturating_add(block_frames);
+                self.primed = self.startup_frames >= target_frames;
+                return true;
+            }
             if queued + block_frames <= target_frames {
                 // Less than one block of headroom left in the ring -- the
                 // worker isn't staying ahead of the device.
@@ -155,7 +166,6 @@ impl ClockSource for DeviceFillClock {
                 }
                 return self.wall_clock.wait_for_tick(stop);
             }
-            self.primed = true;
             let overshoot = queued + block_frames - target_frames;
             let drain = Duration::from_nanos((overshoot as u64 * 1_000_000_000) / dev_sr as u64);
             thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));

@@ -154,7 +154,13 @@ where
     T: Sample + cpal::SizedSample + cpal::FromSample<f32> + Send + 'static,
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
-    let mut buf: Vec<f32> = vec![0.0; 16384];
+    const DEFAULT_SCRATCH_FRAMES: usize = 1024;
+    let configured_frames = match config.buffer_size {
+        cpal::BufferSize::Fixed(frames) => frames as usize,
+        cpal::BufferSize::Default => DEFAULT_SCRATCH_FRAMES,
+    };
+    let scratch_samples = configured_frames.max(1) * out_channels.max(1);
+    let mut buf: Vec<f32> = vec![0.0; scratch_samples];
     let stream = device
         .build_output_stream::<T, _, _>(
             config,
@@ -162,16 +168,13 @@ where
                 if out_channels == 0 || data.is_empty() {
                     return;
                 }
-                let total = data.len();
-                let frames = total / out_channels;
-                if buf.len() < total {
-                    buf.resize(total, 0.0);
-                }
-                // `fill` supplies interleaved audio already at the device's
-                // channel width (the DSP worker produces `out_channels`-wide).
-                fill(&mut buf[..total], frames);
-                for (out, s) in data.iter_mut().zip(&buf[..total]) {
-                    *out = T::from_sample(*s);
+                let callback_frames = data.len() / out_channels;
+                for out_chunk in data.chunks_mut(buf.len()) {
+                    let samples = out_chunk.len();
+                    fill(&mut buf[..samples], callback_frames);
+                    for (out, sample) in out_chunk.iter_mut().zip(&buf[..samples]) {
+                        *out = T::from_sample(*sample);
+                    }
                 }
             },
             err_cb,

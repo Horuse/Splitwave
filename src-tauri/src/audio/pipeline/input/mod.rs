@@ -16,7 +16,7 @@ use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
 use crate::audio::resample::MultiResampler;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{RESAMPLE_CHUNK, RING_CAPACITY_FRAMES};
+use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 
 #[cfg(target_os = "macos")]
@@ -34,11 +34,6 @@ use windows as platform;
 
 pub(super) use platform::resolve_input;
 use platform::start_input_stream as start_native_input_stream;
-
-/// ScreenCaptureKit (macOS) and PipeWire (Linux) both deliver 48 kHz, matching
-/// the device side so no resampling happens on capture delivery.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-pub(super) const SCK_SR: u32 = 48_000;
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
 /// down the capture, or signals + joins the file reader thread.
@@ -76,10 +71,19 @@ impl InputHandle {
     }
 
     #[cfg(target_os = "macos")]
-    fn tap_rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
+    fn rate_probe(&self) -> Option<crate::audio::capture::macos_tap::TapRateProbe> {
         match self {
             InputHandle::Capture(capture) => capture.tap_rate_probe(),
-            InputHandle::Normalized(n) => n._input.tap_rate_probe(),
+            InputHandle::Normalized(n) => n._input.rate_probe(),
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn rate_probe(&self) -> Option<crate::audio::capture::linux::RateProbe> {
+        match self {
+            InputHandle::Capture(capture) => Some(capture.rate_probe()),
+            InputHandle::Normalized(n) => n._input.rate_probe(),
             _ => None,
         }
     }
@@ -115,6 +119,7 @@ pub(super) enum ResolvedInput {
     PwSource {
         node_id: String,
         sample_rate: u32,
+        channels: u32,
     },
     SystemAudio {
         sample_rate: u32,
@@ -152,6 +157,8 @@ impl ResolvedInput {
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             ResolvedInput::Cpal { src_channels, .. } => (*src_channels as u32).max(1),
+            #[cfg(target_os = "linux")]
+            ResolvedInput::PwSource { channels, .. } => (*channels).max(1),
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
             _ => 2,
         }
@@ -213,12 +220,12 @@ pub(super) fn start_input_stream(
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
     let (raw_producer, mut raw_consumer) =
-        RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * channels.max(1));
+        RingBuffer::<f32>::new(ring_capacity_frames(sample_rate) * channels.max(1));
     let (mut raw_tx, raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
     let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
-    #[cfg(target_os = "macos")]
-    let rate_probe = input.tap_rate_probe();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let label = node_id.to_string();
@@ -227,7 +234,10 @@ pub(super) fn start_input_stream(
         .spawn(move || {
             let mut bridge = bridge;
             let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let mut native_rate = sample_rate;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let native_rate = sample_rate;
             let mut resampler = if native_rate == target_sample_rate {
                 None
             } else {
@@ -245,8 +255,8 @@ pub(super) fn start_input_stream(
             );
             while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
                 bridge.apply_commands();
-                #[cfg(target_os = "macos")]
-                if let Some(rate) = rate_probe.and_then(|probe| probe.sample_rate()) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                if let Some(rate) = rate_probe.as_ref().and_then(|probe| probe.sample_rate()) {
                     if rate == native_rate {
                         // Nothing to do; avoid perturbing the sinc state.
                     } else {

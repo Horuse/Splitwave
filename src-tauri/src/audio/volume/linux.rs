@@ -77,6 +77,11 @@ fn device_volume_from(volume: &ChannelVolumes, mute: bool) -> DeviceVolume {
 // "default"/"pipewire"/"sysdefault" are route aliases, not PulseAudio sink
 // names; resolve them to the server's actual default sink/source name.
 fn resolve_device(intro: &Introspector, kind: DeviceKind, name: &str) -> Option<String> {
+    if kind == DeviceKind::Input {
+        if let Some(sink) = name.strip_prefix("monitor:") {
+            return Some(format!("{sink}.monitor"));
+        }
+    }
     match name {
         "default" | "pipewire" | "sysdefault" => {
             let out = Arc::new(Mutex::new(None));

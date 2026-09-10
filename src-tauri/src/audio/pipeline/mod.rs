@@ -39,11 +39,11 @@ mod meter;
 mod native;
 mod output;
 #[cfg(target_os = "linux")]
-pub(crate) use output::RtThread;
+pub(crate) use worker::RtThread;
 mod sig;
 mod worker;
 
-use dag::{build_output_graph, OutputGraph, OutputMeta, SourceMeta, RING_CAPACITY_FRAMES};
+use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};
 use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
@@ -638,6 +638,9 @@ impl ActivePipeline {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
+                #[cfg(target_os = "linux")]
+                let resolved = resolve_input(inp, pipeline_sr)?;
+                #[cfg(not(target_os = "linux"))]
                 let resolved = resolve_input(inp)?;
                 let sr = match &resolved {
                     ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
@@ -843,7 +846,7 @@ impl ActivePipeline {
                 };
                 for o2 in cons {
                     let (prod, consumer) =
-                        rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * width);
+                        rtrb::RingBuffer::<f32>::new(ring_capacity_frames(output_sr) * width);
                     built.graph.attach_tap(idx, prod);
                     pending_cuts
                         .entry(o2.clone())
@@ -1287,6 +1290,7 @@ impl ActivePipeline {
             Some(spawn_xrun_thread(
                 self.source_stats.clone(),
                 self.output_stats.clone(),
+                self.speakers.len() as i64,
             ))
         };
 

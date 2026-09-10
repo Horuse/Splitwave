@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use crate::audio::health;
 
 const LATE_REPORT_THRESHOLD: Duration = Duration::from_millis(2);
+#[cfg(target_os = "linux")]
+const RT_BUDGET_RESET_SLEEP: Duration = Duration::from_micros(50);
 
 pub trait ClockSource: Send + 'static {
     /// Returns `false` when `stop` is set; `true` on each tick.
@@ -16,6 +18,10 @@ pub trait ClockSource: Send + 'static {
     /// Nominal sample rate this clock targets.
     #[allow(dead_code)]
     fn sample_rate(&self) -> u32;
+
+    fn realtime_ready(&self) -> bool {
+        true
+    }
 }
 
 /// On overrun, the next deadline resets to "now" rather than bursting through
@@ -31,6 +37,7 @@ pub struct SystemClockTicker {
     period: Duration,
     next_deadline: Option<Instant>,
     catchup_max: Duration,
+    report_late: bool,
 }
 
 impl SystemClockTicker {
@@ -42,6 +49,7 @@ impl SystemClockTicker {
             period,
             next_deadline: None,
             catchup_max: Duration::ZERO,
+            report_late: true,
         }
     }
 
@@ -51,6 +59,12 @@ impl SystemClockTicker {
         let mut t = Self::new(sample_rate, block_frames);
         t.catchup_max = t.period * max_blocks;
         t
+    }
+
+    fn rate_limiter(sample_rate: u32, block_frames: usize) -> Self {
+        let mut ticker = Self::new(sample_rate, block_frames);
+        ticker.report_late = false;
+        ticker
     }
 }
 
@@ -69,13 +83,17 @@ impl ClockSource for SystemClockTicker {
                 let late = now - d;
                 // Sub-threshold lateness is scheduler jitter the next deadline
                 // absorbs; only a real block-scale miss is worth reporting.
-                if late >= LATE_REPORT_THRESHOLD {
+                if self.report_late && late >= LATE_REPORT_THRESHOLD {
                     health::bump(&health::CLOCK_LATE_BLOCKS, 1);
                     health::raise_max(&health::CLOCK_LATE_MAX_US, late.as_micros() as u64);
                 }
                 if late <= self.catchup_max {
+                    #[cfg(target_os = "linux")]
+                    thread::sleep(RT_BUDGET_RESET_SLEEP);
                     d
                 } else {
+                    #[cfg(target_os = "linux")]
+                    thread::sleep(RT_BUDGET_RESET_SLEEP);
                     now
                 }
             }
@@ -107,9 +125,13 @@ pub struct DeviceFillClock {
     /// (see `speaker_ring`). Read here every tick so the ring always bridges
     /// one full callback whatever buffer the device negotiated.
     target: Arc<AtomicI64>,
-    /// The ring has reached its target at least once. Until then the empty
-    /// ring is the startup prefill, not a worker that fell behind.
+    /// The startup fill budget has been produced. Until then an empty ring is
+    /// startup prefill, not a worker that fell behind.
     primed: bool,
+    startup_frames: usize,
+    /// Prevents a sink that drains immediately (for example a PipeWire null
+    /// sink) from turning the real-time worker into an unbounded busy loop.
+    wall_clock: SystemClockTicker,
 }
 
 impl DeviceFillClock {
@@ -127,6 +149,8 @@ impl DeviceFillClock {
             level,
             target,
             primed: false,
+            startup_frames: 0,
+            wall_clock: SystemClockTicker::rate_limiter(pipeline_sample_rate, engine_block_frames),
         }
     }
 }
@@ -143,15 +167,14 @@ impl ClockSource for DeviceFillClock {
             let pipe_sr = self.pipeline_sample_rate.max(1) as u64;
             let block_frames = ((self.engine_block_frames as u64 * dev_sr as u64 + pipe_sr / 2)
                 / pipe_sr) as usize;
-            if queued + block_frames <= target_frames {
-                // Less than one block of headroom left in the ring -- the
-                // worker isn't staying ahead of the device.
-                if self.primed && queued < block_frames {
-                    health::bump(&health::CLOCK_LATE_BLOCKS, 1);
-                }
+            if !self.primed {
+                self.startup_frames = self.startup_frames.saturating_add(block_frames);
+                self.primed = self.startup_frames >= target_frames;
                 return true;
             }
-            self.primed = true;
+            if queued + block_frames <= target_frames {
+                return self.wall_clock.wait_for_tick(stop);
+            }
             let overshoot = queued + block_frames - target_frames;
             let drain = Duration::from_nanos((overshoot as u64 * 1_000_000_000) / dev_sr as u64);
             thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));
@@ -160,5 +183,9 @@ impl ClockSource for DeviceFillClock {
 
     fn sample_rate(&self) -> u32 {
         self.device_sample_rate.load(Ordering::Relaxed)
+    }
+
+    fn realtime_ready(&self) -> bool {
+        self.primed
     }
 }

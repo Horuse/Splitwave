@@ -144,7 +144,7 @@
 		</div>
 
 		<!-- stream info -->
-		<div class="flex flex-col gap-1 node-spec">
+		<div class="node-spec flex flex-col gap-1">
 			<div class="flex items-center justify-between">
 				<span>codec</span>
 				<span>
@@ -168,7 +168,7 @@
 		</div>
 
 		<!-- quality + throughput -->
-		<div class="flex items-center justify-between node-spec">
+		<div class="node-spec flex items-center justify-between">
 			<div class="flex items-center gap-1">
 				<SignalBars {loss} />
 				<span class="tabular-nums">

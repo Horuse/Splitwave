@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod error;
 mod logs;
+mod native_crash;
 mod state;
 
 use std::path::PathBuf;
@@ -20,10 +21,62 @@ const MENU_EVENT: &str = "menu://action";
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-// Set at startup. A panic can kill the app before the live `PANIC_EVENT`
-// reaches the UI, so each panic is also appended here (one JSON object per
-// line) and replayed on the next launch.
+// Set at startup. Reports are persisted before termination and replayed on the
+// next launch because a dying process cannot reliably notify the webview.
 static CRASH_FILE: OnceLock<PathBuf> = OnceLock::new();
+static SESSION_FILE: OnceLock<PathBuf> = OnceLock::new();
+
+fn append_report(path: &std::path::Path, payload: &serde_json::Value) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{payload}");
+    }
+}
+
+fn initialize_crash_reporting(dir: &std::path::Path) {
+    let crash_file = dir.join("crashes.jsonl");
+    let session_file = dir.join("running-session");
+    let crash_len = std::fs::metadata(&crash_file).map_or(0, |meta| meta.len());
+
+    if let Ok(baseline) = std::fs::read_to_string(&session_file) {
+        let baseline = baseline.trim().parse::<u64>().unwrap_or(0);
+        if crash_len <= baseline {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0);
+            append_report(
+                &crash_file,
+                &json!({
+                    "kind": "unexpectedExit",
+                    "message": "Splitwave did not shut down cleanly",
+                    "backtrace": "No native stack was captured. The process may have been killed by the OS, an out-of-memory condition, or a native crash without a dump.",
+                    "thread": "<unknown>",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "ts": ts,
+                }),
+            );
+        }
+    }
+
+    let current_len = std::fs::metadata(&crash_file).map_or(0, |meta| meta.len());
+    let _ = std::fs::write(&session_file, current_len.to_string());
+    let _ = CRASH_FILE.set(crash_file.clone());
+    let _ = SESSION_FILE.set(session_file);
+    if let Err(error) = native_crash::install(&crash_file) {
+        tracing::error!(%error, "failed to install native crash handler");
+    }
+}
+
+fn mark_clean_exit() {
+    if let Some(path) = SESSION_FILE.get() {
+        let _ = std::fs::remove_file(path);
+    }
+}
 
 #[cfg(target_os = "windows")]
 pub fn run_windows_vb_cable_helper() -> Option<i32> {
@@ -34,8 +87,7 @@ pub fn app_handle() -> Option<&'static AppHandle> {
     APP_HANDLE.get()
 }
 
-/// Reads and clears persisted crash reports (best-effort). Called once at
-/// startup so the UI can surface crashes from a previous run.
+/// Reads and clears persisted crash reports (best-effort).
 pub fn take_crash_reports() -> Vec<serde_json::Value> {
     let Some(path) = CRASH_FILE.get() else {
         return Vec::new();
@@ -43,7 +95,13 @@ pub fn take_crash_reports() -> Vec<serde_json::Value> {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path);
+    if let Some(session) = SESSION_FILE.get() {
+        let _ = std::fs::write(session, "0");
+    }
     contents
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -127,6 +185,7 @@ fn install_panic_hook() {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let payload = json!({
+                "kind": "rustPanic",
                 "message": info.to_string(),
                 "backtrace": backtrace,
                 "thread": std::thread::current().name().unwrap_or("<unnamed>"),
@@ -160,6 +219,9 @@ fn install_panic_hook() {
 /// chance to install its own.
 pub fn reinstall_panic_hook() {
     install_panic_hook();
+    if let Err(error) = native_crash::reinstall() {
+        tracing::error!(%error, "failed to reinstall native crash handler");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -186,11 +248,20 @@ pub fn run() {
             let handle = app.handle().clone();
             let _ = APP_HANDLE.set(handle.clone());
 
+            #[cfg(target_os = "linux")]
+            pipewire::init();
+
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);
-                let file = dir.join("crashes.jsonl");
-                info!(path = %file.display(), "crash log");
-                let _ = CRASH_FILE.set(file);
+                initialize_crash_reporting(&dir);
+                if let Some(file) = CRASH_FILE.get() {
+                    info!(path = %file.display(), "crash log");
+                }
+            }
+
+            #[cfg(target_os = "linux")]
+            if let Err(error) = audio::virtual_device::restore(&handle) {
+                tracing::error!(%error, "failed to restore PipeWire virtual devices");
             }
 
             // Native menu only on macOS (top menu bar). On Linux GTK renders it
@@ -230,6 +301,8 @@ pub fn run() {
             commands::get_logs,
             commands::clear_logs,
             commands::debug_panic,
+            commands::debug_native_crash,
+            commands::debug_unexpected_exit,
             commands::list_input_devices,
             commands::list_output_devices,
             commands::play_cue,
@@ -279,6 +352,11 @@ pub fn run() {
             commands::webrtc_set_identity,
             commands::webrtc_session_state,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                mark_clean_exit();
+            }
+        });
 }

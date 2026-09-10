@@ -436,7 +436,6 @@
 		return idx >= 0 ? p.slice(idx + 1) : p;
 	}
 
-
 	const WAV_BIT_DEPTHS: { value: WavBitDepth; label: string; sub: string }[] = [
 		{ value: 'i16', label: '16-bit', sub: 'PCM' },
 		{ value: 'i24', label: '24-bit', sub: 'PCM' },
@@ -797,7 +796,7 @@
 				{/if}
 			</div>
 		</div>
-		<div class="flex items-center justify-between node-spec">
+		<div class="node-spec flex items-center justify-between">
 			<span class="truncate">
 				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
 			</span>
@@ -810,7 +809,7 @@
 		{/if}
 
 		<div class="flex items-center justify-between border-t border-neutral-200 pt-1">
-			<span class="flex items-center gap-1 node-spec">
+			<span class="node-spec flex items-center gap-1">
 				<Pulse class="size-3" />
 				Waveform
 				{#if !isAppendable(data.format)}

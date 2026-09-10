@@ -28,7 +28,6 @@
 		return Math.min(100, Math.round((s.downloaded / s.total) * 100));
 	}
 
-
 	function dismiss() {
 		updaterStore.state = { phase: 'idle' };
 	}

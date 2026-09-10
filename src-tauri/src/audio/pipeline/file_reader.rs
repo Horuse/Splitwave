@@ -410,8 +410,8 @@ fn run(
     let mut last_paused_progress = Instant::now();
 
     // Playback rate follows the consumers draining these rings: decode until
-    // `pace_queue` samples are buffered, then idle. The ring (dag.rs
-    // RING_CAPACITY_FRAMES) can hold a whole short file, so backpressure alone
+    // `pace_queue` samples are buffered, then idle. The downstream ring can
+    // hold a whole short file, so backpressure alone
     // doesn't pace anything; a wall-clock schedule instead drifts against the
     // audio clock (steady underruns) and turns any stall -- a graph swap
     // re-routing our bridges -- into an unpaced catch-up burst.

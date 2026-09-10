@@ -1,4 +1,4 @@
-export type ErrorSource = 'rustPanic' | 'jsError' | 'unhandledRejection';
+export type ErrorSource = 'rustPanic' | 'nativeCrash' | 'unexpectedExit' | 'jsError' | 'unhandledRejection';
 
 export interface ErrorEntry {
 	source: ErrorSource;

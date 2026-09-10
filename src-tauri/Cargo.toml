@@ -15,9 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
-# rubato's sinc resampler is unusable in dev without optimisation — a single
-# 1024-frame block takes ~16 ms vs ~500 µs at -O3, so the DSP worker can't
-# keep real time and input rings overflow. Optimise just the resampler stack;
+# rubato's resamplers are unusable in dev without optimisation — a single
+# block can miss its deadline at -O0, so the DSP worker cannot keep real time
+# and input rings overflow. Optimise just the resampler stack;
 # leaving the rest of the workspace (tauri, web stack, our crate) at -O0
 # keeps clean builds fast.
 [profile.dev.package.rubato]
@@ -106,7 +106,7 @@ raw-window-handle = "0.6"
 vst3 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-pipewire = { version = "0.9", features = ["v0_3_44"] }
+pipewire = { version = "0.9", features = ["v0_3_49"] }
 # Native volume read/set and event-driven change notifications. Talks to
 # pipewire-pulse; high-level, so no subprocess or polling like wpctl/pactl.
 libpulse-binding = "2"
@@ -114,14 +114,15 @@ freedesktop-desktop-entry = "0.8"
 freedesktop-icons = "0.4"
 resvg = "0.47"
 dirs = "5"
-# VST3: modules are loaded with dlopen, and X11 editors hand the host file
-# descriptors to poll from its run loop.
-libc = "0.2"
 # Bundled roots for the updater's reqwest client (see `check_for_updates`):
 # sandboxed AppImages/Flatpak can't see the host trust store, so the update
 # check falls back to webpki-roots. macOS/Windows keep the platform verifier.
 webpki-roots = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[target.'cfg(unix)'.dependencies]
+# Fatal-signal crash persistence; Linux VST3 hosting also uses dlopen and poll.
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.61"
@@ -138,6 +139,9 @@ windows = { version = "0.61", features = [
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_IO",
+    "Win32_System_Kernel",
     "Win32_System_JobObjects",
     "Win32_System_Registry",
     "Win32_System_Variant",

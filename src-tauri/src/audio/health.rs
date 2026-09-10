@@ -36,9 +36,7 @@ counters! {
     SOURCE_TRIM_DROPPED_SAMPLES,
     /// Samples dropped by a StagingRing overrun (producer outran the drain).
     STAGING_OVERRUN_SAMPLES,
-    /// Worker blocks produced with no clock slack left: a wall-clock deadline
-    /// already passed on wake, or (device-paced speaker workers) the ring had
-    /// less than one block of headroom.
+    /// Worker blocks whose wall-clock deadline had already passed on wake.
     CLOCK_LATE_BLOCKS,
     /// Worst single deadline miss, microseconds (monotonic high-water mark).
     CLOCK_LATE_MAX_US,

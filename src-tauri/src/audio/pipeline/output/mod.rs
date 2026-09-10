@@ -4,23 +4,20 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use audio_thread_priority::{
-    demote_current_thread_from_real_time, promote_current_thread_to_real_time, RtPriorityHandle,
-};
 use rtrb::{Producer, RingBuffer};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
 use crate::audio::effects::{update_meter, MeterHandle, WaveformHandle};
 use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
 use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
-use crate::audio::resample::MultiResampler;
+use crate::audio::resample::FixedRateResampler;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::{ring_capacity_frames, OutputGraph, DSP_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -40,13 +37,6 @@ pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, 
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
-
-// Ring length in frames; multiplied by the device channel count at open. ~1 s
-// @ 48 kHz so the adaptive fill target (which follows the device's own buffer
-// size) has room to grow on setups that hand out large playback buffers
-// (~250 ms on some Linux/PipeWire sessions) while a healthy device still only
-// buffers a few blocks.
-pub(super) const SPEAKER_RING_CAPACITY_FRAMES: usize = 48_000;
 
 // Floor for the adaptive fill target: enough to absorb a DSP-side spike
 // without the device clock -- not the wall clock -- ever seeing an empty ring.
@@ -289,8 +279,10 @@ pub(super) fn speaker_ring(
     Arc<AtomicI64>,
     SpeakerIo,
 ) {
-    let (producer, mut consumer) =
-        RingBuffer::<f32>::new(SPEAKER_RING_CAPACITY_FRAMES * out_channels);
+    // One second at the actual device rate, so high-rate and wide-channel
+    // streams have the same time capacity as 48 kHz stereo.
+    let capacity_frames = ring_capacity_frames(device_rate);
+    let (producer, mut consumer) = RingBuffer::<f32>::new(capacity_frames * out_channels);
     let level = Arc::new(AtomicI64::new(0));
     let level_cb = level.clone();
     let target = Arc::new(AtomicI64::new(pipeline_frames_to_device_frames(
@@ -301,7 +293,7 @@ pub(super) fn speaker_ring(
     let target_cb = target.clone();
     let io = SpeakerIo::new(device_rate, target.clone(), graph_latency_frames);
     let io_cb = io.clone();
-    let fill = move |out: &mut [f32], _frames: usize| {
+    let fill = move |out: &mut [f32], callback_frames: usize| {
         let read = streams::bulk_pop(&mut consumer, out);
         level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
         // Size the fill target to the device's own callback buffer so the ring
@@ -319,10 +311,12 @@ pub(super) fn speaker_ring(
             pipeline_rate,
             device_rate,
         );
-        let dev_frames = out.len() / out_channels;
-        let max = SPEAKER_RING_CAPACITY_FRAMES
-            .saturating_sub(dev_frames + margin)
-            .max(min);
+        let dev_frames = if callback_frames == 0 {
+            out.len() / out_channels
+        } else {
+            callback_frames
+        };
+        let max = capacity_frames.saturating_sub(dev_frames + margin).max(min);
         target_cb.store(
             (dev_frames + margin).clamp(min, max) as i64,
             Ordering::Relaxed,
@@ -334,34 +328,6 @@ pub(super) fn speaker_ring(
         io_cb.callbacks.fetch_add(1, Ordering::Relaxed);
     };
     (producer, fill, level, target, io)
-}
-
-// Held for the worker's lifetime: dropping the handle restores normal scheduling.
-pub(crate) struct RtThread(Option<RtPriorityHandle>);
-
-impl RtThread {
-    pub(crate) fn promote(worker: &'static str, sample_rate: u32) -> Self {
-        match promote_current_thread_to_real_time(DSP_BLOCK_FRAMES as u32, sample_rate) {
-            Ok(handle) => {
-                info!(worker, "worker thread promoted to real-time");
-                Self(Some(handle))
-            }
-            Err(e) => {
-                warn!(worker, error = %e, "real-time promotion failed, running at normal priority");
-                Self(None)
-            }
-        }
-    }
-}
-
-impl Drop for RtThread {
-    fn drop(&mut self) {
-        if let Some(handle) = self.0.take() {
-            if let Err(e) = demote_current_thread_from_real_time(handle) {
-                warn!(error = %e, "real-time demotion failed");
-            }
-        }
-    }
 }
 
 // Shared by both platforms' `start_speaker_stream`: a device-fill-paced
@@ -391,7 +357,7 @@ pub(super) fn spawn_speaker_worker(
     let mut resampler = if initial_device_rate == pipeline_rate {
         None
     } else {
-        Some(MultiResampler::new(
+        Some(FixedRateResampler::new(
             pipeline_rate,
             initial_device_rate,
             DSP_BLOCK_FRAMES,
@@ -405,26 +371,36 @@ pub(super) fn spawn_speaker_worker(
             .map(|r| r.out_max() * channels)
             .unwrap_or(DSP_BLOCK_FRAMES * channels)
     ];
+    let mut resampled_channels = 0;
     let join = thread::Builder::new()
         .name(format!("speaker:{initial_device_rate}"))
         .spawn(move || {
-            let _rt = RtThread::promote("speaker", initial_device_rate);
-            worker.run(stop_thread, clock, |block| {
-                update_meter(&meter, block, channels);
-                let device_block = if let Some(resampler) = &mut resampler {
-                    let written = resampler.process_chunk_into(block, &mut resampled)?;
-                    &resampled[..written]
-                } else {
-                    block
-                };
-                let written = streams::bulk_push_counted(
-                    &mut producer,
-                    device_block,
-                    &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
-                );
-                level.fetch_add((written / channels) as i64, Ordering::Relaxed);
-                Ok(())
-            });
+            worker.run(
+                stop_thread,
+                clock,
+                Some(("speaker", pipeline_rate)),
+                |block, active_channels| {
+                    update_meter(&meter, block, channels);
+                    let device_block = if let Some(resampler) = &mut resampler {
+                        resampled_channels = resampled_channels.max(active_channels);
+                        let written = resampler.process_chunk_into(
+                            block,
+                            resampled_channels,
+                            &mut resampled,
+                        )?;
+                        &resampled[..written]
+                    } else {
+                        block
+                    };
+                    let written = streams::bulk_push_counted(
+                        &mut producer,
+                        device_block,
+                        &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
+                    );
+                    level.fetch_add((written / channels) as i64, Ordering::Relaxed);
+                    Ok(())
+                },
+            );
         })
         .map_err(|e| AppError::Stream(format!("spawn speaker worker: {e}")))?;
     Ok((
@@ -450,8 +426,12 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     let join = thread::Builder::new()
         .name("monitor".into())
         .spawn(move || {
-            let _rt = RtThread::promote("monitor", sample_rate);
-            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
+            worker.run(
+                stop_thread,
+                Box::new(ticker),
+                Some(("monitor", sample_rate)),
+                |_block, _| Ok(()),
+            );
         })
         .map_err(|e| AppError::Stream(format!("spawn monitor worker: {e}")))?;
     Ok((
@@ -480,8 +460,12 @@ pub(super) fn start_wire_sender_worker(
     let join = thread::Builder::new()
         .name("netsender".into())
         .spawn(move || {
-            let _rt = RtThread::promote("netsender", sample_rate);
-            worker.run(stop_thread, Box::new(ticker), |_block| Ok(()));
+            worker.run(
+                stop_thread,
+                Box::new(ticker),
+                Some(("netsender", sample_rate)),
+                |_block, _| Ok(()),
+            );
         })
         .map_err(|e| AppError::Stream(format!("spawn net sender worker: {e}")))?;
     Ok((
@@ -556,7 +540,7 @@ pub(super) fn start_recorder_worker(
             let mut frames_written: u64 = base_frames;
             let mut encoder = encoder;
 
-            worker.run(stop_thread, clock, |block| {
+            worker.run(stop_thread, clock, None, |block, _| {
                 encoder.write_interleaved(block)?;
                 frames_written += (block.len() / channels_usize) as u64;
                 wave_thread.push_interleaved(block, block.len() / channels_usize, base_frames);

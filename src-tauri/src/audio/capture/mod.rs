@@ -8,7 +8,7 @@ pub(crate) mod macos_tap;
 pub use macos_backend::{capture_rate, uses_taps, Capture};
 
 #[cfg(target_os = "linux")]
-mod linux;
+pub(crate) mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::Capture;
 

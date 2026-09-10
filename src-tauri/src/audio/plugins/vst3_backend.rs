@@ -563,8 +563,22 @@ mod tests {
     #[test]
     fn cid_round_trips() {
         let cid: TUID = [
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, -0x78, -0x67, -0x56, -0x45, -0x34,
-            -0x23, -0x12, -0x01,
+            0x00_u8 as _,
+            0x11_u8 as _,
+            0x22_u8 as _,
+            0x33_u8 as _,
+            0x44_u8 as _,
+            0x55_u8 as _,
+            0x66_u8 as _,
+            0x77_u8 as _,
+            0x88_u8 as _,
+            0x99_u8 as _,
+            0xAA_u8 as _,
+            0xBB_u8 as _,
+            0xCC_u8 as _,
+            0xDD_u8 as _,
+            0xEE_u8 as _,
+            0xFF_u8 as _,
         ];
         let text = format_cid(&cid);
         assert_eq!(text, "00112233445566778899AABBCCDDEEFF");

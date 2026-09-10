@@ -158,7 +158,6 @@
 		return i >= 0 ? p.slice(i + 1) : p;
 	}
 
-
 	function extension(p: string | null): string {
 		const i = p?.lastIndexOf('.') ?? -1;
 		return i > 0 ? (p as string).slice(i + 1).toUpperCase() : '';
@@ -176,7 +175,6 @@
 		flow.updateNodeData(id, { volume: scalar });
 		audioMethods.setInputVolume(id, scalar).catch(() => {});
 	}
-
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
 
@@ -207,7 +205,7 @@
 		{/if}
 
 		{#if sampleRate > 0}
-			<div class="flex justify-between node-spec">
+			<div class="node-spec flex justify-between">
 				<span>{formatHz(sampleRate)} · {channelLabel}</span>
 				<span class="tabular-nums">{extension(data.filePath)}</span>
 			</div>

@@ -25,6 +25,14 @@
 		invoke('debug_panic').catch(() => {});
 	}
 
+	function nativeCrash() {
+		invoke('debug_native_crash').catch(() => {});
+	}
+
+	function unexpectedExit() {
+		invoke('debug_unexpected_exit').catch(() => {});
+	}
+
 	function fakeJsError() {
 		errorStore.report({
 			source: 'jsError',
@@ -89,6 +97,8 @@
 				<MenuSection label="Errors" />
 				<MenuItem label="Rust panic" onclick={fakeRustPanic} />
 				<MenuItem label="Real crash (panic)" onclick={realRustCrash} />
+				<MenuItem label="Native crash (process)" onclick={nativeCrash} />
+				<MenuItem label="Unexpected exit (process)" onclick={unexpectedExit} />
 				<MenuItem label="JS error" onclick={fakeJsError} />
 				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
 				<MenuSection label="Updater" />

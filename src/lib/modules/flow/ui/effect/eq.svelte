@@ -161,7 +161,6 @@
 			(e.currentTarget as HTMLInputElement).blur();
 		}
 	}
-
 </script>
 
 <Wrapper label="EQ" icon={Sliders} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>

@@ -5,10 +5,7 @@ use pw::spa::pod::Pod;
 
 use crate::error::AppResult;
 
-const CHANNELS: usize = 2;
-const RATE: u32 = 48_000;
 const F32_SIZE: usize = std::mem::size_of::<f32>();
-const STRIDE: usize = F32_SIZE * CHANNELS;
 
 struct Terminate;
 
@@ -33,12 +30,14 @@ impl Drop for Playback {
 impl Playback {
     pub fn start(
         sink_node_name: &str,
+        sample_rate: u32,
+        channels: usize,
         fill: impl FnMut(&mut [f32]) -> usize + Send + 'static,
     ) -> AppResult<Self> {
         let (sender, receiver) = pw::channel::channel::<Terminate>();
         let target = sink_node_name.to_string();
         let thread = std::thread::spawn(move || {
-            if let Err(e) = run(receiver, &target, Box::new(fill)) {
+            if let Err(e) = run(receiver, &target, sample_rate, channels, Box::new(fill)) {
                 tracing::error!("pipewire playback: {e:?}");
             }
         });
@@ -52,6 +51,8 @@ impl Playback {
 fn run(
     receiver: pw::channel::Receiver<Terminate>,
     sink_node_name: &str,
+    sample_rate: u32,
+    channels: usize,
     fill: Box<dyn FnMut(&mut [f32]) -> usize + Send>,
 ) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
@@ -69,42 +70,56 @@ fn run(
         *pw::keys::MEDIA_ROLE => "Music",
     };
     props.insert(*pw::keys::TARGET_OBJECT, sink_node_name);
+    let latency_frames = (sample_rate / 100).max(1);
+    props.insert(
+        *pw::keys::NODE_LATENCY,
+        format!("{latency_frames}/{sample_rate}"),
+    );
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-playback", props)?;
     let user_data = UserData { fill };
+    let stride = F32_SIZE * channels;
 
     let _listener = stream
         .add_local_listener_with_user_data(user_data)
-        .process(|stream, user_data| {
-            let Some(mut buffer) = stream.dequeue_buffer() else {
+        .process(move |stream_ref, user_data| {
+            let Some(mut buffer) = stream_ref.dequeue_buffer() else {
                 return;
             };
+            let requested_frames = buffer.requested() as usize;
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;
             }
             let data = &mut datas[0];
             let Some(raw) = data.data() else { return };
-            let capacity = raw.len() / F32_SIZE;
-            if capacity == 0 {
+            let capacity_samples = raw.len() / F32_SIZE;
+            let capacity_frames = capacity_samples / channels;
+            let frames = if requested_frames > 0 {
+                requested_frames.min(capacity_frames)
+            } else {
+                capacity_frames
+            };
+            let sample_count = frames * channels;
+            if sample_count == 0 {
                 return;
             }
-            let mut samples = vec![0.0f32; capacity];
-            let written = (user_data.fill)(&mut samples).min(capacity);
-            for (i, s) in samples[..written].iter().enumerate() {
-                raw[i * F32_SIZE..(i + 1) * F32_SIZE].copy_from_slice(&s.to_le_bytes());
-            }
+            // F32LE is negotiated below and PipeWire aligns mapped buffers.
+            let samples = unsafe {
+                std::slice::from_raw_parts_mut(raw.as_mut_ptr() as *mut f32, sample_count)
+            };
+            let written = (user_data.fill)(samples).min(sample_count);
             let chunk = data.chunk_mut();
             *chunk.offset_mut() = 0;
-            *chunk.stride_mut() = STRIDE as i32;
+            *chunk.stride_mut() = stride as i32;
             *chunk.size_mut() = (written * F32_SIZE) as u32;
         })
         .register()?;
 
     let mut audio_info = AudioInfoRaw::new();
     audio_info.set_format(AudioFormat::F32LE);
-    audio_info.set_rate(RATE);
-    audio_info.set_channels(CHANNELS as u32);
+    audio_info.set_rate(sample_rate);
+    audio_info.set_channels(channels as u32);
 
     let obj = spa::pod::Object {
         type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
@@ -144,19 +159,24 @@ mod tests {
         let c = calls.clone();
         let t = total.clone();
         let mut phase = 0.0f32;
-        let pb = Playback::start("alsa_output.pci-0000_00_0a.0.stereo-fallback", move |buf| {
-            c.fetch_add(1, Ordering::Relaxed);
-            t.fetch_add(buf.len(), Ordering::Relaxed);
-            for f in buf.chunks_mut(2) {
-                let s = (phase * 2.0 * std::f32::consts::PI * 440.0 / 48000.0).sin() * 0.2;
-                phase += 1.0;
-                if f.len() == 2 {
-                    f[0] = s;
-                    f[1] = s;
+        let pb = Playback::start(
+            "alsa_output.pci-0000_00_0a.0.stereo-fallback",
+            48_000,
+            2,
+            move |buf| {
+                c.fetch_add(1, Ordering::Relaxed);
+                t.fetch_add(buf.len(), Ordering::Relaxed);
+                for f in buf.chunks_mut(2) {
+                    let s = (phase * 2.0 * std::f32::consts::PI * 440.0 / 48000.0).sin() * 0.2;
+                    phase += 1.0;
+                    if f.len() == 2 {
+                        f[0] = s;
+                        f[1] = s;
+                    }
                 }
-            }
-            buf.len()
-        })
+                buf.len()
+            },
+        )
         .expect("start playback");
         std::thread::sleep(std::time::Duration::from_millis(1500));
         drop(pb);

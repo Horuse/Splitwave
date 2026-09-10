@@ -11,8 +11,8 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"tauri": "tauri",
 		"format": "prettier --write \"**/*.{ts,tsx,md,svelte,json}\" && cargo fmt --manifest-path src-tauri/Cargo.toml",
-		"generate": "cd src-tauri && cargo test",
-		"test": "cargo test --manifest-path src-tauri/Cargo.toml"
+		"generate": "cd src-tauri && cargo test -- --test-threads=1",
+		"test": "cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=1"
 	},
 	"license": "MIT",
 	"dependencies": {

@@ -21,3 +21,6 @@ vite.config.ts.timestamp-*
 /flatpak/.flatpak-builder/
 /flatpak/splitwave.deb
 /flatpak/*.flatpak
+
+# Internal defects documentation
+docs/ENGINE_DEFECTS.md

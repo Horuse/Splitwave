@@ -119,8 +119,8 @@ fn activate_on_main(
             let same_plugin = old.path == path && old.plugin_id == plugin_id;
             GRAVEYARD.with(|g| g.borrow_mut().bury(old.instance, old.alive));
 
-            if same_plugin {
-                // Same plugin, pipeline rebuilt: re-attach to existing window!
+            if same_plugin && editor::is_open(&node_id) {
+                // Same plugin, pipeline rebuilt: re-attach to existing open window!
                 if let Some(window) = editor::window_for(&node_id) {
                     // IMPORTANT: Drop the old editor view first so its removed() and
                     // peer teardown happen BEFORE the new view calls attached()!
@@ -157,8 +157,8 @@ fn activate_on_main(
                     }
                 }
             } else {
-                // Different plugin chosen on this node: close the previous editor
-                // window so the new one opens cleanly with its own UI and geometry.
+                // Different plugin chosen or editor was closed: close the previous editor
+                // window so it doesn't reopen unexpectedly during pipeline reconcile.
                 old.editor = None;
                 editor::close_window(&node_id);
                 if let Some(app) = crate::app_handle() {

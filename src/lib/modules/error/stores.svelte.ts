@@ -12,8 +12,12 @@ export interface ErrorEntry {
 
 class ErrorStore {
 	current = $state<ErrorEntry | null>(null);
+	hadPreviousCrash = $state(false);
 
 	report(entry: ErrorEntry): void {
+		if (entry.previousRun) {
+			this.hadPreviousCrash = true;
+		}
 		this.current = entry;
 	}
 

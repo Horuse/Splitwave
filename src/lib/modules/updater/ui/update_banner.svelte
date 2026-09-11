@@ -42,9 +42,16 @@
 	<ModalShell {title} {titleClass} canClose={s.phase !== 'installing'} onClose={dismiss}>
 		{#snippet badge()}
 			{#if s.phase === 'available' || s.phase === 'downloading'}
-				<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
-					v{s.update.version}
-				</span>
+				<div class="flex items-center gap-1.5">
+					<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
+						v{s.update.version}
+					</span>
+					{#if /-(rc|beta|alpha)/i.test(s.update.version)}
+						<span class="rounded-md bg-amber-500/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+							PRE-RELEASE
+						</span>
+					{/if}
+				</div>
 			{/if}
 		{/snippet}
 

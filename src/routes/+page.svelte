@@ -75,7 +75,7 @@
 	{/snippet}
 </Header>
 
-<div class="flex h-[calc(100vh-40px)] flex-col gap-8 overflow-y-auto p-8">
+<div class="flex flex-1 min-h-0 flex-col gap-8 overflow-y-auto p-8">
 	{#if !isWindows}
 		<DriverUpdateBanner />
 	{/if}

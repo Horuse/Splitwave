@@ -6284,6 +6284,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+ "url",
  "vst3",
  "webpki-roots 0.26.11",
  "webrtc",

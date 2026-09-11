@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { errorStore } from '../stores.svelte';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { formatAppInfo, getCachedAppInfo } from '$lib/modules/app_info';
 	import { ModalShell } from '$lib/modules/overlay/ui/modal';
 	import CopyButton from '$lib/components/copy_button.svelte';
@@ -81,12 +82,27 @@
 		titleClass={current.previousRun ? 'text-sm font-semibold text-amber-500' : 'text-sm font-semibold text-red-500'}
 		onClose={dismiss}>
 		{#snippet badge()}
-			<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
-				{sourceLabel(current.source)}
-			</span>
+			<div class="flex items-center gap-1.5">
+				<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
+					{sourceLabel(current.source)}
+				</span>
+				{#if current.previousRun || audioStore.safeMode}
+					<span class="rounded-md bg-amber-500/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+						SAFE MODE
+					</span>
+				{/if}
+			</div>
 		{/snippet}
 
 		<div class="flex flex-col gap-3 px-5 py-4">
+			{#if current.previousRun || audioStore.safeMode}
+				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+					<div class="font-semibold">Safe Mode is active</div>
+					<div class="mt-0.5 text-[11px] opacity-90">
+						Automatic audio pipeline startup was skipped to prevent a crash loop. You can safely inspect or edit your pipelines and start them manually when ready.
+					</div>
+				</div>
+			{/if}
 			<p class="text-xs text-neutral-900">
 				{#if current.previousRun}
 					The app closed unexpectedly during your previous session. Reporting this helps us fix it.

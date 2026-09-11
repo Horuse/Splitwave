@@ -46,6 +46,7 @@
 	function setApp<
 		K extends
 			| 'checkUpdatesOnLaunch'
+			| 'includePreReleases'
 			| 'maxSnapshots'
 			| 'snapToGrid'
 			| 'gridSize'
@@ -82,7 +83,7 @@
 	{/snippet}
 </Header>
 
-<div class="h-[calc(100vh-40px)] overflow-y-auto p-8">
+<div class="flex-1 min-h-0 overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">
 		<section class="flex flex-col gap-3">
 			<div>
@@ -209,6 +210,12 @@
 				label="Check on launch"
 				hint="Looks for a new version each time the app starts."
 				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)} />
+
+			<Toggle
+				checked={appSettings.includePreReleases}
+				label="Receive pre-release updates (Beta / RC)"
+				hint="Download preview versions (beta, RC, alpha) with the newest features and bug fixes before general release."
+				onChange={() => setApp('includePreReleases', !appSettings.includePreReleases)} />
 		</section>
 
 		<section class="flex flex-col gap-2">

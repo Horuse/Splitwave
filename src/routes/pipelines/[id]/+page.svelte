@@ -116,7 +116,7 @@
 	{/snippet}
 </Header>
 
-<div class="flex h-[calc(100vh-40px)] w-full">
+<div class="flex flex-1 min-h-0 w-full">
 	{#if notFound}
 		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
 	{:else if stale}

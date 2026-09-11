@@ -533,8 +533,8 @@ pub async fn stop_pipeline(state: State<'_, AppState>, app: AppHandle) -> AppRes
 
 // Updater errors serialize Display-only, hiding reqwest's cause; unwind source()+Debug.
 #[tauri::command]
-pub async fn diagnose_update_error(app: AppHandle) -> String {
-    let report = match configured_updater(&app) {
+pub async fn diagnose_update_error(app: AppHandle, endpoint: Option<String>) -> String {
+    let report = match configured_updater(&app, endpoint.as_deref()) {
         Ok(updater) => match updater.check().await {
             Ok(Some(u)) => format!("check succeeded; update {} is available", u.version),
             Ok(None) => "check succeeded; no update available".to_string(),
@@ -563,14 +563,21 @@ fn updater_tls_config() -> rustls::ClientConfig {
         .with_no_client_auth()
 }
 
-fn configured_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+fn configured_updater(
+    app: &AppHandle,
+    endpoint: Option<&str>,
+) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
     #[cfg(target_os = "linux")]
-    let builder = app
+    let mut builder = app
         .updater_builder()
         .configure_client(|b| b.tls_backend_preconfigured(updater_tls_config()));
     #[cfg(not(target_os = "linux"))]
-    let builder = app.updater_builder();
+    let mut builder = app.updater_builder();
+    if let Some(ep) = endpoint {
+        let url = url::Url::parse(ep).map_err(|e| e.to_string())?;
+        builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
+    }
     builder.build().map_err(|e| e.to_string())
 }
 
@@ -588,9 +595,12 @@ pub struct UpdateMetadata {
 /// Mirrors `plugin:updater|check` but with bundled roots wired into the HTTP
 /// client; the plugin's own `check` command can't be configured.
 #[tauri::command]
-pub async fn check_for_updates(app: AppHandle) -> Result<Option<UpdateMetadata>, String> {
+pub async fn check_for_updates(
+    app: AppHandle,
+    endpoint: Option<String>,
+) -> Result<Option<UpdateMetadata>, String> {
     use tauri::Manager;
-    let updater = configured_updater(&app)?;
+    let updater = configured_updater(&app, endpoint.as_deref())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };

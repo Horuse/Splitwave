@@ -4,6 +4,7 @@ import { LazyStore } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
 import { arch, type as osType } from '@tauri-apps/plugin-os';
 import { updaterStore } from './stores.svelte';
+import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 // Shape returned by the `check_for_updates` command; mirrors the plugin's
 // `check` metadata so `new Update(...)` can wrap it unchanged.
@@ -53,10 +54,35 @@ function noBuildMessage(): string {
 	return `Unfortunately, the latest version has no build for ${arch()} on ${osLabel(osType())}. It looks like you built it yourself, or this platform is no longer supported.`;
 }
 
+async function resolveUpdateEndpoint(): Promise<string | null> {
+	if (!appSettings.includePreReleases) return null;
+	try {
+		const res = await fetch(RELEASES_API, {
+			headers: { Accept: 'application/vnd.github+json' }
+		});
+		if (!res.ok) return null;
+		const releases = await res.json();
+		if (!Array.isArray(releases)) return null;
+		const candidate = releases.find(
+			(r: { draft?: boolean; assets?: Array<{ name: string; browser_download_url: string }> }) =>
+				!r.draft && Array.isArray(r.assets) && r.assets.some((a) => a.name === 'latest.json')
+		);
+		if (candidate) {
+			const asset = candidate.assets.find((a: { name: string }) => a.name === 'latest.json');
+			return asset?.browser_download_url ?? null;
+		}
+	} catch {
+		// Fall back to default endpoint
+	}
+	return null;
+}
+
 export async function checkForUpdates(silent = false): Promise<void> {
 	updaterStore.state = { phase: 'checking' };
+	let endpoint: string | null = null;
 	try {
-		const metadata = await invoke<CheckMetadata | null>('check_for_updates');
+		endpoint = await resolveUpdateEndpoint();
+		const metadata = await invoke<CheckMetadata | null>('check_for_updates', { endpoint });
 		const update = metadata ? new Update(metadata) : null;
 		if (!update) {
 			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'up_to_date' };
@@ -77,7 +103,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
 			updaterStore.state = silent ? { phase: 'idle' } : { phase: 'unsupported', message: noBuildMessage() };
 			return;
 		}
-		const message = await diagnoseError(e);
+		const message = await diagnoseError(e, endpoint);
 		updaterStore.state = silent ? { phase: 'idle' } : { phase: 'error', message };
 	}
 }
@@ -115,10 +141,10 @@ export function latestRelease(): Promise<Release | null> {
 	return fetchRelease('/latest');
 }
 
-async function diagnoseError(e: unknown): Promise<string> {
+async function diagnoseError(e: unknown, endpoint?: string | null): Promise<string> {
 	const base = e instanceof Error ? e.message : String(e);
 	try {
-		const detail = await invoke<string>('diagnose_update_error');
+		const detail = await invoke<string>('diagnose_update_error', { endpoint: endpoint ?? null });
 		return detail ? `${base}\n\n${detail}` : base;
 	} catch {
 		return base;

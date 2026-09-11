@@ -10,7 +10,7 @@ export function migrateFileRecordingMode(pipeline: Pipeline): Pipeline {
 			if (n.kind !== 'fileRecording') return n;
 			const data = withDefaults(n.kind, n.data) as Record<string, unknown>;
 			if (data.allowOverwrite === true) data.mode = 'overwrite';
-			delete data.allowOverwrite;
+			data.allowOverwrite = data.mode === 'overwrite';
 			return { ...n, data };
 		})
 	};

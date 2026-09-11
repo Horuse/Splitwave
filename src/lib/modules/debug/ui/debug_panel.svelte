@@ -3,6 +3,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import type { Update } from '@tauri-apps/plugin-updater';
 	import { errorStore } from '$lib/modules/error';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { updaterStore, latestRelease } from '$lib/modules/updater';
 	import { getCachedAppInfo } from '$lib/modules/app_info';
 	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
@@ -50,6 +51,21 @@
 		});
 	}
 
+	async function fakeSafeMode() {
+		if (audioStore.isRunning) {
+			await audioStore.deactivatePipeline().catch(() => {});
+		}
+		audioStore.safeMode = true;
+		errorStore.report({
+			source: 'nativeCrash',
+			message: 'Native crash: SIGSEGV (Process crashed during audio startup)',
+			stack: 'The process terminated before a Rust backtrace could be captured. Use the OS crash dump for the native stack.',
+			thread: '<native>',
+			at: Date.now(),
+			previousRun: true
+		});
+	}
+
 	// Uses the real latest GitHub release so the modal shows notes of the shape
 	// users actually get.
 	async function fakeUpdateAvailable() {
@@ -67,6 +83,24 @@
 			phase: 'available',
 			update: stub,
 			notes: release?.notes ?? 'Could not reach the GitHub releases API.'
+		};
+	}
+
+	async function fakeBetaUpdateAvailable() {
+		const release = await latestRelease();
+		const stub = {
+			version: '1.2.0-rc.1',
+			currentVersion: getCachedAppInfo()?.appVersion ?? '1.1.0',
+			date: new Date().toISOString(),
+			downloadAndInstall: async () => {},
+			download: async () => {},
+			install: async () => {},
+			close: async () => {}
+		} as unknown as Update;
+		updaterStore.state = {
+			phase: 'available',
+			update: stub,
+			notes: release?.notes ?? '### Pre-release v1.2.0-rc.1\n\n- Safe mode on crash\n- Automatic pipeline backup\n- Pre-release beta channel'
 		};
 	}
 
@@ -95,14 +129,16 @@
 		<div transition:fly={{ duration: 200, y: 5 }}>
 			<Menu>
 				<MenuSection label="Errors" />
-				<MenuItem label="Rust panic" onclick={fakeRustPanic} />
+				<MenuItem label="Rust panic (preview)" onclick={fakeRustPanic} />
 				<MenuItem label="Real crash (panic)" onclick={realRustCrash} />
 				<MenuItem label="Native crash (process)" onclick={nativeCrash} />
 				<MenuItem label="Unexpected exit (process)" onclick={unexpectedExit} />
 				<MenuItem label="JS error" onclick={fakeJsError} />
 				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
+				<MenuItem label="Safe Mode (simulate)" onclick={fakeSafeMode} />
 				<MenuSection label="Updater" />
 				<MenuItem label="Update available" onclick={fakeUpdateAvailable} />
+				<MenuItem label="Pre-release update available" onclick={fakeBetaUpdateAvailable} />
 				<MenuItem label="Downloading 30%" onclick={fakeDownloading} />
 				<MenuItem label="Update error" onclick={fakeUpdateError} />
 				<MenuSeparator />

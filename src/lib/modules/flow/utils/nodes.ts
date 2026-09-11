@@ -205,7 +205,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Waveform,
 		icon: PulseIcon,
 		defaultData: DEFAULT_NODE_DATA['waveform'],
-		defaultSize: { width: 200, height: 140 }
+		defaultSize: { width: 256, height: 130 }
 	}),
 	spectrum: entry<'spectrum'>({
 		kind: 'spectrum',

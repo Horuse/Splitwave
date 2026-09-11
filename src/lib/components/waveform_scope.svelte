@@ -19,7 +19,8 @@
 		// Encoder writes PCM (WAV/AIFF) — the disk-peak source; `null` falls
 		// back to the path-extension heuristic.
 		pcm = null,
-		maxChannels = null
+		maxChannels = null,
+		showBufferLimit = false
 	}: {
 		nodeId: string;
 		height?: number;
@@ -29,6 +30,7 @@
 		pcm?: boolean | null;
 		// Caps displayed lanes; phantom multi lanes without a cable are dropped.
 		maxChannels?: number | null;
+		showBufferLimit?: boolean;
 	} = $props();
 
 	const SEG_FRAMES = 64;
@@ -894,7 +896,7 @@
 					c.stroke();
 					c.restore();
 
-					if (totalSegs > 0) {
+					if (showBufferLimit && totalSegs > 0) {
 						c.save();
 						c.font = '6.5px monospace';
 						const line1 = 'Live view · Buffer limit';

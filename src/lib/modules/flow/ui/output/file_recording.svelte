@@ -833,7 +833,8 @@
 				nodeId={id}
 				filePath={data.filePath}
 				pcm={data.format.kind === 'wav' || data.format.kind === 'aiff'}
-				maxChannels={waveformChannels} />
+				maxChannels={waveformChannels}
+				showBufferLimit />
 		{/if}
 	</div>
 </Wrapper>

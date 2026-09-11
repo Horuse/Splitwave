@@ -9,6 +9,7 @@ export type ModalComponent<Props = Record<string, unknown>> = Component<ModalBas
 
 export interface ModalParams {
 	canClose?: boolean;
+	onClose?: () => void;
 	[key: string]: unknown;
 }
 

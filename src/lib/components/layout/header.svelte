@@ -10,6 +10,7 @@
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Popover } from '$lib/modules/overlay/ui';
+	import { AnnouncementBanner } from '$lib/modules/announcements';
 
 	interface Props {
 		left?: Snippet;
@@ -112,3 +113,5 @@
 		<button type="button" class="btn-warning px-3 py-0.5 text-xs" onclick={() => (audioStore.safeMode = false)}> Dismiss </button>
 	</div>
 {/if}
+
+<AnnouncementBanner />

@@ -26,6 +26,16 @@ pub fn window_for(node_id: &str) -> Option<tauri::Window> {
     windows().lock().unwrap().get(node_id).cloned()
 }
 
+/// Returns whether this node's editor window currently exists and is visible.
+pub fn is_open(node_id: &str) -> bool {
+    windows()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
 /// Closes a node's editor window if one is open. Shared with the format hosts,
 /// which have to take the window down alongside the instance it belongs to.
 pub fn close_window(node_id: &str) {

@@ -5,10 +5,16 @@
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import Markdown from '$lib/components/markdown.svelte';
 	import { Checkmark } from '$lib/components/icons';
-	import { getCachedAppInfo } from '$lib/modules/app_info';
+	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import { formatBytes } from '$lib/components/format';
 
-	const info = getCachedAppInfo();
+	let info = $derived(getCachedAppInfo());
+
+	$effect(() => {
+		if (!info) {
+			loadAppInfo().catch(() => {});
+		}
+	});
 
 	let s = $derived(updaterStore.state);
 

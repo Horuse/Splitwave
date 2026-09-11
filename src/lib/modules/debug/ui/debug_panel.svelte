@@ -7,6 +7,7 @@
 	import { updaterStore, latestRelease } from '$lib/modules/updater';
 	import { getCachedAppInfo } from '$lib/modules/app_info';
 	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
+	import { announcementStore, runModalQueue } from '$lib/modules/announcements';
 
 	let open = $state(false);
 
@@ -118,9 +119,119 @@
 		updaterStore.state = { phase: 'error', message: 'signature verification failed' };
 	}
 
+	function fakeRcBanner() {
+		announcementStore.bannerQueue = [
+			{
+				id: 'notice-testing-v130-rc',
+				type: 'banner',
+				severity: 'info',
+				priority: 50,
+				badge: 'RC TEST',
+				title: 'Testing Splitwave 1.3.0 Release Candidate',
+				message: 'You are running Splitwave 1.3.0-rc.1. Please report any audio or UI feedback on GitHub.',
+				action: {
+					label: 'Report Issue',
+					url: 'https://github.com/Horuse/Splitwave/issues'
+				},
+				dismissible: true,
+				filters: {
+					channels: ['rc']
+				}
+			},
+			...announcementStore.bannerQueue.filter((b) => b.id !== 'notice-testing-v130-rc')
+		];
+		announcementStore.currentBannerIndex = 0;
+	}
+
+	function fakeModalNotice() {
+		announcementStore.modalQueue = [
+			{
+				id: 'notice-updater-resource-id-workaround',
+				type: 'modal',
+				severity: 'critical',
+				priority: 100,
+				badge: 'NOTICE',
+				title: 'Manual Update Required for v1.1.0',
+				message: 'In-app automatic updates are broken in v1.1.0. Please download the latest version manually once from splitwave.app or GitHub.',
+				markdown:
+					'### In-App Update Notice\n\nDue to an updater issue in version `1.1.0`, automatic updates fail with `The resource id is invalid`.\n\nTo update to the latest version, please download and install Splitwave manually once:\n- [Official Website](https://splitwave.app)\n- [GitHub Releases](https://github.com/Horuse/Splitwave/releases)\n\nYour existing pipelines, presets, and audio configuration will be preserved automatically.',
+				action: {
+					label: 'Download Latest',
+					url: 'https://splitwave.app'
+				},
+				dismissible: true,
+				filters: {
+					versions: '1.1.0',
+					channels: ['stable', 'rc', 'beta']
+				}
+			}
+		];
+		runModalQueue().catch(() => {});
+	}
+
+	function fakeQueueMultiple() {
+		announcementStore.bannerQueue = [
+			{
+				id: 'banner-test-1',
+				type: 'banner',
+				severity: 'critical',
+				priority: 100,
+				badge: 'CRITICAL',
+				title: 'Buffer Underrun Detected',
+				message: 'Audio output buffer underflowed by 128 frames at 96kHz.',
+				dismissible: true
+			},
+			{
+				id: 'banner-test-2',
+				type: 'banner',
+				severity: 'info',
+				priority: 50,
+				badge: 'RC TEST',
+				title: 'Testing Splitwave 1.3.0 Release Candidate',
+				message: 'Please report any edge connection or VST3 editor issues on GitHub.',
+				dismissible: true
+			}
+		];
+		announcementStore.currentBannerIndex = 0;
+
+		announcementStore.modalQueue = [
+			{
+				id: 'modal-test-1',
+				type: 'modal',
+				severity: 'warning',
+				title: 'Audio Buffer Optimization Notice',
+				message: 'Recommended buffer size was adjusted to minimize playback latency.',
+				markdown:
+					'### Notice #1\n\nThis tests the **sequential modal queue**. When you click Dismiss or Next, modal #2 opens automatically without overlapping popups.',
+				dismissible: true
+			},
+			{
+				id: 'modal-test-2',
+				type: 'modal',
+				severity: 'info',
+				title: 'New Virtual Devices Available',
+				message: 'Splitwave virtual audio loopback drivers are ready for testing.',
+				markdown: '### Notice #2\n\nSequential queue verified! All modal announcements processed.',
+				dismissible: true
+			}
+		];
+		runModalQueue().catch(() => {});
+	}
+
+	function resetDismissedAnnouncements() {
+		if (typeof window !== 'undefined') {
+			window.localStorage.removeItem('announcements:dismissed');
+		}
+		announcementStore.dismissed = {};
+		announcementStore.bannerQueue = [];
+		announcementStore.modalQueue = [];
+	}
+
 	function clearAll() {
 		errorStore.dismiss();
 		updaterStore.state = { phase: 'idle' };
+		announcementStore.bannerQueue = [];
+		announcementStore.modalQueue = [];
 	}
 </script>
 
@@ -141,6 +252,11 @@
 				<MenuItem label="Pre-release update available" onclick={fakeBetaUpdateAvailable} />
 				<MenuItem label="Downloading 30%" onclick={fakeDownloading} />
 				<MenuItem label="Update error" onclick={fakeUpdateError} />
+				<MenuSection label="Announcements" />
+				<MenuItem label="Test RC Banner" onclick={fakeRcBanner} />
+				<MenuItem label="Test Modal Notice" onclick={fakeModalNotice} />
+				<MenuItem label="Test Queue (2 Banners + 2 Modals)" onclick={fakeQueueMultiple} />
+				<MenuItem label="Reset Dismissed Notices" onclick={resetDismissedAnnouncements} />
 				<MenuSeparator />
 				<MenuItem label="Clear all" onclick={clearAll} />
 			</Menu>

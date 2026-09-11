@@ -581,26 +581,26 @@ fn configured_updater(
     builder.build().map_err(|e| e.to_string())
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMetadata {
-    rid: tauri::ResourceId,
-    current_version: String,
-    version: String,
-    date: Option<String>,
-    body: Option<String>,
-    raw_json: serde_json::Value,
+    pub rid: tauri::ResourceId,
+    pub current_version: String,
+    pub version: String,
+    pub date: Option<String>,
+    pub body: Option<String>,
+    pub raw_json: serde_json::Value,
 }
 
 /// Mirrors `plugin:updater|check` but with bundled roots wired into the HTTP
 /// client; the plugin's own `check` command can't be configured.
 #[tauri::command]
 pub async fn check_for_updates(
-    app: AppHandle,
+    webview: tauri::Webview,
     endpoint: Option<String>,
 ) -> Result<Option<UpdateMetadata>, String> {
     use tauri::Manager;
-    let updater = configured_updater(&app, endpoint.as_deref())?;
+    let updater = configured_updater(webview.app_handle(), endpoint.as_deref())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };
@@ -608,7 +608,7 @@ pub async fn check_for_updates(
     let version = update.version.clone();
     let body = update.body.clone();
     let raw_json = update.raw_json.clone();
-    let rid = app.resources_table().add(update);
+    let rid = webview.resources_table().add(update);
     Ok(Some(UpdateMetadata {
         rid,
         current_version,

@@ -8,27 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Configurable pipeline sample rate** - select the pipeline processing sample rate in Settings (presets from 44.1 kHz to 192 kHz, or custom step) and configure sample rates per virtual device. When device and pipeline rates match, audio passes through bit-transparently without resampling, with a subtle indicator in the header (#39).
-- **Overhauled Waveform scope** - redesigned high-performance canvas oscilloscope with deterministic time-normalized zoom, smooth live recording tail, multi-lane view, buffer boundary marker, and disk-backed peak navigation for WAV and AIFF files (#31).
-- **File recording append mode & rate controls** - WAV and AIFF recordings can now append to existing files or prompt before overwrite. Recording formats auto-fit supported sample rates and bit depths, with customizable sample rate selection (#31).
-- **Managed VB-CABLE virtual microphone on Windows** - install, verify, and configure the virtual microphone directly from Splitwave without manual driver management (#26).
-- **Device auto-reconnect** - disconnecting an active audio interface or Bluetooth headset no longer fails the pipeline; streams pause cleanly and resume automatically once the device is plugged back in (#38).
+- **Configurable pipeline sample rate** - select the pipeline processing sample rate in Settings (presets from 44.1 kHz to 192 kHz, or custom step) and configure sample rates per virtual device. When device and pipeline rates match, audio passes through bit-transparently without resampling, with a subtle indicator in the header by @Horuse in (#39).
+- **Overhauled Waveform scope** - redesigned high-performance canvas oscilloscope with deterministic time-normalized zoom, smooth live recording tail, multi-lane view, buffer boundary marker, and disk-backed peak navigation for WAV and AIFF files by @Horuse in (#31).
+- **File recording append mode & rate controls** - WAV and AIFF recordings can now append to existing files or prompt before overwrite. Recording formats auto-fit supported sample rates and bit depths, with customizable sample rate selection by @Horuse in (#31).
+- **Managed VB-CABLE virtual microphone on Windows** - install, verify, and configure the virtual microphone directly from Splitwave without manual driver management by @DeadMorose777 in (#26).
+- **Device auto-reconnect** - disconnecting an active audio interface or Bluetooth headset no longer fails the pipeline; streams pause cleanly and resume automatically once the device is plugged back by @Horuse in (#38).
 - **Safe mode** - if the engine encounters an unexpected crash, Splitwave restarts in safe mode with an alert banner and pauses pipeline auto-activation so you can safely inspect and edit the graph.
 - **Beta updates channel** - opt into pre-release and beta builds directly from Settings, with a pre-release indicator badge in the header.
-- **Opus audio file decoding** - Audio File node supports decoding Opus files via Symphonia libopus (#31).
+- **Opus audio file decoding** - Audio File node supports decoding Opus files via Symphonia libopus by @Horuse in (#31).
 
 ### Changed
 
-- Network audio nodes (Net Sender and Net Receiver) use a leaner v2 wire protocol with dynamic format detection and configurable sample rates (#39).
-- Audio node specifications use unified styling and a reusable numeric stepper across controls (#31, #39).
-- Real-time speaker pacing and prefill budgets are bounded across all platforms to prevent drift and latency creep (#41).
+- Network audio nodes (Net Sender and Net Receiver) use a leaner v2 wire protocol with dynamic format detection and configurable sample rates  by @Horuse in (#39).
+- Audio node specifications use unified styling and a reusable numeric stepper across controls by @Horuse in (#31, #39).
+- Real-time speaker pacing and prefill budgets are bounded across all platforms to prevent drift and latency creep by @Horuse in (#41).
 
 ### Fixed
 
-- Linux PipeWire format negotiation queries native device parameters and tracks negotiated rates accurately, resolving virtual monitor capture issues and reducing idle meter CPU overhead (#41).
-- Plugin hosting: resolved VST3 and Audio Unit editor lifecycle deadlocks on reopen, enforced proper UI thread affinity, and enabled flexible window resizing (#37).
-- Audio File playback: fixed unexpected EOF errors on truncated WAV files, fixed MP3 decoding on files with broken Xing headers, and stabilized loop synchronization (#31).
-- Leaked event listeners in node flow were removed on unmount, preventing stale nodes from waking up after graph edits (#31).
+- Linux PipeWire format negotiation queries native device parameters and tracks negotiated rates accurately, resolving virtual monitor capture issues and reducing idle meter CPU overhead by @Horuse in (#41).
+- Plugin hosting: resolved VST3 and Audio Unit editor lifecycle deadlocks on reopen, enforced proper UI thread affinity, and enabled flexible window resizing by @Horuse in (#37).
+- Audio File playback: fixed unexpected EOF errors on truncated WAV files, fixed MP3 decoding on files with broken Xing headers, and stabilized loop synchronization by @Horuse in (#31).
+- Leaked event listeners in node flow were removed on unmount, preventing stale nodes from waking up after graph edits by @Horuse in (#31).
 
 ## [1.1.0] - 2026-08-17
 

@@ -1,5 +1,5 @@
 mod audio;
-mod commands;
+pub mod commands;
 mod error;
 mod logs;
 mod native_crash;

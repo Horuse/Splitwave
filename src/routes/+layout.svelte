@@ -18,6 +18,7 @@
 	import { logStore } from '$lib/modules/logs';
 	import { LogsModal } from '$lib/modules/logs/ui';
 	import { platform } from '@tauri-apps/plugin-os';
+	import { initAnnouncements } from '$lib/modules/announcements';
 
 	const isDev = import.meta.env.DEV;
 
@@ -106,6 +107,7 @@
 			await audioStore.autoActivateOnLaunch();
 		} catch {}
 		pipelineStore.refresh().catch(() => {});
+		initAnnouncements();
 		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => {

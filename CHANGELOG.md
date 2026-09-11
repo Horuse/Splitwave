@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0-rc.1] - 2026-09-11
+
+### Fixed
+
+- Fixed in-app updater throwing invalid resource ID when installing updates by registering update handles into webview resource tables.
+- Fixed version display falling back to "v?" in updater banner and about modal by making cached app info reactive.
+- Prevented closed plugin editor windows from reopening during pipeline reconcile when connecting or disconnecting edges.
+- Disabled browser context menu and web inspector on right-click across all platforms.
+- Prohibited accidental text selection across app buttons and canvas elements while keeping text selectable in modals, error dialogs, and inputs.
+
 ## [1.2.0] - 2026-09-11
 
 ### Added
@@ -19,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Network audio nodes (Net Sender and Net Receiver) use a leaner v2 wire protocol with dynamic format detection and configurable sample rates  by @Horuse in (#39).
+- Network audio nodes (Net Sender and Net Receiver) use a leaner v2 wire protocol with dynamic format detection and configurable sample rates by @Horuse in (#39).
 - Audio node specifications use unified styling and a reusable numeric stepper across controls by @Horuse in (#31, #39).
 - Real-time speaker pacing and prefill budgets are bounded across all platforms to prevent drift and latency creep by @Horuse in (#41).
 
@@ -165,6 +175,7 @@ Initial release.
 - Node graph routing with hot reconcile: edit the graph while the pipeline runs without interrupting streams.
 - Undo/redo, node copy/paste, pipeline snapshot history, auto-update and the virtual audio driver.
 
+[1.3.0-rc.1]: https://github.com/Horuse/Splitwave/compare/v1.2.0...v1.3.0-rc.1
 [1.2.0]: https://github.com/Horuse/Splitwave/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Horuse/Splitwave/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Horuse/Splitwave/compare/v0.5.0...v1.0.0

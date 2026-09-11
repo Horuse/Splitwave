@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
-	import { getCachedAppInfo } from '$lib/modules/app_info';
+	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 
 	let { modalId }: ModalBaseProps = $props();
 
 	const REPO = 'Horuse/Splitwave';
-	const info = getCachedAppInfo();
+	let info = $derived(getCachedAppInfo());
+
+	$effect(() => {
+		if (!info) {
+			loadAppInfo().catch(() => {});
+		}
+	});
 
 	const links = [
 		{ label: 'Website', url: 'https://splitwave.app/' },

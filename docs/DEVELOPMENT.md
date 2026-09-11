@@ -1,26 +1,19 @@
 # Development
 
-Setting up a build. For what a reviewable pull request looks like — diff
-scope, formatting, per-OS testing — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+Setting up a build. For what a reviewable pull request looks like — diff scope, formatting, per-OS testing — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Prerequisites
 
 **macOS:**
 
-- macOS 13+ with Xcode Command Line Tools (`xcode-select --install`) -- gives
-  you `swiftc` and the SDKs Tauri needs.
-- [CMake](https://cmake.org) (`brew install cmake`) -- builds the bundled Opus
-  encoder.
+- macOS 13+ with Xcode Command Line Tools (`xcode-select --install`) -- gives you `swiftc` and the SDKs Tauri needs.
+- [CMake](https://cmake.org) (`brew install cmake`) -- builds the bundled Opus encoder.
 - [Rust](https://rustup.rs) (stable toolchain)
 - [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
 
 **Linux:**
 
-- A PipeWire session and these dev packages (Debian/Ubuntu names):
-  `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev`
-  `libsoup-3.0-dev libpipewire-0.3-dev clang libclang-dev libasound2-dev`
-  `libopus-dev libpulse-dev` (Fedora: `pipewire-devel pulseaudio-libs-devel`)
-  Runtime volume control also needs the `pipewire-pulse` server module.
+- A PipeWire session and these dev packages (Debian/Ubuntu names): `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev` `libsoup-3.0-dev libpipewire-0.3-dev clang libclang-dev libasound2-dev` `libopus-dev libpulse-dev` (Fedora: `pipewire-devel pulseaudio-libs-devel`) Runtime volume control also needs the `pipewire-pulse` server module.
 - [Rust](https://rustup.rs) (stable toolchain)
 - [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
 
@@ -33,10 +26,7 @@ winget install Oven-sh.Bun
 winget install Microsoft.VisualStudio.2022.BuildTools
 ```
 
-The last command only fetches the installer, it does **not** select any
-workload. After it finishes, open the **Visual Studio Installer** app
-(Start menu), click **Modify** on Build Tools 2022, and check **Desktop
-development with C++**.
+The last command only fetches the installer, it does **not** select any workload. After it finishes, open the **Visual Studio Installer** app (Start menu), click **Modify** on Build Tools 2022, and check **Desktop development with C++**.
 
 ## Setup
 
@@ -60,8 +50,7 @@ bun run tauri build --bundles nsis     # local installer build (Windows)
 bun run format   # Prettier (.prettierrc) + rustfmt (rustfmt.toml)
 ```
 
-Required before opening a PR — see
-[CONTRIBUTING.md](../CONTRIBUTING.md#keep-the-diff-to-the-change).
+Required before opening a PR — see [CONTRIBUTING.md](../CONTRIBUTING.md#keep-the-diff-to-the-change).
 
 ## Project layout
 

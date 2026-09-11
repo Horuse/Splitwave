@@ -2,44 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.0] - 2026-09-11
+
+### Added
+
+- **Configurable pipeline sample rate** - select the pipeline processing sample rate in Settings (presets from 44.1 kHz to 192 kHz, or custom step) and configure sample rates per virtual device. When device and pipeline rates match, audio passes through bit-transparently without resampling, with a subtle indicator in the header (#39).
+- **Overhauled Waveform scope** - redesigned high-performance canvas oscilloscope with deterministic time-normalized zoom, smooth live recording tail, multi-lane view, buffer boundary marker, and disk-backed peak navigation for WAV and AIFF files (#31).
+- **File recording append mode & rate controls** - WAV and AIFF recordings can now append to existing files or prompt before overwrite. Recording formats auto-fit supported sample rates and bit depths, with customizable sample rate selection (#31).
+- **Managed VB-CABLE virtual microphone on Windows** - install, verify, and configure the virtual microphone directly from Splitwave without manual driver management (#26).
+- **Device auto-reconnect** - disconnecting an active audio interface or Bluetooth headset no longer fails the pipeline; streams pause cleanly and resume automatically once the device is plugged back in (#38).
+- **Safe mode** - if the engine encounters an unexpected crash, Splitwave restarts in safe mode with an alert banner and pauses pipeline auto-activation so you can safely inspect and edit the graph.
+- **Beta updates channel** - opt into pre-release and beta builds directly from Settings, with a pre-release indicator badge in the header.
+- **Opus audio file decoding** - Audio File node supports decoding Opus files via Symphonia libopus (#31).
+
+### Changed
+
+- Network audio nodes (Net Sender and Net Receiver) use a leaner v2 wire protocol with dynamic format detection and configurable sample rates (#39).
+- Audio node specifications use unified styling and a reusable numeric stepper across controls (#31, #39).
+- Real-time speaker pacing and prefill budgets are bounded across all platforms to prevent drift and latency creep (#41).
+
+### Fixed
+
+- Linux PipeWire format negotiation queries native device parameters and tracks negotiated rates accurately, resolving virtual monitor capture issues and reducing idle meter CPU overhead (#41).
+- Plugin hosting: resolved VST3 and Audio Unit editor lifecycle deadlocks on reopen, enforced proper UI thread affinity, and enabled flexible window resizing (#37).
+- Audio File playback: fixed unexpected EOF errors on truncated WAV files, fixed MP3 decoding on files with broken Xing headers, and stabilized loop synchronization (#31).
+- Leaked event listeners in node flow were removed on unmount, preventing stale nodes from waking up after graph edits (#31).
 
 ## [1.1.0] - 2026-08-17
 
 ### Added
 
-- **Persistent pipeline activation** - the pipeline that was running when the
-  app closed is remembered and starts again on launch. App Audio and Audio File
-  sources that are not available yet are left out and reconnect automatically
-  once they appear (#21).
-- **Device volume in dB** - the hardware volume sliders on input and output
-  nodes show their attenuation in decibels and follow changes made outside the
-  app through native OS listeners on every platform (#20).
-- **Native audio on Linux** - device volume is driven through libpulse and
-  virtual devices through the PipeWire library instead of shelling out to
-  `wpctl`, `pactl` and `pw-cli` (#23).
-- **End-to-end latency badge in the header** - combines the input backlog, the
-  graph's delay compensation and the adaptive output buffer into one live
-  readout.
+- **Persistent pipeline activation** - the pipeline that was running when the app closed is remembered and starts again on launch. App Audio and Audio File sources that are not available yet are left out and reconnect automatically once they appear (#21).
+- **Device volume in dB** - the hardware volume sliders on input and output nodes show their attenuation in decibels and follow changes made outside the app through native OS listeners on every platform (#20).
+- **Native audio on Linux** - device volume is driven through libpulse and virtual devices through the PipeWire library instead of shelling out to `wpctl`, `pactl` and `pw-cli` (#23).
+- **End-to-end latency badge in the header** - combines the input backlog, the graph's delay compensation and the adaptive output buffer into one live readout.
 - **System theme** - the header theme toggle now cycles light, dark and system.
 
 ### Changed
 
-- Recording is paced by the wall clock, so file sources that decode faster than
-  real time no longer over-run the encoder.
-- Speaker ring fill adapts to the device's own buffer size, running at that
-  latency instead of underrunning on large-buffer (PipeWire) setups.
+- Recording is paced by the wall clock, so file sources that decode faster than real time no longer over-run the encoder.
+- Speaker ring fill adapts to the device's own buffer size, running at that latency instead of underrunning on large-buffer (PipeWire) setups.
 
 ### Fixed
 
-- Update checks work in sandboxed AppImage builds on Linux (bundled
-  CA roots), and a missing build for the current OS/arch shows a friendly note
-  instead of an error.
-- Activating a pipeline from the list prompts for a missing recording file
-  instead of failing.
-- Pipeline name input sizes itself to its content and is capped at 64
-  characters.
+- Update checks work in sandboxed AppImage builds on Linux (bundled CA roots), and a missing build for the current OS/arch shows a friendly note instead of an error.
+- Activating a pipeline from the list prompts for a missing recording file instead of failing.
+- Pipeline name input sizes itself to its content and is capped at 64 characters.
 - Virtual device page marks unsaved edits as dirty until applied.
 - Log and snapshot lists no longer produce duplicate list keys (#18).
 
@@ -47,51 +57,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Log viewer** - Cmd/Ctrl+Shift+L opens an in-app log window in every build,
-  showing engine and interface logs together with level filtering, search and
-  one-click copy.
-- **Virtual device apply without root** - device changes are picked up through
-  a watched shared config instead of requiring elevated privileges.
-- **Plugin hosting** - load your own plugins as effect nodes: CLAP and VST3 on
-  every platform, Audio Unit on macOS. The plugin's own editor opens in a native
-  window, its parameters are editable in the node itself, and its state is saved
-  with the pipeline. Linux editors need an X11 session (XWayland included).
-- **Separate channel routing** (#12) - each channel of a device gets its own
-  handle, so you can wire, process and mix individual channels instead of fixed
-  stereo pairs. Existing pipelines are migrated automatically.
-- **WebRTC, Net Sender and Net Receiver nodes** (#10) - stream audio between
-  machines and into WebRTC sessions.
-- **Mute hotkey** - bind any key or combination to a Mute node and toggle it
-  system-wide, even when Splitwave is in the background. Optionally a spoken cue
-  confirms the switch on an output device of your choice, at its own volume.
+- **Log viewer** - Cmd/Ctrl+Shift+L opens an in-app log window in every build, showing engine and interface logs together with level filtering, search and one-click copy.
+- **Virtual device apply without root** - device changes are picked up through a watched shared config instead of requiring elevated privileges.
+- **Plugin hosting** - load your own plugins as effect nodes: CLAP and VST3 on every platform, Audio Unit on macOS. The plugin's own editor opens in a native window, its parameters are editable in the node itself, and its state is saved with the pipeline. Linux editors need an X11 session (XWayland included).
+- **Separate channel routing** (#12) - each channel of a device gets its own handle, so you can wire, process and mix individual channels instead of fixed stereo pairs. Existing pipelines are migrated automatically.
+- **WebRTC, Net Sender and Net Receiver nodes** (#10) - stream audio between machines and into WebRTC sessions.
+- **Mute hotkey** - bind any key or combination to a Mute node and toggle it system-wide, even when Splitwave is in the background. Optionally a spoken cue confirms the switch on an output device of your choice, at its own volume.
 - **Spectrum analyzer** node with per-channel FFT.
-- **De-esser** node with presets, and a **Declick** node for removing clicks and
-  crackle.
-- **Effect presets** - save any effect's settings and reuse them anywhere, with
-  factory presets included.
-- **Pipeline templates** - start from a ready-made graph instead of an empty
-  canvas.
-- **Settings window** - theme, canvas behaviour, history depth, update checks
-  and preset management in one place.
+- **De-esser** node with presets, and a **Declick** node for removing clicks and crackle.
+- **Effect presets** - save any effect's settings and reuse them anywhere, with factory presets included.
+- **Pipeline templates** - start from a ready-made graph instead of an empty canvas.
+- **Settings window** - theme, canvas behaviour, history depth, update checks and preset management in one place.
 - Analyzer node now reports signal metrics and delivery profiles.
-- Crashes are saved and shown on the next launch instead of vanishing with the
-  window.
+- Crashes are saved and shown on the next launch instead of vanishing with the window.
 - Node icons and a refreshed modal design.
 
 ### Changed
 
-- Plugins receive the node's full channel width instead of being forced into
-  stereo.
+- Plugins receive the node's full channel width instead of being forced into stereo.
 - Effect nodes got a visual pass.
-- Device and application dropdowns rescan when opened, so a device plugged in
-  while the app was running shows up without pressing Rescan.
+- Device and application dropdowns rescan when opened, so a device plugged in while the app was running shows up without pressing Rescan.
 
 ### Fixed
 
-- Cables that point at a channel a device does not have are now flagged, and
-  edges left dangling blink with a warning on the node.
-- Fan-out nodes are computed once and shared, monitoring included, instead of
-  being processed per branch.
+- Cables that point at a channel a device does not have are now flagged, and edges left dangling blink with a warning on the node.
+- Fan-out nodes are computed once and shared, monitoring included, instead of being processed per branch.
 - Gain-reduction readouts no longer freeze, and the monitor backlog is bounded.
 - Spectrum taps keep updating in monitor mode.
 - Virtual devices can be applied while the engine is idle.
@@ -107,27 +97,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Virtual audio device no longer produces garbled audio when used as a
-  microphone, including when several apps capture it at once (stream format
-  mismatch).
+- Virtual audio device no longer produces garbled audio when used as a microphone, including when several apps capture it at once (stream format mismatch).
 
 ## [0.4.0] - 2026-06-05
 
 ### Added
 
-- Noise Suppressor exposes advanced controls: a DeepFilterNet post-filter toggle
-  and adjustable processing thresholds.
+- Noise Suppressor exposes advanced controls: a DeepFilterNet post-filter toggle and adjustable processing thresholds.
 - New app icons and refreshed branding.
 
 ### Fixed
 
-- Audio file playback no longer drops audio under bursty load - file sources
-  keep their backlog instead of being trimmed.
+- Audio file playback no longer drops audio under bursty load - file sources keep their backlog instead of being trimmed.
 - "Reveal in folder" works for recordings, and transport buttons have tooltips.
-- Level meter readout settles at the dB floor on silence instead of drifting to
-  -inf.
-- "Check for Updates" reports the actual failure cause instead of a bare
-  "builder error", with a one-click button to copy it.
+- Level meter readout settles at the dB floor on silence instead of drifting to -inf.
+- "Check for Updates" reports the actual failure cause instead of a bare "builder error", with a one-click button to copy it.
 
 ## [0.3.0] - 2026-06-03
 
@@ -149,8 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-format audio file decoding - the Audio File node plays more than WAV.
 - Audio File transport controls: pause, stop and skip.
 - Input volume control for App Audio, System Audio and Audio File.
-- Separate Monitor category - meter nodes that work without an output
-  connection.
+- Separate Monitor category - meter nodes that work without an output connection.
 
 ### Fixed
 
@@ -176,16 +159,13 @@ Initial release.
 
 ### Added
 
-- Inputs: microphone, system audio capture, per-app audio capture, audio file
-  playback with loop and auto-stop.
+- Inputs: microphone, system audio capture, per-app audio capture, audio file playback with loop and auto-stop.
 - Outputs: speaker, and file recording in WAV, FLAC, AIFF, Opus, MP3 and AAC.
-- Effects: Gain, Mute, Channel Balance, 10-band graphic EQ, Compressor, Limiter,
-  Noise Gate, Saturator, Delay, Reverb, Level Meter, LUFS Meter, Waveform.
-- Node graph routing with hot reconcile: edit the graph while the pipeline runs
-  without interrupting streams.
-- Undo/redo, node copy/paste, pipeline snapshot history, auto-update and the
-  virtual audio driver.
+- Effects: Gain, Mute, Channel Balance, 10-band graphic EQ, Compressor, Limiter, Noise Gate, Saturator, Delay, Reverb, Level Meter, LUFS Meter, Waveform.
+- Node graph routing with hot reconcile: edit the graph while the pipeline runs without interrupting streams.
+- Undo/redo, node copy/paste, pipeline snapshot history, auto-update and the virtual audio driver.
 
+[1.2.0]: https://github.com/Horuse/Splitwave/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Horuse/Splitwave/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Horuse/Splitwave/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/Horuse/Splitwave/compare/v0.4.0...v0.5.0

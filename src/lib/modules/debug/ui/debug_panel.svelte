@@ -89,8 +89,8 @@
 	async function fakeBetaUpdateAvailable() {
 		const release = await latestRelease();
 		const stub = {
-			version: '1.2.0-rc.1',
-			currentVersion: getCachedAppInfo()?.appVersion ?? '1.1.0',
+			version: '1.3.0-rc.1',
+			currentVersion: getCachedAppInfo()?.appVersion ?? '1.2.0',
 			date: new Date().toISOString(),
 			downloadAndInstall: async () => {},
 			download: async () => {},
@@ -100,7 +100,7 @@
 		updaterStore.state = {
 			phase: 'available',
 			update: stub,
-			notes: release?.notes ?? '### Pre-release v1.2.0-rc.1\n\n- Safe mode on crash\n- Automatic pipeline backup\n- Pre-release beta channel'
+			notes: release?.notes ?? '### Pre-release v1.3.0-rc.1\n\n- Safe mode on crash\n- Automatic pipeline backup\n- Pre-release beta channel'
 		};
 	}
 

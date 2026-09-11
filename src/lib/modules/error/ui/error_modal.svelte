@@ -99,7 +99,8 @@
 				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
 					<div class="font-semibold">Safe Mode is active</div>
 					<div class="mt-0.5 text-[11px] opacity-90">
-						Automatic audio pipeline startup was skipped to prevent a crash loop. You can safely inspect or edit your pipelines and start them manually when ready.
+						Automatic audio pipeline startup was skipped to prevent a crash loop. You can safely inspect or edit your pipelines and start them
+						manually when ready.
 					</div>
 				</div>
 			{/if}

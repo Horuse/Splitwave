@@ -14,6 +14,12 @@
 			"options": {
 				"parser": "svelte"
 			}
+		},
+		{
+			"files": "*.md",
+			"options": {
+				"proseWrap": "never"
+			}
 		}
 	],
 	"tailwindStylesheet": "./src/app.css"

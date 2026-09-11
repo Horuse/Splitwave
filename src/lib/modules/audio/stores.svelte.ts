@@ -300,9 +300,7 @@ class AudioStore {
 		if (errorStore.hadPreviousCrash || crashGuard) {
 			this.safeMode = true;
 			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
-			this.reportError(
-				new Error('Safe Mode: Auto-starting previous pipeline was skipped because Splitwave crashed last time.')
-			);
+			this.reportError(new Error('Safe Mode: Auto-starting previous pipeline was skipped because Splitwave crashed last time.'));
 			return;
 		}
 

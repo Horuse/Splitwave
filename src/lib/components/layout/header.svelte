@@ -106,14 +106,9 @@
 		transition:slide={{ duration: 150 }}
 		class="relative z-40 flex w-full items-center justify-between border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-600 dark:text-amber-400">
 		<div class="flex items-center gap-2">
-			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 font-bold uppercase tracking-wider text-[10px]">Safe Mode</span>
+			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase">Safe Mode</span>
 			<span>Auto-starting audio pipeline was skipped because Splitwave crashed last time.</span>
 		</div>
-		<button
-			type="button"
-			class="btn-warning px-3 py-0.5 text-xs"
-			onclick={() => (audioStore.safeMode = false)}>
-			Dismiss
-		</button>
+		<button type="button" class="btn-warning px-3 py-0.5 text-xs" onclick={() => (audioStore.safeMode = false)}> Dismiss </button>
 	</div>
 {/if}

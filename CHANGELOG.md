@@ -6,11 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.3.0-rc.1] - 2026-09-11
 
+### Added
+
+- Added remotely managed announcements with banner and modal presentation, targeting by app version, release channel, platform, architecture, and expiry date.
+
 ### Fixed
 
 - Fixed in-app updater throwing invalid resource ID when installing updates by registering update handles into webview resource tables.
 - Fixed version display falling back to "v?" in updater banner and about modal by making cached app info reactive.
 - Prevented closed plugin editor windows from reopening during pipeline reconcile when connecting or disconnecting edges.
+- Fixed Waveform monitors showing phantom channels when disconnected and kept their node size, resize controls, and channel layout synchronized.
+- Kept the live buffer-limit notice exclusive to the waveform embedded in File Recording.
 - Disabled browser context menu and web inspector on right-click across all platforms.
 - Prohibited accidental text selection across app buttons and canvas elements while keeping text selectable in modals, error dialogs, and inputs.
 

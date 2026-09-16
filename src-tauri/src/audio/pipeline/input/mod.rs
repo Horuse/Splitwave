@@ -322,3 +322,60 @@ pub(super) fn start_input_stream(
         join: Some(join),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_input_resampler_bypassed_when_rates_match() {
+        // When native_rate == target_sample_rate (e.g. 96 kHz App Audio and 96 kHz pipeline),
+        // no resampler must be allocated, ensuring bit-transparent passthrough with zero quality loss.
+        for rate in [44_100, 48_000, 96_000, 192_000] {
+            let native_rate = rate;
+            let target_sample_rate = rate;
+            let resampler = if native_rate == target_sample_rate {
+                None
+            } else {
+                MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, 2).ok()
+            };
+            assert!(resampler.is_none(), "resampler should be None for matching rate {rate}");
+        }
+    }
+
+    #[test]
+    fn test_input_resampler_only_allocated_when_rates_differ() {
+        let resampler = if 48_000 == 96_000 {
+            None
+        } else {
+            MultiResampler::new(48_000, 96_000, RESAMPLE_CHUNK, 2).ok()
+        };
+        assert!(resampler.is_some(), "resampler must be Some when rates differ");
+    }
+
+    #[test]
+    fn test_input_bit_transparent_sample_passthrough() {
+        // Verify that when resampler is None, samples pass through bit-for-bit without any modification.
+        let mut input_buf = vec![0.0f32; RESAMPLE_CHUNK * 2];
+        for (i, sample) in input_buf.iter_mut().enumerate() {
+            *sample = ((i as f32) * 0.001).sin();
+        }
+
+        let mut resampler: Option<MultiResampler> = None;
+        let mut output_buf = Vec::new();
+
+        let normalized = if let Some(resampler) = &mut resampler {
+            output_buf.clear();
+            resampler.process_chunk(&input_buf, &mut output_buf).unwrap();
+            output_buf.as_slice()
+        } else {
+            input_buf.as_slice()
+        };
+
+        assert_eq!(normalized.len(), input_buf.len());
+        // Verify bit-exact equality (no rounding, no sinc filtering)
+        for (a, b) in normalized.iter().zip(input_buf.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+    }
+}

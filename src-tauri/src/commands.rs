@@ -264,6 +264,14 @@ pub fn device_info(kind: DeviceKind, name: String) -> AppResult<NativeDeviceInfo
 }
 
 #[tauri::command]
+pub fn capture_device_info(
+    kind: String,
+    pipeline_sample_rate: Option<u32>,
+) -> AppResult<NativeDeviceInfo> {
+    crate::audio::capture::capture_device_info(&kind, pipeline_sample_rate)
+}
+
+#[tauri::command]
 pub fn check_capture_permission() -> CapturePermission {
     let state = permission::capture();
     info!(?state, "capture permission checked");

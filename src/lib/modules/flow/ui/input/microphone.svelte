@@ -5,7 +5,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
-	import type { NativeDeviceInfo } from '$lib/modules/audio/types';
+	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
@@ -14,7 +14,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatPct } from '$lib/components/format';
 
 	const isWindows = platform() === 'windows';
 
@@ -24,7 +24,13 @@
 	const flow = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
 
-	let info = $state<NativeDeviceInfo | null>(null);
+	let options = $derived(audioStore.inputDevices.map((d) => ({ value: d.id, label: d.name })));
+	let missing = $derived(!!data.deviceId && !audioStore.inputDevices.some((d) => d.id === data.deviceId));
+
+	const devInfo = useDeviceInfo({
+		kind: 'input',
+		deviceId: () => (missing ? null : (data.deviceId ?? null))
+	});
 
 	// unsupported: device has no software-settable gain (hardware-knob mics).
 	const gain = deviceVolume('input', () => (missing ? null : (data.deviceId ?? null)));
@@ -39,46 +45,25 @@
 
 	let unlistenRefresh: (() => void) | undefined;
 	onMount(() => {
-		unlistenRefresh = onNodeAction(id, 'refresh', () => refresh());
+		unlistenRefresh = onNodeAction(id, 'refresh', () => {
+			void refresh();
+			void devInfo.refresh();
+		});
 	});
 	onDestroy(() => unlistenRefresh?.());
-
-	let options = $derived(audioStore.inputDevices.map((d) => ({ value: d.id, label: d.name })));
-	let missing = $derived(!!data.deviceId && !audioStore.inputDevices.some((d) => d.id === data.deviceId));
-
-	$effect(() => {
-		const deviceId = data.deviceId;
-		if (!deviceId || missing) {
-			info = null;
-			return;
-		}
-		let cancelled = false;
-		audioMethods
-			.deviceInfo('input', deviceId)
-			.then((r) => {
-				if (!cancelled) info = r;
-			})
-			.catch(() => {
-				if (!cancelled) info = null;
-			});
-		return () => {
-			cancelled = true;
-		};
-	});
 
 	async function setGainPct(pct: number) {
 		await gain.set(pct / 100);
 	}
 
-	import { formatHz, formatPct } from '$lib/components/format';
-
 	let gainPct = $derived((gain.scalar ?? 0) * 100);
 
-	let channelCount = $derived(Math.max(info?.channels ?? 2, 1));
+	let channelCount = $derived(Math.max(devInfo.channels, 1));
+	let srcTooltip = $derived(devInfo.resamplingTooltip);
 
-	let srcTooltip = $derived.by(() => {
-		if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatHz(info.sampleRate)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+	$effect(() => {
+		const _ = channelCount;
+		updateNodeInternals(id);
 	});
 </script>
 
@@ -100,9 +85,9 @@
 		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">Selected device not available</span>
-		{:else if info}
+		{:else if devInfo.info}
 			<span class="node-spec">
-				{formatHz(info.sampleRate)} · {info.channels} ch · {info.sampleFormat}
+				{devInfo.specText}
 			</span>
 		{/if}
 

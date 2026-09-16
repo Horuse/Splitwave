@@ -103,6 +103,23 @@ A backend that cannot support the feature returns an error; it does not substitu
 - Time-critical audio work belongs to MMCSS/Pro Audio scheduling. Do not use generic process or thread priority boosts as a substitute, and never block, allocate or perform COM/UI work in the render callback.
 - COM initialization and endpoint management remain on control threads. The callback exchanges audio and status only through preallocated buffers and lock-free state.
 
+### Capture & Sample Rate Negotiation per Platform
+
+App Audio and System Audio capture adhere to OS-specific hardware/driver semantics:
+
+- **macOS (CoreAudio Process Tap / ScreenCaptureKit)**:
+    - Process Taps (`AudioHardwareCreateProcessTap`) tap directly into the system audio server buffer before delivery to hardware.
+    - Rate is strictly dictated by the active hardware output device's nominal sample rate (configured in Audio MIDI Setup). CoreAudio taps do not provide arbitrary client-side resampling.
+    - _In plain terms_: the sample rate shown in the App/System Audio UI will always equal your macOS output device's sample rate (not the pipeline setting). When Pipeline Sample Rate matches the output device, capture is bit-transparent (no resamplers active).
+- **Windows (WASAPI)**:
+    - _System Audio_: standard WASAPI Loopback on the default render endpoint. The sample rate matches the physical output endpoint's configured mix format (`IAudioClient::GetMixFormat`).
+    - _App Audio_: process loopback via `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`. The virtual capture endpoint accepts any target sample rate at initialization; we initialize it directly with the Pipeline sample rate.
+    - _In plain terms_: App Audio runs at whatever sample rate is configured in your pipeline settings (zero internal resamplers). System Audio runs at your default Windows playback device's sample rate.
+- **Linux (PipeWire)**:
+    - Both App and System Audio negotiate the Pipeline sample rate directly via SPA format parameters (`spa::param::ParamType::Format`).
+    - PipeWire natively delivers frames matching the requested pipeline quantum/rate without extra application-level resampling if negotiated.
+    - _In plain terms_: both App Audio and System Audio sample rates will always equal whatever sample rate is configured in your pipeline settings.
+
 ### Cross-platform output contract
 
 - The physical stream always receives its native channel width. Sample-rate conversion may stop at the highest routed channel; remaining channels are explicitly zero-filled before the device ring.

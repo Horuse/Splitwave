@@ -233,13 +233,7 @@ fn run_process_loopback(
 
         let capture: IAudioCaptureClient = client.GetService().map_err(com_err)?;
         client.Start().map_err(com_err)?;
-        let r = pump(
-            &capture,
-            TARGET_CHANNELS as usize,
-            rate,
-            &stop,
-            bridge,
-        );
+        let r = pump(&capture, TARGET_CHANNELS as usize, rate, &stop, bridge);
         let _ = client.Stop();
         r
     }

@@ -339,7 +339,10 @@ mod tests {
             } else {
                 MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, 2).ok()
             };
-            assert!(resampler.is_none(), "resampler should be None for matching rate {rate}");
+            assert!(
+                resampler.is_none(),
+                "resampler should be None for matching rate {rate}"
+            );
         }
     }
 
@@ -350,7 +353,10 @@ mod tests {
         } else {
             MultiResampler::new(48_000, 96_000, RESAMPLE_CHUNK, 2).ok()
         };
-        assert!(resampler.is_some(), "resampler must be Some when rates differ");
+        assert!(
+            resampler.is_some(),
+            "resampler must be Some when rates differ"
+        );
     }
 
     #[test]
@@ -366,7 +372,9 @@ mod tests {
 
         let normalized = if let Some(resampler) = &mut resampler {
             output_buf.clear();
-            resampler.process_chunk(&input_buf, &mut output_buf).unwrap();
+            resampler
+                .process_chunk(&input_buf, &mut output_buf)
+                .unwrap();
             output_buf.as_slice()
         } else {
             input_buf.as_slice()

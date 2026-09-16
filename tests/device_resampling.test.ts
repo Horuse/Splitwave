@@ -6,10 +6,7 @@ describe('Bit-transparent passthrough and resampling detection', () => {
 		const appAudioRate = 96_000;
 		const pipelineRate = 96_000;
 
-		const resamplingTooltip =
-			appAudioRate === pipelineRate
-				? undefined
-				: `Resampling: ${formatHz(appAudioRate)} → ${formatHz(pipelineRate)}`;
+		const resamplingTooltip = appAudioRate === pipelineRate ? undefined : `Resampling: ${formatHz(appAudioRate)} → ${formatHz(pipelineRate)}`;
 
 		expect(resamplingTooltip).toBeUndefined();
 	});
@@ -18,10 +15,7 @@ describe('Bit-transparent passthrough and resampling detection', () => {
 		const systemAudioRate = 96_000;
 		const pipelineRate = 96_000;
 
-		const resamplingTooltip =
-			systemAudioRate === pipelineRate
-				? undefined
-				: `Resampling: ${formatHz(systemAudioRate)} → ${formatHz(pipelineRate)}`;
+		const resamplingTooltip = systemAudioRate === pipelineRate ? undefined : `Resampling: ${formatHz(systemAudioRate)} → ${formatHz(pipelineRate)}`;
 
 		expect(resamplingTooltip).toBeUndefined();
 	});
@@ -30,10 +24,7 @@ describe('Bit-transparent passthrough and resampling detection', () => {
 		const pipelineRate = 96_000;
 		const speakerRate = 96_000;
 
-		const resamplingTooltip =
-			speakerRate === pipelineRate
-				? undefined
-				: `Resampling: ${formatHz(pipelineRate)} → ${formatHz(speakerRate)}`;
+		const resamplingTooltip = speakerRate === pipelineRate ? undefined : `Resampling: ${formatHz(pipelineRate)} → ${formatHz(speakerRate)}`;
 
 		expect(resamplingTooltip).toBeUndefined();
 	});
@@ -42,10 +33,7 @@ describe('Bit-transparent passthrough and resampling detection', () => {
 		const appAudioRate = 48_000;
 		const pipelineRate = 96_000;
 
-		const resamplingTooltip =
-			appAudioRate === pipelineRate
-				? undefined
-				: `Resampling: ${formatHz(appAudioRate)} → ${formatHz(pipelineRate)}`;
+		const resamplingTooltip = appAudioRate === pipelineRate ? undefined : `Resampling: ${formatHz(appAudioRate)} → ${formatHz(pipelineRate)}`;
 
 		expect(resamplingTooltip).toBe('Resampling: 48 kHz → 96 kHz');
 	});
@@ -54,10 +42,7 @@ describe('Bit-transparent passthrough and resampling detection', () => {
 		const pipelineRate = 48_000;
 		const speakerRate = 96_000;
 
-		const resamplingTooltip =
-			speakerRate === pipelineRate
-				? undefined
-				: `Resampling: ${formatHz(pipelineRate)} → ${formatHz(speakerRate)}`;
+		const resamplingTooltip = speakerRate === pipelineRate ? undefined : `Resampling: ${formatHz(pipelineRate)} → ${formatHz(speakerRate)}`;
 
 		expect(resamplingTooltip).toBe('Resampling: 48 kHz → 96 kHz');
 	});

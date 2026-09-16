@@ -5,9 +5,7 @@ import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { formatHz } from '$lib/components/format';
 import type { NativeDeviceInfo } from './types';
 
-export type DeviceInfoTarget =
-	| { kind: 'input' | 'output'; deviceId: () => string | null }
-	| { kind: 'system' | 'app'; pipelineRate?: () => number };
+export type DeviceInfoTarget = { kind: 'input' | 'output'; deviceId: () => string | null } | { kind: 'system' | 'app'; pipelineRate?: () => number };
 
 export interface DeviceInfoState {
 	readonly info: NativeDeviceInfo | null;

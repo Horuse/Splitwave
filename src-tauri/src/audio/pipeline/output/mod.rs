@@ -611,16 +611,14 @@ mod tests {
                 None
             } else {
                 Some(
-                    FixedRateResampler::new(
-                        pipeline_rate,
-                        initial_device_rate,
-                        RESAMPLE_CHUNK,
-                        2,
-                    )
-                    .unwrap(),
+                    FixedRateResampler::new(pipeline_rate, initial_device_rate, RESAMPLE_CHUNK, 2)
+                        .unwrap(),
                 )
             };
-            assert!(resampler.is_none(), "output resampler should be None for matching rate {rate}");
+            assert!(
+                resampler.is_none(),
+                "output resampler should be None for matching rate {rate}"
+            );
         }
     }
 
@@ -631,7 +629,10 @@ mod tests {
         } else {
             Some(FixedRateResampler::new(96_000, 48_000, RESAMPLE_CHUNK, 2).unwrap())
         };
-        assert!(resampler.is_some(), "output resampler must be Some when rates differ");
+        assert!(
+            resampler.is_some(),
+            "output resampler must be Some when rates differ"
+        );
     }
 
     #[test]

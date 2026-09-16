@@ -82,8 +82,12 @@
 		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
-		{:else if data.bundleId}
+		{:else if data.bundleId && devInfo.info}
 			<span class="node-spec">{devInfo.specText}</span>
+		{:else if data.bundleId}
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

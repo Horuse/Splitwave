@@ -330,6 +330,18 @@ pub(super) fn speaker_ring(
     (producer, fill, level, target, io)
 }
 
+fn output_resampler(
+    pipeline_rate: u32,
+    device_rate: u32,
+    channels: usize,
+) -> AppResult<Option<FixedRateResampler>> {
+    if pipeline_rate == device_rate {
+        Ok(None)
+    } else {
+        FixedRateResampler::new(pipeline_rate, device_rate, DSP_BLOCK_FRAMES, channels).map(Some)
+    }
+}
+
 // Shared by both platforms' `start_speaker_stream`: a device-fill-paced
 // worker that mixes the output sub-graph and bulk-pushes blocks into the
 // speaker ring.
@@ -354,16 +366,7 @@ pub(super) fn spawn_speaker_worker(
         target,
     ));
     let initial_device_rate = device_sample_rate.load(Ordering::Relaxed);
-    let mut resampler = if initial_device_rate == pipeline_rate {
-        None
-    } else {
-        Some(FixedRateResampler::new(
-            pipeline_rate,
-            initial_device_rate,
-            DSP_BLOCK_FRAMES,
-            channels,
-        )?)
-    };
+    let mut resampler = output_resampler(pipeline_rate, initial_device_rate, channels)?;
     let mut resampled = vec![
         0.0_f32;
         resampler
@@ -605,16 +608,7 @@ mod tests {
         // When initial_device_rate == pipeline_rate (e.g. 96 kHz pipeline and 96 kHz speaker),
         // no output resampler must be allocated, preserving 1:1 bit-transparent playback.
         for rate in [44_100, 48_000, 96_000, 192_000] {
-            let initial_device_rate = rate;
-            let pipeline_rate = rate;
-            let resampler = if initial_device_rate == pipeline_rate {
-                None
-            } else {
-                Some(
-                    FixedRateResampler::new(pipeline_rate, initial_device_rate, RESAMPLE_CHUNK, 2)
-                        .unwrap(),
-                )
-            };
+            let resampler = output_resampler(rate, rate, 2).unwrap();
             assert!(
                 resampler.is_none(),
                 "output resampler should be None for matching rate {rate}"
@@ -624,11 +618,7 @@ mod tests {
 
     #[test]
     fn test_output_resampler_only_allocated_when_rates_differ() {
-        let resampler = if 96_000 == 48_000 {
-            None
-        } else {
-            Some(FixedRateResampler::new(96_000, 48_000, RESAMPLE_CHUNK, 2).unwrap())
-        };
+        let resampler = output_resampler(96_000, 48_000, 2).unwrap();
         assert!(
             resampler.is_some(),
             "output resampler must be Some when rates differ"
@@ -644,7 +634,7 @@ mod tests {
             *sample = ((i as f32) * 0.005).cos();
         }
 
-        let mut resampler: Option<FixedRateResampler> = None;
+        let mut resampler = output_resampler(96_000, 96_000, 2).unwrap();
         let mut resampled = Vec::new();
         let active_channels = 2;
         let mut resampled_channels = 0;

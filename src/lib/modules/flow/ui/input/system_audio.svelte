@@ -127,7 +127,13 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
-		<span class="node-spec">{devInfo.specText}</span>
+		{#if devInfo.info}
+			<span class="node-spec">{devInfo.specText}</span>
+		{:else}
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
+		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>

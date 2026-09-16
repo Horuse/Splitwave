@@ -89,6 +89,10 @@
 			<span class="node-spec">
 				{devInfo.specText}
 			</span>
+		{:else if data.deviceId}
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
 		{/if}
 
 		{#if data.deviceId && !missing}

@@ -198,6 +198,18 @@ pub(super) fn start_audio_file(
     Ok(InputHandle::AudioFile(reader))
 }
 
+fn input_resampler(
+    native_rate: u32,
+    target_sample_rate: u32,
+    channels: usize,
+) -> AppResult<Option<MultiResampler>> {
+    if native_rate == target_sample_rate {
+        Ok(None)
+    } else {
+        MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, channels).map(Some)
+    }
+}
+
 /// Capture callbacks only enqueue native-rate samples. A dedicated worker
 /// normalizes each input once before the dynamic fan-out reaches the DSP graph.
 /// If `sample_rate == target_sample_rate`, NO RESAMPLING is performed (resampler is None),
@@ -238,14 +250,9 @@ pub(super) fn start_input_stream(
             let mut native_rate = sample_rate;
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let native_rate = sample_rate;
-            let mut resampler = if native_rate == target_sample_rate {
-                None
-            } else {
-                match MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, channels)
-                {
-                    Ok(resampler) => Some(resampler),
-                    Err(_) => return,
-                }
+            let mut resampler = match input_resampler(native_rate, target_sample_rate, channels) {
+                Ok(resampler) => resampler,
+                Err(_) => return,
             };
             let mut output_buf = Vec::with_capacity(
                 resampler
@@ -271,12 +278,9 @@ pub(super) fn start_input_stream(
                             }
                         }
                         native_rate = rate;
-                        resampler = if rate == target_sample_rate {
-                            None
-                        } else {
-                            MultiResampler::new(rate, target_sample_rate, RESAMPLE_CHUNK, channels)
-                                .ok()
-                        };
+                        resampler = input_resampler(rate, target_sample_rate, channels)
+                            .ok()
+                            .flatten();
                         output_buf = Vec::with_capacity(
                             resampler
                                 .as_ref()
@@ -332,13 +336,7 @@ mod tests {
         // When native_rate == target_sample_rate (e.g. 96 kHz App Audio and 96 kHz pipeline),
         // no resampler must be allocated, ensuring bit-transparent passthrough with zero quality loss.
         for rate in [44_100, 48_000, 96_000, 192_000] {
-            let native_rate = rate;
-            let target_sample_rate = rate;
-            let resampler = if native_rate == target_sample_rate {
-                None
-            } else {
-                MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, 2).ok()
-            };
+            let resampler = input_resampler(rate, rate, 2).unwrap();
             assert!(
                 resampler.is_none(),
                 "resampler should be None for matching rate {rate}"
@@ -348,11 +346,7 @@ mod tests {
 
     #[test]
     fn test_input_resampler_only_allocated_when_rates_differ() {
-        let resampler = if 48_000 == 96_000 {
-            None
-        } else {
-            MultiResampler::new(48_000, 96_000, RESAMPLE_CHUNK, 2).ok()
-        };
+        let resampler = input_resampler(48_000, 96_000, 2).unwrap();
         assert!(
             resampler.is_some(),
             "resampler must be Some when rates differ"
@@ -367,7 +361,7 @@ mod tests {
             *sample = ((i as f32) * 0.001).sin();
         }
 
-        let mut resampler: Option<MultiResampler> = None;
+        let mut resampler = input_resampler(96_000, 96_000, 2).unwrap();
         let mut output_buf = Vec::new();
 
         let normalized = if let Some(resampler) = &mut resampler {

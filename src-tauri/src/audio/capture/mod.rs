@@ -36,9 +36,7 @@ pub fn capture_device_info(
     #[cfg(target_os = "windows")]
     {
         let sample_rate = match kind {
-            "system" => {
-                loopback_mix_rate().unwrap_or_else(|_| pipeline_sample_rate.unwrap_or(48_000))
-            }
+            "system" => loopback_mix_rate()?,
             _ => pipeline_sample_rate.unwrap_or(48_000),
         };
         Ok(NativeDeviceInfo {

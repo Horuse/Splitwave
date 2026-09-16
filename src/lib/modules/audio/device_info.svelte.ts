@@ -9,6 +9,7 @@ export type DeviceInfoTarget = { kind: 'input' | 'output'; deviceId: () => strin
 
 export interface DeviceInfoState {
 	readonly info: NativeDeviceInfo | null;
+	readonly isLoading: boolean;
 	readonly sampleRate: number;
 	readonly channels: number;
 	readonly sampleFormat: string;
@@ -24,31 +25,53 @@ export interface DeviceInfoState {
  */
 export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 	let info = $state<NativeDeviceInfo | null>(null);
+	let isLoading = $state(true);
+	let requestId = 0;
+	let currentKey: string | null = null;
 
 	async function query(): Promise<void> {
+		const id = ++requestId;
 		if ('deviceId' in target) {
-			const id = target.deviceId();
-			if (!id) {
+			const deviceId = target.deviceId();
+			if (!deviceId) {
+				currentKey = null;
 				info = null;
+				isLoading = false;
 				return;
 			}
+			const key = `${target.kind}:${deviceId}`;
+			if (currentKey !== key) {
+				currentKey = key;
+				info = null;
+			}
+			isLoading = true;
 			try {
-				const r = await methods.deviceInfo(target.kind, id);
-				if (target.deviceId() === id) {
+				const r = await methods.deviceInfo(target.kind, deviceId);
+				if (id === requestId && target.deviceId() === deviceId) {
 					info = r;
 				}
 			} catch {
-				if (target.deviceId() === id) {
+				if (id === requestId && target.deviceId() === deviceId) {
 					info = null;
 				}
+			} finally {
+				if (id === requestId) isLoading = false;
 			}
 		} else {
 			const rate = target.pipelineRate ? target.pipelineRate() : appSettings.pipelineSampleRate;
+			const key = `${target.kind}:${rate}`;
+			if (currentKey !== key) {
+				currentKey = key;
+				info = null;
+			}
+			isLoading = true;
 			try {
 				const r = await methods.captureDeviceInfo(target.kind, rate);
-				info = r;
+				if (id === requestId) info = r;
 			} catch {
-				info = null;
+				if (id === requestId) info = null;
+			} finally {
+				if (id === requestId) isLoading = false;
 			}
 		}
 	}
@@ -61,6 +84,7 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 			const _running = audioStore.isRunning;
 			if (!id) {
 				info = null;
+				isLoading = false;
 				return;
 			}
 			void query();
@@ -112,11 +136,12 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 	const specText = $derived(`${formatHz(sampleRate)} · ${channels} ch · ${sampleFormat}`);
 
 	const resamplingTooltip = $derived.by(() => {
+		if (!info) return undefined;
 		if (target.kind === 'output') {
-			if (!info || info.sampleRate === appSettings.pipelineSampleRate) return undefined;
+			if (info.sampleRate === appSettings.pipelineSampleRate) return undefined;
 			return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(info.sampleRate)}`;
 		} else {
-			const sr = info?.sampleRate ?? 48_000;
+			const sr = info.sampleRate;
 			if (sr === appSettings.pipelineSampleRate) return undefined;
 			return `Resampling: ${formatHz(sr)} → ${formatHz(appSettings.pipelineSampleRate)}`;
 		}
@@ -125,6 +150,9 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 	return {
 		get info() {
 			return info;
+		},
+		get isLoading() {
+			return isLoading;
 		},
 		get sampleRate() {
 			return sampleRate;

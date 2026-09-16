@@ -3,6 +3,7 @@
 	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
@@ -10,14 +11,15 @@
 	import { Apps } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
-	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { formatHz, formatPct } from '$lib/components/format';
+	import { formatPct } from '$lib/components/format';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
 
 	const flow = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
+
+	const devInfo = useDeviceInfo({ kind: 'app' });
 
 	function setApp(value: string | null) {
 		flow.updateNodeData(id, { bundleId: value });
@@ -30,7 +32,8 @@
 	let unlistenRefresh: (() => void) | undefined;
 	onMount(() => {
 		unlistenRefresh = onNodeAction(id, 'refresh', () => {
-			refresh().catch(() => {});
+			void refresh();
+			void devInfo.refresh();
 		});
 	});
 	onDestroy(() => {
@@ -54,12 +57,12 @@
 
 	let volumePct = $derived((data.volume ?? 1) * 100);
 
-	// App Audio capture is stereo; expose one output handle per channel.
-	const channelCount = 2;
+	let channelCount = $derived(devInfo.channels);
+	let srcTooltip = $derived(devInfo.resamplingTooltip);
 
-	let srcTooltip = $derived.by(() => {
-		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Resampling: ${formatHz(48_000)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+	$effect(() => {
+		const _ = channelCount;
+		updateNodeInternals(id);
 	});
 </script>
 
@@ -79,8 +82,12 @@
 		</Combobox>
 		{#if missing}
 			<span class="text-[10px] text-red-500">App no longer running</span>
+		{:else if data.bundleId && devInfo.info}
+			<span class="node-spec">{devInfo.specText}</span>
 		{:else if data.bundleId}
-			<span class="node-spec">{formatHz(48_000)} · 2 ch · f32</span>
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

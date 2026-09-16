@@ -4,6 +4,7 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { useDeviceInfo } from '$lib/modules/audio';
 	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
@@ -12,7 +13,7 @@
 	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatPct } from '$lib/components/format';
 
 	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
 	// loopback) need it neither.
@@ -25,6 +26,8 @@
 
 	const flow = useSvelteFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
+
+	const devInfo = useDeviceInfo({ kind: 'system' });
 
 	let permission = $state<CapturePermission | null>(null);
 	let checking = $state(false);
@@ -63,16 +66,14 @@
 		audioMethods.setInputVolume(id, scalar).catch(() => {});
 	}
 
-	import { formatHz, formatPct } from '$lib/components/format';
-
 	let volumePct = $derived((data.volume ?? 1) * 100);
 
-	// System Audio capture is stereo; expose one output handle per channel.
-	const channelCount = 2;
+	let channelCount = $derived(devInfo.channels);
+	let srcTooltip = $derived(devInfo.resamplingTooltip);
 
-	let srcTooltip = $derived.by(() => {
-		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Resampling: ${formatHz(48_000)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+	$effect(() => {
+		const _ = channelCount;
+		updateNodeInternals(id);
 	});
 </script>
 
@@ -126,7 +127,13 @@
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
-		<span class="node-spec">{formatHz(48_000)} · 2 ch · f32</span>
+		{#if devInfo.info}
+			<span class="node-spec">{devInfo.specText}</span>
+		{:else}
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
+		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>

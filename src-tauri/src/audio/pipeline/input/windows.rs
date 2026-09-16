@@ -15,11 +15,12 @@ use crate::error::AppResult;
 use super::super::native::native_config;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
-const LOOPBACK_FALLBACK_RATE: u32 = 48_000;
-
 const LOOPBACK_CHANNELS: usize = 2;
 
-pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<ResolvedInput> {
+pub(in crate::audio::pipeline) fn resolve_input(
+    inp: &ValidInput,
+    target_sample_rate: u32,
+) -> AppResult<ResolvedInput> {
     match &inp.spec {
         InputSpec::Microphone { device_id } => {
             let device = device::find(DeviceKind::Input, device_id)?;
@@ -35,12 +36,11 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
         InputSpec::SystemAudio {
             exclude_current_app,
         } => Ok(ResolvedInput::SystemAudio {
-            sample_rate: crate::audio::capture::loopback_mix_rate()
-                .unwrap_or(LOOPBACK_FALLBACK_RATE),
+            sample_rate: crate::audio::capture::loopback_mix_rate()?,
             exclude_current_app: *exclude_current_app,
         }),
         InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
-            sample_rate: LOOPBACK_FALLBACK_RATE,
+            sample_rate: target_sample_rate,
             bundle_id: bundle_id.clone(),
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),

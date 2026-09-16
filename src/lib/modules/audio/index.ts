@@ -9,5 +9,6 @@ const Audio = {
 	ui
 };
 
+export { useDeviceInfo, type DeviceInfoTarget, type DeviceInfoState } from './device_info.svelte';
 export type { types };
 export default Audio;

@@ -36,6 +36,8 @@ export const methods = {
 	listAudioApplications: (): Promise<AudioApplication[]> => invoke<AudioApplication[]>('list_audio_applications'),
 	getAppIcons: (bundleIds: string[]): Promise<Record<string, string>> => invoke<Record<string, string>>('get_app_icons', { bundleIds }),
 	deviceInfo: (kind: 'input' | 'output', name: string): Promise<NativeDeviceInfo> => invoke<NativeDeviceInfo>('device_info', { kind, name }),
+	captureDeviceInfo: (kind: 'system' | 'app', pipelineSampleRate?: number): Promise<NativeDeviceInfo> =>
+		invoke<NativeDeviceInfo>('capture_device_info', { kind, pipelineSampleRate }),
 	checkCapturePermission: (): Promise<CapturePermission> => invoke<CapturePermission>('check_capture_permission'),
 	pathExists: (path: string): Promise<boolean> => invoke<boolean>('path_exists', { path }),
 	/** Min/max peak bins read from a WAV/AIFF file for a requested frame range. */

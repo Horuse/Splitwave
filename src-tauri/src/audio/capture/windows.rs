@@ -55,7 +55,7 @@ impl Capture {
 
     pub fn start_app(
         bundle_id: &str,
-        _sample_rate: u32,
+        sample_rate: u32,
         _channels: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
@@ -63,7 +63,7 @@ impl Capture {
             AppError::Stream(format!("no active audio session found for {bundle_id:?}"))
         })?;
         Ok(spawn(bridge, move |stop, bridge| {
-            run_process_loopback(pid, stop, bridge)
+            run_process_loopback(pid, sample_rate, stop, bridge)
         }))
     }
 }
@@ -154,8 +154,14 @@ fn run_loopback(stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
 }
 
 // Per-app capture via the Win10 2004+ process-loopback activation. The virtual
-// device has no mix format, so we ask for 48 kHz stereo f32 explicitly.
-fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
+// device has no fixed mix format, so we initialize it directly with the desired
+// pipeline sample rate to avoid unnecessary resampling.
+fn run_process_loopback(
+    pid: u32,
+    sample_rate: u32,
+    stop: Arc<AtomicBool>,
+    bridge: BroadcastRx,
+) -> AppResult<()> {
     unsafe {
         ensure_com();
         let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
@@ -200,11 +206,16 @@ fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) ->
             .cast()
             .map_err(com_err)?;
 
+        let rate = if sample_rate > 0 {
+            sample_rate
+        } else {
+            TARGET_RATE
+        };
         let wfx = WAVEFORMATEX {
             wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
             nChannels: TARGET_CHANNELS,
-            nSamplesPerSec: TARGET_RATE,
-            nAvgBytesPerSec: TARGET_RATE * TARGET_CHANNELS as u32 * 4,
+            nSamplesPerSec: rate,
+            nAvgBytesPerSec: rate * TARGET_CHANNELS as u32 * 4,
             nBlockAlign: TARGET_CHANNELS * 4,
             wBitsPerSample: 32,
             cbSize: 0,
@@ -222,13 +233,7 @@ fn run_process_loopback(pid: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) ->
 
         let capture: IAudioCaptureClient = client.GetService().map_err(com_err)?;
         client.Start().map_err(com_err)?;
-        let r = pump(
-            &capture,
-            TARGET_CHANNELS as usize,
-            TARGET_RATE,
-            &stop,
-            bridge,
-        );
+        let r = pump(&capture, TARGET_CHANNELS as usize, rate, &stop, bridge);
         let _ = client.Stop();
         r
     }

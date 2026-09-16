@@ -8,7 +8,7 @@
 		(cmd) => {
 			if (cmd === 'list_input_devices') return [{ ...SPLITWAVE_DEVICE, kind: 'input' }];
 			if (cmd === 'list_output_devices') return [{ ...SPLITWAVE_DEVICE, kind: 'output' }];
-			if (cmd === 'device_info') return { sampleRate: 48000, channels: 2, sampleFormat: 'f32' };
+			if (cmd === 'device_info' || cmd === 'capture_device_info') return { sampleRate: 48000, channels: 2, sampleFormat: 'f32' };
 			if (cmd === 'get_device_volume') return 0.75;
 			if (cmd === 'scan_plugins') return [];
 			if (cmd.startsWith('list_')) return [];

@@ -330,6 +330,18 @@ pub(super) fn speaker_ring(
     (producer, fill, level, target, io)
 }
 
+fn output_resampler(
+    pipeline_rate: u32,
+    device_rate: u32,
+    channels: usize,
+) -> AppResult<Option<FixedRateResampler>> {
+    if pipeline_rate == device_rate {
+        Ok(None)
+    } else {
+        FixedRateResampler::new(pipeline_rate, device_rate, DSP_BLOCK_FRAMES, channels).map(Some)
+    }
+}
+
 // Shared by both platforms' `start_speaker_stream`: a device-fill-paced
 // worker that mixes the output sub-graph and bulk-pushes blocks into the
 // speaker ring.
@@ -354,16 +366,7 @@ pub(super) fn spawn_speaker_worker(
         target,
     ));
     let initial_device_rate = device_sample_rate.load(Ordering::Relaxed);
-    let mut resampler = if initial_device_rate == pipeline_rate {
-        None
-    } else {
-        Some(FixedRateResampler::new(
-            pipeline_rate,
-            initial_device_rate,
-            DSP_BLOCK_FRAMES,
-            channels,
-        )?)
-    };
+    let mut resampler = output_resampler(pipeline_rate, initial_device_rate, channels)?;
     let mut resampled = vec![
         0.0_f32;
         resampler
@@ -593,4 +596,62 @@ pub(super) fn start_recorder_worker(
         ctrl,
         wave,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::pipeline::dag::RESAMPLE_CHUNK;
+
+    #[test]
+    fn test_output_resampler_bypassed_when_rates_match() {
+        // When initial_device_rate == pipeline_rate (e.g. 96 kHz pipeline and 96 kHz speaker),
+        // no output resampler must be allocated, preserving 1:1 bit-transparent playback.
+        for rate in [44_100, 48_000, 96_000, 192_000] {
+            let resampler = output_resampler(rate, rate, 2).unwrap();
+            assert!(
+                resampler.is_none(),
+                "output resampler should be None for matching rate {rate}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_output_resampler_only_allocated_when_rates_differ() {
+        let resampler = output_resampler(96_000, 48_000, 2).unwrap();
+        assert!(
+            resampler.is_some(),
+            "output resampler must be Some when rates differ"
+        );
+    }
+
+    #[test]
+    fn test_output_bit_transparent_sample_passthrough() {
+        // Verify that when output resampler is None, samples pass directly to the device buffer.
+        let total_samples = RESAMPLE_CHUNK * 2;
+        let mut block = vec![0.0f32; total_samples];
+        for (i, sample) in block.iter_mut().enumerate() {
+            *sample = ((i as f32) * 0.005).cos();
+        }
+
+        let mut resampler = output_resampler(96_000, 96_000, 2).unwrap();
+        let mut resampled = Vec::new();
+        let active_channels = 2;
+        let mut resampled_channels = 0;
+
+        let device_block = if let Some(resampler) = &mut resampler {
+            resampled_channels = resampled_channels.max(active_channels);
+            let written = resampler
+                .process_chunk_into(&block[..total_samples], resampled_channels, &mut resampled)
+                .unwrap();
+            &resampled[..written]
+        } else {
+            &block[..total_samples]
+        };
+
+        assert_eq!(device_block.len(), total_samples);
+        for (a, b) in device_block.iter().zip(block.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+    }
 }

@@ -15,6 +15,7 @@ const MAX_GAP_PACKETS: u16 = 50;
 /// rather than the network reordering a few packets.
 const RESTART_RUN: u32 = 25;
 
+#[derive(Debug)]
 pub enum SeqStep {
     /// Continues the timeline, with `gap` lost packets to conceal before it.
     Advance { gap: u16 },
@@ -56,5 +57,77 @@ impl ChannelTimeline {
             return SeqStep::Resync;
         }
         SeqStep::Drop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequential_packets_advance_without_gap() {
+        let mut t = ChannelTimeline::default();
+        for seq in [0u16, 1, 2, 3] {
+            match t.step(seq) {
+                SeqStep::Advance { gap } => assert_eq!(gap, 0, "seq {seq}"),
+                other => panic!("seq {seq}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn small_gap_conceals_then_advances() {
+        let mut t = ChannelTimeline::default();
+        assert!(matches!(t.step(0), SeqStep::Advance { gap: 0 }));
+        // Packet 3 arrives after 1 was lost.
+        match t.step(3) {
+            SeqStep::Advance { gap } => assert_eq!(gap, 2),
+            other => panic!("small gap must advance: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_and_reordered_are_dropped() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(5);
+        assert!(matches!(t.step(5), SeqStep::Drop), "same seq twice");
+        assert!(matches!(t.step(4), SeqStep::Drop), "late arrival");
+        assert!(matches!(t.step(3), SeqStep::Drop));
+    }
+
+    #[test]
+    fn huge_gap_is_a_resync_not_a_fill() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(0);
+        match t.step(200) {
+            SeqStep::Resync => {}
+            other => panic!("a 200-packet outage must resync: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn restart_run_resyncs() {
+        const RESTART_RUN: u32 = 25;
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(100);
+        // A sender restarting at 0: 25 rejected packets in a row flip to resync.
+        for seq in [200u16, 201] {
+            let _ = t.step(seq);
+        }
+        let mut rejected = 0;
+        let mut last = None;
+        for seq in 0..40u16 {
+            let step = t.step(seq);
+            match step {
+                SeqStep::Drop => rejected += 1,
+                SeqStep::Resync => {
+                    last = Some((rejected, seq));
+                    break;
+                }
+                SeqStep::Advance { .. } => panic!("restart must not advance timeline"),
+            }
+        }
+        let (run, _at) = last.expect("a long run of rejections must flip to resync");
+        assert!(run >= RESTART_RUN as u32 - 1, "rejections counted: {run}");
     }
 }

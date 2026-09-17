@@ -380,4 +380,67 @@ mod tests {
             assert_eq!(a.to_bits(), b.to_bits());
         }
     }
+
+    #[test]
+    fn resolved_input_reports_sample_rate_and_channels() {
+        let sys = ResolvedInput::SystemAudio {
+            sample_rate: 96_000,
+            exclude_current_app: true,
+        };
+        assert_eq!(sys.sample_rate(), 96_000);
+        assert_eq!(sys.native_channels(), 2, "non-cpal sources emit stereo");
+
+        let app = ResolvedInput::AppAudio {
+            sample_rate: 48_000,
+            bundle_id: "com.test".into(),
+        };
+        assert_eq!(app.sample_rate(), 48_000);
+        assert_eq!(app.native_channels(), 2);
+
+        let file = ResolvedInput::AudioFile {
+            sample_rate: 44_100,
+            channels: 1,
+            path: PathBuf::from("/tmp/x.wav"),
+        };
+        assert_eq!(file.sample_rate(), 44_100);
+        assert_eq!(file.native_channels(), 1);
+    }
+
+    #[test]
+    fn resampler_rates_must_differ_for_some_channels() {
+        // Zero channels still allocates (rubato accepts it) — the guard lives
+        // upstream; matching rates never allocate regardless of width.
+        for channels in [0usize, 1, 2, 8] {
+            assert!(input_resampler(48_000, 48_000, channels).unwrap().is_none());
+        }
+        assert!(input_resampler(48_000, 44_100, 0).is_ok());
+    }
+
+    #[test]
+    fn resolve_audio_file_probes_a_real_wav() {
+        // Write a tiny WAV via hound and probe it back.
+        let path = std::env::temp_dir().join(format!("splitwave-probe-{}.wav", std::process::id()));
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        {
+            let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+            writer.write_sample(0i16).unwrap();
+            writer.write_sample(0i16).unwrap();
+        }
+        let resolved = resolve_audio_file(path.to_str().unwrap()).expect("probe wav");
+        assert!(matches!(
+            resolved,
+            ResolvedInput::AudioFile {
+                sample_rate: 44_100,
+                channels: 2,
+                ..
+            }
+        ));
+        assert!(resolve_audio_file("/definitely/not/here.wav").is_err());
+        std::fs::remove_file(&path).ok();
+    }
 }

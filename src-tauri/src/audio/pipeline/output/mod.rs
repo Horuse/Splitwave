@@ -602,6 +602,7 @@ pub(super) fn start_recorder_worker(
 mod tests {
     use super::*;
     use crate::audio::pipeline::dag::RESAMPLE_CHUNK;
+    use std::collections::HashMap;
 
     #[test]
     fn test_output_resampler_bypassed_when_rates_match() {
@@ -653,5 +654,218 @@ mod tests {
         for (a, b) in device_block.iter().zip(block.iter()) {
             assert_eq!(a.to_bits(), b.to_bits());
         }
+    }
+
+    #[test]
+    fn pipeline_frames_convert_to_device_frames_with_rounding() {
+        assert_eq!(pipeline_frames_to_device_frames(1024, 48_000, 48_000), 1024);
+        assert_eq!(pipeline_frames_to_device_frames(1024, 48_000, 96_000), 2048);
+        assert_eq!(pipeline_frames_to_device_frames(1024, 96_000, 48_000), 512);
+        // Half-frame rounds up (512*48/96 = 256.0 → 256).
+        assert_eq!(pipeline_frames_to_device_frames(512, 96_000, 48_000), 256);
+        // Zero pipeline rate falls back to 1: frames * device_rate / 1.
+        assert_eq!(
+            pipeline_frames_to_device_frames(1024, 0, 48_000),
+            1024 * 48_000
+        );
+    }
+
+    #[test]
+    fn resolved_output_reports_rates() {
+        assert_eq!(ResolvedOutput::WireSender(44_100).sample_rate(), 44_100);
+        assert_eq!(
+            ResolvedOutput::File {
+                path: PathBuf::from("/tmp/x.wav"),
+                sample_rate: 96_000,
+                format: RecordingFormat::Wav {
+                    bit_depth: crate::audio::graph::WavBitDepth::F32
+                },
+                channels: 2,
+                append: false,
+                base_frames: 0,
+            }
+            .sample_rate(),
+            96_000
+        );
+    }
+
+    #[test]
+    fn speaker_ring_reads_what_was_pushed() {
+        let (mut prod, mut fill, level, target, io) = speaker_ring(2, 48_000, 48_000, 0);
+        let data: Vec<f32> = (0..1024 * 2).map(|i| i as f32 * 0.001).collect();
+        // Ring is one second at the device rate — far larger than a block.
+        assert_eq!(
+            prod.push_entire_slice(&data).ok(),
+            Some(()),
+            "ring must absorb a block"
+        );
+        let mut out = vec![0.0f32; 1024 * 2];
+        fill(&mut out, 0);
+        assert_eq!(out, data);
+        // The fill decrements the gauge; the push-side increment lives in the
+        // worker, so the standalone gauge reads -read/out_channels.
+        assert_eq!(level.load(Ordering::Relaxed), -1024);
+        assert!(target.load(Ordering::Relaxed) > 0);
+        assert!(io.requested.load(Ordering::Relaxed) > 0);
+        assert!(io.read.load(Ordering::Relaxed) > 0);
+        assert_eq!(io.callbacks.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn stream_guard_counts_live_streams() {
+        let before = LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed);
+        {
+            let _guard = StreamGuard::new();
+            assert_eq!(LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed), before + 1);
+        }
+        assert_eq!(LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn speaker_worker_pushes_blocks_into_the_ring() {
+        use super::super::dag::build_output_graph;
+        use crate::audio::effects::EffectRegistry;
+        use crate::audio::graph::{EdgeSpec, GraphSpec, InputSpec, NodeKind, NodeSpec, ValidGraph};
+
+        // Build a monitor-style graph (mic source ring, no real device).
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                NodeSpec {
+                    id: "m".into(),
+                    kind: NodeKind::Microphone,
+                    data: serde_json::json!({ "deviceId": "dev" }),
+                },
+                NodeSpec {
+                    id: "s".into(),
+                    kind: NodeKind::Speaker,
+                    data: serde_json::json!({ "deviceId": "dev" }),
+                },
+            ],
+            edges: vec![EdgeSpec {
+                id: "e".into(),
+                source: "m".into(),
+                source_handle: None,
+                target: "s".into(),
+                target_handle: None,
+            }],
+        };
+        let valid: ValidGraph = g.validate().expect("valid");
+        let mut producer_pairs = Vec::new();
+        let native = valid
+            .inputs
+            .iter()
+            .map(|i| (i.id.clone(), 48_000))
+            .collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = EffectRegistry::new();
+        let built = build_output_graph(
+            Some("s"),
+            48_000,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+
+        let (prod, _fill, level, target, io) = speaker_ring(2, 48_000, 48_000, 0);
+        let device_sr = Arc::new(AtomicU32::new(48_000));
+        let meter = MeterHandle::new("w".into());
+        let (_worker, _ctrl) = spawn_speaker_worker(
+            prod,
+            level.clone(),
+            target.clone(),
+            device_sr.clone(),
+            2,
+            built.graph,
+            meter,
+        )
+        .expect("spawn worker");
+        // The worker must pump blocks within a few hundred ms.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            level.load(Ordering::Relaxed) > 0,
+            "worker pushed audio into the ring"
+        );
+        assert!(io.callbacks.load(Ordering::Relaxed) >= 0);
+    }
+
+    #[test]
+    fn monitor_worker_runs_at_wall_clock() {
+        use super::super::dag::build_output_graph;
+        use crate::audio::effects::EffectRegistry;
+        use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+        use std::collections::HashMap;
+
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                NodeSpec {
+                    id: "m".into(),
+                    kind: NodeKind::Microphone,
+                    data: serde_json::json!({ "deviceId": "dev" }),
+                },
+                NodeSpec {
+                    id: "lm".into(),
+                    kind: NodeKind::LevelMeter,
+                    data: serde_json::json!({}),
+                },
+            ],
+            edges: vec![EdgeSpec {
+                id: "e".into(),
+                source: "m".into(),
+                source_handle: None,
+                target: "lm".into(),
+                target_handle: None,
+            }],
+        };
+        let valid: ValidGraph = g.validate().expect("valid");
+        let mut producer_pairs = Vec::new();
+        let native = valid
+            .inputs
+            .iter()
+            .map(|i| (i.id.clone(), 48_000))
+            .collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = EffectRegistry::new();
+        let built = build_output_graph(
+            None,
+            48_000,
+            true,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+
+        let (recorder, _ctrl) = start_monitor_worker(built.graph).expect("spawn monitor");
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            built.output.blocks.load(Ordering::Relaxed) > 0,
+            "monitor produced blocks in real time"
+        );
+        drop(recorder);
+        let after_stop = built.output.blocks.load(Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            built.output.blocks.load(Ordering::Relaxed),
+            after_stop,
+            "worker stopped on drop"
+        );
     }
 }

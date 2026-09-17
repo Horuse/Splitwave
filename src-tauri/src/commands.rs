@@ -886,3 +886,110 @@ pub async fn webrtc_join_room(
 pub async fn webrtc_leave_room(node_id: String) {
     webrtc::leave_room(&node_id).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_exists_sync_helper() {
+        let existing = std::env::temp_dir().join("splitwave-cmds");
+        std::fs::create_dir_all(&existing).expect("temp dir");
+        assert!(path_exists(existing.to_string_lossy().to_string()));
+        assert!(!path_exists("/definitely/not/a/path/splitwave".into()));
+    }
+
+    #[test]
+    fn error_chain_unwinds_sources() {
+        #[derive(Debug)]
+        struct Leaf(String);
+        impl std::fmt::Display for Leaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "leaf: {}", self.0)
+            }
+        }
+        impl std::error::Error for Leaf {}
+
+        #[derive(Debug)]
+        struct Mid(Leaf);
+        impl std::fmt::Display for Mid {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "mid")
+            }
+        }
+        impl std::error::Error for Mid {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let report = format_error_chain(&Mid(Leaf("socket closed".into())));
+        assert!(report.starts_with("mid"));
+        assert!(report.contains("debug: Mid"));
+        assert!(report.contains("caused by [0]: leaf: socket closed"));
+        assert!(report.contains("debug: Leaf"));
+    }
+
+    #[test]
+    fn audio_request_returns_the_replied_value() {
+        // A stand-in audio thread answering IsRunning, driven the same way the
+        // real commands drive it (through the async runtime).
+        let (tx, rx) = mpsc::channel::<Command>();
+        std::thread::spawn(move || {
+            if let Command::IsRunning { reply } = rx.recv().expect("command") {
+                let _ = reply.send(true);
+            }
+        });
+        let r = tauri::async_runtime::block_on(async {
+            audio_request(tx, |reply| Command::IsRunning { reply }).await
+        });
+        assert_eq!(r.expect("reply"), true);
+    }
+
+    #[test]
+    fn audio_request_reports_disconnected_engine() {
+        // Sender dropped without a reply → "audio thread reply lost".
+        let (tx, rx) = mpsc::channel::<Command>();
+        std::thread::spawn(move || {
+            // Receive the command, then drop its reply sender without replying.
+            if let Ok(Command::IsRunning { reply }) = rx.recv() {
+                drop(reply);
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        let r = tauri::async_runtime::block_on(async {
+            audio_request(tx, |reply| Command::IsRunning { reply }).await
+        });
+        let msg = format!("{:?}", r.expect_err("must fail"));
+        assert!(msg.contains("reply lost"), "{msg}");
+    }
+
+    #[test]
+    fn audio_request_reports_dead_engine() {
+        // Dropping the receiver entirely → "audio thread is gone".
+        let (tx, rx) = mpsc::channel::<Command>();
+        drop(rx);
+        let r = tauri::async_runtime::block_on(async {
+            audio_request(tx, |reply| Command::IsRunning { reply }).await
+        });
+        let msg = format!("{:?}", r.expect_err("must fail"));
+        assert!(msg.contains("audio thread is gone"), "{msg}");
+    }
+
+    #[test]
+    fn update_metadata_serializes_camel_case() {
+        let md = UpdateMetadata {
+            rid: 1u32,
+            current_version: "1.0.0".into(),
+            version: "1.1.0".into(),
+            date: None,
+            body: Some("release notes".into()),
+            raw_json: serde_json::json!({}),
+        };
+        let v = serde_json::to_value(&md).expect("serialize");
+        assert!(v.get("currentVersion").is_some());
+        assert!(v.get("rawJson").is_some());
+        assert!(v.get("current_version").is_none());
+        assert!(v.get("rid").is_some());
+    }
+}

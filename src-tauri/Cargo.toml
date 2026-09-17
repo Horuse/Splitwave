@@ -59,6 +59,10 @@ opt-level = 3
 [profile.dev.package.deep_filter]
 opt-level = 3
 
+[dev-dependencies]
+proptest = "1"
+insta = { version = "1", features = ["json", "redactions"] }
+
 [dependencies]
 tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"

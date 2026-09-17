@@ -151,3 +151,221 @@ impl Effect for NoiseGateEffect {
         self.process_inner(samples, None, frames);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::util::{db_to_linear, load_f32};
+    use super::*;
+    use proptest::prelude::*;
+
+    const SR: u32 = 48_000;
+
+    fn dc(frames: usize, amp: f32) -> Vec<f32> {
+        vec![amp; frames * 2]
+    }
+
+    fn sine(frames: usize, amp: f32) -> Vec<f32> {
+        (0..frames)
+            .flat_map(|i| {
+                let s = amp * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / SR as f32).sin();
+                [s, s]
+            })
+            .collect()
+    }
+
+    fn gate(data: NoiseGateData) -> (NoiseGateEffect, Arc<AtomicU32>) {
+        let (e, _, g) = NoiseGateEffect::new(data, SR);
+        (e, g)
+    }
+
+    fn loud_data() -> NoiseGateData {
+        NoiseGateData {
+            threshold_db: -30.0,
+            range_db: -24.0,
+            attack_ms: 5.0,
+            hold_ms: 50.0,
+            release_ms: 50.0,
+            bypassed: false,
+        }
+    }
+
+    #[test]
+    fn quiet_input_closes_to_range_attenuation() {
+        let (mut e, gain) = gate(loud_data());
+        // Release τ = 50 ms ≈ 2400 frames; 40 blocks settle to closed gain.
+        let mut buf = dc(12000, 0.005); // well below -30 dB threshold
+        e.process(&mut buf, 12000);
+        let closed = db_to_linear(-24.0);
+        let got = load_f32(&gain);
+        assert!(
+            (got - closed).abs() < 0.15 * closed,
+            "gate must settle at range attenuation: {got} vs {closed}"
+        );
+        let peak = buf[12000 * 2 - 2400..]
+            .iter()
+            .fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak < 0.005 * closed * 2.0, "output attenuated: {peak}");
+    }
+
+    #[test]
+    fn loud_input_opens_gate() {
+        let (mut e, gain) = gate(loud_data());
+        let mut buf = dc(2400, 0.5);
+        e.process(&mut buf, 2400);
+        assert!(
+            load_f32(&gain) > 0.99,
+            "gate must open: {:#}",
+            load_f32(&gain)
+        );
+    }
+
+    #[test]
+    fn hold_keeps_gate_open_after_signal_ends() {
+        let (mut e, gain) = gate(loud_data());
+        let mut loud = sine(240, 0.5);
+        e.process(&mut loud, 240);
+        // Signal stops. Hold = 50 ms = 2400 frames.
+        let silence = vec![0.0; 240 * 2];
+        let mut b = silence.clone();
+        e.process(&mut b, 240); // 240 frames into hold
+        assert!(
+            load_f32(&gain) > 0.9,
+            "gate must stay open during hold: {}",
+            load_f32(&gain)
+        );
+        // Wait well past the hold window plus the release tail: 60 blocks
+        // is 14.4 s, hold + release need ~7.7 s to close below range+1 dB.
+        for _ in 0..60 {
+            let mut b = silence.clone();
+            e.process(&mut b, 240);
+        }
+        assert!(
+            load_f32(&gain) < db_to_linear(-24.0) + 0.01,
+            "gate must close after hold: {}",
+            load_f32(&gain)
+        );
+    }
+
+    #[test]
+    fn sidechain_keys_gate() {
+        // Quiet main + loud sidechain → gate opens, main passes.
+        let (mut e, gain) = gate(loud_data());
+        let quiet_main = sine(240, 0.002);
+        let loud_side = sine(240, 0.9);
+        let mut main = quiet_main.clone();
+        e.process_with_sidechain(&mut main, Some(&loud_side), 120);
+        assert!(load_f32(&gain) > 0.9);
+
+        // Loud main + silent sidechain → gate closes over the release tail.
+        let (mut e2, gain2) = gate(loud_data());
+        let loud_main = sine(4800, 0.9);
+        let silent_side = vec![0.0; 4800 * 2];
+        let mut main = loud_main.clone();
+        e2.process_with_sidechain(&mut main, Some(&silent_side), 2400);
+        assert!(load_f32(&gain2) < 0.5, "silent sidechain must close gate");
+    }
+
+    #[test]
+    fn detector_tracks_input_envelope() {
+        let (mut e, gain) = gate(loud_data());
+        // Amplitude right at the threshold boundary toggles state without
+        // panic and the stored gain follows the open/close transitions.
+        let loud = sine(240, 0.05); // == threshold -30 dB
+        e.process(&mut loud.clone(), 120);
+        assert!(load_f32(&gain) > 0.9);
+    }
+
+    #[test]
+    fn new_clamps_hostile_params() {
+        let d = NoiseGateData {
+            threshold_db: -200.0,
+            range_db: 12.0,
+            attack_ms: 0.0,
+            hold_ms: -5.0,
+            release_ms: 0.0,
+            bypassed: false,
+        };
+        let (mut e, c, state) = NoiseGateEffect::new(d, SR);
+        let EffectControl::NoiseGate {
+            threshold_db,
+            range_db,
+            attack_ms,
+            hold_ms,
+            release_ms,
+        } = &c
+        else {
+            panic!("wrong control variant");
+        };
+        assert_eq!(load_f32(range_db), 0.0, "positive range clamps to 0");
+        assert_eq!(load_f32(hold_ms), 0.0);
+        assert_eq!(load_f32(attack_ms), 0.01);
+        assert_eq!(load_f32(release_ms), 0.1);
+        assert_eq!(load_f32(threshold_db), -200.0);
+        let mut buf = vec![0.1; 96];
+        e.process(&mut buf, 48);
+        assert!(buf.iter().all(|s| s.is_finite()));
+        assert!(load_f32(&state).is_finite());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn gate_output_is_finite_and_never_exceeds_input(
+            input in proptest::prelude::prop::collection::vec(-1.0f32..1.0, 512),
+            threshold in -60.0f32..0.0,
+            range in -80.0f32..6.0,
+        ) {
+            let d = NoiseGateData {
+                threshold_db: threshold,
+                range_db: range,
+                attack_ms: 5.0,
+                hold_ms: 10.0,
+                release_ms: 50.0,
+                bypassed: false,
+            };
+            let (mut e, _, _) = NoiseGateEffect::new(d, SR);
+            let mut buf = input.clone();
+            e.process(&mut buf, 256);
+            for (o, i) in buf.iter().zip(&input) {
+                prop_assert!(o.is_finite());
+                prop_assert!(o.abs() <= i.abs() + 1e-7, "|{o}| > |{i}|: gate amplified");
+            }
+        }
+    }
+    #[test]
+    fn from_state_rebuild_shares_atoms() {
+        let (mut e, c, state) = NoiseGateEffect::new(loud_data(), SR);
+        let EffectControl::NoiseGate {
+            threshold_db,
+            range_db,
+            attack_ms,
+            hold_ms,
+            release_ms,
+            ..
+        } = &c
+        else {
+            panic!("variant")
+        };
+        let mut e2 = NoiseGateEffect::from_state(
+            threshold_db.clone(),
+            range_db.clone(),
+            attack_ms.clone(),
+            hold_ms.clone(),
+            release_ms.clone(),
+            SR,
+            state.clone(),
+        );
+        // Both instances read the same atoms: updating via the control
+        // changes the rebuilt effect's behaviour.
+        range_db.store((-12.0f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // Release τ = 50 ms = 2400 frames; 60 blocks settle near closed gain.
+        for _ in 0..60 {
+            let mut b1 = dc(240, 0.002);
+            e.process(&mut b1, 240);
+            let mut b2 = dc(240, 0.002);
+            e2.process_with_sidechain(&mut b2, None, 240);
+        }
+        let want = db_to_linear(-12.0);
+        let got = load_f32(&state);
+        assert!((got - want).abs() < 0.02 * want, "{got} vs {want}");
+    }
+}

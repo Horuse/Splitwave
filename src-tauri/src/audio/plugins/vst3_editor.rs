@@ -289,6 +289,7 @@ mod tests {
 
     #[test]
     fn every_installed_plugin_offers_an_embeddable_editor() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let installed = Vst3Backend.scan();
         if installed.is_empty() {
             return skipped("editor creation");
@@ -333,6 +334,7 @@ mod tests {
     /// told the size it ended up with. This is the path AU has no equivalent of.
     #[test]
     fn a_resize_request_reaches_the_host_and_returns_to_the_plugin() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
             return skipped("editor resize requests");
         };

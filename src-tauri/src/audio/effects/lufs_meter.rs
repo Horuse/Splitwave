@@ -386,3 +386,147 @@ mod tests {
         assert!(corr > 0.99, "expected ~1.0, got {corr}");
     }
 }
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use crate::audio::effects::Effect;
+
+    const SR: u32 = 48_000;
+
+    fn tone(frames: usize, amp: f32) -> Vec<f32> {
+        (0..frames * 2)
+            .map(|i| amp * ((i / 2) as f32 * 440.0 * 2.0 * std::f32::consts::PI / SR as f32).sin())
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_defaults_are_silence_floor() {
+        let (_, h) = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR);
+        let s = h.snapshot();
+        assert_eq!(s.momentary, LUFS_SILENT);
+        assert_eq!(s.integrated, LUFS_SILENT);
+        assert_eq!(s.tp_l, LUFS_SILENT);
+        assert_eq!(s.sample_peak, LUFS_SILENT);
+        assert_eq!(s.dc_offset, 0.0);
+        assert_eq!(s.correlation, 1.0);
+        assert_eq!(s.clips, 0);
+    }
+
+    #[test]
+    fn from_handle_rebuilds_working_meter() {
+        let (_, h) = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR);
+        let mut m = LufsMeterEffect::from_handle(h.clone(), SR);
+        let mut buf = vec![0.5f32; 4800 * 2];
+        m.process(&mut buf, 4800);
+        let s = h.snapshot();
+        // Constant 0.5 → peak -6.02 dBFS, RMS matches.
+        assert!(
+            (s.sample_peak + 6.0206).abs() < 0.01,
+            "peak {}",
+            s.sample_peak
+        );
+        assert!((s.rms + 6.0206).abs() < 0.05, "rms {}", s.rms);
+    }
+
+    #[test]
+    fn mono_width_picks_mono_analyser() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = vec![0.5f32; 4800];
+        m.process(&mut buf, 4800);
+        let s = m.handle.snapshot();
+        assert!(s.momentary >= LUFS_SILENT);
+        assert!(s.momentary < 0.0, "mono block must not read 3 LU hot");
+    }
+
+    #[test]
+    fn wide_block_downmixes_first_two_channels() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        // 6 channels, ch0 full scale, ch1 silent.
+        let mut buf = vec![0.0f32; 4800 * 6];
+        for f in 0..4800 {
+            buf[f * 6] = 1.0;
+        }
+        m.process(&mut buf, 4800);
+        assert_eq!(m.handle.clips.load(Ordering::Relaxed), 4800);
+    }
+
+    #[test]
+    fn noise_floor_tracks_quietest_window() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        // 1 s loud, then 1.5 s quiet (each 300 ms window needs to land in one
+        // quiet span; 300 ms window = 14400 frames).
+        let mut loud = vec![0.5f32; 48000 * 2];
+        m.process(&mut loud, 48000);
+        let mut quiet = vec![0.005f32; 72000 * 2];
+        m.process(&mut quiet, 72000);
+        let floor = load_f32(&m.handle.noise_floor);
+        assert!(
+            floor < -40.0,
+            "quiet window must set the floor, got {floor}"
+        );
+    }
+
+    #[test]
+    fn digital_black_does_not_latch_floor() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut silence = vec![0.0f32; 48000 * 2 * 2];
+        m.process(&mut silence, 96000);
+        let floor = load_f32(&m.handle.noise_floor);
+        assert_eq!(floor, LUFS_SILENT, "digital black must not peg the floor");
+    }
+
+    #[test]
+    fn dc_offset_is_reported() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = vec![0.5f32; 4800 * 2];
+        m.process(&mut buf, 4800);
+        let s = m.handle.snapshot();
+        assert!((s.dc_offset - 0.5).abs() < 1e-3, "dc {}", s.dc_offset);
+    }
+
+    #[test]
+    fn out_of_phase_channels_correlate_negatively() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = Vec::with_capacity(72000 * 2);
+        for f in 0..72000 {
+            let l = ((f as f32 * 440.0 * 2.0 * std::f32::consts::PI / SR as f32).sin()) * 0.5;
+            buf.push(l);
+            buf.push(-l);
+        }
+        m.process(&mut buf, 72000);
+        let corr = load_f32(&m.handle.correlation);
+        assert!(corr < -0.9, "anti-phase must report ~-1, got {corr}");
+    }
+
+    #[test]
+    fn sample_peak_tracks_magnitude() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = vec![0.0f32; 4800 * 2];
+        buf[0] = -1.0;
+        buf[1] = 0.7;
+        m.process(&mut buf, 4800);
+        let s = m.handle.snapshot();
+        assert!((s.sample_peak - 0.0).abs() < 0.01, "peak {}", s.sample_peak);
+    }
+
+    #[test]
+    fn global_metrics_update_after_one_second() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = vec![0.5f32; 96000 * 2];
+        m.process(&mut buf, 96000);
+        let s = m.handle.snapshot();
+        assert!(s.integrated > LUFS_SILENT, "integrated must be computed");
+        assert!(s.lra >= 0.0);
+        assert!(s.tp_l > LUFS_SILENT, "true peak tracked");
+        let _ = tone(0, 0.0);
+    }
+
+    #[test]
+    fn zero_frames_is_noop() {
+        let mut m = LufsMeterEffect::new(LufsMeterData {}, "n".into(), SR).0;
+        let mut buf = vec![0.5f32; 16];
+        m.process(&mut buf, 0);
+        assert_eq!(m.handle.snapshot().sample_peak, LUFS_SILENT);
+    }
+}

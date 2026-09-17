@@ -187,7 +187,7 @@ pub(super) struct SourceStats {
 }
 
 impl SourceStats {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             xrun: Arc::new(AtomicU64::new(0)),
             stalled: Arc::new(AtomicU64::new(0)),

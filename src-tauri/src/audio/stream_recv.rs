@@ -897,3 +897,155 @@ impl ChannelReceiver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+
+    /// Registry + stereo consumer primed with `frames` of constant audio on
+    /// both channels. Returns the receiver to mix and the broadcast handles.
+    fn primed_registry(frames: usize, realtime: bool) -> (FanoutRegistry, ChannelReceiver) {
+        let reg = FanoutRegistry::default();
+        let seq: u16 = 100;
+        // Consumers register FIRST: a push with no live consumer goes nowhere.
+        let handle = reg.register_consumer(48_000, realtime);
+        for key in ["0", "1"] {
+            let bc = reg.attach_channel(key.to_string(), seq);
+            broadcast_push(&bc, seq + 7, 8, &vec![0.5f32; frames]);
+        }
+        let recv = ChannelReceiver::new(handle);
+        (reg, recv)
+    }
+
+    #[test]
+    fn extend_seq_wraps_16bit_counters() {
+        assert_eq!(extend_seq(0, 0), 0);
+        assert_eq!(extend_seq(5, 10), 5, "goes backwards within half a epoch");
+        assert_eq!(extend_seq(10, 5), 10);
+        // 16-bit wrap: 0 is one past 65535.
+        assert_eq!(extend_seq(0, 65_535), 65_536);
+        assert_eq!(extend_seq(65_535, 65_536), 65_535);
+    }
+
+    #[test]
+    fn group_id_differs_for_peers_same_for_channels() {
+        assert_eq!(group_id("peer:abc:0"), group_id("peer:abc:1"));
+        assert_ne!(group_id("peer:abc:0"), group_id("peer:xyz:0"));
+        assert_eq!(
+            group_id("0"),
+            group_id("1"),
+            "direct-IP channels share a group"
+        );
+    }
+
+    #[test]
+    fn register_consumer_opens_in_phase_taps() {
+        let (reg, recv) = primed_registry(960 * 10, true);
+        // Both channels registered and share the group's target depth.
+        assert_eq!(
+            recv.taps.lock().unwrap().len(),
+            2,
+            "both channels registered"
+        );
+        // The broadcast is still tracked by the registry.
+        drop(reg);
+    }
+
+    #[test]
+    fn realtime_consumer_mixes_after_prime() {
+        let (_, recv) = primed_registry(960 * 40, true);
+        let mut mix = vec![0.0f32; OUT_BLOCK_FRAMES * 2];
+        // Give the tap's resampler a moment to pull from the ring.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        recv.mix_block(&mut mix);
+        let max = mix.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(max > 0.4, "primed tap must reach the mix: {max}");
+        assert!(mix.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn unprimed_consumer_streams_silence() {
+        let reg = FanoutRegistry::default();
+        let bc = reg.attach_channel("ch".into(), 0);
+        // Nothing pushed: a realtime consumer must stream silence, not panic.
+        let handle = reg.register_consumer(48_000, true);
+        let recv = ChannelReceiver::new(handle);
+        let mut mix = vec![0.0f32; OUT_BLOCK_FRAMES * 2];
+        recv.mix_block(&mut mix);
+        assert!(mix.iter().all(|s| *s == 0.0));
+        let _ = bc;
+    }
+
+    #[test]
+    fn channel_taps_draw_per_channel_audio() {
+        let reg = FanoutRegistry::default();
+        let bc = reg.attach_channel("0".into(), 10);
+        let handle = reg.register_consumer(48_000, true);
+        // Prime well past the 60 ms target so the tap actually plays out.
+        broadcast_push(&bc, 11, 1, &vec![0.7f32; 960 * 40]);
+        let recv = ChannelReceiver::new(handle);
+        let mut mix = vec![0.0f32; OUT_BLOCK_FRAMES * 2];
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        recv.mix_block(&mut mix);
+        let mut tap = vec![0.0f32; OUT_BLOCK_FRAMES];
+        recv.channel("0", &mut tap);
+        let peak = tap.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.6, "channel tap carries the pushed audio: {peak}");
+    }
+
+    #[test]
+    fn unknown_channel_tap_is_silence_not_panic() {
+        let reg = FanoutRegistry::default();
+        let handle = reg.register_consumer(48_000, true);
+        let recv = ChannelReceiver::new(handle);
+        let mut tap = vec![0.0f32; OUT_BLOCK_FRAMES];
+        recv.channel("ghost", &mut tap);
+        assert!(tap.iter().all(|s| *s == 0.0));
+        recv.prefix_mix("ghost:", &mut tap);
+        assert!(tap.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn drop_channel_and_clear_reset_state() {
+        let reg = FanoutRegistry::default();
+        let bc = reg.attach_channel("0".into(), 1);
+        let handle = reg.register_consumer(48_000, true);
+        let taps = handle.taps.clone();
+        broadcast_push(&bc, 2, 1, &vec![0.5f32; 960]);
+        assert_eq!(taps.lock().unwrap().len(), 1);
+        reg.drop_channel("0");
+        assert_eq!(
+            taps.lock().unwrap().len(),
+            0,
+            "dropped channel leaves the tap map"
+        );
+        // Re-attach works after a drop.
+        let bc2 = reg.attach_channel("0".into(), 9);
+        broadcast_push(&bc2, 10, 1, &vec![0.5f32; 960]);
+        assert_eq!(taps.lock().unwrap().len(), 1);
+        // clear() forgets consumers and broadcasts; the tap map itself is
+        // consumer-owned and just goes quiet (no further pushes).
+        reg.clear();
+        assert_eq!(reg.buffer_depth(), None, "no consumers left after clear");
+    }
+
+    #[test]
+    fn buffer_depth_reports_the_consumer_target() {
+        let reg = FanoutRegistry::default();
+        assert_eq!(reg.buffer_depth(), None, "no consumers yet");
+        let bc = reg.attach_channel("c".into(), 1);
+        broadcast_push_sr(&bc, 2, 1, &vec![0.0f32; 1920], 44_100);
+        let handle = reg.register_consumer(48_000, true);
+        let depth = reg.buffer_depth().expect("consumer registered");
+        assert_eq!(
+            depth, TARGET_INIT as u32,
+            "fresh consumer steers to the init depth"
+        );
+        assert_eq!(
+            bc.sample_rate.load(Ordering::Relaxed),
+            44_100,
+            "push carries its rate"
+        );
+    }
+}

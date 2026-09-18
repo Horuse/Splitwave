@@ -32,6 +32,18 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const PROGRESS_EVENT: &str = "audio://audio_file_progress";
 const SEEK_NONE: i64 = -1;
 
+/// Progress payloads go to the frontend via Tauri; tests drive the reader
+/// with a recording emitter instead of an `AppHandle<Wry>`.
+pub(super) trait ProgressEmitter: Send + Sync + 'static {
+    fn emit_progress(&self, payload: serde_json::Value);
+}
+
+impl<R: tauri::Runtime> ProgressEmitter for AppHandle<R> {
+    fn emit_progress(&self, payload: serde_json::Value) {
+        let _ = self.emit(PROGRESS_EVENT, payload);
+    }
+}
+
 pub(super) struct AudioFileReader {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
@@ -115,13 +127,13 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
     })
 }
 
-pub(super) fn start_audio_file_reader(
+pub(super) fn start_audio_file_reader<E: ProgressEmitter>(
     node_id: String,
     path: PathBuf,
     bridge: BroadcastRx,
     initial_loop: bool,
     paused: Arc<AtomicBool>,
-    app: AppHandle,
+    app: E,
 ) -> AppResult<AudioFileReader> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -371,7 +383,7 @@ fn reopen_decoder(od: &mut OpenedDecoder, path: &Path) {
     }
 }
 
-fn run(
+fn run<E: ProgressEmitter>(
     node_id: String,
     path: &Path,
     mut bridge: BroadcastRx,
@@ -379,7 +391,7 @@ fn run(
     seek_to: &AtomicI64,
     loop_enabled: &AtomicBool,
     paused: &AtomicBool,
-    app: &AppHandle,
+    app: &E,
 ) -> AppResult<()> {
     let mut od = open_decoder(path)?;
 
@@ -667,7 +679,7 @@ fn clamp_frame(frame: u64, total: u64) -> u64 {
 }
 
 fn emit_progress(
-    app: &AppHandle,
+    app: &impl ProgressEmitter,
     node_id: &str,
     frames: u64,
     total_frames: u64,
@@ -676,18 +688,15 @@ fn emit_progress(
     stopped: bool,
     paused: bool,
 ) {
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        json!({
-            "nodeId": node_id,
-            "frames": frames,
-            "totalFrames": total_frames,
-            "sampleRate": sample_rate,
-            "channels": channels,
-            "stopped": stopped,
-            "paused": paused,
-        }),
-    );
+    app.emit_progress(json!({
+        "nodeId": node_id,
+        "frames": frames,
+        "totalFrames": total_frames,
+        "sampleRate": sample_rate,
+        "channels": channels,
+        "stopped": stopped,
+        "paused": paused,
+    }));
 }
 
 #[cfg(test)]
@@ -939,6 +948,194 @@ mod tests {
             }
         }
         assert!(decoded > 0, "no audio decoded from truncated wav");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn probe_falls_back_to_duration_when_num_frames_missing() {
+        // An MP3 without a Xing/Info tag carries no num_frames; the probe
+        // falls back to the track duration for the scrubber's range.
+        let path = temp_path("probe.mp3");
+        let _ = std::fs::remove_file(&path);
+        let frames = 48_000usize;
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push((f % 100) as f32 / 100.0);
+            block.push(0.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Mp3 { bitrate_kbps: 128 },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let info = probe_audio_file(&path).unwrap();
+        assert_eq!(info.sample_rate, 48_000);
+        assert!(
+            info.total_frames > 0,
+            "duration fallback must yield a total"
+        );
+        assert!(
+            (info.total_frames as i64 - frames as i64).abs() < 8_000,
+            "total {} vs source {}",
+            info.total_frames,
+            frames
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn probe_rejects_garbage_and_missing_files() {
+        assert!(probe_audio_file(Path::new("/definitely/not/here.wav")).is_err());
+        let path = temp_path("garbage.dat");
+        std::fs::write(&path, [0u8; 4096]).unwrap();
+        assert!(probe_audio_file(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn clamp_frame_bounds_seek_targets() {
+        assert_eq!(clamp_frame(10_000, 2_000), 2_000);
+        assert_eq!(clamp_frame(0, 2_000), 0);
+        assert_eq!(clamp_frame(500, 0), 500, "unknown total keeps the target");
+        assert_eq!(clamp_frame(u64::MAX, 1), 1);
+    }
+
+    #[test]
+    fn reader_seek_and_loop_atoms_are_public() {
+        // The seek/loop atoms are what the UI commands drive; a reader must
+        // hand out the same Arcs the run loop watches.
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let path = temp_path("atoms.wav");
+        let frames = 2_000usize;
+        let mut block: Vec<f32> = (0..frames * 2).map(|i| (i % 7) as f32 / 7.0).collect();
+        block.truncate(frames * 2);
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let paused = Arc::new(AtomicBool::new(true));
+        let bridge = crate::audio::input_bridge::broadcast_channel().1;
+        let reader = start_audio_file_reader(
+            "node".into(),
+            path.clone(),
+            bridge,
+            false,
+            paused.clone(),
+            app.handle().clone(),
+        )
+        .expect("reader starts");
+        // The atoms are usable and the run loop tolerates a paused start.
+        reader.seek_to().store(100, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(120));
+        reader.loop_enabled().store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(60));
+        drop(reader); // Drop must stop and join the thread without hanging.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reader_streams_audio_into_the_bridge_until_eof() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let path = temp_path("stream.wav");
+        let frames = 12_000usize; // 250 ms of audio
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push(((f % 40) as f32) / 40.0);
+            block.push(-((f % 40) as f32) / 40.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let paused = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let _keep = tx;
+        let reader = start_audio_file_reader(
+            "node".into(),
+            path.clone(),
+            rx,
+            false,
+            paused.clone(),
+            app.handle().clone(),
+        )
+        .expect("reader");
+        // Unrouted bridge → wall-clock pacing: 250 ms of audio plays out in
+        // real time, then the reader pauses itself at EOF.
+        std::thread::sleep(Duration::from_millis(900));
+        assert!(paused.load(Ordering::SeqCst), "reader pauses at EOF");
+        drop(reader);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn paused_reader_stays_paused_and_resumes_on_unpause() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let path = temp_path("pause.wav");
+        let frames = 48_000usize;
+        let mut block: Vec<f32> = (0..frames * 2).map(|i| (i % 13) as f32 / 13.0).collect();
+        block.truncate(frames * 2);
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let paused = Arc::new(AtomicBool::new(true));
+        let (tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let _keep = tx;
+        let reader = start_audio_file_reader(
+            "node".into(),
+            path.clone(),
+            rx,
+            false,
+            paused.clone(),
+            app.handle().clone(),
+        )
+        .expect("reader");
+        std::thread::sleep(Duration::from_millis(150));
+        // Unpause for a moment, then pause again: the loop must honour both.
+        paused.store(false, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(150));
+        paused.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(100));
+        drop(reader);
         let _ = std::fs::remove_file(&path);
     }
 }

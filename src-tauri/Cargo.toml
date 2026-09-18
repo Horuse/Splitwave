@@ -62,6 +62,7 @@ opt-level = 3
 [dev-dependencies]
 proptest = "1"
 insta = { version = "1", features = ["json", "redactions"] }
+tauri = { version = "2", features = ["test"] }
 
 [dependencies]
 tauri = { version = "2", features = ["unstable"] }

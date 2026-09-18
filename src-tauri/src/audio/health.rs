@@ -73,3 +73,68 @@ pub fn raise_max(counter: &AtomicU64, value: u64) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn snapshot_covers_every_counter_in_order() {
+        let snap = snapshot();
+        assert!(snap.len() >= 12, "all glitch counters snapshot");
+        assert_eq!(snap[0].0, "OUTPUT_UNDERRUN_SAMPLES");
+        assert_eq!(snap.last().unwrap().0, "OFFLOAD_RING_OVERRUN_SAMPLES");
+        // Every name is unique (labels feed tracing logs).
+        let mut names: Vec<&str> = snap.iter().map(|(n, _)| *n).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), snap.len(), "counter labels must be unique");
+    }
+
+    #[test]
+    fn bump_ignores_zero_adds() {
+        let before = OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed);
+        bump(&OUTPUT_UNDERRUN_SAMPLES, 0);
+        assert_eq!(OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed), before);
+        bump(&OUTPUT_UNDERRUN_SAMPLES, 5);
+        assert_eq!(OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed), before + 5);
+    }
+
+    #[test]
+    fn raise_max_never_goes_backwards() {
+        let before = CLOCK_LATE_MAX_US.load(Ordering::Relaxed);
+        raise_max(&CLOCK_LATE_MAX_US, 5_000);
+        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 5_000);
+        // A smaller miss must not lower the high-water mark.
+        raise_max(&CLOCK_LATE_MAX_US, 2_000);
+        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 5_000);
+        raise_max(&CLOCK_LATE_MAX_US, 7_000);
+        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 7_000);
+        // Restore the previous value for other tests.
+        raise_max(&CLOCK_LATE_MAX_US, before);
+    }
+
+    #[test]
+    fn raise_max_survives_concurrent_bumps() {
+        // Races on the high-water mark resolve to the true maximum, not to
+        // whichever CAS got there first.
+        let counter = Arc::new(AtomicU64::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|k| {
+                let c = counter.clone();
+                thread::spawn(move || {
+                    for i in 0..100u64 {
+                        raise_max(&c, (k * 100 + i) as u64);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 799);
+    }
+}

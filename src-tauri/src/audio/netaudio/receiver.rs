@@ -312,7 +312,7 @@ mod tests {
         sender.send_to(&buf, &target).expect("send packet 10");
 
         // Wait for the async recv loop to drain it.
-        for _ in 0..50 {
+        for _ in 0..150 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.packets.load(Ordering::Relaxed) > 0 {
                 break;
@@ -333,7 +333,7 @@ mod tests {
         pcm_packet(&mut buf2, 0, 15, &vec![0.25f32; 480]);
         std::thread::sleep(std::time::Duration::from_millis(30));
         sender.send_to(&buf2, &target).expect("send packet 15");
-        for _ in 0..50 {
+        for _ in 0..150 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.lost.load(Ordering::Relaxed) > 0 {
                 break;

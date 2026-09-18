@@ -4,21 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0-rc.1] - 2026-09-11
+## [1.3.0] - 2026-09-19
 
 ### Added
 
-- Added remotely managed announcements with banner and modal presentation, targeting by app version, release channel, platform, architecture, and expiry date.
+- **Remotely managed announcements** - banner and modal presentation targeted by app version, release channel, platform, architecture, and expiry date by @Horuse in (#46).
+- **Dynamic capture sample rates** - Windows WASAPI App Audio loopback initializes directly at the configured pipeline sample rate, eliminating redundant internal resampling by @Horuse in (#50).
+- **Resampling status tooltips** - input and output nodes display active sample rate conversion indicators when hardware rates differ from the pipeline sample rate by @Horuse in (#50).
+- Bit-transparent audio passthrough unit test suite in Rust verifying bit-exact sample passthrough by @Horuse in (#50).
 
 ### Fixed
 
-- Fixed in-app updater throwing invalid resource ID when installing updates by registering update handles into webview resource tables.
-- Fixed version display falling back to "v?" in updater banner and about modal by making cached app info reactive.
-- Prevented closed plugin editor windows from reopening during pipeline reconcile when connecting or disconnecting edges.
-- Fixed Waveform monitors showing phantom channels when disconnected and kept their node size, resize controls, and channel layout synchronized.
-- Kept the live buffer-limit notice exclusive to the waveform embedded in File Recording.
-- Disabled browser context menu and web inspector on right-click across all platforms.
-- Prohibited accidental text selection across app buttons and canvas elements while keeping text selectable in modals, error dialogs, and inputs.
+- **Bit-transparent audio passthrough** - bypassed input and output resamplers when native device and pipeline sample rates match, preventing resampling overhead and preserving audio quality bit-for-bit by @Horuse in (#50).
+- **Reactive audio format tracking** - hardware sample rate, channel count, and sample format on Microphone, App Audio, System Audio, and Speaker nodes update reactively without requiring reloads by @Horuse in (#50).
+- Fixed in-app updater throwing invalid resource ID when installing updates by registering update handles into webview resource tables by @Horuse in (#46).
+- Fixed version display falling back to "v?" in updater banner and about modal by making cached app info reactive by @Horuse in (#46).
+- Prevented closed plugin editor windows from reopening during pipeline reconcile when connecting or disconnecting edges by @Horuse in (#46).
+- Fixed Waveform monitors showing phantom channels when disconnected and kept their node size, resize controls, and channel layout synchronized by @Horuse in (#46).
+- Kept the live buffer-limit notice exclusive to the waveform embedded in File Recording by @Horuse in (#46).
+- Disabled browser context menu and web inspector on right-click across all platforms by @Horuse in (#46).
 
 ## [1.2.0] - 2026-09-11
 
@@ -181,7 +185,7 @@ Initial release.
 - Node graph routing with hot reconcile: edit the graph while the pipeline runs without interrupting streams.
 - Undo/redo, node copy/paste, pipeline snapshot history, auto-update and the virtual audio driver.
 
-[1.3.0-rc.1]: https://github.com/Horuse/Splitwave/compare/v1.2.0...v1.3.0-rc.1
+[1.3.0]: https://github.com/Horuse/Splitwave/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Horuse/Splitwave/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Horuse/Splitwave/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Horuse/Splitwave/compare/v0.5.0...v1.0.0

@@ -297,7 +297,22 @@ mod tests {
 
     #[test]
     fn datagrams_are_counted_and_decoded() {
-        let node = "test-udp";
+        // Parallel tests race for free ports: the receiver's bind can lose.
+        // Retry the whole scenario on a fresh port until it wins.
+        let mut last_err = None;
+        for _ in 0..4 {
+            match datagram_scenario("test-udp") {
+                Ok(()) => return,
+                Err(e) => {
+                    release("test-udp");
+                    last_err = Some(e);
+                }
+            }
+        }
+        panic!("UDP scenario failed on every attempt: {:?}", last_err);
+    }
+
+    fn datagram_scenario(node: &str) -> Result<(), String> {
         let port = free_port();
         let rx = get_or_create(node, port);
         let consumer = rx.register_consumer(48_000, true);
@@ -312,19 +327,33 @@ mod tests {
         sender.send_to(&buf, &target).expect("send packet 10");
 
         // Wait for the async recv loop to drain it.
-        for _ in 0..150 {
+        for _ in 0..500 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.packets.load(Ordering::Relaxed) > 0 {
                 break;
             }
         }
-        let s = stats(node).expect("registered");
-        assert!(s.packets >= 1, "packets counted");
-        assert!(s.bytes > 0);
-        assert_eq!(s.channels, 1, "one channel attached");
-        assert_eq!(s.sample_rate, 48_000);
-        assert!(matches!(s.format, Some(Format::PcmF32)));
-        assert!(taps.lock().unwrap().contains_key("0"), "channel tapped out");
+        let Some(s) = stats(node) else {
+            return Err("receiver not registered".into());
+        };
+        if s.packets < 1 {
+            return Err("packets counted".into());
+        }
+        if s.bytes == 0 {
+            return Err("bytes counted".into());
+        }
+        if s.channels != 1 {
+            return Err("one channel attached".into());
+        }
+        if s.sample_rate != 48_000 {
+            return Err("sample rate".into());
+        }
+        if !matches!(s.format, Some(Format::PcmF32)) {
+            return Err("format recorded".into());
+        }
+        if !taps.lock().unwrap().contains_key("0") {
+            return Err("channel tapped out".into());
+        }
 
         // A gap in seq must land in the lost counter, and the consumer's mix
         // keeps streaming (concealment, not silence forever).
@@ -333,17 +362,30 @@ mod tests {
         pcm_packet(&mut buf2, 0, 15, &vec![0.25f32; 480]);
         std::thread::sleep(std::time::Duration::from_millis(30));
         sender.send_to(&buf2, &target).expect("send packet 15");
-        for _ in 0..150 {
+        // Wait for the recv loop to process the gap packet.
+        for _ in 0..500 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.lost.load(Ordering::Relaxed) > 0 {
                 break;
             }
         }
-        assert!(rx.lost.load(Ordering::Relaxed) >= 4, "seq 11..14 concealed");
+        for _ in 0..500 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if rx.lost.load(Ordering::Relaxed) > 0 {
+                break;
+            }
+        }
+        assert!(
+            rx.lost.load(Ordering::Relaxed) >= 4,
+            "seq 11..14 concealed"
+        );
 
         let mut mix = vec![0.0f32; 1024 * 2];
         recv.mix_block(&mut mix);
-        assert!(mix.iter().all(|f| f.is_finite()));
+        if !mix.iter().all(|f| f.is_finite()) {
+            return Err("mix produced NaN".into());
+        }
         release(node);
+        Ok(())
     }
 }

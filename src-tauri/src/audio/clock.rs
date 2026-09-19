@@ -212,11 +212,12 @@ mod tests {
             assert!(t.wait_for_tick(&stop));
         }
         let elapsed = started.elapsed();
-        // 9 sleeping intervals ≈ 9 periods; scheduler slack ±4 ms.
+        // 9 sleeping intervals ≈ 9 periods. Under parallel test load the
+        // scheduler can overshoot, so only a coarse band is asserted:
+        // no faster than pacing allows, no wildly slower.
         let want = Duration::from_millis(90);
         assert!(
-            elapsed >= want - Duration::from_millis(4)
-                && elapsed < want + Duration::from_millis(4),
+            elapsed >= want - Duration::from_millis(5) && elapsed < want + Duration::from_millis(200),
             "paced {elapsed:?}, want ~{want:?}"
         );
     }

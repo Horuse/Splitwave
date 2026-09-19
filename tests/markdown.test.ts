@@ -61,7 +61,7 @@ describe('parseMarkdown blocks', () => {
 	it('a blank line closes a running list', () => {
 		const blocks = parseMarkdown('- a\n\n- b');
 		const lists = blocks.filter((b) => b.kind === 'list');
-		expect(lists.length).toBe(2, 'blank line splits lists');
+		expect(lists.length).toBe(2);
 	});
 
 	it('fenced code keeps its lines verbatim and resumes paragraphs after', () => {

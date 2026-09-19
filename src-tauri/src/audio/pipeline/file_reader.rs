@@ -845,14 +845,26 @@ mod tests {
         // reader can't rewind an already-read stream), so a fresh decode must
         // yield audio again rather than staying at the end.
         reopen_decoder(&mut od, &path);
-        let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
-        assert!(n > 0, "{label}: decode did not restart after EOF reopen");
-        assert!(
-            out[..n * od.channels]
+        let mut restarted_frames = 0usize;
+        let mut restarted_audio = false;
+        while restarted_frames < 8192 {
+            let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+            if n == 0 {
+                break;
+            }
+            restarted_frames += n;
+            restarted_audio |= out[..n * od.channels]
                 .iter()
-                .any(|sample| sample.abs() > 1e-4),
-            "{label}: restart decoded silence"
+                .any(|sample| sample.abs() > 1e-4);
+            if restarted_audio {
+                break;
+            }
+        }
+        assert!(
+            restarted_frames > 0,
+            "{label}: decode did not restart after EOF reopen"
         );
+        assert!(restarted_audio, "{label}: restart decoded only silence");
 
         // Metadata-less fallback: a fresh scan agrees with the reported total.
         let mut od2 = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));

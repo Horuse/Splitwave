@@ -1139,3 +1139,17 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+/// Test-only progress sink so `pipeline/mod.rs` tests can drive the reader
+/// without a Tauri `AppHandle<Wry>`.
+#[cfg(test)]
+pub mod file_reader_test_emitter {
+    use super::ProgressEmitter;
+
+    #[derive(Default)]
+    pub struct TestEmitter;
+
+    impl ProgressEmitter for TestEmitter {
+        fn emit_progress(&self, _payload: serde_json::Value) {}
+    }
+}

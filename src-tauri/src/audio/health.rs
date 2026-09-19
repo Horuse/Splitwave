@@ -105,16 +105,17 @@ mod tests {
 
     #[test]
     fn raise_max_never_goes_backwards() {
+        // The counter is process-global and other tests raise it too, so the
+        // property under test is monotonicity, not absolute values.
         let before = CLOCK_LATE_MAX_US.load(Ordering::Relaxed);
-        raise_max(&CLOCK_LATE_MAX_US, 5_000);
-        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 5_000);
+        let target = before.max(5_000);
+        raise_max(&CLOCK_LATE_MAX_US, target);
+        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target);
         // A smaller miss must not lower the high-water mark.
         raise_max(&CLOCK_LATE_MAX_US, 2_000);
-        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 5_000);
-        raise_max(&CLOCK_LATE_MAX_US, 7_000);
-        assert_eq!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed), 7_000);
-        // Restore the previous value for other tests.
-        raise_max(&CLOCK_LATE_MAX_US, before);
+        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target);
+        raise_max(&CLOCK_LATE_MAX_US, target + 2_000);
+        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target + 2_000);
     }
 
     #[test]

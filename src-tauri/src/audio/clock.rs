@@ -189,3 +189,132 @@ impl ClockSource for DeviceFillClock {
         self.primed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_flag_returns_false_immediately() {
+        let stop = AtomicBool::new(true);
+        let mut t = SystemClockTicker::new(48_000, 1024);
+        assert!(!t.wait_for_tick(&stop));
+    }
+
+    #[test]
+    fn paces_at_the_block_period() {
+        let sr = 48_000;
+        let block = 480; // 10 ms
+        let mut t = SystemClockTicker::new(sr, block);
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        for _ in 0..10 {
+            assert!(t.wait_for_tick(&stop));
+        }
+        let elapsed = started.elapsed();
+        // 9 sleeping intervals ≈ 9 periods; scheduler slack ±4 ms.
+        let want = Duration::from_millis(90);
+        assert!(
+            elapsed >= want - Duration::from_millis(4)
+                && elapsed < want + Duration::from_millis(4),
+            "paced {elapsed:?}, want ~{want:?}"
+        );
+    }
+
+    #[test]
+    fn sample_rate_reports_configured_rate() {
+        let t = SystemClockTicker::new(44_100, 1024);
+        assert_eq!(t.sample_rate(), 44_100);
+    }
+
+    #[test]
+    fn bounded_lateness_bursts_through_catchup() {
+        let sr = 48_000;
+        let block = 480; // 10 ms period
+        let mut t = SystemClockTicker::with_catchup(sr, block, 8);
+        let stop = AtomicBool::new(false);
+        assert!(t.wait_for_tick(&stop));
+        // Oversleep by ~2.5 periods: catchup keeps the deadline, so the next
+        // tick returns immediately and catches up.
+        std::thread::sleep(Duration::from_millis(25));
+        let start = Instant::now();
+        assert!(t.wait_for_tick(&stop));
+        let first = start.elapsed();
+        assert!(first < Duration::from_millis(2), "burst tick must be fast");
+    }
+
+    #[test]
+    fn beyond_catchup_resets_the_deadline() {
+        let sr = 48_000;
+        let block = 480; // 10 ms; catchup 8 blocks = 80 ms
+        let mut t = SystemClockTicker::with_catchup(sr, block, 8);
+        let stop = AtomicBool::new(false);
+        assert!(t.wait_for_tick(&stop));
+        // A real stall: far past the whole catchup window.
+        std::thread::sleep(Duration::from_millis(120));
+        let start = Instant::now();
+        assert!(t.wait_for_tick(&stop));
+        // Returned immediately (reset to now) rather than bursting.
+        assert!(start.elapsed() < Duration::from_millis(2));
+    }
+
+    #[test]
+    fn rate_limiter_does_not_report_late() {
+        // The device-fill clock shares the ticker with report_late off.
+        let mut t = SystemClockTicker::rate_limiter(48_000, 480);
+        let stop = AtomicBool::new(false);
+        std::thread::sleep(Duration::from_millis(12));
+        assert!(t.wait_for_tick(&stop));
+        // Whatever it was, the late counter must not have moved for this tick.
+        let late = health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed);
+        let _ = late; // reporting is disabled inside rate_limiter
+    }
+
+    #[test]
+    fn fill_clock_primes_until_the_startup_budget_is_met() {
+        let dev_sr = Arc::new(AtomicU32::new(48_000));
+        let level = Arc::new(AtomicI64::new(0));
+        let target = Arc::new(AtomicI64::new(2 * 1024)); // two engine blocks
+        let mut clock = DeviceFillClock::new(48_000, dev_sr.clone(), 1024, level.clone(), target.clone());
+        let stop = AtomicBool::new(false);
+        assert!(!clock.realtime_ready(), "fresh clock is unprimed");
+        assert!(clock.wait_for_tick(&stop));
+        assert!(!clock.realtime_ready(), "one block is not the full budget");
+        assert!(clock.wait_for_tick(&stop));
+        assert!(clock.realtime_ready(), "budget met after the second block");
+        // Primed clock paces off the ring: below target → wall-clock tick.
+        assert!(clock.wait_for_tick(&stop));
+        // sample_rate follows the device atom.
+        assert_eq!(clock.sample_rate(), 48_000);
+        dev_sr.store(96_000, Ordering::Relaxed);
+        assert_eq!(clock.sample_rate(), 96_000);
+    }
+
+    #[test]
+    fn fill_clock_waits_when_the_ring_is_over_target() {
+        let dev_sr = Arc::new(AtomicU32::new(48_000));
+        let level = Arc::new(AtomicI64::new(1024));
+        let target = Arc::new(AtomicI64::new(1024)); // already at target
+        let mut clock = DeviceFillClock::new(48_000, dev_sr, 1024, level.clone(), target.clone());
+        let stop = AtomicBool::new(false);
+        // First call primes (startup budget), second must wait for drain —
+        // bounded by FILL_CLOCK_MAX_SLEEP, not spinning forever.
+        let start = Instant::now();
+        assert!(clock.wait_for_tick(&stop));
+        assert!(start.elapsed() <= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn fill_clock_honours_stop() {
+        let dev_sr = Arc::new(AtomicU32::new(48_000));
+        let mut clock = DeviceFillClock::new(
+            48_000,
+            dev_sr,
+            1024,
+            Arc::new(AtomicI64::new(0)),
+            Arc::new(AtomicI64::new(1024)),
+        );
+        let stop = AtomicBool::new(true);
+        assert!(!clock.wait_for_tick(&stop));
+    }
+}

@@ -1297,3 +1297,244 @@ impl ActivePipeline {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::graph::{
+        EdgeSpec, EffectSpec, GainData, GraphSpec, InputSpec, NodeKind, NodeSpec, ValidGraph,
+    };
+
+    fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
+        NodeSpec {
+            id: id.to_string(),
+            kind,
+            data,
+        }
+    }
+
+    fn mic(id: &str) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Microphone,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
+    }
+
+    fn speaker(id: &str) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Speaker,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
+    }
+
+    fn gain_node(id: &str, db: f32) -> NodeSpec {
+        node(id, NodeKind::Gain, serde_json::json!({ "gainDb": db }))
+    }
+
+    fn edge(id: &str, from: &str, to: &str) -> EdgeSpec {
+        EdgeSpec {
+            id: id.to_string(),
+            source: from.to_string(),
+            source_handle: None,
+            target: to.to_string(),
+            target_handle: None,
+        }
+    }
+
+    fn mic_to_speaker() -> ValidGraph {
+        GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
+            edges: vec![edge("e1", "m", "g"), edge("e2", "g", "s")],
+        }
+        .validate()
+        .expect("valid")
+    }
+
+    #[test]
+    fn monitor_mode_detection() {
+        // No outputs at all → monitor (an output-less graph can only exist
+        // internally, so it is assembled directly).
+        let g = ValidGraph {
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            effects: Vec::new(),
+            edges: Vec::new(),
+            sample_rate: 48_000,
+        };
+        assert!(monitor_mode(&g));
+
+        // Analyzer present even with a real output → monitor for it.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("m"),
+                speaker("s"),
+                node("lm", NodeKind::LevelMeter, serde_json::json!({})),
+            ],
+            edges: vec![edge("e1", "m", "s"), edge("e2", "m", "lm")],
+        }
+        .validate()
+        .expect("valid");
+        assert!(monitor_mode(&g));
+
+        // Plain graph → not monitor mode.
+        assert!(!monitor_mode(&mic_to_speaker()));
+    }
+
+    #[test]
+    fn empty_pipeline_is_a_quiescent_noop() {
+        let p = ActivePipeline::new();
+        assert_eq!(p.output_latency_ms(), 0, "idle pipeline reports no latency");
+        // Every live-param command on an unknown node is a silent no-op.
+        p.update_effect("ghost", &serde_json::json!({ "gainDb": -6.0 }));
+        p.seek_audio_file("ghost", 100);
+        p.set_audio_file_loop("ghost", true);
+        p.set_audio_file_paused("ghost", false);
+        p.set_input_volume("ghost", 0.5);
+    }
+
+    #[test]
+    fn update_effect_routes_to_the_registered_control() {
+        let mut p = ActivePipeline::new();
+        let linear = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let bypass = Arc::new(AtomicBool::new(false));
+        p.effect_controls.insert(
+            "g".into(),
+            EffectControl::Gain {
+                linear: linear.clone(),
+            },
+        );
+        p.effect_bypasses.insert("g".into(), bypass.clone());
+
+        p.update_effect("g", &serde_json::json!({ "gainDb": -6.0 }));
+        assert!(
+            (f32::from_bits(linear.load(Ordering::Relaxed)) - 10f32.powf(-6.0 / 20.0)).abs() < 1e-6
+        );
+
+        p.update_effect("g", &serde_json::json!({ "bypassed": true }));
+        assert!(bypass.load(Ordering::Relaxed));
+
+        // Non-numeric plugin params are skipped, not fatal.
+        p.update_effect("g", &serde_json::json!({ "pluginParams": { "nope": "x" } }));
+    }
+
+    #[test]
+    fn latency_reads_source_backlog_into_the_report() {
+        let mut p = ActivePipeline::new();
+        // Source stats keyed to output "s"; no speakers registered yet → 0.
+        p.source_stats.push(SourceMeta {
+            label: "src".into(),
+            stats: crate::audio::pipeline::dag::SourceStats::new(),
+            channels: 2,
+            native_sr: 48_000,
+            frames_per_block: 1024,
+            input_id: Some("m".into()),
+            output_id: "s".into(),
+            capture: None,
+        });
+        assert_eq!(p.output_latency_ms(), 0, "no speakers → no latency");
+    }
+
+    #[test]
+    fn is_structurally_current_requires_a_running_pipeline() {
+        let p = ActivePipeline::new();
+        assert!(!p.is_structurally_current(&mic_to_speaker()));
+    }
+
+    #[test]
+    fn structurally_current_ignores_live_params() {
+        let mut p = ActivePipeline::new();
+        // Running state claims an empty graph set; a graph whose running-set
+        // matches but whose effect sigs differ structurally is not current.
+        let g1 = mic_to_speaker();
+        p.current = Some(g1.clone());
+        // Running outputs empty vs graph's {s} → not current.
+        assert!(!p.is_structurally_current(&g1));
+        // A structurally identical graph would need running outputs; with
+        // none the running-set check rejects it either way.
+        let mut g2 = mic_to_speaker();
+        if let Some(e) = g2.effects.iter_mut().find(|e| e.id == "g") {
+            e.spec = EffectSpec::Gain(GainData {
+                gain_db: -12.0,
+                bypassed: false,
+            });
+        }
+        assert!(!p.is_structurally_current(&g2));
+    }
+
+    #[test]
+    fn teardown_on_an_empty_pipeline_is_harmless() {
+        let mut p = ActivePipeline::new();
+        p.teardown();
+        p.tear_down_outputs();
+        assert!(p.inputs.is_empty());
+        assert!(p.speakers.is_empty());
+    }
+
+    #[test]
+    fn file_commands_drive_the_audio_file_reader_atoms() {
+        use crate::audio::pipeline::file_reader::file_reader_test_emitter::TestEmitter;
+
+        let path = std::env::temp_dir().join(format!("pipeline_file_{}.wav", std::process::id()));
+        let frames = 2_000usize;
+        let mut block: Vec<f32> = (0..frames * 2).map(|i| (i % 9) as f32 / 9.0).collect();
+        block.truncate(frames * 2);
+        let mut enc = crate::audio::encoders::build_encoder(
+            &path,
+            48_000,
+            2,
+            crate::audio::graph::RecordingFormat::Wav {
+                bit_depth: crate::audio::graph::WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let paused = Arc::new(AtomicBool::new(true));
+        let drain = Arc::new(AtomicU64::new(0));
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let bridge = broadcast_channel().1;
+        let reader = file_reader::start_audio_file_reader(
+            "f".into(),
+            path.clone(),
+            bridge,
+            false,
+            paused.clone(),
+            TestEmitter::default(),
+        )
+        .expect("reader");
+        let state = InputState {
+            _handle: InputHandle::AudioFile(reader),
+            sample_rate: 48_000,
+            channels: 2,
+            bridge_tx: broadcast_channel().0,
+            bridges_by_output: HashMap::new(),
+            volume: volume.clone(),
+            paused: Some(paused.clone()),
+            drain: Some(drain.clone()),
+        };
+        let mut p = ActivePipeline::new();
+        p.inputs.insert("f".to_string(), state);
+
+        // Seek queues on the reader and bumps the drain generation.
+        p.seek_audio_file("f", 500);
+        assert_eq!(drain.load(Ordering::SeqCst), 1);
+        // Loop toggle lands on the reader.
+        p.set_audio_file_loop("f", true);
+        // Volume stores bits; paused flips the atom.
+        p.set_input_volume("f", 0.5);
+        assert_eq!(volume.load(Ordering::Relaxed), 0.5f32.to_bits());
+        p.set_audio_file_paused("f", false);
+        assert!(!paused.load(Ordering::SeqCst));
+        // Unknown node ids stay silent.
+        p.seek_audio_file("other", 5);
+        p.set_input_volume("other", 0.1);
+        drop(p);
+        let _ = std::fs::remove_file(&path);
+    }
+}

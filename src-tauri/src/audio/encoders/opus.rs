@@ -193,3 +193,71 @@ fn generate_serial() -> u32 {
         .map(|d| d.as_nanos() as u32)
         .unwrap_or(0xDEAD_BEEF)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::encoders::AudioEncoder;
+    use crate::audio::graph::OpusApplication;
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("opus_enc_test_{}_{}", std::process::id(), name));
+        p
+    }
+
+    #[test]
+    fn empty_write_is_accepted_and_the_file_exists() {
+        let path = temp("empty.opus");
+        let mut enc =
+            OpusRecorder::create(&path, 2, OpusApplication::Audio, 96_000).expect("create");
+        enc.write_interleaved(&[]).expect("empty write is a no-op");
+        enc.write_interleaved(&[]).expect("empty write is a no-op");
+        enc.flush().expect("flush");
+        Box::new(enc).finalize().expect("finalize");
+        assert!(path.exists());
+        assert!(std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn mono_opus_writes_short_file() {
+        let path = temp("mono.opus");
+        let mut enc =
+            OpusRecorder::create(&path, 1, OpusApplication::Audio, 96_000).expect("create mono");
+        // Half a second of audio.
+        let samples: Vec<f32> = (0..24_000)
+            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / 48_000.0).sin())
+            .collect();
+        enc.write_interleaved(&samples).expect("write");
+        enc.flush().expect("flush");
+        Box::new(enc).finalize().expect("finalize");
+        assert!(std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn many_frames_are_buffered_into_frames_and_pages() {
+        let path = temp("long.opus");
+        let mut enc =
+            OpusRecorder::create(&path, 2, OpusApplication::Audio, 96_000).expect("create");
+        // 20 k frames ≫ one 960-sample frame: exercises the buffering loop
+        // and multiple ogg pages.
+        let samples: Vec<f32> = (0..20_000 * 2)
+            .map(|i| ((i / 2) % 50) as f32 / 50.0)
+            .collect();
+        enc.write_interleaved(&samples).expect("write many");
+        enc.write_interleaved(&samples[..7usize])
+            .expect("slack left in pending");
+        enc.flush().expect("flush");
+        Box::new(enc).finalize().expect("finalize");
+        assert!(std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false));
+        let _ = std::fs::remove_file(&path);
+    }
+}

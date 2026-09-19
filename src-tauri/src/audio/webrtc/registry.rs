@@ -227,3 +227,101 @@ pub fn peer_stats(node_id: &str) -> HashMap<String, (u32, u64, u64)> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::graph::{NetCodec, OpusApplication};
+
+    fn uniq(prefix: &str) -> String {
+        format!(
+            "{prefix}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        )
+    }
+
+    #[test]
+    fn get_or_create_reuses_the_session() {
+        tauri::async_runtime::block_on(async {
+            let id = uniq("reg");
+            let a = get_or_create(&id, 96_000, OpusApplication::Audio);
+            let b = get_or_create(&id, 96_000, OpusApplication::Voip);
+            assert!(
+                Arc::ptr_eq(&a, &b),
+                "same node id must reuse the session (bitrate change takes a rebuild)"
+            );
+            assert_eq!(b.opus_bitrate, 96_000);
+            // A different id gets its own session.
+            let other = get_or_create(&uniq("reg"), 96_000, OpusApplication::Audio);
+            assert!(!Arc::ptr_eq(&a, &other));
+            leave_room(&id).await; // resets state; registry entries persist by design
+            leave_room(&uniq("reg")); // leaving a ghost session is a no-op
+        });
+    }
+
+    #[test]
+    fn session_state_for_unknown_node_is_idle() {
+        let state = tauri::async_runtime::block_on(session_state("definitely-not-registered"));
+        assert_eq!(state.phase, "idle");
+        assert!(state.room_code.is_none());
+        assert!(state.peers.is_empty());
+    }
+
+    #[test]
+    fn mark_room_and_identity_update_the_state() {
+        tauri::async_runtime::block_on(async {
+            let id = uniq("room");
+            mark_room(
+                &id,
+                96_000,
+                OpusApplication::Audio,
+                "hosting",
+                Some("123456".into()),
+            );
+            set_identity(&id, "tester".into(), 2, NetCodec::Opus);
+            let s = get(&id).expect("session");
+            assert_eq!(*s.phase.lock().unwrap(), "hosting");
+            assert_eq!(s.room_code.lock().unwrap().as_deref(), Some("123456"));
+            assert_eq!(*s.local_name.lock().unwrap(), "tester");
+            // Channels clamp to the wire limit.
+            assert_eq!(s.local_channels.load(Ordering::Relaxed), 2);
+            let state = session_state(&id).await;
+            assert_eq!(state.phase, "hosting");
+            assert_eq!(state.room_code.as_deref(), Some("123456"));
+            // leave_room resets the room bookkeeping.
+            leave_room(&id).await;
+            let state = session_state(&id).await;
+            assert_eq!(state.phase, "idle");
+            assert!(state.room_code.is_none());
+        });
+    }
+
+    #[test]
+    fn identity_channels_clamp_to_wire_limit() {
+        tauri::async_runtime::block_on(async {
+            let id = uniq("clamp");
+            get_or_create(&id, 96_000, OpusApplication::Audio);
+            set_identity(&id, "n".into(), 9999, NetCodec::PcmF32);
+            assert_eq!(
+                get(&id).unwrap().local_channels.load(Ordering::Relaxed),
+                crate::audio::netaudio::MAX_CHANNELS as u32
+            );
+            leave_room(&id).await;
+        });
+    }
+
+    #[test]
+    fn peer_pings_and_stats_on_peerless_session_are_empty() {
+        tauri::async_runtime::block_on(async {
+            let id = uniq("stats");
+            get_or_create(&id, 96_000, OpusApplication::Audio);
+            assert!(peer_pings(&id).is_empty());
+            assert!(peer_stats(&id).is_empty());
+            assert_eq!(buffer_ms(&id), 0, "no bridge yet → zero buffer");
+            leave_room(&id).await;
+        });
+    }
+}

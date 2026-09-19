@@ -785,7 +785,16 @@ mod tests {
     // EOF (the loop path) instead of staying at the end. Lossy codecs pad/trim,
     // so frame counts are checked against a generous band around the source.
     fn assert_format_roundtrip(fmt: RecordingFormat, label: &str) {
-        let path = temp_path(&format!("{label}.out"));
+        let extension = match &fmt {
+            RecordingFormat::Wav { .. } => "wav",
+            RecordingFormat::Aiff { .. } => "aiff",
+            RecordingFormat::Flac { .. } => "flac",
+            RecordingFormat::Opus { .. } => "opus",
+            RecordingFormat::Mp3 { .. } => "mp3",
+            #[cfg(target_os = "macos")]
+            RecordingFormat::Aac { .. } => "m4a",
+        };
+        let path = temp_path(&format!("{label}.{extension}"));
         let _ = std::fs::remove_file(&path);
         let sample_rate = 48_000u32;
         let ch = 2u16;
@@ -814,17 +823,23 @@ mod tests {
         let mut interleaved = Vec::new();
         let mut out = vec![0.0f32; 8192];
         let mut decoded = 0u64;
+        let mut energy = 0.0f64;
         loop {
             let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
             if n == 0 {
                 break;
             }
             decoded += n as u64;
+            energy += out[..n * od.channels]
+                .iter()
+                .map(|sample| (*sample as f64) * (*sample as f64))
+                .sum::<f64>();
         }
         assert!(
             (band_min..=band_max).contains(&decoded),
             "{label}: decoded {decoded} outside ~{frames}"
         );
+        assert!(energy > 1.0, "{label}: decoder returned silence");
 
         // Loop restart: after EOF, the reader reopens the file (symphonia's isomp4
         // reader can't rewind an already-read stream), so a fresh decode must
@@ -832,6 +847,12 @@ mod tests {
         reopen_decoder(&mut od, &path);
         let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
         assert!(n > 0, "{label}: decode did not restart after EOF reopen");
+        assert!(
+            out[..n * od.channels]
+                .iter()
+                .any(|sample| sample.abs() > 1e-4),
+            "{label}: restart decoded silence"
+        );
 
         // Metadata-less fallback: a fresh scan agrees with the reported total.
         let mut od2 = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));

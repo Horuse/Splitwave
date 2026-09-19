@@ -128,24 +128,35 @@ impl RuntimeEffect {
         sidechain: Option<&[f32]>,
         frames: usize,
     ) {
+        let active = &mut main[..frames * 2];
+        for sample in active.iter_mut() {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
+        }
         match self {
-            RuntimeEffect::Compressor(e) => e.process_with_sidechain(main, sidechain, frames),
-            RuntimeEffect::NoiseGate(e) => e.process_with_sidechain(main, sidechain, frames),
-            RuntimeEffect::Gain(e) => e.process(main, frames),
-            RuntimeEffect::Mute(e) => e.process(main, frames),
-            RuntimeEffect::ChannelBalance(e) => e.process(main, frames),
-            RuntimeEffect::Saturator(e) => e.process(main, frames),
-            RuntimeEffect::Eq(e) => e.process(main, frames),
-            RuntimeEffect::LevelMeter(e) => e.process(main, frames),
-            RuntimeEffect::LufsMeter(e) => e.process(main, frames),
-            RuntimeEffect::Waveform(e) => e.process(main, frames),
-            RuntimeEffect::Limiter(e) => e.process(main, frames),
-            RuntimeEffect::Delay(e) => e.process(main, frames),
-            RuntimeEffect::Reverb(e) => e.process(main, frames),
-            RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
-            RuntimeEffect::Declick(e) => e.process(main, frames),
-            RuntimeEffect::DeEsser(e) => e.process(main, frames),
-            RuntimeEffect::HostedPlugin(e) => e.process(main, frames),
+            RuntimeEffect::Compressor(e) => e.process_with_sidechain(active, sidechain, frames),
+            RuntimeEffect::NoiseGate(e) => e.process_with_sidechain(active, sidechain, frames),
+            RuntimeEffect::Gain(e) => e.process(active, frames),
+            RuntimeEffect::Mute(e) => e.process(active, frames),
+            RuntimeEffect::ChannelBalance(e) => e.process(active, frames),
+            RuntimeEffect::Saturator(e) => e.process(active, frames),
+            RuntimeEffect::Eq(e) => e.process(active, frames),
+            RuntimeEffect::LevelMeter(e) => e.process(active, frames),
+            RuntimeEffect::LufsMeter(e) => e.process(active, frames),
+            RuntimeEffect::Waveform(e) => e.process(active, frames),
+            RuntimeEffect::Limiter(e) => e.process(active, frames),
+            RuntimeEffect::Delay(e) => e.process(active, frames),
+            RuntimeEffect::Reverb(e) => e.process(active, frames),
+            RuntimeEffect::NoiseSuppressor(e) => e.process(active, frames),
+            RuntimeEffect::Declick(e) => e.process(active, frames),
+            RuntimeEffect::DeEsser(e) => e.process(active, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process(active, frames),
+        }
+        for sample in active {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
         }
     }
 }
@@ -1692,6 +1703,62 @@ mod tests {
             reg.scopes.clear();
             reg.gr_atomics.clear();
             reg.plugin_primary_claimed.clear();
+        }
+    }
+
+    #[test]
+    fn runtime_effects_contain_non_finite_samples_and_recover() {
+        let mut reg = EffectRegistry::new();
+        let specs = [
+            EffectSpec::Gain(GainData {
+                gain_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::Saturator(SaturatorData {
+                threshold_db: -1.0,
+                drive_db: 3.0,
+                bypassed: false,
+            }),
+            EffectSpec::Eq(EqData {
+                gains_db: [0.0; 10],
+                bypassed: false,
+            }),
+            EffectSpec::Limiter(LimiterData {
+                ceiling_db: -1.0,
+                lookahead_ms: 1.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Delay(DelayData {
+                time_ms: 10.0,
+                feedback: 0.5,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::Reverb(ReverbData {
+                room_size: 0.5,
+                damping: 0.5,
+                width: 1.0,
+                mix: 0.5,
+                bypassed: false,
+            }),
+        ];
+        for spec in &specs {
+            let mut build = instantiate_effect(spec, "finite", 48_000, true, true, 2, &mut reg);
+            let mut poisoned = vec![0.25; 96];
+            poisoned[10] = f32::NAN;
+            poisoned[11] = f32::INFINITY;
+            build.effect.process_with_sidechain(&mut poisoned, None, 48);
+            assert!(poisoned.iter().all(|sample| sample.is_finite()), "{spec:?}");
+
+            let mut clean = vec![0.25; 96];
+            build.effect.process_with_sidechain(&mut clean, None, 48);
+            assert!(
+                clean.iter().all(|sample| sample.is_finite()),
+                "state poisoned: {spec:?}"
+            );
+            reg.controls.clear();
+            reg.gr_atomics.clear();
         }
     }
 

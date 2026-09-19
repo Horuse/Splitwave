@@ -178,7 +178,7 @@ mod tests {
     fn same_rate_decode_is_direct() {
         // Decode twice: once at the source rate (no resampler), once at a
         // rate that must go through it. Both produce audio.
-        let mut mss = MediaSourceStream::new(Box::new(Cursor::new(MUTED_MP3)), Default::default());
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(MUTED_MP3)), Default::default());
         let mut hint = Hint::new();
         hint.with_extension("mp3");
         let format = symphonia::default::get_probe()

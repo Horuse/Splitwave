@@ -1301,9 +1301,7 @@ impl ActivePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::graph::{
-        EdgeSpec, EffectSpec, GainData, GraphSpec, InputSpec, NodeKind, NodeSpec, ValidGraph,
-    };
+    use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {

@@ -235,14 +235,10 @@ mod tests {
         let block = 480; // 10 ms period
         let mut t = SystemClockTicker::with_catchup(sr, block, 8);
         let stop = AtomicBool::new(false);
+        let deadline = Instant::now() - Duration::from_millis(25);
+        t.next_deadline = Some(deadline);
         assert!(t.wait_for_tick(&stop));
-        // Oversleep by ~2.5 periods: catchup keeps the deadline, so the next
-        // tick returns immediately and catches up.
-        std::thread::sleep(Duration::from_millis(25));
-        let start = Instant::now();
-        assert!(t.wait_for_tick(&stop));
-        let first = start.elapsed();
-        assert!(first < Duration::from_millis(2), "burst tick must be fast");
+        assert_eq!(t.next_deadline, Some(deadline + t.period));
     }
 
     #[test]
@@ -251,17 +247,13 @@ mod tests {
         let block = 480; // 10 ms; catchup 8 blocks = 80 ms
         let mut t = SystemClockTicker::with_catchup(sr, block, 8);
         let stop = AtomicBool::new(false);
+        let stale = Instant::now() - Duration::from_millis(120);
+        t.next_deadline = Some(stale);
+        let before = Instant::now();
         assert!(t.wait_for_tick(&stop));
-        // A real stall: far past the whole catchup window.
-        std::thread::sleep(Duration::from_millis(120));
-        let start = Instant::now();
-        assert!(t.wait_for_tick(&stop));
-        // The overdue tick returns immediately, then the reset deadline makes
-        // the following tick wait for a fresh period.
-        assert!(start.elapsed() < Duration::from_millis(2));
-        let next = Instant::now();
-        assert!(t.wait_for_tick(&stop));
-        assert!(next.elapsed() >= Duration::from_millis(8));
+        let reset = t.next_deadline.expect("deadline reset");
+        assert!(reset >= before + t.period);
+        assert!(reset > stale + t.period);
     }
 
     #[test]
@@ -270,7 +262,7 @@ mod tests {
         let mut t = SystemClockTicker::rate_limiter(48_000, 480);
         let stop = AtomicBool::new(false);
         let before = health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed);
-        std::thread::sleep(Duration::from_millis(25));
+        t.next_deadline = Some(Instant::now() - Duration::from_millis(25));
         assert!(t.wait_for_tick(&stop));
         assert_eq!(health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed), before);
     }

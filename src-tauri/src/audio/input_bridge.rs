@@ -330,9 +330,9 @@ mod tests {
     #[test]
     fn slots_exhaust_and_free_up() {
         let mut tx = broadcast_channel().0;
-        for i in 0..BRIDGE_CAPACITY {
+        for _ in 0..BRIDGE_CAPACITY {
             let (prod, _) = RingBuffer::<f32>::new(64);
-            tx.add(prod).expect("slot {i} free");
+            tx.add(prod).expect("slot free");
         }
         assert_eq!(tx.free_slots(), 0);
         let (prod, _) = RingBuffer::<f32>::new(64);

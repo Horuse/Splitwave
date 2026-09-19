@@ -725,7 +725,7 @@ mod tests {
     fn speaker_worker_pushes_blocks_into_the_ring() {
         use super::super::dag::build_output_graph;
         use crate::audio::effects::EffectRegistry;
-        use crate::audio::graph::{EdgeSpec, GraphSpec, InputSpec, NodeKind, NodeSpec, ValidGraph};
+        use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
 
         // Build a monitor-style graph (mic source ring, no real device).
         let g = GraphSpec {

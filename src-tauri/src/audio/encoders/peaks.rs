@@ -309,6 +309,7 @@ fn extended80_to_u32(bytes: [u8; 10]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::encoders::build_encoder;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -318,7 +319,6 @@ mod tests {
 
     #[test]
     fn reads_peaks_from_a_recording_in_progress() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::{RecordingFormat, WavBitDepth};
         let path = temp_path("peaks_live.wav");
         let _ = std::fs::remove_file(&path);
@@ -351,7 +351,6 @@ mod tests {
 
     #[test]
     fn reads_wav_f32_peaks() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::RecordingFormat;
         let path = temp_path("peaks.wav");
         let _ = std::fs::remove_file(&path);
@@ -391,7 +390,6 @@ mod tests {
 
     #[test]
     fn reads_aiff_i16_peaks() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::{AiffBitDepth, RecordingFormat};
         let path = temp_path("peaks.aiff");
         let _ = std::fs::remove_file(&path);
@@ -428,7 +426,6 @@ mod tests {
 
     #[test]
     fn read_peaks_clamps_ranges_beyond_the_file() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::{RecordingFormat, WavBitDepth};
         let path = temp_path("clamp.wav");
         let mut block = vec![0.5f32; 1024 * 2];

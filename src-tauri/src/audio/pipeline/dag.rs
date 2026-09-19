@@ -2032,10 +2032,7 @@ mod tests {
 #[cfg(test)]
 mod graph_tests {
     use super::*;
-    use crate::audio::graph::{
-        EdgeKind, EdgeSpec, EffectSpec, GainData, GraphSpec, InputSpec, NodeKind, NodeSpec,
-        OpusApplication, OutputSpec, RecordingFormat, RecordingMode, ValidGraph,
-    };
+    use crate::audio::graph::{EdgeSpec, EffectSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
 
     const SR: u32 = 48_000;
 
@@ -2331,7 +2328,7 @@ mod graph_tests {
                 });
             }
         }
-        let (mut built, _) = build(Some("s"), SR, &valid, SR, false);
+        let (built, _) = build(Some("s"), SR, &valid, SR, false);
         assert_eq!(built.graph.latency_frames(), 96, "2 ms lookahead @ 48k");
         // Both paths are padded to the same length → mix stays aligned.
         assert_eq!(built.graph.active_output_channels(), 2);

@@ -265,12 +265,12 @@ mod tests {
     use crate::audio::netaudio::packet::{write_header, Format};
     use std::net::UdpSocket;
 
-    fn free_port() -> u16 {
+    fn free_port() -> Result<u16, String> {
         std::net::UdpSocket::bind("127.0.0.1:0")
-            .expect("bind probe")
+            .map_err(|e| format!("bind probe: {e}"))?
             .local_addr()
-            .expect("addr")
-            .port()
+            .map(|addr| addr.port())
+            .map_err(|e| format!("probe address: {e}"))
     }
 
     fn pcm_packet(buf: &mut Vec<u8>, channel: u8, seq: u16, payload: &[f32]) {
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn receiver_registry_roundtrip() {
-        let port = free_port();
+        let port = free_port().expect("free UDP port");
         let r = get_or_create("test-node", port);
         assert_eq!(stats("test-node").expect("registered").channels, 0);
         // Same port returns the same instance; a port change rebinds.
@@ -313,13 +313,13 @@ mod tests {
     }
 
     fn datagram_scenario(node: &str) -> Result<(), String> {
-        let port = free_port();
+        let port = free_port()?;
         let rx = get_or_create(node, port);
         let consumer = rx.register_consumer(48_000, true);
         let taps = consumer.taps.clone();
         let recv = crate::audio::stream_recv::ChannelReceiver::new(consumer);
 
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("client");
+        let sender = UdpSocket::bind("127.0.0.1:0").map_err(|e| format!("client bind: {e}"))?;
         let target = format!("127.0.0.1:{port}");
         let mut buf = Vec::new();
         let seq: u16 = 10;
@@ -327,7 +327,7 @@ mod tests {
         sender.send_to(&buf, &target).expect("send packet 10");
 
         // Wait for the async recv loop to drain it.
-        for _ in 0..500 {
+        for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.packets.load(Ordering::Relaxed) > 0 {
                 break;
@@ -363,13 +363,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(30));
         sender.send_to(&buf2, &target).expect("send packet 15");
         // Wait for the recv loop to process the gap packet.
-        for _ in 0..500 {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            if rx.lost.load(Ordering::Relaxed) > 0 {
-                break;
-            }
-        }
-        for _ in 0..500 {
+        for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.lost.load(Ordering::Relaxed) > 0 {
                 break;

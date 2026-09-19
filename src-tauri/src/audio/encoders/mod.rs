@@ -137,8 +137,8 @@ mod tests {
         AiffBitDepth, FlacBitDepth, FlacCompression, OpusApplication, WavBitDepth,
     };
 
-    fn temp(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("{name}-{}.out", std::process::id()))
+    fn temp(name: &str, extension: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("{name}-{}.{extension}", std::process::id()))
     }
 
     fn sine(frames: usize, channels: u16) -> Vec<f32> {
@@ -152,7 +152,16 @@ mod tests {
     /// assert that a non-empty file landed (their readers are decoder-stack
     /// specific and the peaks command refuses them by design).
     fn roundtrip(name: &str, format: RecordingFormat, channels: u16, check_peaks: bool) {
-        let path = temp(name);
+        let extension = match &format {
+            RecordingFormat::Wav { .. } => "wav",
+            RecordingFormat::Aiff { .. } => "aiff",
+            RecordingFormat::Flac { .. } => "flac",
+            RecordingFormat::Opus { .. } => "opus",
+            RecordingFormat::Mp3 { .. } => "mp3",
+            #[cfg(target_os = "macos")]
+            RecordingFormat::Aac { .. } => "m4a",
+        };
+        let path = temp(name, extension);
         let mut enc = build_encoder(&path, 48_000, channels, format, false).expect("build");
         enc.write_interleaved(&sine(48_000, channels))
             .expect("write");
@@ -216,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn flac_encoder_roundtrip() {
+    fn flac_encoder_writes_nonempty_file() {
         roundtrip(
             "flac",
             RecordingFormat::Flac {
@@ -229,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn opus_encoder_roundtrip() {
+    fn opus_encoder_writes_nonempty_file() {
         roundtrip(
             "opus",
             RecordingFormat::Opus {
@@ -242,19 +251,19 @@ mod tests {
     }
 
     #[test]
-    fn mp3_encoder_roundtrip() {
+    fn mp3_encoder_writes_nonempty_file() {
         roundtrip("mp3", RecordingFormat::Mp3 { bitrate_kbps: 128 }, 2, false);
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn aac_encoder_roundtrip() {
+    fn aac_encoder_writes_nonempty_file() {
         roundtrip("aac", RecordingFormat::Aac { bitrate: 128_000 }, 2, false);
     }
 
     #[test]
     fn build_encoder_rejects_bad_channel_counts() {
-        let path = temp("bad-ch");
+        let path = temp("bad-ch", "opus");
         for channels in [0u16, 3u16] {
             let err = build_encoder(
                 &path,
@@ -295,7 +304,7 @@ mod tests {
     #[test]
     fn append_rejects_compressed_formats() {
         let err = validate_append_target(
-            &temp("nope"),
+            &temp("nope", "opus"),
             48_000,
             2,
             RecordingFormat::Opus {
@@ -312,7 +321,7 @@ mod tests {
 
     #[test]
     fn wav_append_validates_against_mismatch() {
-        let path = temp("append-wav");
+        let path = temp("append-wav", "wav");
         let mut enc = build_encoder(
             &path,
             48_000,
@@ -365,7 +374,7 @@ mod tests {
         )
         .is_err());
         assert!(validate_append_target(
-            &temp("missing-file"),
+            &temp("missing-file", "wav"),
             48_000,
             2,
             RecordingFormat::Wav {
@@ -378,7 +387,7 @@ mod tests {
 
     #[test]
     fn aiff_append_validates() {
-        let path = temp("append-aiff");
+        let path = temp("append-aiff", "aiff");
         let mut enc = build_encoder(
             &path,
             48_000,

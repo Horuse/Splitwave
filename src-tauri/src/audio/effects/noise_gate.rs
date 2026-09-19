@@ -115,6 +115,7 @@ impl NoiseGateEffect {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),
                 None => frame[0].abs().max(frame[1].abs()),
             };
+            let detected = if detected.is_finite() { detected } else { 0.0 };
             let coeff = if detected > self.envelope {
                 attack_coeff
             } else {

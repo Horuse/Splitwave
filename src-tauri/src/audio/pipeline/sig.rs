@@ -200,9 +200,7 @@ fn edge_kind_ord(k: EdgeKind) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::graph::{
-        EdgeSpec, EffectSpec, GainData, GraphSpec, InputSpec, NodeKind, NodeSpec, OutputSpec,
-    };
+    use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec};
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {

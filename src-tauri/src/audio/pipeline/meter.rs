@@ -438,7 +438,7 @@ pub(super) fn spawn_meter_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, AtomicU64};
+    use std::sync::atomic::AtomicU64;
 
     #[test]
     fn off_rate_tolerance_and_quantum() {

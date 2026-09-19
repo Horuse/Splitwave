@@ -901,7 +901,6 @@ impl ChannelReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
 
     /// Registry + stereo consumer primed with `frames` of constant audio on
     /// both channels. Returns the receiver to mix and the broadcast handles.
@@ -1036,7 +1035,7 @@ mod tests {
         assert_eq!(reg.buffer_depth(), None, "no consumers yet");
         let bc = reg.attach_channel("c".into(), 1);
         broadcast_push_sr(&bc, 2, 1, &vec![0.0f32; 1920], 44_100);
-        let handle = reg.register_consumer(48_000, true);
+        let _handle = reg.register_consumer(48_000, true);
         let depth = reg.buffer_depth().expect("consumer registered");
         assert_eq!(
             depth, TARGET_INIT as u32,

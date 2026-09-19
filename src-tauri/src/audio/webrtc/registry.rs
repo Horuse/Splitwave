@@ -255,10 +255,12 @@ mod tests {
             );
             assert_eq!(b.opus_bitrate, 96_000);
             // A different id gets its own session.
-            let other = get_or_create(&uniq("reg"), 96_000, OpusApplication::Audio);
+            let other_id = uniq("reg");
+            let other = get_or_create(&other_id, 96_000, OpusApplication::Audio);
             assert!(!Arc::ptr_eq(&a, &other));
             leave_room(&id).await; // resets state; registry entries persist by design
-            leave_room(&uniq("reg")); // leaving a ghost session is a no-op
+            leave_room(&other_id).await;
+            leave_room(&uniq("reg")).await; // leaving a ghost session is a no-op
         });
     }
 

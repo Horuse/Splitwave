@@ -2380,7 +2380,6 @@ mod graph_tests {
         g.edges.push(edge("e2", "m", None, "lm", None));
         let valid = g.validate().expect("valid");
         let (mut built, mut producers) = build(None, SR, &valid, SR, false);
-        assert!(built.graph.latency_frames() >= 0, "monitor graph builds");
         let prod = producers.get_mut("m").unwrap();
         push_all(prod, &stereo_ramp(4096, 0.0));
         let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
@@ -2465,7 +2464,6 @@ mod graph_tests {
 
     #[test]
     fn net_sender_output_builds_a_consumer_node() {
-        use std::net::SocketAddr;
         let g = GraphSpec {
             sample_rate: None,
             nodes: vec![
@@ -2488,7 +2486,6 @@ mod graph_tests {
         let valid = g.validate().expect("send graph valid");
         assert_eq!(valid.outputs.len(), 1);
         let (mut built, _) = build(Some("net"), SR, &valid, SR, false);
-        assert!(built.graph.latency_frames() >= 0);
         assert_eq!(built.graph.out_channels(), 2);
         // Send-side graph is driven like any output.
         let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];

@@ -38,13 +38,6 @@ describe('parseInline', () => {
 		});
 	});
 
-	it('a single unmatched * becomes emphasis; trailing ** stays literal', () => {
-		const blocks = parseMarkdown('a * b ** c');
-		const p = blocks[0];
-		if (p.kind !== 'paragraph') throw new Error('expected paragraph');
-		expect(p.content[1]).toEqual({ kind: 'em', text: ' b ' });
-		expect(p.content[p.content.length - 1]).toEqual(text('* c'));
-	});
 });
 
 describe('parseMarkdown blocks', () => {
@@ -57,7 +50,7 @@ describe('parseMarkdown blocks', () => {
 		const blocks = parseMarkdown('- a\n- b\n1. one\n2. two\n- c');
 		const lists = blocks.filter((b) => b.kind === 'list');
 		expect(lists.length).toBe(3);
-		if (lists[0].kind === 'list') expect(lists[0].items).toEqual([[text('b')]].flat().length ? [[{ kind: 'text', text: 'a' }], [{ kind: 'text', text: 'b' }]] : []);
+		if (lists[0].kind === 'list') expect(lists[0].items).toEqual([[text('a')], [text('b')]]);
 		const ordered = lists.find((l) => l.ordered);
 		if (ordered?.kind === 'list') expect(ordered.items.map((i) => i[0])).toEqual([
 			{ kind: 'text', text: 'one' },

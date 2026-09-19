@@ -226,6 +226,7 @@ mod tests {
         let mut buf = vec![1.0; 96 * 2];
         e.process(&mut buf, 96);
         // Max feedback = 1.0*0.28 + 0.7 = 0.98 < 1: stable, no explosion.
+        let mut energies = Vec::new();
         for _ in 0..50 {
             let mut zero = vec![0.0; 9600 * 2];
             e.process(&mut zero, 4800);
@@ -235,10 +236,9 @@ mod tests {
                 "no runaway: {:#}",
                 zero.iter().fold(0.0f32, |m, s| m.max(s.abs()))
             );
+            energies.push(zero.iter().map(|s| s * s).sum::<f32>());
         }
-        // Energy must decay toward silence.
-        let tail_energy: f32 = buf[..].iter().map(|s| s * s).sum();
-        assert!(tail_energy >= 0.0);
+        assert!(energies[49] < energies[0] * 1e-3);
     }
 
     #[test]

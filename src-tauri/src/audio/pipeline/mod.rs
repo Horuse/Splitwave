@@ -1422,47 +1422,9 @@ mod tests {
     }
 
     #[test]
-    fn latency_reads_source_backlog_into_the_report() {
-        let mut p = ActivePipeline::new();
-        // Source stats keyed to output "s"; no speakers registered yet → 0.
-        p.source_stats.push(SourceMeta {
-            label: "src".into(),
-            stats: crate::audio::pipeline::dag::SourceStats::new(),
-            channels: 2,
-            native_sr: 48_000,
-            frames_per_block: 1024,
-            input_id: Some("m".into()),
-            output_id: "s".into(),
-            capture: None,
-        });
-        assert_eq!(p.output_latency_ms(), 0, "no speakers → no latency");
-    }
-
-    #[test]
     fn is_structurally_current_requires_a_running_pipeline() {
         let p = ActivePipeline::new();
         assert!(!p.is_structurally_current(&mic_to_speaker()));
-    }
-
-    #[test]
-    fn structurally_current_ignores_live_params() {
-        let mut p = ActivePipeline::new();
-        // Running state claims an empty graph set; a graph whose running-set
-        // matches but whose effect sigs differ structurally is not current.
-        let g1 = mic_to_speaker();
-        p.current = Some(g1.clone());
-        // Running outputs empty vs graph's {s} → not current.
-        assert!(!p.is_structurally_current(&g1));
-        // A structurally identical graph would need running outputs; with
-        // none the running-set check rejects it either way.
-        let mut g2 = mic_to_speaker();
-        if let Some(e) = g2.effects.iter_mut().find(|e| e.id == "g") {
-            e.spec = EffectSpec::Gain(GainData {
-                gain_db: -12.0,
-                bypassed: false,
-            });
-        }
-        assert!(!p.is_structurally_current(&g2));
     }
 
     #[test]

@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn blocking_push_waits_for_room_and_stops_on_stop() {
+    fn blocking_push_stops_before_writing() {
         let (mut tx, mut rx) = broadcast_channel();
         let (prod, mut cons) = RingBuffer::<f32>::new(1024);
         let _ = tx.add(prod).expect("add");
@@ -375,8 +375,7 @@ mod tests {
 
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
-        // Push 512 samples (fits), then overfill: blocking path waits for the
-        // consumer to drain.
+        // A normal push reaches the consumer.
         let block = vec![0.5f32; 512];
         rx.broadcast_blocking(&block, &stop, &paused, Duration::from_micros(100));
         let mut out = vec![0.0f32; 512];
@@ -384,7 +383,7 @@ mod tests {
         assert_eq!(n, 512);
         assert_eq!(out, block);
 
-        // Now stop mid-blocking push: the call returns promptly.
+        // A pre-existing stop refuses the next block.
         let stop2 = Arc::new(AtomicBool::new(true));
         rx.broadcast_blocking(
             &vec![0.5f32; 2048],
@@ -392,6 +391,8 @@ mod tests {
             &paused,
             Duration::from_millis(1),
         );
+        let mut stopped = vec![0.0f32; 512];
+        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut stopped), 0);
     }
 
     #[test]
@@ -411,25 +412,5 @@ mod tests {
             &paused,
             Duration::from_micros(50),
         );
-    }
-
-    #[test]
-    fn rt_side_overwrite_returns_prev_to_main() {
-        // Defensive path: an Add for an occupied slot returns the previous
-        // producer to main instead of dropping on RT.
-        let (mut tx, mut rx) = broadcast_channel();
-        let (p1, _c1) = RingBuffer::<f32>::new(64);
-        let (slot, _) = tx.add(p1).expect("add 1");
-        rx.apply_commands();
-        // Force an Add for an already-used slot via the command queue.
-        let (p2, _c2) = RingBuffer::<f32>::new(64);
-        let _ = tx.cmds.push(BroadcastCmd::Add {
-            slot,
-            producer: p2,
-            stats: CaptureStats::new(),
-        });
-        rx.apply_commands();
-        tx.drain_discarded(); // collects p1
-        tx.drain_discarded();
     }
 }

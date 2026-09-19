@@ -7,10 +7,7 @@ use super::biquad::{biquad_for, BandShape, Biquad};
 use super::util::{db_to_linear, load_f32};
 use super::{Effect, EffectControl};
 
-/// Linkwitz-Riley 4th-order crossover points: geometric means between adjacent
-/// band centres. LR4 = two cascaded 2nd-order Butterworth biquads; sum of
-/// matched LPF/HPF at the same fc is allpass, so all 10 bands sum back to a
-/// magnitude-flat output when their gains are unity.
+/// Fourth-order crossover points at geometric means between adjacent bands.
 const EQ_CROSSOVER_FREQS: [f32; 9] = [
     45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085,
 ];
@@ -35,20 +32,15 @@ impl Lr4 {
     }
 }
 
-/// Per-channel filter chain. The input cascades through 9 crossover splits:
-/// each split peels off one band's slice via LPF and forwards the HPF residual
-/// to the next stage. Band gains scale these slices and we sum.
+/// Per-channel filter chain. Each split derives its low band by subtracting the
+/// high-pass residual, so unity gains reconstruct the input exactly.
 struct ChannelChain {
-    lpfs: [Lr4; 9],
     hpfs: [Lr4; 9],
 }
 
 impl ChannelChain {
     fn new(sample_rate: u32) -> Self {
         Self {
-            lpfs: std::array::from_fn(|i| {
-                Lr4::new(BandShape::Lpf, EQ_CROSSOVER_FREQS[i], sample_rate)
-            }),
             hpfs: std::array::from_fn(|i| {
                 Lr4::new(BandShape::Hpf, EQ_CROSSOVER_FREQS[i], sample_rate)
             }),
@@ -60,9 +52,10 @@ impl ChannelChain {
         let mut residual = x;
         let mut sum = 0.0;
         for i in 0..9 {
-            let band = self.lpfs[i].process(residual);
-            residual = self.hpfs[i].process(residual);
+            let next = self.hpfs[i].process(residual);
+            let band = residual - next;
             sum += band * gains_linear[i];
+            residual = next;
         }
         sum + residual * gains_linear[9]
     }
@@ -149,34 +142,17 @@ mod tests {
     }
 
     #[test]
-    fn unity_gains_are_exact_at_dc() {
-        // DC passes band 0's LP chain (gain exactly 1 at DC) → flat within
-        // the transient ripple, which decays over ~4k frames at 45 Hz fc.
-        let (mut e, _) = EqEffect::new(unity_data(), SR);
-        let mut buf = vec![0.5f32; 6000 * 2];
-        e.process(&mut buf, 6000);
-        let tail = &buf[6000 * 2 - 2000..];
-        for s in tail {
-            assert!((s - 0.5).abs() < 5e-3, "unity EQ shifted DC: {s}");
-        }
-        assert!(buf.iter().all(|s| s.is_finite()));
-    }
-
-    #[test]
-    fn unity_gains_conserve_energy_on_noise() {
-        // Two cascaded Q=1/√2 sections per split are LR4-like but not an
-        // exact allpass at the crossover edges: the settled tail stays
-        // within ~7% of the input energy. Lock that bound.
+    fn unity_gains_reconstruct_every_sample() {
         let (mut e, _) = EqEffect::new(unity_data(), SR);
         let input = noise(9600);
         let mut buf = input.clone();
         e.process(&mut buf, 9600);
-        let (ri, ro) = (rms(&input[4800..]), rms(&buf[4800..]));
-        assert!(
-            (ro - ri).abs() < 0.10 * ri,
-            "unity EQ must stay near-flat: in {ri} out {ro}"
-        );
-        assert!(buf.iter().all(|s| s.is_finite()));
+        let max_error = buf
+            .iter()
+            .zip(&input)
+            .map(|(out, input)| (out - input).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_error < 1e-6, "unity reconstruction error: {max_error}");
     }
 
     #[test]

@@ -217,7 +217,8 @@ mod tests {
         // no faster than pacing allows, no wildly slower.
         let want = Duration::from_millis(90);
         assert!(
-            elapsed >= want - Duration::from_millis(5) && elapsed < want + Duration::from_millis(200),
+            elapsed >= want - Duration::from_millis(5)
+                && elapsed < want + Duration::from_millis(200),
             "paced {elapsed:?}, want ~{want:?}"
         );
     }
@@ -255,8 +256,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(120));
         let start = Instant::now();
         assert!(t.wait_for_tick(&stop));
-        // Returned immediately (reset to now) rather than bursting.
+        // The overdue tick returns immediately, then the reset deadline makes
+        // the following tick wait for a fresh period.
         assert!(start.elapsed() < Duration::from_millis(2));
+        let next = Instant::now();
+        assert!(t.wait_for_tick(&stop));
+        assert!(next.elapsed() >= Duration::from_millis(8));
     }
 
     #[test]
@@ -264,11 +269,10 @@ mod tests {
         // The device-fill clock shares the ticker with report_late off.
         let mut t = SystemClockTicker::rate_limiter(48_000, 480);
         let stop = AtomicBool::new(false);
-        std::thread::sleep(Duration::from_millis(12));
+        let before = health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(25));
         assert!(t.wait_for_tick(&stop));
-        // Whatever it was, the late counter must not have moved for this tick.
-        let late = health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed);
-        let _ = late; // reporting is disabled inside rate_limiter
+        assert_eq!(health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed), before);
     }
 
     #[test]
@@ -276,7 +280,8 @@ mod tests {
         let dev_sr = Arc::new(AtomicU32::new(48_000));
         let level = Arc::new(AtomicI64::new(0));
         let target = Arc::new(AtomicI64::new(2 * 1024)); // two engine blocks
-        let mut clock = DeviceFillClock::new(48_000, dev_sr.clone(), 1024, level.clone(), target.clone());
+        let mut clock =
+            DeviceFillClock::new(48_000, dev_sr.clone(), 1024, level.clone(), target.clone());
         let stop = AtomicBool::new(false);
         assert!(!clock.realtime_ready(), "fresh clock is unprimed");
         assert!(clock.wait_for_tick(&stop));
@@ -298,11 +303,19 @@ mod tests {
         let target = Arc::new(AtomicI64::new(1024)); // already at target
         let mut clock = DeviceFillClock::new(48_000, dev_sr, 1024, level.clone(), target.clone());
         let stop = AtomicBool::new(false);
-        // First call primes (startup budget), second must wait for drain —
-        // bounded by FILL_CLOCK_MAX_SLEEP, not spinning forever.
-        let start = Instant::now();
+        // First call primes. Stop the otherwise blocking second call after it
+        // has demonstrably waited instead of returning immediately.
         assert!(clock.wait_for_tick(&stop));
-        assert!(start.elapsed() <= Duration::from_millis(20));
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_setter = stop.clone();
+        let join = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            stop_setter.store(true, Ordering::SeqCst);
+        });
+        let start = Instant::now();
+        assert!(!clock.wait_for_tick(&stop));
+        join.join().unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(10));
     }
 
     #[test]

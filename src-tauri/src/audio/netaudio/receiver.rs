@@ -375,10 +375,7 @@ mod tests {
                 break;
             }
         }
-        assert!(
-            rx.lost.load(Ordering::Relaxed) >= 4,
-            "seq 11..14 concealed"
-        );
+        assert!(rx.lost.load(Ordering::Relaxed) >= 4, "seq 11..14 concealed");
 
         let mut mix = vec![0.0f32; 1024 * 2];
         recv.mix_block(&mut mix);

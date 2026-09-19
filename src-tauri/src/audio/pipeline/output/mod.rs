@@ -795,7 +795,11 @@ mod tests {
             level.load(Ordering::Relaxed) > 0,
             "worker pushed audio into the ring"
         );
-        assert!(io.callbacks.load(Ordering::Relaxed) >= 0);
+        assert_eq!(
+            io.callbacks.load(Ordering::Relaxed),
+            0,
+            "no device callback is attached"
+        );
     }
 
     #[test]

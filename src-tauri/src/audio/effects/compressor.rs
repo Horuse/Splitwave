@@ -109,6 +109,7 @@ impl CompressorEffect {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),
                 None => frame[0].abs().max(frame[1].abs()),
             };
+            let detected = if detected.is_finite() { detected } else { 0.0 };
             if detected > self.envelope {
                 self.envelope += (detected - self.envelope) * attack_coeff;
             } else {
@@ -133,8 +134,17 @@ impl CompressorEffect {
             if gr_only < block_min_gr {
                 block_min_gr = gr_only;
             }
-            frame[0] *= gr_only * makeup_lin;
-            frame[1] *= gr_only * makeup_lin;
+            let gain = gr_only * makeup_lin;
+            frame[0] = if frame[0].is_finite() {
+                frame[0] * gain
+            } else {
+                0.0
+            };
+            frame[1] = if frame[1].is_finite() {
+                frame[1] * gain
+            } else {
+                0.0
+            };
         }
         store_f32(&self.gr_lin, block_min_gr);
     }
@@ -342,10 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn inf_input_yields_nan_at_that_frame_then_recovers() {
-        // Locking current behaviour: an Inf input sample passes through the
-        // gain multiplier as Inf*0 == NaN for that frame only; the stream
-        // itself recovers to unity gain.
+    fn non_finite_input_is_silenced_and_state_recovers() {
         let d = CompressorData {
             threshold_db: -12.0,
             ratio: 4.0,
@@ -359,9 +366,8 @@ mod tests {
         let mut input = dc(5, 0.5);
         input[4] = f32::INFINITY;
         let out = run(&mut e, &input, 5);
-        assert!(out[4].is_nan(), "frame with Inf: {:#}", out[4]);
-        assert!(out[..4].iter().all(|s| s.is_finite()));
-        assert!(out[5..].iter().all(|s| s.is_finite()));
+        assert_eq!(out[4], 0.0);
+        assert!(out.iter().all(|s| s.is_finite()));
         let follow = sine(240, 0.2);
         let out2 = run(&mut e, &follow, 240);
         assert!(out2.iter().all(|s| s.is_finite() && !s.is_nan()));
@@ -418,7 +424,7 @@ mod tests {
         }
 
         #[test]
-        fn inf_input_nan_confined_to_that_frame(
+        fn non_finite_input_never_escapes(
             input in prop::collection::vec(-2.0f32..2.0, 512),
             poison_pos in 0usize..512,
             makeup in -12.0f32..24.0,
@@ -437,11 +443,8 @@ mod tests {
             buf[poison_pos] = f32::INFINITY;
             e.process(&mut buf, 256);
             for (k, s) in buf.iter().enumerate() {
-                if k == poison_pos {
-                    prop_assert!(s.is_nan());
-                } else {
-                    prop_assert!(!s.is_nan(), "NaN leaked to sample {k}");
-                }
+                prop_assert!(s.is_finite(), "non-finite output at sample {k}");
+                if k == poison_pos { prop_assert_eq!(*s, 0.0); }
             }
         }
     }

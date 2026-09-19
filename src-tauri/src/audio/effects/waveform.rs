@@ -173,8 +173,9 @@ fn write(g: &mut WaveformState, samples: &[f32], frames: usize, head_seed: Optio
     }
     let cap = g.frames;
     let n = frames.min(cap);
-    let src = &samples[..n * ch];
-    let pos = g.write;
+    let skipped = frames - n;
+    let src = &samples[skipped * ch..frames * ch];
+    let pos = (g.write + skipped) % cap;
     let end = pos + n;
     if end <= cap {
         g.buf[pos * ch..end * ch].copy_from_slice(src);
@@ -185,7 +186,7 @@ fn write(g: &mut WaveformState, samples: &[f32], frames: usize, head_seed: Optio
         g.buf[..(n * ch - first)].copy_from_slice(&src[first..]);
         g.write = end - cap;
     }
-    g.total += n as u64;
+    g.total += frames as u64;
 }
 
 pub struct WaveformEffect {
@@ -315,15 +316,12 @@ mod tests {
     #[test]
     fn drain_skips_overwritten_frames() {
         let h = handle("n", 48_000);
-        // Push 4000 frames (> ring), drain must return only the last
-        // SCOPE_RING_FRAMES with the absolute start index.
-        for k in 0..25 {
-            h.push_interleaved(&block(k, 200, 1), 200, 0);
-        }
+        let input = block(1, SCOPE_RING_FRAMES + 37, 1);
+        h.push_interleaved(&input, SCOPE_RING_FRAMES + 37, 0);
         let (start, out, ch) = h.drain();
         assert_eq!(ch, 1);
-        assert_eq!(start, 0);
-        assert_eq!(out.len(), 5000);
+        assert_eq!(start, 37);
+        assert_eq!(out, input[37..]);
     }
 
     #[test]
@@ -395,7 +393,7 @@ mod tests {
         #[test]
         fn ring_roundtrip_preserves_last_written_frames(
             seed in 0u64..100_000,
-            chunks in 1usize..8,
+            chunks in 34usize..42,
             ch in 1usize..5,
         ) {
             let h = handle("p", 48_000);
@@ -414,9 +412,11 @@ mod tests {
             }
             let (start, out, got_ch) = h.drain();
             prop_assert_eq!(got_ch, ch);
-            prop_assert_eq!(out.len(), expected.len());
-            prop_assert!(start == 0);
-            for (got, want) in out.iter().zip(&expected) {
+            let kept = SCOPE_RING_FRAMES * ch;
+            let expected_start = expected.len().saturating_sub(kept);
+            prop_assert_eq!(out.len(), expected.len() - expected_start);
+            prop_assert_eq!(start as usize, expected_start / ch);
+            for (got, want) in out.iter().zip(&expected[expected_start..]) {
                 prop_assert!((*got as f64 - *want).abs() < 1e-6);
             }
         }

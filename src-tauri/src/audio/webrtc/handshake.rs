@@ -517,7 +517,6 @@ fn candidate_summary(sdp: &str) -> String {
 mod tests {
     use super::*;
     use crate::audio::graph::OpusApplication;
-    use crate::audio::webrtc::registry::leave_room;
 
     /// Full two-peer handshake on one machine: host creates an offer, guest
     /// accepts it, host completes with the answer. ICE runs on host/loopback

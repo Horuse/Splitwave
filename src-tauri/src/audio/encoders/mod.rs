@@ -30,6 +30,16 @@ pub trait AudioEncoder: Send {
     fn finalize(self: Box<Self>) -> AppResult<()>;
 }
 
+fn validate_interleaved(samples: &[f32], channels: u16) -> AppResult<()> {
+    if channels == 0 || samples.len() % channels as usize != 0 {
+        return Err(crate::error::AppError::Validation(format!(
+            "interleaved buffer has {} samples for {channels} channels",
+            samples.len()
+        )));
+    }
+    Ok(())
+}
+
 pub fn build_encoder(
     path: &Path,
     sample_rate: u32,
@@ -147,11 +157,7 @@ mod tests {
             .collect()
     }
 
-    /// Writes a real file through each format's encoder and finalises it.
-    /// WAV/AIFF get verified through `read_peaks`; compressed formats only
-    /// assert that a non-empty file landed (their readers are decoder-stack
-    /// specific and the peaks command refuses them by design).
-    fn roundtrip(name: &str, format: RecordingFormat, channels: u16, check_peaks: bool) {
+    fn pcm_roundtrip(name: &str, format: RecordingFormat, channels: u16) {
         let extension = match &format {
             RecordingFormat::Wav { .. } => "wav",
             RecordingFormat::Aiff { .. } => "aiff",
@@ -169,96 +175,47 @@ mod tests {
         // finalize consumes the encoder and closes the file.
         enc.finalize().expect("finalize");
         assert!(path.exists(), "encoder must leave a file");
-        if check_peaks {
-            let peaks = read_peaks(&path, 0, 1024, 16).expect("read peaks");
-            assert_eq!(peaks.sample_rate, 48_000);
-            assert_eq!(peaks.channels, channels as u32);
-            assert!(peaks.total_frames >= 48_000 / 2, "frames recorded");
-            let max_peak = peaks.maxs.iter().flatten().fold(0.0f32, |m, s| m.max(*s));
-            assert!(max_peak > 0.2, "sine must be visible in peaks: {max_peak}");
-            assert!(max_peak <= 0.6);
-        } else {
-            assert!(
-                std::fs::metadata(&path)
-                    .map(|m| m.len() > 0)
-                    .unwrap_or(false),
-                "compressed formats must still write a non-empty file"
-            );
-        }
+        let peaks = read_peaks(&path, 0, 1024, 16).expect("read peaks");
+        assert_eq!(peaks.sample_rate, 48_000);
+        assert_eq!(peaks.channels, channels as u32);
+        assert_eq!(peaks.total_frames, 48_000);
+        let max_peak = peaks.maxs.iter().flatten().fold(0.0f32, |m, s| m.max(*s));
+        assert!(max_peak > 0.2, "sine must be visible in peaks: {max_peak}");
+        assert!(max_peak <= 0.6);
         std::fs::remove_file(&path).ok();
     }
 
     #[test]
     fn wav_encoder_roundtrip_stereo() {
-        roundtrip(
+        pcm_roundtrip(
             "wav-st",
             RecordingFormat::Wav {
                 bit_depth: WavBitDepth::F32,
             },
             2,
-            true,
         );
     }
 
     #[test]
     fn wav_encoder_roundtrip_i24() {
-        roundtrip(
+        pcm_roundtrip(
             "wav-i24",
             RecordingFormat::Wav {
                 bit_depth: WavBitDepth::I24,
             },
             2,
-            true,
         );
     }
 
     #[test]
     fn aiff_encoder_roundtrip() {
-        roundtrip(
+        pcm_roundtrip(
             "aiff",
             RecordingFormat::Aiff {
                 bit_depth: AiffBitDepth::I24,
             },
             2,
-            true,
         );
-    }
-
-    #[test]
-    fn flac_encoder_writes_nonempty_file() {
-        roundtrip(
-            "flac",
-            RecordingFormat::Flac {
-                bit_depth: FlacBitDepth::I24,
-                compression: FlacCompression::Default,
-            },
-            2,
-            false,
-        );
-    }
-
-    #[test]
-    fn opus_encoder_writes_nonempty_file() {
-        roundtrip(
-            "opus",
-            RecordingFormat::Opus {
-                bitrate: 96_000,
-                application: OpusApplication::Audio,
-            },
-            2,
-            false,
-        );
-    }
-
-    #[test]
-    fn mp3_encoder_writes_nonempty_file() {
-        roundtrip("mp3", RecordingFormat::Mp3 { bitrate_kbps: 128 }, 2, false);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn aac_encoder_writes_nonempty_file() {
-        roundtrip("aac", RecordingFormat::Aac { bitrate: 128_000 }, 2, false);
     }
 
     #[test]
@@ -299,6 +256,65 @@ mod tests {
         };
         assert!(msg.contains("1..8"), "{msg}");
         std::fs::remove_file(&path).ok();
+    }
+
+    fn assert_rejects_partial_frame(name: &str, extension: &str, format: RecordingFormat) {
+        let path = temp(name, extension);
+        let mut encoder = build_encoder(&path, 48_000, 2, format, false).expect("build encoder");
+        let err = encoder
+            .write_interleaved(&[0.0, 0.0, 1.0])
+            .expect_err("a stereo buffer must contain complete frames");
+        let crate::error::AppError::Validation(message) = err else {
+            panic!("validation error expected");
+        };
+        assert!(message.contains("3 samples for 2 channels"), "{message}");
+        drop(encoder);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn encoders_reject_partial_interleaved_frames() {
+        assert_rejects_partial_frame(
+            "partial-wav",
+            "wav",
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+        );
+        assert_rejects_partial_frame(
+            "partial-aiff",
+            "aiff",
+            RecordingFormat::Aiff {
+                bit_depth: AiffBitDepth::I24,
+            },
+        );
+        assert_rejects_partial_frame(
+            "partial-flac",
+            "flac",
+            RecordingFormat::Flac {
+                bit_depth: FlacBitDepth::I24,
+                compression: FlacCompression::Default,
+            },
+        );
+        assert_rejects_partial_frame(
+            "partial-mp3",
+            "mp3",
+            RecordingFormat::Mp3 { bitrate_kbps: 192 },
+        );
+        assert_rejects_partial_frame(
+            "partial-opus",
+            "opus",
+            RecordingFormat::Opus {
+                bitrate: 96_000,
+                application: OpusApplication::Audio,
+            },
+        );
+        #[cfg(target_os = "macos")]
+        assert_rejects_partial_frame(
+            "partial-aac",
+            "m4a",
+            RecordingFormat::Aac { bitrate: 128_000 },
+        );
     }
 
     #[test]

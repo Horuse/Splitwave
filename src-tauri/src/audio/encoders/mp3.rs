@@ -8,7 +8,7 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::mem::MaybeUninit;
 use std::path::Path;
 
-use mp3lame_encoder::{max_required_buffer_size, Builder, FlushNoGap, InterleavedPcm, MonoPcm};
+use mp3lame_encoder::{max_required_buffer_size, Builder, FlushGap, InterleavedPcm, MonoPcm};
 
 use super::AudioEncoder;
 use crate::error::{AppError, AppResult};
@@ -70,6 +70,7 @@ impl Mp3Recorder {
 
 impl AudioEncoder for Mp3Recorder {
     fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
+        super::validate_interleaved(samples, self.channels)?;
         let frames = samples.len() / self.channels as usize;
         let needed = max_required_buffer_size(frames);
         self.out_buf.clear();
@@ -100,7 +101,7 @@ impl AudioEncoder for Mp3Recorder {
         let spare: &mut [MaybeUninit<u8>] = self.out_buf.spare_capacity_mut();
         let written = self
             .encoder
-            .flush::<FlushNoGap>(spare)
+            .flush::<FlushGap>(spare)
             .map_err(|e| AppError::Stream(format!("mp3 final flush: {e:?}")))?;
         unsafe { self.out_buf.set_len(written) };
         self.file

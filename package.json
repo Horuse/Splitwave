@@ -8,6 +8,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"test": "bun scripts/test-all.ts",
+		"test:frontend": "bun test tests",
 		"check": "bun scripts/check-all.ts",
 		"check:frontend": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

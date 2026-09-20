@@ -1,7 +1,7 @@
 const tasks = [
 	{
 		name: 'frontend',
-		command: ['bun', 'test', 'tests']
+		command: ['bun', 'run', 'test:frontend']
 	},
 	{
 		name: 'backend',

@@ -99,14 +99,6 @@ pub(super) fn resolve_output(
             let path = PathBuf::from(file_path);
             let sample_rate = pinned.or(file_sr_hint).unwrap_or(RECORDER_DEFAULT_SR);
             let append = *mode == RecordingMode::Append;
-            // Overwrite erases the file up front -- the confirmed modal's
-            // contract -- so every encoder starts from a clean path: the FLAC
-            // writer refuses existing files, and CoreAudio's AAC rejects
-            // arbitrary sample rates, custom ones included.
-            if *mode == RecordingMode::Overwrite && path.exists() {
-                std::fs::remove_file(&path)
-                    .map_err(|e| AppError::Stream(format!("remove {}: {e}", path.display())))?;
-            }
             if let RecordingFormat::Aac { bitrate } = format {
                 // Probed limits of Apple's AAC encoder (macOS 14): it encodes
                 // only 32/44.1/48 kHz, with bitrate bounds scaling by channel
@@ -148,6 +140,12 @@ pub(super) fn resolve_output(
             } else {
                 0
             };
+            // Validate the complete recording configuration before honoring
+            // the user's confirmed overwrite and touching the existing file.
+            if *mode == RecordingMode::Overwrite && path.exists() {
+                std::fs::remove_file(&path)
+                    .map_err(|e| AppError::Stream(format!("remove {}: {e}", path.display())))?;
+            }
             Ok(ResolvedOutput::File {
                 path,
                 sample_rate,
@@ -603,6 +601,70 @@ mod tests {
     use super::*;
     use crate::audio::pipeline::dag::RESAMPLE_CHUNK;
     use std::collections::HashMap;
+
+    fn recording_output(
+        path: &std::path::Path,
+        format: RecordingFormat,
+        mode: RecordingMode,
+    ) -> ValidOutput {
+        ValidOutput {
+            id: "recording".into(),
+            spec: OutputSpec::FileRecording {
+                file_path: path.to_string_lossy().into_owned(),
+                format,
+                channels: 2,
+                mode,
+                sample_rate: None,
+            },
+        }
+    }
+
+    #[test]
+    fn invalid_overwrite_configuration_preserves_existing_file() {
+        let path = std::env::temp_dir().join(format!(
+            "splitwave-invalid-overwrite-{}.mp3",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"existing recording").expect("fixture");
+        let output = recording_output(
+            &path,
+            RecordingFormat::Mp3 { bitrate_kbps: 999 },
+            RecordingMode::Overwrite,
+        );
+
+        let error = match resolve_output(&output, Some(48_000)) {
+            Ok(_) => panic!("invalid bitrate was accepted"),
+            Err(error) => error,
+        };
+        assert!(format!("{error}").contains("MP3 bitrate"));
+        assert_eq!(
+            std::fs::read(&path).expect("existing file retained"),
+            b"existing recording"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn valid_overwrite_configuration_removes_existing_file() {
+        let path = std::env::temp_dir().join(format!(
+            "splitwave-valid-overwrite-{}.wav",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"existing recording").expect("fixture");
+        let output = recording_output(
+            &path,
+            RecordingFormat::Wav {
+                bit_depth: crate::audio::graph::WavBitDepth::F32,
+            },
+            RecordingMode::Overwrite,
+        );
+
+        resolve_output(&output, Some(48_000)).expect("valid recording output");
+        assert!(
+            !path.exists(),
+            "confirmed overwrite must clear the old path"
+        );
+    }
 
     #[test]
     fn test_output_resampler_bypassed_when_rates_match() {

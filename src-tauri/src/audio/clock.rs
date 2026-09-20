@@ -257,14 +257,13 @@ mod tests {
     }
 
     #[test]
-    fn rate_limiter_does_not_report_late() {
-        // The device-fill clock shares the ticker with report_late off.
-        let mut t = SystemClockTicker::rate_limiter(48_000, 480);
-        let stop = AtomicBool::new(false);
-        let before = health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed);
-        t.next_deadline = Some(Instant::now() - Duration::from_millis(25));
-        assert!(t.wait_for_tick(&stop));
-        assert_eq!(health::CLOCK_LATE_BLOCKS.load(Ordering::Relaxed), before);
+    fn rate_limiter_disables_late_reporting() {
+        // Global health counters are intentionally shared by all workers, so
+        // their exact value is not a race-safe unit-test oracle.
+        let t = SystemClockTicker::rate_limiter(48_000, 480);
+        assert!(!t.report_late);
+        assert_eq!(t.catchup_max, Duration::ZERO);
+        assert_eq!(t.period, Duration::from_millis(10));
     }
 
     #[test]

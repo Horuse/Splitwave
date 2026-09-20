@@ -804,6 +804,24 @@ impl GraphSpec {
     /// - Anything not on a path from some input to some output is dropped.
     /// - Cycles are rejected.
     pub fn validate(&self) -> AppResult<ValidGraph> {
+        let mut node_ids = HashSet::new();
+        for node in &self.nodes {
+            if !node_ids.insert(node.id.as_str()) {
+                return Err(AppError::Validation(format!(
+                    "duplicate node id {:?}",
+                    node.id
+                )));
+            }
+        }
+        let mut edge_ids = HashSet::new();
+        for edge in &self.edges {
+            if !edge_ids.insert(edge.id.as_str()) {
+                return Err(AppError::Validation(format!(
+                    "duplicate edge id {:?}",
+                    edge.id
+                )));
+            }
+        }
         let (nodes, edges) = self.expand_roles();
         let nodes_by_id: HashMap<&str, &RoleNode> =
             nodes.iter().map(|n| (n.id.as_str(), n)).collect();
@@ -1502,6 +1520,28 @@ mod tests {
             edges: vec![edge("e", "m", None, "ghost", None)],
         };
         assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_graph_ids_are_rejected_before_routing() {
+        let duplicate_nodes = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("same"), speaker("same")],
+            edges: vec![],
+        };
+        let error = duplicate_nodes.validate().expect_err("duplicate node id");
+        assert!(format!("{error}").contains("duplicate node id \"same\""));
+
+        let duplicate_edges = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![
+                edge("same", "m", None, "s", Some("ch1")),
+                edge("same", "m", None, "s", Some("ch2")),
+            ],
+        };
+        let error = duplicate_edges.validate().expect_err("duplicate edge id");
+        assert!(format!("{error}").contains("duplicate edge id \"same\""));
     }
 
     #[test]

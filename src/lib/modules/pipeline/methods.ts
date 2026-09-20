@@ -1,7 +1,7 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 import type { Pipeline } from './types';
 import { PIPELINE_VERSION } from './version';
-import { isFromFuture, migrate } from './migrations';
+import { isFromFuture, migrate, migrateSnapshot } from './migrations';
 import { pruneDanglingEdges } from './sanitize';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 
@@ -21,7 +21,7 @@ export const methods = {
 		const entries = await store.entries<Pipeline>();
 		return entries
 			.filter(([k]) => k.startsWith(KEY_PREFIX))
-			.map(([, v]) => v)
+			.map(([, pipeline]) => (isFromFuture(pipeline) ? pipeline : pruneDanglingEdges(migrate(pipeline))))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
 	},
 
@@ -70,13 +70,18 @@ export const methods = {
 	},
 
 	async listSnapshots(id: string): Promise<Snapshot[]> {
-		return (await store.get<Snapshot[]>(SNAPSHOT_KEY_PREFIX + id)) ?? [];
+		const snapshots = (await store.get<Snapshot[]>(SNAPSHOT_KEY_PREFIX + id)) ?? [];
+		return snapshots.map((snapshot) => {
+			const migrated = migrateSnapshot(snapshot);
+			if (isFromFuture(migrated.pipeline)) return migrated;
+			return { ...migrated, pipeline: pruneDanglingEdges(migrated.pipeline) };
+		});
 	},
 
 	async addSnapshot(p: Pipeline): Promise<void> {
 		const key = SNAPSHOT_KEY_PREFIX + p.id;
 		const existing = (await store.get<Snapshot[]>(key)) ?? [];
-		existing.push({ takenAt: Date.now(), pipeline: p });
+		existing.push({ takenAt: Date.now(), pipeline: { ...p, version: PIPELINE_VERSION } });
 		// Ring-buffer behaviour -- drop oldest.
 		const cap = appSettings.maxSnapshots;
 		if (existing.length > cap) {

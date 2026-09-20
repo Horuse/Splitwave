@@ -96,6 +96,14 @@ describe('pipeline persistence migrations', () => {
 		expect(stored.map((snapshot) => snapshot.takenAt)).not.toContain(1);
 	});
 
+	it('serializes concurrent snapshot writes without losing either edit', async () => {
+		appSettings.maxSnapshots = 10;
+		await Promise.all([methods.addSnapshot(pipeline('p', { name: 'first' })), methods.addSnapshot(pipeline('p', { name: 'second' }))]);
+
+		const stored = persisted.get('snapshots:p') as Array<{ pipeline: Pipeline }>;
+		expect(stored.map((snapshot) => snapshot.pipeline.name)).toEqual(['first', 'second']);
+	});
+
 	it('save writes the current version and the legacy overwrite compatibility flag', async () => {
 		await methods.save(
 			pipeline('recording', {

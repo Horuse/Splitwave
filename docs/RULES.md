@@ -45,6 +45,6 @@ type(scope): subject
 ## When in doubt
 
 - Read the current code, not earlier explanations.
-- RT path change → `cargo check`.
+- RT path change → `bun run check`.
 - Svelte change → `bun run check`.
 - Rust `#[derive(TS)]` change → `bun run generate`, commit the generated files with the Rust change.

@@ -814,7 +814,6 @@ mod tests {
             RecordingFormat::Flac { .. } => "flac",
             RecordingFormat::Opus { .. } => "opus",
             RecordingFormat::Mp3 { .. } => "mp3",
-            #[cfg(target_os = "macos")]
             RecordingFormat::Aac { .. } => "m4a",
         };
         let path = temp_path(&format!("{label}.{extension}"));

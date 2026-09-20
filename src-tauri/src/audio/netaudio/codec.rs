@@ -157,3 +157,125 @@ impl ChannelDecoder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn collect() -> (Rc<RefCell<Vec<Vec<u8>>>>, impl FnMut(&[u8])) {
+        let sink: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let emit = {
+            let sink = sink.clone();
+            move |payload: &[u8]| sink.borrow_mut().push(payload.to_vec())
+        };
+        (sink, emit)
+    }
+
+    #[test]
+    fn chunk_samples_are_even_and_positive() {
+        assert!(chunk_samples(Format::PcmF32) % 2 == 0);
+        assert!(chunk_samples(Format::PcmI16) % 2 == 0);
+        assert_eq!(chunk_samples(Format::Opus), OPUS_FRAME_SAMPLES);
+    }
+
+    #[test]
+    fn pcm_encoder_emits_fixed_size_payloads() {
+        let (sink, emit) = collect();
+        let mut enc = ChannelEncoder::new(Format::PcmF32, 96_000, opus::Application::Audio);
+        // One chunk plus a little slack: exactly one full packet leaves.
+        let chunk = chunk_samples(Format::PcmF32);
+        enc.push(&vec![0.25f32; chunk + 3], emit);
+        let packets = sink.borrow();
+        assert_eq!(packets.len(), 1, "one full chunk leaves the accumulator");
+        assert_eq!(packets[0].len(), chunk * 4);
+    }
+
+    #[test]
+    fn pcm_i16_encoder_roundtrips_through_decoder() {
+        let (sink, emit) = collect();
+        let mut enc = ChannelEncoder::new(Format::PcmI16, 0, opus::Application::Audio);
+        let chunk = chunk_samples(Format::PcmI16);
+        let input: Vec<f32> = (0..chunk)
+            .map(|i| if i % 2 == 0 { 0.5 } else { -0.25 })
+            .collect();
+        enc.push(&input, emit);
+        assert_eq!(sink.borrow().len(), 1);
+        let mut dec = ChannelDecoder::new();
+        let mut out = Vec::new();
+        dec.decode(Format::PcmI16, &sink.borrow()[0], &mut out);
+        assert_eq!(out.len(), chunk);
+        for (o, i) in out.iter().zip(&input) {
+            assert!((o - i).abs() < 1.0 / 32768.0 * 2.0, "{o} vs {i}");
+        }
+    }
+
+    #[test]
+    fn opus_encoder_decoder_roundtrip() {
+        let (sink, emit) = collect();
+        let mut enc = ChannelEncoder::new(Format::Opus, 96_000, opus::Application::Audio);
+        // Feed 4 chunks of a sine; each becomes one opus packet.
+        let input: Vec<f32> = (0..OPUS_FRAME_SAMPLES * 3)
+            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / SR as f32).sin())
+            .collect();
+        enc.push(&input, emit);
+        assert_eq!(sink.borrow().len(), 3, "three opus packets");
+        let mut dec = ChannelDecoder::new();
+        let mut out = Vec::new();
+        for p in sink.borrow().iter() {
+            dec.decode(Format::Opus, p, &mut out);
+        }
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|s| s.is_finite()));
+        // A 440 Hz sine must come back with energy, not silence.
+        let rms = (out.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / out.len() as f64).sqrt();
+        assert!(rms > 0.1, "decoded audio has energy: {rms}");
+    }
+
+    #[test]
+    fn conceal_owes_exactly_the_lost_timeline() {
+        let mut dec = ChannelDecoder::new();
+        let mut out = vec![1.0f32; 10];
+        dec.conceal_packets(Format::PcmF32, 3, &mut out);
+        let chunk = chunk_samples(Format::PcmF32);
+        // PCM concealment is silence, but the timeline keeps its place.
+        assert_eq!(out.len(), 10 + 3 * chunk);
+        assert_eq!(out[0], 1.0, "existing content untouched");
+        assert_eq!(out[out.len() - 1], 0.0);
+    }
+
+    #[test]
+    fn conceal_opus_produces_extrapolation() {
+        // Encode a tone, decode one packet, then conceal: opus PLC must
+        // return something non-silent.
+        let (sink, emit) = collect();
+        let mut enc = ChannelEncoder::new(Format::Opus, 96_000, opus::Application::Audio);
+        let input: Vec<f32> = (0..OPUS_FRAME_SAMPLES * 2)
+            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / SR as f32).sin())
+            .collect();
+        enc.push(&input, emit);
+        let mut dec = ChannelDecoder::new();
+        let mut out = Vec::new();
+        dec.decode(Format::Opus, &sink.borrow()[0], &mut out);
+        let before = out.len();
+        dec.conceal_packets(Format::Opus, 2, &mut out);
+        assert_eq!(out.len(), before + 2 * OPUS_FRAME_SAMPLES);
+        assert!(out.iter().all(|s| s.is_finite()));
+        assert!(
+            out[before..].iter().any(|s| s.abs() > 1e-4),
+            "Opus PLC returned only silence after a tone"
+        );
+    }
+
+    #[test]
+    fn pcm_decode_discards_only_the_trailing_partial_sample() {
+        let mut dec = ChannelDecoder::new();
+        let mut payload = Vec::from(1.0f32.to_le_bytes());
+        payload.extend_from_slice(&(-0.5f32).to_le_bytes());
+        payload.extend_from_slice(&[0xaa, 0xbb]);
+        let mut out = vec![7.0];
+        dec.decode(Format::PcmF32, &payload, &mut out);
+        assert_eq!(out, vec![7.0, 1.0, -0.5]);
+    }
+}

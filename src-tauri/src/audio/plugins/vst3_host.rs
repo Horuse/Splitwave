@@ -554,6 +554,7 @@ mod tests {
 
     #[test]
     fn reports_parameters_in_normalised_form() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some((instance, name)) = first_plugin() else {
             return skipped("parameter reporting");
         };
@@ -576,6 +577,7 @@ mod tests {
     /// reports back, or the plugin's own window would show something else.
     #[test]
     fn a_parameter_set_by_the_host_is_read_back() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some((instance, name)) = first_plugin() else {
             return skipped("host-to-editor parameter writes");
         };
@@ -602,6 +604,7 @@ mod tests {
     /// which is the only path from there to the audio thread.
     #[test]
     fn an_edit_from_the_plugin_reaches_the_param_ring() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         struct ToRing(Arc<ParamRing>);
         impl crate::audio::plugins::vst3_com::EditListener for ToRing {
             fn param_edited(&self, id: u32, value: f64) {
@@ -638,6 +641,7 @@ mod tests {
     /// instance, which is what reopening a project does.
     #[test]
     fn state_survives_a_reinstantiation() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
             return skipped("state persistence");
         };
@@ -669,6 +673,7 @@ mod tests {
 
     #[test]
     fn a_state_blob_that_is_not_ours_is_refused() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some((instance, _)) = first_plugin() else {
             return skipped("rejection of a foreign state blob");
         };
@@ -681,6 +686,7 @@ mod tests {
     /// that silently refused to run.
     #[test]
     fn renders_signal_through_every_installed_plugin() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         const FRAMES: usize = 512;
         const RATE: u32 = 48_000;
 
@@ -767,6 +773,7 @@ mod tests {
     /// it; one that refuses falls back to a stereo pair.
     #[test]
     fn negotiates_the_widest_layout_each_plugin_accepts() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = Vst3Backend.scan();
         if found.is_empty() {
             return skipped("layout negotiation");
@@ -805,6 +812,7 @@ mod tests {
 
     #[test]
     fn instantiates_every_installed_plugin() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = Vst3Backend.scan();
         if found.is_empty() {
             return skipped("instantiation");

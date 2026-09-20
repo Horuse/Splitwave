@@ -309,6 +309,7 @@ fn extended80_to_u32(bytes: [u8; 10]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::encoders::build_encoder;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -318,7 +319,6 @@ mod tests {
 
     #[test]
     fn reads_peaks_from_a_recording_in_progress() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::{RecordingFormat, WavBitDepth};
         let path = temp_path("peaks_live.wav");
         let _ = std::fs::remove_file(&path);
@@ -351,7 +351,6 @@ mod tests {
 
     #[test]
     fn reads_wav_f32_peaks() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::RecordingFormat;
         let path = temp_path("peaks.wav");
         let _ = std::fs::remove_file(&path);
@@ -391,7 +390,6 @@ mod tests {
 
     #[test]
     fn reads_aiff_i16_peaks() {
-        use crate::audio::encoders::build_encoder;
         use crate::audio::graph::{AiffBitDepth, RecordingFormat};
         let path = temp_path("peaks.aiff");
         let _ = std::fs::remove_file(&path);
@@ -417,6 +415,69 @@ mod tests {
         assert_eq!(peaks.channels, 1);
         assert_eq!(peaks.total_frames, 512);
         assert!((peaks.maxs[0][1] - 1.0).abs() < 0.002);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_peaks_rejects_compressed_and_missing_files() {
+        assert!(read_peaks(Path::new("/definitely/not/here.wav"), 0, 64, 8).is_err());
+        use crate::audio::graph::{FlacBitDepth, FlacCompression, RecordingFormat};
+        let path = temp_path("compressed.flac");
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Flac {
+                bit_depth: FlacBitDepth::I16,
+                compression: FlacCompression::Fast,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&[0.25; 32]).unwrap();
+        enc.finalize().unwrap();
+        let err = match read_peaks(&path, 0, 64, 8) {
+            Ok(_) => panic!("FLAC is not random-access PCM"),
+            Err(err) => err,
+        };
+        assert!(format!("{err}").contains("only WAV and AIFF"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_peaks_clamps_ranges_beyond_the_file() {
+        use crate::audio::graph::{RecordingFormat, WavBitDepth};
+        let path = temp_path("clamp.wav");
+        let mut block = vec![0.5f32; 1024 * 2];
+        block.truncate(1024 * 2);
+        let mut enc = crate::audio::encoders::build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        // start_frame past EOF clamps to the end; the result is valid.
+        let p = read_peaks(&path, 500_000, 64, 8).expect("clamped read");
+        assert_eq!(p.total_frames, 1024);
+        assert_eq!(p.start_frame, 1024);
+        assert_eq!(p.maxs, vec![vec![0.0; 8]; 2]);
+        assert_eq!(p.mins, vec![vec![0.0; 8]; 2]);
+        // bin_count = 0 keeps one empty bin vector per channel.
+        let p0 = read_peaks(&path, 0, 64, 0).expect("zero bins");
+        assert_eq!(p0.maxs, vec![Vec::<f32>::new(), Vec::new()]);
+        assert_eq!(p0.mins, vec![Vec::<f32>::new(), Vec::new()]);
+        // Huge frames_per_bin covers the whole file in one bin.
+        let p1 = read_peaks(&path, 0, u32::MAX, 4).expect("huge fpb");
+        assert_eq!(p1.maxs.len(), 2);
+        assert!((p1.maxs[0][0] - 0.5).abs() < 0.01);
+        assert_eq!(&p1.maxs[0][1..], &[0.0; 3]);
         let _ = std::fs::remove_file(&path);
     }
 }

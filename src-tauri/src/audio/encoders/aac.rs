@@ -22,6 +22,7 @@ extern "C" {
 
 pub struct AacRecorder {
     handle: *mut c_void,
+    channels: u16,
 }
 
 unsafe impl Send for AacRecorder {}
@@ -51,14 +52,14 @@ impl AacRecorder {
                 path.display()
             )));
         }
-        Ok(Self { handle })
+        Ok(Self { handle, channels })
     }
 }
 
 impl AudioEncoder for AacRecorder {
     fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
-        debug_assert!(samples.len() % 2 == 0, "stereo buffer must be even length");
-        let frames = (samples.len() / 2) as i32;
+        super::validate_interleaved(samples, self.channels)?;
+        let frames = (samples.len() / self.channels as usize) as i32;
         if frames == 0 {
             return Ok(());
         }

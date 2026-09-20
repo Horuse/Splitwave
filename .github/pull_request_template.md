@@ -4,8 +4,8 @@
   - Read docs/CONTRIBUTING.md and docs/RULES.md.
   - Keep the diff to the change. No drive-by renames, reformatting, or
     refactors of code the change does not touch.
-  - Run `bun run check`, `cargo check --manifest-path src-tauri/Cargo.toml`,
-    and `bun run format` — all must pass and leave the tree clean.
+  - Run `bun run test`, `bun run check`, and `bun run format` —
+    all must pass and leave the tree clean.
   - If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and
     commit the regenerated files in src/lib/modules/pipeline/generated/.
 -->
@@ -21,8 +21,8 @@ _Explain the design choice. What alternatives were considered and rejected? If t
 ## Checklist
 
 - [ ] Diff is limited to the change — no unrelated edits
+- [ ] `bun run test` passes
 - [ ] `bun run check` passes
-- [ ] `cargo check --manifest-path src-tauri/Cargo.toml` passes
 - [ ] `bun run format` leaves the tree clean
 - [ ] Generated TS types are committed with the Rust change (if any)
 - [ ] No new dependency without a reason in the PR description

@@ -258,3 +258,125 @@ impl NetReceiver {
         state
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::netaudio::packet::{write_header, Format};
+    use std::net::UdpSocket;
+
+    fn free_port() -> Result<u16, String> {
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .map_err(|e| format!("bind probe: {e}"))?
+            .local_addr()
+            .map(|addr| addr.port())
+            .map_err(|e| format!("probe address: {e}"))
+    }
+
+    fn pcm_packet(buf: &mut Vec<u8>, channel: u8, seq: u16, payload: &[f32]) {
+        // The raw encoders clear the buffer (they write packet bodies), so the
+        // payload is encoded first and the header is written into its place.
+        let mut body = Vec::new();
+        packet::pcm_f32_encode(payload, &mut body);
+        write_header(buf, Format::PcmF32, channel, seq, 48_000, 0, 0);
+        buf.extend_from_slice(&body);
+    }
+
+    #[test]
+    fn receiver_registry_roundtrip() {
+        let port = free_port().expect("free UDP port");
+        let r = get_or_create("test-node", port);
+        assert_eq!(stats("test-node").expect("registered").channels, 0);
+        // Same port returns the same instance; a port change rebinds.
+        let again = get_or_create("test-node", port);
+        assert!(Arc::ptr_eq(&r, &again));
+        release("test-node");
+        assert!(stats("test-node").is_none(), "release frees the node");
+        release("test-node"); // releasing a ghost is a no-op
+    }
+
+    #[test]
+    fn datagrams_are_counted_and_decoded() {
+        // Parallel tests race for free ports: the receiver's bind can lose.
+        // Retry the whole scenario on a fresh port until it wins.
+        let mut last_err = None;
+        for _ in 0..4 {
+            match datagram_scenario("test-udp") {
+                Ok(()) => return,
+                Err(e) => {
+                    release("test-udp");
+                    last_err = Some(e);
+                }
+            }
+        }
+        panic!("UDP scenario failed on every attempt: {:?}", last_err);
+    }
+
+    fn datagram_scenario(node: &str) -> Result<(), String> {
+        let port = free_port()?;
+        let rx = get_or_create(node, port);
+        let consumer = rx.register_consumer(48_000, true);
+        let taps = consumer.taps.clone();
+        let recv = crate::audio::stream_recv::ChannelReceiver::new(consumer);
+
+        let sender = UdpSocket::bind("127.0.0.1:0").map_err(|e| format!("client bind: {e}"))?;
+        let target = format!("127.0.0.1:{port}");
+        let mut buf = Vec::new();
+        let seq: u16 = 10;
+        pcm_packet(&mut buf, 0, seq, &vec![0.25f32; 480]);
+        sender.send_to(&buf, &target).expect("send packet 10");
+
+        // Wait for the async recv loop to drain it.
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if rx.packets.load(Ordering::Relaxed) > 0 {
+                break;
+            }
+        }
+        let Some(s) = stats(node) else {
+            return Err("receiver not registered".into());
+        };
+        if s.packets < 1 {
+            return Err("packets counted".into());
+        }
+        if s.bytes == 0 {
+            return Err("bytes counted".into());
+        }
+        if s.channels != 1 {
+            return Err("one channel attached".into());
+        }
+        if s.sample_rate != 48_000 {
+            return Err("sample rate".into());
+        }
+        if !matches!(s.format, Some(Format::PcmF32)) {
+            return Err("format recorded".into());
+        }
+        if !taps.lock().unwrap().contains_key("0") {
+            return Err("channel tapped out".into());
+        }
+
+        // A gap in seq must land in the lost counter, and the consumer's mix
+        // keeps streaming (concealment, not silence forever).
+        let mut buf2 = Vec::new();
+        // seq 15 after 10: four lost packets on the timeline.
+        pcm_packet(&mut buf2, 0, 15, &vec![0.25f32; 480]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        sender.send_to(&buf2, &target).expect("send packet 15");
+        // Wait for the recv loop to process the gap packet.
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if rx.lost.load(Ordering::Relaxed) > 0 {
+                break;
+            }
+        }
+        assert!(rx.lost.load(Ordering::Relaxed) >= 4, "seq 11..14 concealed");
+
+        let mut mix = vec![0.0f32; 1024 * 2];
+        recv.mix_block(&mut mix);
+        if !mix.iter().all(|f| f.is_finite()) {
+            return Err("mix produced NaN".into());
+        }
+        release(node);
+        Ok(())
+    }
+}

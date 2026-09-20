@@ -434,3 +434,29 @@ pub(super) fn spawn_meter_thread(
         join: Some(join),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn off_rate_tolerance_and_quantum() {
+        // Healthy rate: within the relative tolerance.
+        assert!(!off_rate(100.0, 102.0, 1.0));
+        assert!(!off_rate(98.0, 100.0, 1.0));
+        // Drift beyond 2% is flagged.
+        assert!(off_rate(100.0, 110.0, 1.0));
+        assert!(off_rate(100.0, 90.0, 1.0));
+        // Zero expectation never flags.
+        assert!(!off_rate(50.0, 0.0, 1.0));
+        // A window-boundary misattribution is absorbed by the counter's step
+        // size: at 1024-frame blocks, one block is 2.1% — bigger than the
+        // 2% relative bound but within the 1.5× quantum slack.
+        assert!(
+            !off_rate(1024.0, 0.0 + 0.001, 1024.0),
+            "one block's step must not flag"
+        );
+        assert!(!off_rate(0.0, 0.001, 1024.0));
+        assert!(off_rate(0.0, 48_000.0, 1024.0), "dead output flags");
+    }
+}

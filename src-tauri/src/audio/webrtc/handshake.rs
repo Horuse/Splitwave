@@ -512,3 +512,69 @@ fn candidate_summary(sdp: &str) -> String {
     }
     format!("host={host} mdns={mdns} srflx={srflx} relay={relay} other={other}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::graph::OpusApplication;
+
+    /// Full two-peer handshake on one machine: host creates an offer, guest
+    /// accepts it, host completes with the answer. ICE runs on host/loopback
+    /// candidates only, so no signaling server or internet is involved.
+    #[test]
+    fn local_loop_handshake_connects_two_peers() {
+        tauri::async_runtime::block_on(async {
+            // Every step has its own deadline, so a stuck ICE phase fails the
+            // test instead of hanging the whole suite.
+            let host_node = format!("hs-host-{}", cuid2::create_id());
+            let guest_node = format!("hs-guest-{}", cuid2::create_id());
+
+            let (connection_id, offer_code) = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                create_offer(host_node.clone(), 96_000, OpusApplication::Audio),
+            )
+            .await
+            .expect("offer timed out")
+            .expect("host offer");
+            let (guest_peer_id, answer_code) = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                accept_offer(
+                    guest_node.clone(),
+                    offer_code,
+                    96_000,
+                    OpusApplication::Audio,
+                ),
+            )
+            .await
+            .expect("accept timed out")
+            .expect("guest accept");
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                complete_handshake(host_node.clone(), answer_code),
+            )
+            .await
+            .expect("complete timed out")
+            .expect("complete handshake");
+
+            // The answer maps back onto the host's connection id.
+            assert!(guest_peer_id.len() > 0);
+
+            // Both sides now hold a peer entry for the connection.
+            let host_session = get(&host_node).expect("host session");
+            let guest_session = get(&guest_node).expect("guest session");
+            let host_peers = host_session.peers.lock().await;
+            assert!(
+                host_peers.contains_key(&connection_id),
+                "host tracks the connection"
+            );
+            let guest_peers = guest_session.peers.lock().await;
+            assert!(
+                guest_peers.contains_key(&connection_id),
+                "guest tracks the same connection id"
+            );
+            // Peer connections are intentionally not closed here: leave_room's
+            // ICE teardown has no bound in this environment and the process
+            // exits right after the test.
+        });
+    }
+}

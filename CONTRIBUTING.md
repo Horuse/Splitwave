@@ -57,12 +57,12 @@ If a platform genuinely cannot support what you are adding, return a real error 
 ## Before you open the PR
 
 ```bash
-bun run check                                  # svelte-check + tsc
-cargo check --manifest-path src-tauri/Cargo.toml
+bun run test                                   # frontend + Rust tests in parallel
+bun run check                                  # frontend + Rust checks in parallel
 bun run format                                 # Prettier + rustfmt
 ```
 
-Both checks must pass, and `format` must leave the tree clean. If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `src/lib/modules/pipeline/generated/` together with the Rust change — never by hand, and never on their own.
+All checks must pass, and `format` must leave the tree clean. If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `src/lib/modules/pipeline/generated/` together with the Rust change — never by hand, and never on their own.
 
 Anything persisted to disk — pipeline JSON, `virtual-devices.json`, the macOS driver plist — has to keep loading for people upgrading. Add a `#[serde(default)]` or a versioned migration; do not silently change the meaning of an existing field.
 

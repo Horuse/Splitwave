@@ -804,6 +804,24 @@ impl GraphSpec {
     /// - Anything not on a path from some input to some output is dropped.
     /// - Cycles are rejected.
     pub fn validate(&self) -> AppResult<ValidGraph> {
+        let mut node_ids = HashSet::new();
+        for node in &self.nodes {
+            if !node_ids.insert(node.id.as_str()) {
+                return Err(AppError::Validation(format!(
+                    "duplicate node id {:?}",
+                    node.id
+                )));
+            }
+        }
+        let mut edge_ids = HashSet::new();
+        for edge in &self.edges {
+            if !edge_ids.insert(edge.id.as_str()) {
+                return Err(AppError::Validation(format!(
+                    "duplicate edge id {:?}",
+                    edge.id
+                )));
+            }
+        }
         let (nodes, edges) = self.expand_roles();
         let nodes_by_id: HashMap<&str, &RoleNode> =
             nodes.iter().map(|n| (n.id.as_str(), n)).collect();
@@ -1304,6 +1322,10 @@ mod tests {
         }
     }
 
+    fn gain_node(id: &str) -> NodeSpec {
+        node(id, NodeKind::Gain, serde_json::json!({ "gainDb": 0.0 }))
+    }
+
     fn mic(id: &str) -> NodeSpec {
         node(
             id,
@@ -1488,5 +1510,409 @@ mod tests {
             };
             assert!(g.validate().is_err());
         }
+    }
+
+    #[test]
+    fn edge_to_unknown_node_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m")],
+            edges: vec![edge("e", "m", None, "ghost", None)],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_graph_ids_are_rejected_before_routing() {
+        let duplicate_nodes = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("same"), speaker("same")],
+            edges: vec![],
+        };
+        let error = duplicate_nodes.validate().expect_err("duplicate node id");
+        assert!(format!("{error}").contains("duplicate node id \"same\""));
+
+        let duplicate_edges = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![
+                edge("same", "m", None, "s", Some("ch1")),
+                edge("same", "m", None, "s", Some("ch2")),
+            ],
+        };
+        let error = duplicate_edges.validate().expect_err("duplicate edge id");
+        assert!(format!("{error}").contains("duplicate edge id \"same\""));
+    }
+
+    #[test]
+    fn edge_into_input_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), mic("m2")],
+            edges: vec![edge("e", "m", None, "m2", None)],
+        };
+        let err = g.validate().expect_err("edges into inputs are nonsense");
+        assert!(format!("{err}").contains("points into input"));
+    }
+
+    #[test]
+    fn edge_from_output_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![speaker("s"), speaker("s2")],
+            edges: vec![edge("e", "s", None, "s2", None)],
+        };
+        // An output feeding an output trips the output-source check (targets
+        // aren't inputs, so the input-role rule doesn't fire first).
+        let err = g.validate().expect_err("edge from output");
+        assert!(format!("{err}").contains("starts from output"));
+    }
+
+    #[test]
+    fn no_destination_at_all_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g")],
+            edges: vec![edge("e", "m", None, "g", None)],
+        };
+        let err = g.validate().expect_err("no output, no meter");
+        assert!(format!("{err}").contains("no routing"));
+    }
+
+    #[test]
+    fn cycle_between_effects_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g1"), gain_node("g2"), speaker("s")],
+            edges: vec![
+                edge("e1", "m", None, "g1", None),
+                edge("e2", "g1", None, "g2", None),
+                edge("e3", "g2", None, "g1", None),
+                edge("e4", "g2", None, "s", None),
+            ],
+        };
+        let err = g.validate().expect_err("cycle");
+        assert!(format!("{err}").contains("cycle"));
+    }
+
+    #[test]
+    fn routed_input_missing_device_fails_loudly() {
+        let mut mic_node = mic("m");
+        mic_node.data = serde_json::json!({}); // no deviceId
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic_node, speaker("s")],
+            edges: vec![edge("e", "m", None, "s", None)],
+        };
+        let err = g.validate().expect_err("routed mic without device");
+        assert!(format!("{err}").contains("no device selected"));
+    }
+
+    #[test]
+    fn unrouted_input_missing_device_is_dropped_silently() {
+        let mut mic_node = mic("m");
+        mic_node.data = serde_json::json!({});
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic_node, mic("m2"), speaker("s")],
+            edges: vec![edge("e1", "m2", None, "s", None)],
+        };
+        let v = g.validate().expect("unrouted mic is kept but not resolved");
+        assert_eq!(v.inputs.len(), 1);
+        assert_eq!(v.inputs[0].id, "m2");
+    }
+
+    #[test]
+    fn unrouted_output_without_device_is_dropped() {
+        let mut sp = speaker("s");
+        sp.data = serde_json::json!({});
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), sp, speaker("s2")],
+            edges: vec![edge("e2", "m", None, "s2", None)],
+        };
+        let v = g.validate().expect("valid");
+        assert_eq!(v.outputs.len(), 1);
+        assert_eq!(v.outputs[0].id, "s2");
+    }
+
+    #[test]
+    fn routed_output_missing_device_fails() {
+        let mut sp = speaker("s");
+        sp.data = serde_json::json!({});
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), sp],
+            edges: vec![edge("e", "m", None, "s", None)],
+        };
+        let err = g.validate().expect_err("routed speaker without device");
+        assert!(format!("{err}").contains("Speaker has no device"));
+    }
+
+    #[test]
+    fn system_audio_defaults_volume_and_exclude() {
+        let sys = node("sys", NodeKind::SystemAudio, serde_json::json!({}));
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![sys, speaker("s")],
+            edges: vec![edge("e", "sys", None, "s", None)],
+        };
+        let v = g.validate().expect("valid");
+        assert_eq!(v.inputs[0].volume, 1.0);
+        assert!(
+            matches!(&v.inputs[0].spec, InputSpec::SystemAudio { exclude_current_app } if *exclude_current_app)
+        );
+    }
+
+    #[test]
+    fn file_recording_new_mode_refuses_existing_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("splitwave-test-{}.wav", std::process::id()));
+        std::fs::write(&path, b"x").expect("create file");
+        let rec = node(
+            "rec",
+            NodeKind::FileRecording,
+            serde_json::json!({
+                "filePath": path.to_str().unwrap(),
+                "mode": "new",
+                "format": { "kind": "wav", "bitDepth": "f32" },
+                "channels": 2
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), rec],
+            edges: vec![edge("e", "m", None, "rec", None)],
+        };
+        let err = g.validate().expect_err("new mode + existing file");
+        assert!(format!("{err}").contains("already exists"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn file_recording_missing_directory_is_a_choose_file_error() {
+        let rec = node(
+            "rec",
+            NodeKind::FileRecording,
+            serde_json::json!({
+                "filePath": "/nonexistent-dir-xyz/test.wav",
+                "mode": "overwrite",
+                "format": { "kind": "wav", "bitDepth": "f32" },
+                "channels": 2
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), rec],
+            edges: vec![edge("e", "m", None, "rec", None)],
+        };
+        let err = g.validate().expect_err("missing dir");
+        assert!(format!("{err}").contains("choose-file"));
+    }
+
+    #[test]
+    fn file_recording_append_is_wav_aiff_only() {
+        let rec = node(
+            "rec",
+            NodeKind::FileRecording,
+            serde_json::json!({
+                "filePath": "/tmp/splitwave-test-append.flac",
+                "mode": "append",
+                "format": { "kind": "flac", "bitDepth": "i24", "compression": "default" },
+                "channels": 2
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), rec],
+            edges: vec![edge("e", "m", None, "rec", None)],
+        };
+        let err = g.validate().expect_err("append flac");
+        assert!(format!("{err}").contains("WAV/AIFF"), "actual: {err}");
+    }
+
+    #[test]
+    fn file_recording_channel_bounds() {
+        // FLAC caps at 8; WAV/AIFF allow up to 512.
+        for channels in [0u16, 9u16] {
+            let rec = node(
+                "rec",
+                NodeKind::FileRecording,
+                serde_json::json!({
+                    "filePath": "/tmp/splitwave-test.flac",
+                    "mode": "overwrite",
+                    "format": { "kind": "flac", "bitDepth": "i24", "compression": "default" },
+                    "channels": channels
+                }),
+            );
+            let g = GraphSpec {
+                sample_rate: None,
+                nodes: vec![mic("m"), rec],
+                edges: vec![edge("e", "m", None, "rec", None)],
+            };
+            assert!(g.validate().is_err(), "channels {channels}");
+        }
+        for channels in [0u16, 513u16] {
+            let rec = node(
+                "rec",
+                NodeKind::FileRecording,
+                serde_json::json!({
+                    "filePath": "/tmp/splitwave-test.wav",
+                    "mode": "overwrite",
+                    "format": { "kind": "wav", "bitDepth": "f32" },
+                    "channels": channels
+                }),
+            );
+            let g = GraphSpec {
+                sample_rate: None,
+                nodes: vec![mic("m"), rec],
+                edges: vec![edge("e", "m", None, "rec", None)],
+            };
+            assert!(g.validate().is_err(), "channels {channels}");
+        }
+    }
+
+    #[test]
+    fn file_recording_sample_rate_bounds() {
+        let rec = node(
+            "rec",
+            NodeKind::FileRecording,
+            serde_json::json!({
+                "filePath": "/tmp/splitwave-test.wav",
+                "mode": "overwrite",
+                "format": { "kind": "wav", "bitDepth": "f32" },
+                "channels": 2,
+                "sampleRate": 500_000
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), rec],
+            edges: vec![edge("e", "m", None, "rec", None)],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn net_sender_rejects_bad_ip_and_clamps_channels() {
+        let bad = node(
+            "net",
+            NodeKind::NetSender,
+            serde_json::json!({
+                "targetIp": "not-an-ip",
+                "port": 5000,
+                "codec": "pcm-f32",
+                "opusBitrate": 96_000,
+                "opusApplication": "audio",
+                "channels": 2
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), bad],
+            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+        };
+        let err = g.validate().expect_err("bad ip");
+        assert!(format!("{err}").contains("invalid target IP"));
+
+        let good = node(
+            "net",
+            NodeKind::NetSender,
+            serde_json::json!({
+                "targetIp": "127.0.0.1",
+                "port": 5000,
+                "codec": "pcm-f32",
+                "opusBitrate": 96_000,
+                "opusApplication": "audio",
+                "channels": 1000
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), good],
+            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+        };
+        let v = g.validate().expect("valid");
+        assert!(matches!(
+            &v.outputs[0].spec,
+            OutputSpec::NetSender { channels, .. } if *channels == 255
+        ));
+    }
+
+    #[test]
+    fn opus_net_sender_drops_pinned_sample_rate() {
+        let good = node(
+            "net",
+            NodeKind::NetSender,
+            serde_json::json!({
+                "targetIp": "127.0.0.1",
+                "port": 5000,
+                "codec": "opus",
+                "opusBitrate": 96_000,
+                "opusApplication": "audio",
+                "channels": 2,
+                "sampleRate": 96000
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), good],
+            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+        };
+        let v = g.validate().expect("valid");
+        assert!(matches!(
+            &v.outputs[0].spec,
+            OutputSpec::NetSender {
+                sample_rate: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn effect_with_broken_data_is_rejected() {
+        let bad_gain = node("g", NodeKind::Gain, serde_json::json!({ "gainDb": "loud" }));
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![bad_gain, speaker("s")],
+            edges: vec![edge("e", "g", None, "s", None)],
+        };
+        let err = g.validate().expect_err("gain with string db");
+        assert!(format!("{err}").contains("invalid Gain data"));
+    }
+
+    #[test]
+    fn plugin_node_resolves_to_plugin_spec() {
+        let plugin = node(
+            "p",
+            NodeKind::Plugin,
+            serde_json::json!({
+                "format": "vst3",
+                "path": "/tmp/never.vst3",
+                "pluginId": "abc",
+                "bypassed": false
+            }),
+        );
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![plugin, speaker("s")],
+            edges: vec![edge("e", "p", None, "s", None)],
+        };
+        let v = g.validate().expect("valid");
+        assert!(v.effects.iter().any(|e| matches!(
+            &e.spec,
+            EffectSpec::Plugin { path, plugin_id, .. } if path == "/tmp/never.vst3" && plugin_id == "abc"
+        )));
+    }
+
+    #[test]
+    fn defaults_are_reachable() {
+        assert!(matches!(
+            RecordingFormat::default(),
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32
+            }
+        ));
+        assert_eq!(RecordingMode::default(), RecordingMode::New);
     }
 }

@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
@@ -31,6 +32,18 @@ const EOF_DRAIN_MAX: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const PROGRESS_EVENT: &str = "audio://audio_file_progress";
 const SEEK_NONE: i64 = -1;
+
+/// Progress payloads go to the frontend via Tauri; tests drive the reader
+/// with a recording emitter instead of an `AppHandle<Wry>`.
+pub(super) trait ProgressEmitter: Send + Sync + 'static {
+    fn emit_progress(&self, payload: serde_json::Value);
+}
+
+impl<R: tauri::Runtime> ProgressEmitter for AppHandle<R> {
+    fn emit_progress(&self, payload: serde_json::Value) {
+        let _ = self.emit(PROGRESS_EVENT, payload);
+    }
+}
 
 pub(super) struct AudioFileReader {
     stop: Arc<AtomicBool>,
@@ -98,7 +111,7 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
         .map(|c| c.count() as u32)
         .unwrap_or(2)
         .max(1);
-    let total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
+    let mut total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
         track
             .duration
             .zip(track.time_base)
@@ -108,6 +121,9 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
             })
             .unwrap_or(0)
     });
+    if audio.codec == CODEC_ID_OPUS {
+        total_frames = total_frames.saturating_sub(track.delay.unwrap_or(0) as u64);
+    }
     Ok(AudioFileInfo {
         sample_rate,
         channels,
@@ -115,13 +131,13 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
     })
 }
 
-pub(super) fn start_audio_file_reader(
+pub(super) fn start_audio_file_reader<E: ProgressEmitter>(
     node_id: String,
     path: PathBuf,
     bridge: BroadcastRx,
     initial_loop: bool,
     paused: Arc<AtomicBool>,
-    app: AppHandle,
+    app: E,
 ) -> AppResult<AudioFileReader> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -212,7 +228,7 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
             .ok_or_else(|| AppError::Stream("unknown sample rate".into()))?;
         // Some formats (streaming/flac) leave `num_frames` unset; fall back to
         // the track duration so the scrubber gets a real range.
-        let total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
+        let mut total_frames = track.num_frames.filter(|&n| n > 0).unwrap_or_else(|| {
             track
                 .duration
                 .zip(track.time_base)
@@ -222,6 +238,11 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
                 })
                 .unwrap_or(0)
         });
+        // symphonia-format-ogg 0.6 exposes the raw Opus granule position as
+        // num_frames even though it separately reports the leading pre-skip.
+        if audio.codec == CODEC_ID_OPUS {
+            total_frames = total_frames.saturating_sub(track.delay.unwrap_or(0) as u64);
+        }
         let channels = audio
             .channels
             .as_ref()
@@ -371,7 +392,7 @@ fn reopen_decoder(od: &mut OpenedDecoder, path: &Path) {
     }
 }
 
-fn run(
+fn run<E: ProgressEmitter>(
     node_id: String,
     path: &Path,
     mut bridge: BroadcastRx,
@@ -379,7 +400,7 @@ fn run(
     seek_to: &AtomicI64,
     loop_enabled: &AtomicBool,
     paused: &AtomicBool,
-    app: &AppHandle,
+    app: &E,
 ) -> AppResult<()> {
     let mut od = open_decoder(path)?;
 
@@ -667,7 +688,7 @@ fn clamp_frame(frame: u64, total: u64) -> u64 {
 }
 
 fn emit_progress(
-    app: &AppHandle,
+    app: &impl ProgressEmitter,
     node_id: &str,
     frames: u64,
     total_frames: u64,
@@ -676,18 +697,15 @@ fn emit_progress(
     stopped: bool,
     paused: bool,
 ) {
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        json!({
-            "nodeId": node_id,
-            "frames": frames,
-            "totalFrames": total_frames,
-            "sampleRate": sample_rate,
-            "channels": channels,
-            "stopped": stopped,
-            "paused": paused,
-        }),
-    );
+    app.emit_progress(json!({
+        "nodeId": node_id,
+        "frames": frames,
+        "totalFrames": total_frames,
+        "sampleRate": sample_rate,
+        "channels": channels,
+        "stopped": stopped,
+        "paused": paused,
+    }));
 }
 
 #[cfg(test)]
@@ -702,6 +720,20 @@ mod tests {
         let mut p = std::env::temp_dir();
         p.push(format!("file_reader_test_{}_{}", std::process::id(), name));
         p
+    }
+
+    struct StopAtEof {
+        stop: Arc<AtomicBool>,
+        saw_paused: Arc<AtomicBool>,
+    }
+
+    impl ProgressEmitter for StopAtEof {
+        fn emit_progress(&self, payload: serde_json::Value) {
+            if payload.get("paused").and_then(serde_json::Value::as_bool) == Some(true) {
+                self.saw_paused.store(true, Ordering::SeqCst);
+                self.stop.store(true, Ordering::SeqCst);
+            }
+        }
     }
 
     #[test]
@@ -773,18 +805,35 @@ mod tests {
 
     // Exercises the reader's contract for one format: opens the file, reports a
     // nonzero total, decodes the whole track, then restarts from the start after
-    // EOF (the loop path) instead of staying at the end. Lossy codecs pad/trim,
-    // so frame counts are checked against a generous band around the source.
-    fn assert_format_roundtrip(fmt: RecordingFormat, label: &str) {
-        let path = temp_path(&format!("{label}.out"));
+    // EOF (the loop path) instead of staying at the end. The source length is
+    // deliberately not codec-frame-aligned so end trimming is exercised.
+    fn assert_format_roundtrip_with_channels(fmt: RecordingFormat, label: &str, ch: u16) {
+        let extension = match &fmt {
+            RecordingFormat::Wav { .. } => "wav",
+            RecordingFormat::Aiff { .. } => "aiff",
+            RecordingFormat::Flac { .. } => "flac",
+            RecordingFormat::Opus { .. } => "opus",
+            RecordingFormat::Mp3 { .. } => "mp3",
+            RecordingFormat::Aac { .. } => "m4a",
+        };
+        let path = temp_path(&format!("{label}.{extension}"));
         let _ = std::fs::remove_file(&path);
         let sample_rate = 48_000u32;
-        let ch = 2u16;
-        let frames = 48_000usize;
+        let frames = 48_137usize;
+        // AVAudioFile's AAC container duration includes the fixed encoder
+        // priming plus at most one final 1024-frame packet of padding.  Keep
+        // the bound absolute: it must not grow with the recording length.
+        let frame_tolerance = if matches!(&fmt, RecordingFormat::Aac { .. }) {
+            4_096u64
+        } else {
+            0
+        };
         let mut block = Vec::with_capacity(frames * ch as usize);
         for f in 0..frames {
-            block.push((f % 101) as f32 / 101.0 - 0.5);
-            block.push(-((f % 101) as i32) as f32 / 101.0 + 0.5);
+            for channel in 0..ch {
+                let sample = (f % 101) as f32 / 101.0 - 0.5;
+                block.push(if channel % 2 == 0 { sample } else { -sample });
+            }
         }
         let mut enc = build_encoder(&path, sample_rate, ch, fmt.clone(), false).unwrap();
         enc.write_interleaved(&block).unwrap();
@@ -792,37 +841,60 @@ mod tests {
 
         let mut od = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: open: {e}"));
         assert_eq!(od.sample_rate, sample_rate, "{label}: sample rate");
-        assert!(od.channels >= 1, "{label}: channels");
+        assert_eq!(od.channels, ch as usize, "{label}: channels");
 
-        let band_min = (frames as f64 * 0.8) as u64;
-        let band_max = (frames as f64 * 1.5) as u64;
+        let duration_error = od.total_frames.abs_diff(frames as u64);
         assert!(
-            (band_min..=band_max).contains(&od.total_frames),
-            "{label}: total_frames {} outside ~{frames}",
+            duration_error <= frame_tolerance,
+            "{label}: metadata reports {} frames for {frames}",
             od.total_frames
         );
 
         let mut interleaved = Vec::new();
         let mut out = vec![0.0f32; 8192];
         let mut decoded = 0u64;
+        let mut energy = 0.0f64;
         loop {
             let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
             if n == 0 {
                 break;
             }
             decoded += n as u64;
+            energy += out[..n * od.channels]
+                .iter()
+                .map(|sample| (*sample as f64) * (*sample as f64))
+                .sum::<f64>();
         }
         assert!(
-            (band_min..=band_max).contains(&decoded),
-            "{label}: decoded {decoded} outside ~{frames}"
+            decoded.abs_diff(frames as u64) <= frame_tolerance,
+            "{label}: decoded {decoded} frames for {frames}"
         );
+        assert!(energy > 1.0, "{label}: decoder returned silence");
 
         // Loop restart: after EOF, the reader reopens the file (symphonia's isomp4
         // reader can't rewind an already-read stream), so a fresh decode must
         // yield audio again rather than staying at the end.
         reopen_decoder(&mut od, &path);
-        let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
-        assert!(n > 0, "{label}: decode did not restart after EOF reopen");
+        let mut restarted_frames = 0usize;
+        let mut restarted_audio = false;
+        while restarted_frames < 8192 {
+            let n = decode_next(&mut od, &mut interleaved, &mut out).unwrap();
+            if n == 0 {
+                break;
+            }
+            restarted_frames += n;
+            restarted_audio |= out[..n * od.channels]
+                .iter()
+                .any(|sample| sample.abs() > 1e-4);
+            if restarted_audio {
+                break;
+            }
+        }
+        assert!(
+            restarted_frames > 0,
+            "{label}: decode did not restart after EOF reopen"
+        );
+        assert!(restarted_audio, "{label}: restart decoded only silence");
 
         // Metadata-less fallback: a fresh scan agrees with the reported total.
         let mut od2 = open_decoder(&path).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));
@@ -833,11 +905,15 @@ mod tests {
             od2.fix_gapless_trim,
         );
         assert!(
-            (band_min..=band_max).contains(&scanned),
-            "{label}: scan_frames {scanned} outside ~{frames}"
+            scanned.abs_diff(frames as u64) <= frame_tolerance,
+            "{label}: scan_frames {scanned} for {frames}"
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn assert_format_roundtrip(fmt: RecordingFormat, label: &str) {
+        assert_format_roundtrip_with_channels(fmt, label, 2);
     }
 
     #[test]
@@ -895,7 +971,14 @@ mod tests {
             "opus",
         );
         #[cfg(target_os = "macos")]
-        assert_format_roundtrip(RecordingFormat::Aac { bitrate: 128_000 }, "aac");
+        {
+            assert_format_roundtrip(RecordingFormat::Aac { bitrate: 128_000 }, "aac");
+            assert_format_roundtrip_with_channels(
+                RecordingFormat::Aac { bitrate: 128_000 },
+                "aac_mono",
+                1,
+            );
+        }
     }
 
     #[test]
@@ -940,5 +1023,140 @@ mod tests {
         }
         assert!(decoded > 0, "no audio decoded from truncated wav");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn probe_falls_back_to_duration_when_num_frames_missing() {
+        // An MP3 without a Xing/Info tag carries no num_frames; the probe
+        // falls back to the track duration for the scrubber's range.
+        let path = temp_path("probe.mp3");
+        let _ = std::fs::remove_file(&path);
+        let frames = 48_000usize;
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push((f % 100) as f32 / 100.0);
+            block.push(0.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Mp3 { bitrate_kbps: 128 },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let info = probe_audio_file(&path).unwrap();
+        assert_eq!(info.sample_rate, 48_000);
+        assert!(
+            info.total_frames > 0,
+            "duration fallback must yield a total"
+        );
+        assert!(
+            (info.total_frames as i64 - frames as i64).abs() < 8_000,
+            "total {} vs source {}",
+            info.total_frames,
+            frames
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn probe_rejects_garbage_and_missing_files() {
+        assert!(probe_audio_file(Path::new("/definitely/not/here.wav")).is_err());
+        let path = temp_path("garbage.dat");
+        std::fs::write(&path, [0u8; 4096]).unwrap();
+        assert!(probe_audio_file(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn clamp_frame_bounds_seek_targets() {
+        assert_eq!(clamp_frame(10_000, 2_000), 2_000);
+        assert_eq!(clamp_frame(0, 2_000), 0);
+        assert_eq!(clamp_frame(500, 0), 500, "unknown total keeps the target");
+        assert_eq!(clamp_frame(u64::MAX, 1), 1);
+    }
+
+    #[test]
+    fn reader_streams_audio_into_the_bridge_until_eof() {
+        let path = temp_path("stream.wav");
+        let frames = 12_000usize; // 250 ms of audio
+        let mut block = Vec::with_capacity(frames * 2);
+        for f in 0..frames {
+            block.push(((f % 40) as f32) / 40.0);
+            block.push(-((f % 40) as f32) / 40.0);
+        }
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let paused = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let saw_paused = Arc::new(AtomicBool::new(false));
+        let (_tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let seek_to = AtomicI64::new(SEEK_NONE);
+        let loop_enabled = AtomicBool::new(false);
+        let emitter = StopAtEof {
+            stop: stop.clone(),
+            saw_paused: saw_paused.clone(),
+        };
+
+        // Run synchronously. The emitter stops the loop as soon as EOF emits
+        // its paused state, so this checks the transition without racing a
+        // fixed sleep against the spawned reader thread.
+        run(
+            "node".into(),
+            &path,
+            rx,
+            &stop,
+            &seek_to,
+            &loop_enabled,
+            &paused,
+            &emitter,
+        )
+        .expect("reader reaches EOF");
+        assert!(paused.load(Ordering::SeqCst), "reader pauses at EOF");
+        assert!(
+            saw_paused.load(Ordering::SeqCst),
+            "reader emits the EOF state"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Test-only progress sink so `pipeline/mod.rs` tests can drive the reader
+/// without a Tauri `AppHandle<Wry>`.
+#[cfg(test)]
+pub mod file_reader_test_emitter {
+    use super::ProgressEmitter;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    pub struct TestEmitter {
+        events: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    impl TestEmitter {
+        pub fn events(&self) -> Arc<Mutex<Vec<serde_json::Value>>> {
+            self.events.clone()
+        }
+    }
+
+    impl ProgressEmitter for TestEmitter {
+        fn emit_progress(&self, payload: serde_json::Value) {
+            self.events.lock().unwrap().push(payload);
+        }
     }
 }

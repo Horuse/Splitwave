@@ -277,3 +277,136 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     }
     broadcast_push(&ch.broadcast, seq, packets, &pcm);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::netaudio::packet::{pcm_f32_encode, write_header};
+    use crate::audio::webrtc::session::PeerState;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+    use std::sync::Mutex;
+    use webrtc::peer_connection::configuration::RTCConfiguration;
+    use webrtc::peer_connection::RTCPeerConnection;
+
+    async fn bare_peer_connection() -> Arc<RTCPeerConnection> {
+        // A peer connection whose ICE is never exercised: decode paths only
+        // touch counters and the fanout, never the transport.
+        use webrtc::api::APIBuilder;
+        let api = APIBuilder::new().build();
+        Arc::new(
+            api.new_peer_connection(RTCConfiguration::default())
+                .await
+                .expect("bare pc"),
+        )
+    }
+
+    async fn session_with_peer(node: &str) -> (Arc<WebRtcSession>, String, Arc<PeerState>) {
+        let session =
+            crate::audio::webrtc::registry::get_or_create(node, 96_000, OpusApplication::Audio);
+        let peer_id = format!("peer-{}", cuid2::create_id());
+        let peer = Arc::new(PeerState {
+            peer_id: peer_id.clone(),
+            pc: bare_peer_connection().await,
+            dc: Mutex::new(None),
+            ctrl_dc: Mutex::new(None),
+            channels: Mutex::new(HashMap::new()),
+            muted: Arc::new(AtomicBool::new(false)),
+            ping_ms: Arc::new(AtomicU32::new(0)),
+            packets: Arc::new(AtomicU64::new(0)),
+            lost: Arc::new(AtomicU64::new(0)),
+            remote_name: Arc::new(Mutex::new("remote".into())),
+            remote_channels: Arc::new(AtomicU32::new(0)),
+            display_id: Arc::new(Mutex::new(peer_id.clone())),
+        });
+        session
+            .peers
+            .lock()
+            .await
+            .insert(peer_id.clone(), peer.clone());
+        (session, peer_id, peer)
+    }
+
+    fn pcm_packet(channel: u8, seq: u16, samples: usize) -> Bytes {
+        let mut body = Vec::new();
+        pcm_f32_encode(&vec![0.25f32; samples], &mut body);
+        let mut buf = Vec::new();
+        write_header(&mut buf, Format::PcmF32, channel, seq, 48_000, 0, 0);
+        buf.extend_from_slice(&body);
+        Bytes::from(buf)
+    }
+
+    #[test]
+    fn decode_and_write_walks_the_channel_timeline() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            // Garbage datagram: parse fails, nothing is counted.
+            decode_and_write(Bytes::from_static(b"junk"), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 0);
+
+            // Unknown peer id: silently dropped.
+            decode_and_write(pcm_packet(0, 0, 480), &session, "ghost").await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 0);
+
+            // First packet attaches the channel and counts.
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 1);
+            assert_eq!(peer.channels.lock().unwrap().len(), 1, "channel 0 attached");
+
+            // A gap in seq conceals and lands in the lost counter.
+            decode_and_write(pcm_packet(0, 5, 480), &session, &peer_id).await;
+            assert!(peer.lost.load(Ordering::Relaxed) >= 4, "gap concealed");
+
+            // A duplicate is refused but still counted on arrival.
+            let before = peer.packets.load(Ordering::Relaxed);
+            decode_and_write(pcm_packet(0, 5, 480), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), before + 1);
+            assert_eq!(
+                peer.lost.load(Ordering::Relaxed),
+                4,
+                "duplicates must not count as losses"
+            );
+
+            // A second channel gets its own state.
+            decode_and_write(pcm_packet(1, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.channels.lock().unwrap().len(), 2);
+        });
+    }
+
+    #[test]
+    fn muted_peer_advances_timeline_without_pushing() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-mute-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            peer.muted.store(true, Ordering::Relaxed);
+            decode_and_write(pcm_packet(0, 1, 480), &session, &peer_id).await;
+            // The timeline advanced (next unmuted packet continues in step),
+            // but the muted packet's loss bookkeeping shows no concealment.
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 2);
+            assert_eq!(peer.lost.load(Ordering::Relaxed), 0);
+        });
+    }
+
+    #[test]
+    fn huge_gap_drops_the_channel_state() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-gap-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.channels.lock().unwrap().len(), 1);
+
+            // A 200-packet outage is an outage, not a gap: the channel is
+            // forgotten and re-attaches on the next packet, in phase.
+            decode_and_write(pcm_packet(0, 250, 480), &session, &peer_id).await;
+            assert!(
+                peer.channels.lock().unwrap().is_empty(),
+                "outage drops the channel state"
+            );
+        });
+    }
+}

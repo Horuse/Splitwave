@@ -19,6 +19,7 @@ pub struct FlacRecorder {
     min_sample: f32,
     dither: Xorshift,
     scratch: Vec<i32>,
+    channels: u16,
 }
 
 impl FlacRecorder {
@@ -49,12 +50,14 @@ impl FlacRecorder {
             min_sample,
             dither: Xorshift::seed(0x9e3779b97f4a7c15),
             scratch: Vec::with_capacity(2048),
+            channels,
         })
     }
 }
 
 impl AudioEncoder for FlacRecorder {
     fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
+        super::validate_interleaved(samples, self.channels)?;
         self.scratch.clear();
         if self.scratch.capacity() < samples.len() {
             self.scratch

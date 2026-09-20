@@ -55,6 +55,9 @@ jobs:
       - name: Install JS deps
         run: bun install --frozen-lockfile
 
+      - name: Frontend tests
+        run: bun run test:frontend
+
       # Each OS backend needs its native headers to compile. Linux installs
       # PipeWire and the GTK stack explicitly; macOS and Windows runners ship
       # their SDKs (CoreAudio / WASAPI + MSVC) preinstalled.

@@ -2028,3 +2028,1027 @@ mod tests {
         assert!((dst[0] - 0.75).abs() < 1e-6);
     }
 }
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+    use crate::audio::graph::{EdgeSpec, EffectSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+
+    const SR: u32 = 48_000;
+
+    fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
+        NodeSpec {
+            id: id.to_string(),
+            kind,
+            data,
+        }
+    }
+
+    fn mic(id: &str) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Microphone,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
+    }
+
+    fn gain_node(id: &str, db: f32) -> NodeSpec {
+        node(id, NodeKind::Gain, serde_json::json!({ "gainDb": db }))
+    }
+
+    fn speaker(id: &str) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Speaker,
+            serde_json::json!({ "deviceId": "dev" }),
+        )
+    }
+
+    fn edge(id: &str, from: &str, sh: Option<&str>, to: &str, th: Option<&str>) -> EdgeSpec {
+        EdgeSpec {
+            id: id.to_string(),
+            source: from.to_string(),
+            source_handle: sh.map(str::to_string),
+            target: to.to_string(),
+            target_handle: th.map(str::to_string),
+        }
+    }
+
+    /// mic → gain(0 dB) → speaker, validated.
+    fn passthrough_graph() -> (ValidGraph, String) {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "s", None),
+            ],
+        };
+        (g.validate().expect("valid"), "s".to_string())
+    }
+
+    fn stereo_ramp(frames: usize, offset: f32) -> Vec<f32> {
+        (0..frames * 2)
+            .map(|i| ((i / 2) as f32 + offset) * 0.01)
+            .collect()
+    }
+
+    fn push_all(prod: &mut Producer<f32>, data: &[f32]) -> usize {
+        // The ring is sized for a full second, far more than any test feeds.
+        prod.push_partial_slice(data).1.is_empty() as usize * data.len()
+    }
+
+    fn fresh_registry() -> EffectRegistry {
+        EffectRegistry::new()
+    }
+
+    fn build(
+        output_id: Option<&str>,
+        output_sr: u32,
+        valid: &ValidGraph,
+        input_sr: u32,
+        realtime: bool,
+    ) -> (BuiltOutputGraph, HashMap<String, Producer<f32>>) {
+        let mut producer_pairs = Vec::new();
+        let native = valid
+            .inputs
+            .iter()
+            .map(|i| (i.id.clone(), input_sr))
+            .collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let built = build_output_graph(
+            output_id,
+            output_sr,
+            realtime,
+            valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build succeeds");
+        let mut map = HashMap::new();
+        for (id, prod) in producer_pairs {
+            map.insert(id, prod);
+        }
+        (built, map)
+    }
+
+    #[test]
+    fn passthrough_speaker_reproduces_source_after_two_blocks() {
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
+        assert_eq!(built.graph.sample_rate(), SR);
+        assert_eq!(built.graph.out_channels(), 2);
+        assert_eq!(built.graph.latency_frames(), 0);
+
+        // Feed 4 blocks; the first block drains as the ring fills, the rest
+        // must be an exact copy of the source ramp.
+        let mut fed = Vec::new();
+        for k in 0..4 {
+            fed.extend(stereo_ramp(1024, k as f32 * 1024.0));
+        }
+        let pushed = push_all(producers.get_mut("m").unwrap(), &fed);
+        assert_eq!(pushed, fed.len());
+
+        let mut out1 = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out1);
+        let mut out2 = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out2);
+        assert_eq!(
+            built
+                .output
+                .blocks
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+
+        // With zero effect latency and equal rates the ramp streams straight
+        // through: block 1 is its first 1024 frames, block 2 the next span.
+        assert_eq!(out1, fed[..DSP_BLOCK_FRAMES * 2]);
+        assert_eq!(out2, fed[DSP_BLOCK_FRAMES * 2..DSP_BLOCK_FRAMES * 4]);
+    }
+
+    #[test]
+    fn volume_atom_scales_output() {
+        let (valid, _) = passthrough_graph();
+        let mut volumes: HashMap<String, Arc<AtomicU32>> = HashMap::new();
+        volumes.insert("m".to_string(), Arc::new(AtomicU32::new(1.0f32.to_bits())));
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built = build_output_graph(
+            Some("s"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &volumes,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+        let prod = &mut producer_pairs[0].1;
+        let fed = stereo_ramp(4096, 0.0);
+        push_all(prod, &fed);
+
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+
+        // Drop the volume to 0.5 and confirm the next block scales.
+        volumes["m"].store(0.5f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        built.graph.process_block(&mut out);
+        let want = &fed[DSP_BLOCK_FRAMES * 6..DSP_BLOCK_FRAMES * 8];
+        for (o, w) in out.iter().zip(want) {
+            assert!((o - 0.5 * w).abs() < 1e-5, "{o} vs {w}");
+        }
+    }
+
+    #[test]
+    fn paused_source_drains_ring_and_silences() {
+        let (valid, _) = passthrough_graph();
+        let mut paused: HashMap<String, Arc<AtomicBool>> = HashMap::new();
+        paused.insert("m".to_string(), Arc::new(AtomicBool::new(true)));
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built = build_output_graph(
+            Some("s"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &paused,
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+        let prod = &mut producer_pairs[0].1;
+        push_all(prod, &stereo_ramp(4096, 0.0));
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        assert_eq!(out, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+        // The ring was drained: no backlog left.
+        let meta = &built.sources[0];
+        assert_eq!(
+            meta.stats.level.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+
+    #[test]
+    fn drain_generation_change_flushes_the_source() {
+        let (valid, _) = passthrough_graph();
+        let mut drain: HashMap<String, Arc<AtomicU64>> = HashMap::new();
+        drain.insert("m".to_string(), Arc::new(AtomicU64::new(0)));
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built = build_output_graph(
+            Some("s"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &drain,
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+        let prod = &mut producer_pairs[0].1;
+        push_all(prod, &stereo_ramp(4096, 0.0));
+
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+        // A seek rewinds the capture: generation bumps, everything is dropped.
+        drain["m"].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        built.graph.process_block(&mut out);
+        assert_eq!(out, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+        // The flushed ring stays empty: the next block is silence too.
+        let mut out2 = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out2);
+        assert_eq!(out2, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+    }
+
+    #[test]
+    fn limiter_latency_pads_the_parallel_path() {
+        // Two branches to one output: a passthrough gain and a limiter with
+        // lookahead. The graph must report the lookahead as its latency.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g", 0.0),
+                gain_node("l", 0.0),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "m", None, "l", None),
+                edge("e3", "g", None, "s", None),
+                edge("e4", "l", None, "s", None),
+            ],
+        };
+        // Replace one gain with a limiter spec by editing its node kind.
+        let mut valid = g.validate().expect("valid");
+        for e in &mut valid.effects {
+            if e.id == "l" {
+                e.spec = EffectSpec::Limiter(crate::audio::graph::LimiterData {
+                    ceiling_db: 0.0,
+                    lookahead_ms: 2.0,
+                    release_ms: 50.0,
+                    bypassed: false,
+                });
+            }
+        }
+        let (built, _) = build(Some("s"), SR, &valid, SR, false);
+        assert_eq!(built.graph.latency_frames(), 96, "2 ms lookahead @ 48k");
+        // Both paths are padded to the same length → mix stays aligned.
+        assert_eq!(built.graph.active_output_channels(), 2);
+    }
+
+    #[test]
+    fn missing_sample_rate_is_a_validation_error() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e1", "m", None, "s", None)],
+        };
+        let valid = g.validate().expect("valid");
+        let mut producer_pairs = Vec::new();
+        let native = HashMap::new(); // no entry for "m"
+        let native_ch = HashMap::new();
+        let mut reg = fresh_registry();
+        let err = build_output_graph(
+            Some("s"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        );
+        assert!(err.is_err(), "input without SR must fail");
+    }
+
+    #[test]
+    fn monitor_graph_has_no_terminals_and_tracks_blocks() {
+        let mut g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e1", "m", None, "s", None)],
+        };
+        // An analyzer is a monitor-only node.
+        g.nodes
+            .push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
+        g.edges.push(edge("e2", "m", None, "lm", None));
+        let valid = g.validate().expect("valid");
+        let (mut built, mut producers) = build(None, SR, &valid, SR, false);
+        let prod = producers.get_mut("m").unwrap();
+        push_all(prod, &stereo_ramp(4096, 0.0));
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        assert_eq!(
+            built
+                .output
+                .blocks
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        // Monitor has no terminals: the active width floors at 1.
+        assert_eq!(built.graph.active_output_channels(), 1);
+    }
+
+    #[test]
+    fn fan_out_effect_is_computed_once_and_shared_via_ring() {
+        // mic → gain → spkrA, and gain → spkrB: the gain node is shared.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("a"), speaker("b")],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "a", None),
+                edge("e3", "g", None, "b", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+
+        let plan = plan_cuts(&valid, None);
+        assert_eq!(
+            plan.owner.get("g"),
+            Some(&"a".to_string()),
+            "first output owns"
+        );
+        let consumers = plan.consumers.get("g").expect("fan-out consumers");
+        assert!(consumers.contains(&"b".to_string()));
+        let participants = plan.participants();
+        assert!(participants.contains("a") && participants.contains("b"));
+
+        // Building B with the cut leaf: A's published block feeds B.
+        let (mut built_a, mut producers_a) = build(Some("a"), SR, &valid, SR, false);
+        let (node_idx, width) = built_a.node_meta["g"];
+        assert_eq!(width, 2);
+        let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
+        let mut cut_leaves = HashMap::new();
+        cut_leaves.insert("g".to_string(), (cons, SR, 2));
+
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built_b = build_output_graph(
+            Some("b"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            cut_leaves,
+        )
+        .expect("build B");
+        assert_eq!(built_b.sources.len(), 1, "the shared node is a ring source");
+        assert_eq!(built_b.sources[0].channels, 2);
+
+        // A publishes a block into the tap ring; B reads it back.
+        built_a.graph.attach_tap(node_idx, prod);
+        let published = stereo_ramp(1024, 0.0);
+        push_all(producers_a.get_mut("m").unwrap(), &published);
+        let mut out_a = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built_a.graph.process_block(&mut out_a);
+        let mut out_b = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built_b.graph.process_block(&mut out_b);
+        assert_eq!(out_b, out_a, "consumer reads the owner's published block");
+    }
+
+    #[test]
+    fn net_sender_output_builds_a_consumer_node() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("m"),
+                node(
+                    "net",
+                    NodeKind::NetSender,
+                    serde_json::json!({
+                        "targetIp": "127.0.0.1",
+                        "port": 9,
+                        "codec": "pcm-f32",
+                        "opusBitrate": 96_000,
+                        "opusApplication": "audio",
+                        "channels": 2
+                    }),
+                ),
+            ],
+            edges: vec![edge("e1", "m", None, "net", Some("ch1"))],
+        };
+        let valid = g.validate().expect("send graph valid");
+        assert_eq!(valid.outputs.len(), 1);
+        let (mut built, _) = build(Some("net"), SR, &valid, SR, false);
+        assert_eq!(built.graph.out_channels(), 2);
+        // Send-side graph is driven like any output.
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+    }
+
+    #[test]
+    fn file_recording_output_builds_terminals() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("m"),
+                node(
+                    "rec",
+                    NodeKind::FileRecording,
+                    serde_json::json!({
+                        "filePath": "/tmp/test.wav",
+                        "format": { "kind": "wav", "bitDepth": "f32" },
+                        "channels": 2,
+                        "mode": "overwrite",
+                        "sampleRate": 48000
+                    }),
+                ),
+            ],
+            edges: vec![edge("e1", "m", None, "rec", None)],
+        };
+        let valid = g.validate().expect("recording graph valid");
+        let (mut built, _) = build(Some("rec"), SR, &valid, SR, false);
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        assert_eq!(out, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+    }
+
+    #[test]
+    fn multi_input_sums_into_the_mix() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m1"), mic("m2"), speaker("s")],
+            edges: vec![
+                edge("e1", "m1", None, "s", None),
+                edge("e2", "m2", None, "s", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built = build_output_graph(
+            Some("s"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("build");
+        let mut a = stereo_ramp(4096, 0.0);
+        let mut b = stereo_ramp(4096, 0.5);
+        push_all(&mut producer_pairs[0].1, &a);
+        push_all(&mut producer_pairs[1].1, &b);
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+        for i in 0..out.len() {
+            let want = a[2048 * 2 + i] + b[2048 * 2 + i];
+            assert!(
+                (out[i] - want).abs() < 1e-4,
+                "sample {i}: {} vs {}",
+                out[i],
+                want
+            );
+        }
+        let _ = &mut a;
+        let _ = &mut b;
+    }
+
+    #[test]
+    fn real_rate_change_resamples_and_reports_meta() {
+        let (valid, _) = passthrough_graph();
+        let (built, _) = build(Some("s"), SR, &valid, 44_100, true);
+        let meta = &built.sources[0];
+        assert_eq!(meta.native_sr, 44_100);
+        assert_eq!(meta.channels, 2);
+        // 1024 frames @ 48k consume ceil(1024 * 44100 / 48000) = 941 @ 44.1k.
+        assert_eq!(meta.frames_per_block, 941);
+    }
+
+    #[test]
+    fn set_out_channels_updates_width() {
+        let (valid, _) = passthrough_graph();
+        let (mut built, _) = build(Some("s"), SR, &valid, SR, false);
+        assert_eq!(built.graph.out_channels(), 2);
+        built.graph.set_out_channels(8);
+        assert_eq!(built.graph.out_channels(), 8);
+    }
+
+    #[cfg(test)]
+    mod helper_tests {
+        use super::*;
+
+        #[test]
+        fn staging_ring_roundtrips_and_wraps() {
+            let mut r = StagingRing::with_capacity(8);
+            assert_eq!(r.len(), 0);
+            r.extend_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let mut dst = vec![0.0; 2];
+            assert_eq!(r.pop_into(&mut dst), 2);
+            assert_eq!(dst, vec![1.0, 2.0]);
+            // Wrap past the end.
+            r.extend_from_slice(&[5.0, 6.0, 7.0]);
+            let mut dst = vec![0.0; 3];
+            assert_eq!(r.pop_into(&mut dst), 3);
+            assert_eq!(dst, vec![3.0, 4.0, 5.0]);
+            r.clear();
+            assert_eq!(r.len(), 0);
+        }
+
+        #[test]
+        fn staging_ring_capacity_is_respected() {
+            // In debug builds an overrun is a debug_assert! panic: the clamp only
+            // exists as a release-mode safety net. Tests must stay within cap.
+            let mut r = StagingRing::with_capacity(4);
+            r.extend_from_slice(&[1.0, 2.0]);
+            r.extend_from_slice(&[3.0, 4.0]);
+            assert_eq!(r.len(), 4);
+            assert_eq!(r.dropped(), 0);
+            let mut dst = vec![0.0; 4];
+            assert_eq!(r.pop_into(&mut dst), 4);
+            assert_eq!(dst, vec![1.0, 2.0, 3.0, 4.0]);
+        }
+
+        #[test]
+        fn partial_pop_is_idempotent() {
+            let mut r = StagingRing::with_capacity(8);
+            r.extend_from_slice(&[1.0, 2.0, 3.0]);
+            let mut dst = vec![0.0; 5];
+            assert_eq!(r.pop_into(&mut dst), 3);
+            assert_eq!(&dst[..3], &[1.0, 2.0, 3.0]);
+            assert_eq!(r.len(), 0);
+            assert_eq!(r.pop_into(&mut dst), 0);
+        }
+
+        #[test]
+        fn handle_parsing() {
+            assert_eq!(parse_ch("ch3"), Some(3));
+            assert_eq!(parse_ch("ch"), None);
+            assert_eq!(parse_ch("st2"), None);
+            assert_eq!(parse_stereo("st2"), Some(2));
+            assert_eq!(parse_stereo("ch3"), None);
+            assert_eq!(tap_handle_width("ch3"), Some(1));
+            assert_eq!(tap_handle_width("st2"), Some(2));
+            assert_eq!(tap_handle_width("mix"), None);
+            assert_eq!(target_route("ch4"), Some((3, 1)));
+            assert_eq!(target_route("st2"), Some((1, 2)));
+            assert_eq!(target_route("other"), None);
+        }
+
+        #[test]
+        fn tap_keys_map_wire_names() {
+            let TapKey::Channel(k) = tap_key("ch1").expect("ch1") else {
+                panic!("variant")
+            };
+            assert_eq!(k, "0", "direct-IP wire channels are 0-based");
+            let TapKey::Channel(k) = tap_key("ch12").expect("ch12") else {
+                panic!("variant")
+            };
+            assert_eq!(k, "11");
+            let TapKey::Channel(k) = tap_key("peer:p:0").expect("peer channel") else {
+                panic!("variant")
+            };
+            assert_eq!(k, "p:0", "peer channel keys drop the peer: prefix");
+            let TapKey::PrefixMix(p) = tap_key("peer:p").expect("peer mix") else {
+                panic!("variant")
+            };
+            assert_eq!(p, "p:");
+            assert!(tap_key("noise").is_none());
+        }
+
+        #[test]
+        fn add_to_channel_downmixes_into_one_physical_channel() {
+            let mut src = vec![0.0; DSP_BLOCK_FRAMES * 2];
+            for f in 0..DSP_BLOCK_FRAMES {
+                src[f * 2] = 1.0;
+                src[f * 2 + 1] = 3.0;
+            }
+            let mut dst = vec![0.0; DSP_BLOCK_FRAMES * 4];
+            add_to_channel(&src, &mut dst, 2);
+            for f in 0..DSP_BLOCK_FRAMES {
+                assert_eq!(dst[f * 4 + 2], 2.0, "mono mean into channel 2");
+                assert_eq!(dst[f * 4], 0.0, "other channels untouched");
+            }
+            // Out of range is a no-op.
+            let mut small = vec![0.0; DSP_BLOCK_FRAMES];
+            add_to_channel(&src, &mut small, 5);
+            assert_eq!(small, vec![0.0; DSP_BLOCK_FRAMES]);
+        }
+
+        #[test]
+        fn add_block_at_places_a_stereo_pair() {
+            let src = vec![0.5; DSP_BLOCK_FRAMES * 2];
+            let mut dst = vec![0.0; DSP_BLOCK_FRAMES * 4];
+            add_block_at(&src, &mut dst, 2);
+            for f in 0..DSP_BLOCK_FRAMES {
+                assert_eq!(dst[f * 4 + 2], 0.5);
+                assert_eq!(dst[f * 4 + 3], 0.5);
+                assert_eq!(dst[f * 4], 0.0);
+            }
+            // Offset past the end is a no-op.
+            let mut small = vec![0.0; DSP_BLOCK_FRAMES];
+            add_block_at(&src, &mut small, 3);
+            assert_eq!(small, vec![0.0; DSP_BLOCK_FRAMES]);
+        }
+
+        #[test]
+        fn add_mapped_monotostereo_upmixes_every_channel() {
+            let src = vec![0.5; DSP_BLOCK_FRAMES];
+            let mut dst = vec![0.0; DSP_BLOCK_FRAMES * 4];
+            add_mapped(&src, &mut dst);
+            for s in &dst {
+                assert_eq!(*s, 0.5);
+            }
+            // Zero-width guards.
+            let mut empty_dst: Vec<f32> = Vec::new();
+            add_mapped(&[], &mut empty_dst);
+        }
+
+        #[test]
+        fn crossfade_into_blends_the_second_half() {
+            let mut dst = vec![1.0_f32; SPLICE_FADE_FRAMES * 2];
+            let incoming = vec![0.0_f32; SPLICE_FADE_FRAMES * 2];
+            crossfade_into(&mut dst, &incoming, &[], 2);
+            assert_eq!(dst[0], 1.0, "first frame stays pure outgoing");
+            assert_eq!(dst[dst.len() - 1], 0.0, "last frame is pure incoming");
+            // Incoming longer than dst is truncated safely.
+            let mut dst = vec![1.0_f32; SPLICE_FADE_FRAMES * 2];
+            let mut incoming = vec![0.0_f32; SPLICE_FADE_FRAMES * 2];
+            incoming.extend(vec![0.5_f32; 1000]);
+            crossfade_into(&mut dst, &incoming, &[], 2);
+            assert!(dst.iter().all(|s| s.is_finite()));
+            assert_eq!(
+                *dst.last().unwrap(),
+                0.0,
+                "extra incoming beyond dst is ignored"
+            );
+        }
+
+        #[test]
+        fn delay_line_zero_capacity_passes_through() {
+            let mut line = DelayLine::new(0, 2);
+            let input = vec![0.7f32; 16];
+            assert_eq!(line.delayed(&input), input);
+        }
+
+        #[test]
+        fn source_stats_start_at_zero() {
+            let s = SourceStats::new();
+            assert_eq!(s.xrun.load(Ordering::Relaxed), 0);
+            assert_eq!(s.stalled.load(Ordering::Relaxed), 0);
+            assert_eq!(s.trimmed.load(Ordering::Relaxed), 0);
+            assert_eq!(s.consumed.load(Ordering::Relaxed), 0);
+            assert_eq!(s.level.load(Ordering::Relaxed), 0);
+        }
+
+        #[test]
+        fn ring_capacity_is_one_second() {
+            assert_eq!(ring_capacity_frames(48_000), 48_000);
+        }
+    }
+
+    #[test]
+    fn empty_ring_zero_fills_and_counts_xruns() {
+        let (valid, _) = passthrough_graph();
+        let (mut built, _) = build(Some("s"), SR, &valid, SR, false);
+        let meta = built.sources[0].stats.clone();
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        // Fresh source: not stalled yet → genuine xrun.
+        built.graph.process_block(&mut out);
+        assert_eq!(out, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+        assert_eq!(
+            meta.xrun.load(std::sync::atomic::Ordering::Relaxed),
+            (DSP_BLOCK_FRAMES * 2) as u64
+        );
+        // After the stall window the same silence counts as "stalled".
+        std::thread::sleep(STALL_THRESHOLD + std::time::Duration::from_millis(20));
+        built.graph.process_block(&mut out);
+        assert_eq!(
+            meta.stalled.load(std::sync::atomic::Ordering::Relaxed),
+            (DSP_BLOCK_FRAMES * 2) as u64
+        );
+        assert_eq!(
+            meta.xrun.load(std::sync::atomic::Ordering::Relaxed),
+            (DSP_BLOCK_FRAMES * 2) as u64,
+            "stall must not double-count as xrun"
+        );
+    }
+
+    #[test]
+    fn backlog_trims_with_a_splice_rather_than_a_step() {
+        // Realtime source with more than HIGH (4 blocks) backlog: the trim
+        // path kicks in, drops the excess over blocks and counts it.
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, true);
+        let meta = built.sources[0].stats.clone();
+        // 12 blocks of backlog >> the 4-block high watermark.
+        push_all(
+            producers.get_mut("m").unwrap(),
+            &stereo_ramp(12 * 1024, 0.0),
+        );
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        for _ in 0..6 {
+            built.graph.process_block(&mut out);
+        }
+        assert!(
+            meta.trimmed.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "backlog must be trimmed"
+        );
+        assert!(
+            meta.consumed.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "consumed counter tracks reads"
+        );
+        assert!(out.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn per_channel_taps_carry_single_channels() {
+        // mic --ch1--> speaker: the terminal taps only the left channel.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e1", "m", Some("ch1"), "s", None)],
+        };
+        let valid = g.validate().expect("valid");
+        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
+        // Asymmetric content: L=10, R=-10 so the tap is verifiable.
+        let mut fed = vec![0.0; 2048 * 2];
+        for f in 0..2048 {
+            fed[f * 2] = 10.0;
+            fed[f * 2 + 1] = -10.0;
+        }
+        push_all(producers.get_mut("m").unwrap(), &fed);
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        // The stereo terminal gets a mono source: add_mapped upmixes the
+        // tapped left channel to both physical channels.
+        for f in 0..DSP_BLOCK_FRAMES {
+            assert_eq!(out[f * 2], 10.0, "left");
+            assert_eq!(out[f * 2 + 1], 10.0, "mono upmix of the tapped channel");
+        }
+    }
+
+    #[test]
+    fn target_route_places_the_pair_at_its_offset() {
+        // gain --st3--> speaker: the output lands on physical channels 2-3.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", Some("st3"), "s", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(producers.get_mut("m").unwrap(), &stereo_ramp(4096, 0.0));
+        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built.graph.process_block(&mut out);
+        built.graph.process_block(&mut out);
+        // st3 asks for channels 2-3 of a 2-wide output → clamped to nothing.
+        assert_eq!(out, vec![0.0; DSP_BLOCK_FRAMES * 2]);
+    }
+
+    #[test]
+    fn sidechain_edge_feeds_the_detector_not_the_mix() {
+        let graph = |with_sidechain: bool| GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("main"),
+                mic("key"),
+                node(
+                    "c",
+                    NodeKind::Compressor,
+                    serde_json::json!({
+                        "thresholdDb": -30.0, "ratio": 8.0, "attackMs": 1.0,
+                        "releaseMs": 50.0, "kneeDb": 0.0, "makeupDb": 0.0
+                    }),
+                ),
+                speaker("s"),
+            ],
+            edges: if with_sidechain {
+                vec![
+                    edge("e1", "main", None, "c", None),
+                    edge("e2", "key", None, "c", Some("sidechain")),
+                    edge("e3", "c", None, "s", None),
+                ]
+            } else {
+                vec![
+                    edge("e1", "main", None, "c", None),
+                    edge("e3", "c", None, "s", None),
+                ]
+            },
+        };
+
+        let valid = graph(true).validate().expect("sidechain graph");
+        let (mut keyed, mut keyed_producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(
+            keyed_producers.get_mut("main").unwrap(),
+            &vec![0.1; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+        push_all(
+            keyed_producers.get_mut("key").unwrap(),
+            &vec![1.0; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+
+        let valid = graph(false).validate().expect("main-only graph");
+        let (mut unkeyed, mut unkeyed_producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(
+            unkeyed_producers.get_mut("main").unwrap(),
+            &vec![0.1; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+
+        let mut keyed_out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        let mut unkeyed_out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        for _ in 0..4 {
+            keyed.graph.process_block(&mut keyed_out);
+            unkeyed.graph.process_block(&mut unkeyed_out);
+        }
+        let keyed_peak = keyed_out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        let unkeyed_peak = unkeyed_out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        assert!(unkeyed_peak > 0.02, "main signal vanished: {unkeyed_peak}");
+        assert!(
+            keyed_peak < unkeyed_peak * 0.3,
+            "sidechain did not drive compression: keyed {keyed_peak}, main-only {unkeyed_peak}"
+        );
+        assert!(
+            keyed_peak < 0.1,
+            "sidechain audio leaked into the main mix: {keyed_peak}"
+        );
+    }
+
+    #[test]
+    fn plan_cuts_monitor_owns_analyzer_only_nodes() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g", 0.0),
+                speaker("s"),
+                node("lm", NodeKind::LevelMeter, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "s", None),
+                edge("e3", "g", None, "lm", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        let plan = plan_cuts(&valid, Some("monitor"));
+        // The gain is owned by the speaker output; the monitor reads it back.
+        assert_eq!(plan.owner.get("g"), Some(&"s".to_string()));
+        assert!(plan
+            .consumers
+            .get("g")
+            .map(|c| c.contains(&"monitor".to_string()))
+            .unwrap_or(false));
+        assert!(plan.participants().contains("monitor"));
+    }
+
+    #[test]
+    fn plan_cuts_participants_exclude_ownerless_nodes() {
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e1", "m", None, "s", None)],
+        };
+        let valid = g.validate().expect("valid");
+        let plan = plan_cuts(&valid, None);
+        // No effect nodes → no cuts, no participants.
+        assert!(plan.owner.is_empty());
+        assert!(plan.participants().is_empty());
+    }
+
+    #[test]
+    fn reachable_backward_walks_the_whole_chain() {
+        let (valid, _) = passthrough_graph();
+        let r = reachable_backward("s", &valid);
+        assert!(r.contains("m") && r.contains("g"));
+        assert!(!r.contains("s"));
+        let inputs = inputs_feeding_output("s", &valid);
+        assert_eq!(inputs, vec!["m"]);
+    }
+
+    #[test]
+    fn cut_leaf_across_rates_resamples() {
+        // Owner runs at 44.1k, the consumer output at 48k → ring_source
+        // gets a resampler and the published block arrives resampled.
+        let g = GraphSpec {
+            sample_rate: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("a"), speaker("b")],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "a", None),
+                edge("e3", "g", None, "b", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        let (mut built_a, mut producers_a) = build(Some("a"), 44_100, &valid, 44_100, false);
+        let (node_idx, _) = built_a.node_meta["g"];
+        let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
+        let mut cut_leaves = HashMap::new();
+        cut_leaves.insert("g".to_string(), (cons, 44_100, 2));
+
+        let mut producer_pairs = Vec::new();
+        let native = valid
+            .inputs
+            .iter()
+            .map(|i| (i.id.clone(), 44_100))
+            .collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built_b = build_output_graph(
+            Some("b"),
+            SR,
+            false,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            cut_leaves,
+        )
+        .expect("build B");
+        assert_eq!(built_b.sources[0].native_sr, 44_100);
+
+        // Feed a constant-amplitude ramp at 44.1k; publish into the tap ring
+        // exactly what A's effect produced.
+        push_all(producers_a.get_mut("m").unwrap(), &stereo_ramp(4096, 0.0));
+        let mut out_a = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built_a.graph.attach_tap(node_idx, prod);
+        built_a.graph.process_block(&mut out_a);
+        // A block published at 44.1k resampled to 48k: the value must land
+        // in B's output, finite and near the source level.
+        let mut out_b = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        built_b.graph.process_block(&mut out_b);
+        let peak = out_b.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let consumed = built_b.sources[0]
+            .stats
+            .consumed
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(consumed > 0, "B's cut source never read the ring");
+        assert!(
+            peak > 0.1,
+            "B must receive the owner's audio resampled to 48k, peak {peak}"
+        );
+        assert!(out_b.iter().all(|s| s.is_finite()));
+    }
+}

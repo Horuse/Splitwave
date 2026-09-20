@@ -955,7 +955,6 @@ mod tests {
             if let Ok(Command::IsRunning { reply }) = rx.recv() {
                 drop(reply);
             }
-            std::thread::sleep(Duration::from_secs(2));
         });
         let r = tauri::async_runtime::block_on(async {
             audio_request(tx, |reply| Command::IsRunning { reply }).await

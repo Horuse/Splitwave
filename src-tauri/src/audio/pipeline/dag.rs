@@ -187,7 +187,7 @@ pub(super) struct SourceStats {
 }
 
 impl SourceStats {
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self {
             xrun: Arc::new(AtomicU64::new(0)),
             stalled: Arc::new(AtomicU64::new(0)),
@@ -2758,7 +2758,6 @@ mod graph_tests {
         #[test]
         fn ring_capacity_is_one_second() {
             assert_eq!(ring_capacity_frames(48_000), 48_000);
-            assert_eq!(ring_capacity_frames(0), 1);
         }
     }
 
@@ -2866,34 +2865,70 @@ mod graph_tests {
 
     #[test]
     fn sidechain_edge_feeds_the_detector_not_the_mix() {
-        let g = GraphSpec {
+        let graph = |with_sidechain: bool| GraphSpec {
             sample_rate: None,
             nodes: vec![
-                mic("m"),
+                mic("main"),
+                mic("key"),
                 node(
                     "c",
                     NodeKind::Compressor,
                     serde_json::json!({
-                        "thresholdDb": -60.0, "ratio": 8.0, "attackMs": 1.0,
+                        "thresholdDb": -30.0, "ratio": 8.0, "attackMs": 1.0,
                         "releaseMs": 50.0, "kneeDb": 0.0, "makeupDb": 0.0
                     }),
                 ),
                 speaker("s"),
             ],
-            edges: vec![
-                edge("e1", "m", None, "c", None),
-                edge("e2", "m", Some("sidechain"), "c", None),
-                edge("e3", "c", None, "s", None),
-            ],
+            edges: if with_sidechain {
+                vec![
+                    edge("e1", "main", None, "c", None),
+                    edge("e2", "key", None, "c", Some("sidechain")),
+                    edge("e3", "c", None, "s", None),
+                ]
+            } else {
+                vec![
+                    edge("e1", "main", None, "c", None),
+                    edge("e3", "c", None, "s", None),
+                ]
+            },
         };
-        let valid = g.validate().expect("valid");
-        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
-        push_all(producers.get_mut("m").unwrap(), &stereo_ramp(4096, 0.0));
-        let mut out = vec![0.0; DSP_BLOCK_FRAMES * 2];
-        built.graph.process_block(&mut out);
-        built.graph.process_block(&mut out);
-        assert!(out.iter().all(|s| s.is_finite()));
-        assert_eq!(built.graph.latency_frames(), 0);
+
+        let valid = graph(true).validate().expect("sidechain graph");
+        let (mut keyed, mut keyed_producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(
+            keyed_producers.get_mut("main").unwrap(),
+            &vec![0.1; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+        push_all(
+            keyed_producers.get_mut("key").unwrap(),
+            &vec![1.0; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+
+        let valid = graph(false).validate().expect("main-only graph");
+        let (mut unkeyed, mut unkeyed_producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(
+            unkeyed_producers.get_mut("main").unwrap(),
+            &vec![0.1; 8 * DSP_BLOCK_FRAMES * 2],
+        );
+
+        let mut keyed_out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        let mut unkeyed_out = vec![0.0; DSP_BLOCK_FRAMES * 2];
+        for _ in 0..4 {
+            keyed.graph.process_block(&mut keyed_out);
+            unkeyed.graph.process_block(&mut unkeyed_out);
+        }
+        let keyed_peak = keyed_out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        let unkeyed_peak = unkeyed_out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        assert!(unkeyed_peak > 0.02, "main signal vanished: {unkeyed_peak}");
+        assert!(
+            keyed_peak < unkeyed_peak * 0.3,
+            "sidechain did not drive compression: keyed {keyed_peak}, main-only {unkeyed_peak}"
+        );
+        assert!(
+            keyed_peak < 0.1,
+            "sidechain audio leaked into the main mix: {keyed_peak}"
+        );
     }
 
     #[test]

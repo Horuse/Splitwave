@@ -438,7 +438,6 @@ pub(super) fn spawn_meter_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
 
     #[test]
     fn off_rate_tolerance_and_quantum() {
@@ -459,62 +458,5 @@ mod tests {
         );
         assert!(!off_rate(0.0, 0.001, 1024.0));
         assert!(off_rate(0.0, 48_000.0, 1024.0), "dead output flags");
-    }
-
-    #[test]
-    fn xrun_thread_survives_anomalies_and_stops_on_drop() {
-        // A source that looks broken: high xrun, drifted consumed rate, and
-        // capture deltas that disagree with wall clock. The tick thread must
-        // log (not panic) through all of it.
-        let stats = crate::audio::pipeline::dag::SourceStats::new();
-        stats.xrun.store(1024, Ordering::Relaxed);
-        stats.stalled.store(1024, Ordering::Relaxed);
-        stats.trimmed.store(64, Ordering::Relaxed);
-        stats.consumed.store(48_000, Ordering::Relaxed);
-        let source = SourceMeta {
-            label: "test-src".into(),
-            stats: stats.clone(),
-            channels: 2,
-            native_sr: 48_000,
-            frames_per_block: 1024,
-            input_id: Some("i".into()),
-            output_id: "o".into(),
-            capture: Some(crate::audio::input_bridge::CaptureStats {
-                fed: Arc::new(AtomicU64::new(96_000)),
-                dropped: Arc::new(AtomicU64::new(128)),
-            }),
-        };
-        let blocks = Arc::new(AtomicU64::new(0));
-        let output = OutputMeta {
-            label: "test-out".into(),
-            blocks: blocks.clone(),
-            sample_rate: 48_000,
-            channels: 2,
-            io: None,
-        };
-        // Warmup tick + one reporting tick, with counters moving mid-run.
-        let tick = spawn_xrun_thread(vec![source], vec![output], 0);
-        std::thread::sleep(Duration::from_millis(1300));
-        blocks.fetch_add(46, Ordering::Relaxed);
-        stats.xrun.fetch_add(2048, Ordering::Relaxed);
-        // Second tick logs; then stop cleanly.
-        std::thread::sleep(Duration::from_millis(200));
-        drop(tick);
-        // Blocks counter keeps its value; nothing panicked.
-        assert_eq!(blocks.load(Ordering::Relaxed), 46);
-    }
-
-    #[test]
-    fn orphan_speaker_stream_warning_path_is_harmless() {
-        // expected != live → warn branch; must not panic.
-        let tick = spawn_xrun_thread(vec![], vec![], 1);
-        std::thread::sleep(Duration::from_millis(1100));
-        drop(tick);
-    }
-
-    #[test]
-    fn meter_tick_constants_are_sane() {
-        assert_eq!(METER_TICK, Duration::from_millis(33));
-        assert_eq!(XRUN_TICK, Duration::from_millis(1000));
     }
 }

@@ -10,7 +10,8 @@ pub(super) const MONITOR_KEY: &str = "__monitor__";
 /// Canonical view of an output's sub-graph for diffing across reconciles.
 /// Equal `OutputSig`s mean the output's worker can keep running with
 /// exactly its current effect chain, sources, and consumer rings.
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Clone)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) struct OutputSig {
     /// `None` only for the monitor pseudo-output.
     pub output_spec: Option<OutputSpec>,
@@ -280,7 +281,7 @@ mod tests {
         // s2 reaches b (and a through it).
         assert_eq!(sig2.effects.len(), 2);
         // Different sub-graphs → different signatures.
-        assert_ne!(sig1, sig2);
+        assert!(sig1 != sig2);
     }
 
     #[test]
@@ -338,7 +339,7 @@ mod tests {
         let same = compute_output_sig(&mk(1.0, -6.0), "s");
         let different = compute_output_sig(&mk(3.0, 0.0), "s");
         assert_eq!(base, same, "ceiling is live");
-        assert_ne!(base, different, "lookahead sizes the delay line");
+        assert!(base != different, "lookahead sizes the delay line");
     }
 
     #[test]
@@ -385,9 +386,8 @@ mod tests {
         }
         .validate()
         .expect("valid");
-        assert_ne!(
-            a,
-            compute_output_sig(&other_path, "s"),
+        assert!(
+            a != compute_output_sig(&other_path, "s"),
             "path is structural"
         );
     }
@@ -402,7 +402,7 @@ mod tests {
         // Real output's signature carries the output spec.
         let real = compute_output_sig(&g, "s");
         assert!(real.output_spec.is_some());
-        assert_ne!(monitor, real);
+        assert!(monitor != real);
     }
 
     #[test]

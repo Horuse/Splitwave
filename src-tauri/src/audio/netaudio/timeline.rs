@@ -15,7 +15,6 @@ const MAX_GAP_PACKETS: u16 = 50;
 /// rather than the network reordering a few packets.
 const RESTART_RUN: u32 = 25;
 
-#[derive(Debug)]
 pub enum SeqStep {
     /// Continues the timeline, with `gap` lost packets to conceal before it.
     Advance { gap: u16 },
@@ -70,7 +69,7 @@ mod tests {
         for seq in [0u16, 1, 2, 3] {
             match t.step(seq) {
                 SeqStep::Advance { gap } => assert_eq!(gap, 0, "seq {seq}"),
-                other => panic!("seq {seq}: {other:?}"),
+                _ => panic!("sequence {seq} did not advance"),
             }
         }
     }
@@ -82,7 +81,7 @@ mod tests {
         // Packet 3 arrives after 1 was lost.
         match t.step(3) {
             SeqStep::Advance { gap } => assert_eq!(gap, 2),
-            other => panic!("small gap must advance: {other:?}"),
+            _ => panic!("small gap must advance"),
         }
     }
 
@@ -101,7 +100,7 @@ mod tests {
         let _ = t.step(0);
         match t.step(200) {
             SeqStep::Resync => {}
-            other => panic!("a 200-packet outage must resync: {other:?}"),
+            _ => panic!("a 200-packet outage must resync"),
         }
     }
 

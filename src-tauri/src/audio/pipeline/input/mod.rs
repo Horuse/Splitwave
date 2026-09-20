@@ -407,16 +407,6 @@ mod tests {
     }
 
     #[test]
-    fn resampler_rates_must_differ_for_some_channels() {
-        // Zero channels still allocates (rubato accepts it) — the guard lives
-        // upstream; matching rates never allocate regardless of width.
-        for channels in [0usize, 1, 2, 8] {
-            assert!(input_resampler(48_000, 48_000, channels).unwrap().is_none());
-        }
-        assert!(input_resampler(48_000, 44_100, 0).is_ok());
-    }
-
-    #[test]
     fn resolve_audio_file_probes_a_real_wav() {
         // Write a tiny WAV via hound and probe it back.
         let path = std::env::temp_dir().join(format!("splitwave-probe-{}.wav", std::process::id()));

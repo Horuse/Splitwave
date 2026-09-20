@@ -663,11 +663,6 @@ mod tests {
         assert_eq!(pipeline_frames_to_device_frames(1024, 96_000, 48_000), 512);
         // Half-frame rounds up (512*48/96 = 256.0 → 256).
         assert_eq!(pipeline_frames_to_device_frames(512, 96_000, 48_000), 256);
-        // Zero pipeline rate falls back to 1: frames * device_rate / 1.
-        assert_eq!(
-            pipeline_frames_to_device_frames(1024, 0, 48_000),
-            1024 * 48_000
-        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ const text = (s: string): Inline => ({ kind: 'text', text: s });
 
 describe('parseInline', () => {
 	it('plain text stays a single text run', () => {
-		expect(parseMarkdown('just words').length).toBe(1);
+		expect(parseMarkdown('just words')).toEqual([{ kind: 'paragraph', content: [text('just words')] }]);
 	});
 
 	it('code spans', () => {
@@ -30,14 +30,12 @@ describe('parseInline', () => {
 		const blocks = parseMarkdown('[site](https://example.com) and https://plain.io');
 		const p = blocks[0];
 		if (p.kind !== 'paragraph') throw new Error('expected paragraph');
-		expect(p.content[0]).toEqual({ kind: 'link', text: 'site', href: 'https://example.com' });
-		expect(p.content[p.content.length - 1]).toEqual({
-			kind: 'link',
-			text: 'https://plain.io',
-			href: 'https://plain.io'
-		});
+		expect(p.content).toEqual([
+			{ kind: 'link', text: 'site', href: 'https://example.com' },
+			text(' and '),
+			{ kind: 'link', text: 'https://plain.io', href: 'https://plain.io' }
+		]);
 	});
-
 });
 
 describe('parseMarkdown blocks', () => {
@@ -50,12 +48,14 @@ describe('parseMarkdown blocks', () => {
 		const blocks = parseMarkdown('- a\n- b\n1. one\n2. two\n- c');
 		const lists = blocks.filter((b) => b.kind === 'list');
 		expect(lists.length).toBe(3);
-		if (lists[0].kind === 'list') expect(lists[0].items).toEqual([[text('a')], [text('b')]]);
+		expect(lists[0].items).toEqual([[text('a')], [text('b')]]);
 		const ordered = lists.find((l) => l.ordered);
-		if (ordered?.kind === 'list') expect(ordered.items.map((i) => i[0])).toEqual([
+		if (!ordered) throw new Error('expected ordered list');
+		expect(ordered.items.map((i) => i[0])).toEqual([
 			{ kind: 'text', text: 'one' },
 			{ kind: 'text', text: 'two' }
 		]);
+		expect(lists[2].items).toEqual([[text('c')]]);
 	});
 
 	it('a blank line closes a running list', () => {
@@ -80,7 +80,10 @@ describe('parseMarkdown blocks', () => {
 
 	it('crlf is normalized', () => {
 		const blocks = parseMarkdown('# t\r\n- x\r\n');
-		expect(blocks.length).toBe(2);
+		expect(blocks).toEqual([
+			{ kind: 'heading', level: 1, content: [text('t')] },
+			{ kind: 'list', ordered: false, items: [[text('x')]] }
+		]);
 	});
 
 	it('headings accept inline markup', () => {

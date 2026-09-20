@@ -8,7 +8,7 @@ describe('relativeTime', () => {
 	const now = Date.now();
 
 	it('buckets seconds, minutes, hours', () => {
-		expect(relativeTime(now - 5_000).endsWith('s ago')).toBe(true);
+		expect(relativeTime(now - 5_000)).toBe('5s ago');
 		expect(relativeTime(now - 120_000)).toBe('2m ago');
 		expect(relativeTime(now - 7_200_000)).toBe('2h ago');
 	});

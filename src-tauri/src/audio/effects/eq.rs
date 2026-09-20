@@ -203,21 +203,18 @@ mod tests {
 
     #[test]
     fn channels_are_processed_independently() {
-        let (mut e, _) = EqEffect::new(unity_data(), SR);
-        let mut buf = noise(480);
-        buf.chunks_mut(2).for_each(|f| f[1] = 0.0);
-        let l_before: Vec<f32> = buf.chunks_exact(2).map(|f| f[0]).collect();
-        e.process(&mut buf, 240);
+        let mut data = unity_data();
+        data.gains_db[0] = 6.02;
+        let (mut e, _) = EqEffect::new(data, SR);
+        let mut buf: Vec<f32> = (0..6_000).flat_map(|_| [0.5, 0.0]).collect();
+        e.process(&mut buf, 6_000);
         assert!(
             buf.chunks_exact(2).all(|f| f[1] == 0.0),
             "silent channel must stay silent"
         );
-        assert!(buf.iter().all(|s| s.is_finite()), "no NaN expected");
-        // Left channel must have been processed at all (changed shape).
-        assert!(
-            buf.chunks_exact(2).zip(&l_before).any(|(f, l)| f[0] != *l),
-            "left channel must actually pass through filters"
-        );
+        for frame in buf.chunks_exact(2).skip(5_000) {
+            assert!((frame[0] - 1.0).abs() < 5e-3, "left DC gain: {}", frame[0]);
+        }
     }
 
     #[test]
@@ -299,14 +296,12 @@ mod proptests {
                 bypassed: false,
             };
             let (mut e, _) = EqEffect::new(d, SR);
-            let input = noise(frames, seed);
-            let mut buf = input.clone();
+            let mut buf = noise(frames, seed);
             e.process(&mut buf, frames);
             prop_assert!(buf.iter().all(|s| s.is_finite()));
             // ±24 dB per band, ten bands summed: theoretical worst case is
             // far below 1e3; a runaway filter would blow past it.
             prop_assert!(buf.iter().all(|s| s.abs() < 1e3));
-            let _ = input;
         }
     }
 }

@@ -260,20 +260,22 @@ mod tests {
         dec.decode(Format::Opus, &sink.borrow()[0], &mut out);
         let before = out.len();
         dec.conceal_packets(Format::Opus, 2, &mut out);
-        assert!(out.len() > before, "opus concealment appends decoded state");
+        assert_eq!(out.len(), before + 2 * OPUS_FRAME_SAMPLES);
         assert!(out.iter().all(|s| s.is_finite()));
+        assert!(
+            out[before..].iter().any(|s| s.abs() > 1e-4),
+            "Opus PLC returned only silence after a tone"
+        );
     }
 
     #[test]
-    fn decode_uses_whatever_the_packet_carries() {
+    fn pcm_decode_discards_only_the_trailing_partial_sample() {
         let mut dec = ChannelDecoder::new();
-        let mut out = Vec::new();
-        // 8 bytes of raw f32 → 2 samples; the decoder is packet-agnostic.
-        dec.decode(Format::PcmF32, &[0u8; 8], &mut out);
-        assert_eq!(out.len(), 2);
-        // Odd-length payload: whole-frame guarantee keeps samples even.
-        let mut out2 = Vec::new();
-        dec.decode(Format::PcmF32, &[0u8; 6], &mut out2);
-        assert_eq!(out2.len(), 6 / 4);
+        let mut payload = Vec::from(1.0f32.to_le_bytes());
+        payload.extend_from_slice(&(-0.5f32).to_le_bytes());
+        payload.extend_from_slice(&[0xaa, 0xbb]);
+        let mut out = vec![7.0];
+        dec.decode(Format::PcmF32, &payload, &mut out);
+        assert_eq!(out, vec![7.0, 1.0, -0.5]);
     }
 }

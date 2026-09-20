@@ -42,7 +42,7 @@ const CMD_QUEUE_CAPACITY: usize = BRIDGE_CAPACITY * 4;
 /// of the DSP source reading the other end of the same ring -- the global
 /// `health::CAPTURE_RING_OVERRUN_SAMPLES` total can't tell which input ring
 /// is the one overflowing.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CaptureStats {
     /// Samples successfully written to this slot's ring.
     pub fed: Arc<AtomicU64>,
@@ -336,7 +336,10 @@ mod tests {
         }
         assert_eq!(tx.free_slots(), 0);
         let (prod, _) = RingBuffer::<f32>::new(64);
-        let err = tx.add(prod).expect_err("no slots left");
+        let err = match tx.add(prod) {
+            Ok(_) => panic!("no slots left"),
+            Err(err) => err,
+        };
         assert!(format!("{err}").contains("exhausted"));
         tx.remove(0).expect("remove");
         assert_eq!(tx.free_slots(), 1);

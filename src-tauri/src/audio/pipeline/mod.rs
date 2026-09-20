@@ -1302,6 +1302,7 @@ impl ActivePipeline {
 mod tests {
     use super::*;
     use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+    use std::time::{Duration, Instant};
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {
@@ -1459,15 +1460,18 @@ mod tests {
         let drain = Arc::new(AtomicU64::new(0));
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let bridge = broadcast_channel().1;
+        let emitter = TestEmitter::default();
+        let events = emitter.events();
         let reader = file_reader::start_audio_file_reader(
             "f".into(),
             path.clone(),
             bridge,
             false,
             paused.clone(),
-            TestEmitter::default(),
+            emitter,
         )
         .expect("reader");
+        let loop_enabled = reader.loop_enabled();
         let state = InputState {
             _handle: InputHandle::AudioFile(reader),
             sample_rate: 48_000,
@@ -1484,8 +1488,27 @@ mod tests {
         // Seek queues on the reader and bumps the drain generation.
         p.seek_audio_file("f", 500);
         assert_eq!(drain.load(Ordering::SeqCst), 1);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline
+            && !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["frames"] == 500 && event["paused"] == true)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["frames"] == 500 && event["paused"] == true),
+            "reader did not apply the queued seek"
+        );
         // Loop toggle lands on the reader.
         p.set_audio_file_loop("f", true);
+        assert!(loop_enabled.load(Ordering::SeqCst));
         // Volume stores bits; paused flips the atom.
         p.set_input_volume("f", 0.5);
         assert_eq!(volume.load(Ordering::Relaxed), 0.5f32.to_bits());

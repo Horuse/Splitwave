@@ -84,38 +84,45 @@ mod tests {
     #[test]
     fn snapshot_covers_every_counter_in_order() {
         let snap = snapshot();
-        assert!(snap.len() >= 12, "all glitch counters snapshot");
-        assert_eq!(snap[0].0, "OUTPUT_UNDERRUN_SAMPLES");
-        assert_eq!(snap.last().unwrap().0, "OFFLOAD_RING_OVERRUN_SAMPLES");
-        // Every name is unique (labels feed tracing logs).
-        let mut names: Vec<&str> = snap.iter().map(|(n, _)| *n).collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), snap.len(), "counter labels must be unique");
+        let names: Vec<&str> = snap.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "OUTPUT_UNDERRUN_SAMPLES",
+                "CAPTURE_RING_OVERRUN_SAMPLES",
+                "NET_RING_OVERRUN_SAMPLES",
+                "TAP_RING_OVERRUN_SAMPLES",
+                "SPEAKER_RING_OVERRUN_SAMPLES",
+                "SOURCE_TRIM_DROPPED_SAMPLES",
+                "STAGING_OVERRUN_SAMPLES",
+                "CLOCK_LATE_BLOCKS",
+                "CLOCK_LATE_MAX_US",
+                "STREAM_ERRORS",
+                "OFFLOAD_STARVED_SAMPLES",
+                "OFFLOAD_RESYNC_DROPPED_SAMPLES",
+                "OFFLOAD_RING_OVERRUN_SAMPLES",
+            ]
+        );
     }
 
     #[test]
     fn bump_ignores_zero_adds() {
-        let before = OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed);
-        bump(&OUTPUT_UNDERRUN_SAMPLES, 0);
-        assert_eq!(OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed), before);
-        bump(&OUTPUT_UNDERRUN_SAMPLES, 5);
-        assert_eq!(OUTPUT_UNDERRUN_SAMPLES.load(Ordering::Relaxed), before + 5);
+        let counter = AtomicU64::new(7);
+        bump(&counter, 0);
+        assert_eq!(counter.load(Ordering::Relaxed), 7);
+        bump(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 12);
     }
 
     #[test]
     fn raise_max_never_goes_backwards() {
-        // The counter is process-global and other tests raise it too, so the
-        // property under test is monotonicity, not absolute values.
-        let before = CLOCK_LATE_MAX_US.load(Ordering::Relaxed);
-        let target = before.max(5_000);
-        raise_max(&CLOCK_LATE_MAX_US, target);
-        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target);
-        // A smaller miss must not lower the high-water mark.
-        raise_max(&CLOCK_LATE_MAX_US, 2_000);
-        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target);
-        raise_max(&CLOCK_LATE_MAX_US, target + 2_000);
-        assert!(CLOCK_LATE_MAX_US.load(Ordering::Relaxed) >= target + 2_000);
+        let counter = AtomicU64::new(10);
+        raise_max(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 10);
+        raise_max(&counter, 20);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
+        raise_max(&counter, 15);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
     }
 
     #[test]

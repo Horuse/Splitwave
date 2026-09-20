@@ -722,6 +722,20 @@ mod tests {
         p
     }
 
+    struct StopAtEof {
+        stop: Arc<AtomicBool>,
+        saw_paused: Arc<AtomicBool>,
+    }
+
+    impl ProgressEmitter for StopAtEof {
+        fn emit_progress(&self, payload: serde_json::Value) {
+            if payload.get("paused").and_then(serde_json::Value::as_bool) == Some(true) {
+                self.saw_paused.store(true, Ordering::SeqCst);
+                self.stop.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
     #[test]
     fn open_decoder_reports_real_frame_count() {
         let path = temp_path("open.wav");
@@ -1069,8 +1083,6 @@ mod tests {
 
     #[test]
     fn reader_streams_audio_into_the_bridge_until_eof() {
-        use file_reader_test_emitter::TestEmitter;
-
         let path = temp_path("stream.wav");
         let frames = 12_000usize; // 250 ms of audio
         let mut block = Vec::with_capacity(frames * 2);
@@ -1092,22 +1104,35 @@ mod tests {
         enc.finalize().unwrap();
 
         let paused = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = crate::audio::input_bridge::broadcast_channel();
-        let _keep = tx;
-        let reader = start_audio_file_reader(
+        let stop = Arc::new(AtomicBool::new(false));
+        let saw_paused = Arc::new(AtomicBool::new(false));
+        let (_tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let seek_to = AtomicI64::new(SEEK_NONE);
+        let loop_enabled = AtomicBool::new(false);
+        let emitter = StopAtEof {
+            stop: stop.clone(),
+            saw_paused: saw_paused.clone(),
+        };
+
+        // Run synchronously. The emitter stops the loop as soon as EOF emits
+        // its paused state, so this checks the transition without racing a
+        // fixed sleep against the spawned reader thread.
+        run(
             "node".into(),
-            path.clone(),
+            &path,
             rx,
-            false,
-            paused.clone(),
-            TestEmitter::default(),
+            &stop,
+            &seek_to,
+            &loop_enabled,
+            &paused,
+            &emitter,
         )
-        .expect("reader");
-        // Unrouted bridge → wall-clock pacing: 250 ms of audio plays out in
-        // real time, then the reader pauses itself at EOF.
-        std::thread::sleep(Duration::from_millis(900));
+        .expect("reader reaches EOF");
         assert!(paused.load(Ordering::SeqCst), "reader pauses at EOF");
-        drop(reader);
+        assert!(
+            saw_paused.load(Ordering::SeqCst),
+            "reader emits the EOF state"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

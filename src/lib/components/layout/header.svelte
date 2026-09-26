@@ -50,7 +50,8 @@
 
 <header
 	data-tauri-drag-region
-	class={['z-500 flex h-10 w-full flex-row items-center gap-8 border-b border-theme/5 bg-background px-1.5', customTitlebar ? 'pl-3' : 'pl-20']}>
+	class={['z-500 flex w-full flex-row items-center gap-8 border-b border-theme/5 bg-background px-1.5',
+		customTitlebar ? 'h-10 pl-3' : 'h-[max(2.5rem,calc(40px/var(--ui-zoom,1)))] pl-[calc(80px/var(--ui-zoom,1))]']}>
 	{@render left?.()}
 
 	<div class="ml-auto flex flex-row items-center gap-4">

@@ -7,7 +7,7 @@
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
-	import { appSettings, GRID_SIZES, SNAPSHOT_LIMITS, PIPELINE_SAMPLE_RATE_PRESETS } from '$lib/modules/settings/stores.svelte';
+	import { appSettings, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP, GRID_SIZES, SNAPSHOT_LIMITS, PIPELINE_SAMPLE_RATE_PRESETS } from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
@@ -105,6 +105,25 @@
 						{t.label}
 					</button>
 				{/each}
+			</div>
+
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-neutral-900">Interface scale</span>
+				<NumberStepper
+					value={appSettings.uiScale}
+					min={UI_SCALE_MIN}
+					max={UI_SCALE_MAX}
+					step={UI_SCALE_STEP}
+					label="Interface scale"
+					onchange={(v) => appSettings.setUiScale(v)} />
+				<span class="font-mono text-xs text-neutral-800 tabular-nums">%</span>
+				<button
+					type="button"
+					disabled={appSettings.uiScale === 100}
+					onclick={() => appSettings.setUiScale(100)}
+					class="rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1 text-[11px] font-medium text-neutral-1000 transition-colors hover:bg-neutral-200 disabled:opacity-40">
+					Reset
+				</button>
 			</div>
 		</section>
 

@@ -7,7 +7,15 @@
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
-	import { appSettings, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP, GRID_SIZES, SNAPSHOT_LIMITS, PIPELINE_SAMPLE_RATE_PRESETS } from '$lib/modules/settings/stores.svelte';
+	import {
+		appSettings,
+		UI_SCALE_MIN,
+		UI_SCALE_MAX,
+		UI_SCALE_STEP,
+		GRID_SIZES,
+		SNAPSHOT_LIMITS,
+		PIPELINE_SAMPLE_RATE_PRESETS
+	} from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';

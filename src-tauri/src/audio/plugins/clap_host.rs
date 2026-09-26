@@ -368,7 +368,11 @@ impl ClapInstance {
                 max: info.max_value,
                 default: info.default_value,
                 value,
-                stepped: info.flags.contains(ParamInfoFlags::IS_STEPPED),
+                step: if info.flags.contains(ParamInfoFlags::IS_STEPPED) {
+                    1.0
+                } else {
+                    0.0
+                },
                 read_only: info.flags.contains(ParamInfoFlags::IS_READONLY),
             });
         }

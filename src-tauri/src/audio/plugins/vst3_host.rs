@@ -205,7 +205,7 @@ impl Vst3Instance {
     pub fn params(&self) -> Vec<PluginParamInfo> {
         use vst3::Steinberg::Vst::ParameterInfo;
         use vst3::Steinberg::Vst::ParameterInfo_::ParameterFlags_::{
-            kIsHidden, kIsList, kIsProgramChange, kIsReadOnly,
+            kIsHidden, kIsProgramChange, kIsReadOnly,
         };
 
         let mut out = Vec::new();
@@ -228,7 +228,11 @@ impl Vst3Instance {
                     max: 1.0,
                     default: info.defaultNormalizedValue,
                     value: self.controller.getParamNormalized(info.id),
-                    stepped: info.stepCount > 0 || info.flags & kIsList != 0,
+                    step: if info.stepCount > 0 {
+                        1.0 / info.stepCount as f64
+                    } else {
+                        0.0
+                    },
                     read_only: info.flags & kIsReadOnly != 0,
                 });
             }
@@ -584,7 +588,7 @@ mod tests {
         let Some(param) = instance
             .params()
             .into_iter()
-            .find(|p| !p.read_only && !p.stepped)
+            .find(|p| !p.read_only && p.step == 0.0)
         else {
             panic!("{name} has no continuous writable parameter");
         };
@@ -650,7 +654,7 @@ mod tests {
         let param = before
             .params()
             .into_iter()
-            .find(|p| !p.read_only && !p.stepped)
+            .find(|p| !p.read_only && p.step == 0.0)
             .expect("a continuous parameter");
         let target = if param.value > 0.5 { 0.25 } else { 0.75 };
         before.set_param(param.id, target);

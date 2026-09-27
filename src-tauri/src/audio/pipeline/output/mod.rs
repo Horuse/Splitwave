@@ -1,23 +1,20 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use rtrb::{Producer, RingBuffer};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
-use crate::audio::clock::{ClockSource, DeviceFillClock, SystemClockTicker};
-use crate::audio::effects::{update_meter, MeterHandle, WaveformHandle};
+use crate::audio::clock::{ClockSource, SystemClockTicker};
+use crate::audio::effects::{MeterHandle, WaveformHandle};
 use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
 use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
-use crate::audio::resample::FixedRateResampler;
-use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{ring_capacity_frames, OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::{OutputGraph, TIMER_BLOCK_FRAMES};
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -33,25 +30,14 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
+mod render;
+
 pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, SpeakerResolved};
+pub(super) use render::SpeakerIo;
+use render::{speaker_link, SpeakerLink, SpeakerRenderer};
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
-
-// Floor for the adaptive fill target: enough to absorb a DSP-side spike
-// without the device clock -- not the wall clock -- ever seeing an empty ring.
-// 3 blocks = 64 ms @ 48 kHz / DSP_BLOCK_FRAMES.
-pub(super) const SPEAKER_TARGET_FILL_BLOCKS: usize = 3;
-
-// Extra frames held beyond the device's own callback buffer so the ring never
-// sits exactly empty when the next callback lands.
-const SPEAKER_TARGET_MARGIN_BLOCKS: usize = 2;
-
-#[inline]
-fn pipeline_frames_to_device_frames(frames: usize, pipeline_rate: u32, device_rate: u32) -> usize {
-    ((frames as u64 * device_rate.max(1) as u64 + pipeline_rate.max(1) as u64 / 2)
-        / pipeline_rate.max(1) as u64) as usize
-}
 
 pub(super) enum ResolvedOutput {
     Speaker(SpeakerResolved),
@@ -173,20 +159,6 @@ pub(super) fn resolve_output(
     }
 }
 
-pub(super) struct SpeakerWorker {
-    stop: Arc<AtomicBool>,
-    join: Option<JoinHandle<()>>,
-}
-
-impl Drop for SpeakerWorker {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(j) = self.join.take() {
-            let _ = j.join();
-        }
-    }
-}
-
 pub(super) struct RecorderWorker {
     pub stop: Arc<AtomicBool>,
     pub join: Option<JoinHandle<()>>,
@@ -201,42 +173,36 @@ impl Drop for RecorderWorker {
     }
 }
 
-// Per-callback counters for diagnosing the device's actual pull rate against
-// the DSP worker's supply rate -- distinguishes "device asking for more than
-// real time implies" from "ring nobody fills". Read once a second by the
-// non-RT tick thread (`meter::spawn_xrun_thread`); every write here is
-// `Ordering::Relaxed`, no allocation, no other sync.
-#[derive(Clone)]
-pub(super) struct SpeakerIo {
-    /// Native clock rate of the physical output stream. This differs from the
-    /// graph's pipeline rate when the output resampler is active.
-    pub sample_rate: Arc<AtomicU32>,
-    /// Samples cpal's `fill` was asked for (`out.len()`), summed across callbacks.
-    pub requested: Arc<AtomicU64>,
-    /// Samples actually popped off the ring (`bulk_pop`'s return), summed across callbacks.
-    pub read: Arc<AtomicU64>,
-    /// Number of `fill` invocations.
-    pub callbacks: Arc<AtomicU64>,
-    /// Adaptive fill target in frames, sized to the device's own buffer by the
-    /// callback. The worker's clock steers to it; the UI reads it back as the
-    /// current output latency.
-    pub target_frames: Arc<AtomicI64>,
-    /// Lookahead delay compensation has aligned the graph to (frames) -- the
-    /// deepest cumulative effect latency on the path to this output.
-    pub graph_latency_frames: usize,
+/// A speaker's device callback plus the handoff that carries its renderer in
+/// and back out. Built per open attempt; the renderer is attached only once the
+/// stream is up, so a failed open never takes the graph down with its closure.
+pub(super) fn speaker_callback() -> (SpeakerLink, impl FnMut(&mut [f32], usize) + Send + 'static) {
+    let (link, mut callback) = speaker_link();
+    (link, move |out: &mut [f32], frames: usize| {
+        callback.fill(out, frames)
+    })
 }
 
-impl SpeakerIo {
-    fn new(sample_rate: u32, target_frames: Arc<AtomicI64>, graph_latency_frames: usize) -> Self {
-        Self {
-            sample_rate: Arc::new(AtomicU32::new(sample_rate)),
-            requested: Arc::new(AtomicU64::new(0)),
-            read: Arc::new(AtomicU64::new(0)),
-            callbacks: Arc::new(AtomicU64::new(0)),
-            target_frames,
-            graph_latency_frames,
-        }
-    }
+/// Renderer for a speaker whose stream opened at `device_rate` with
+/// `channels` physical channels. `hardware_frames` is what the device reports
+/// adding past its buffer, where the OS reports it.
+pub(super) fn speaker_renderer(
+    mut graph: OutputGraph,
+    device_rate: u32,
+    channels: usize,
+    hardware_frames: Option<u32>,
+    meter: MeterHandle,
+) -> AppResult<(SpeakerRenderer, WorkerCtrl, SpeakerIo)> {
+    graph.set_out_channels(channels);
+    SpeakerRenderer::new(graph, device_rate, hardware_frames, meter)
+}
+
+/// The engine block expressed in a device's own frames: what its IO buffer
+/// should be so one callback carries one block.
+pub(super) fn device_block(block_frames: usize, pipeline_rate: u32, device_rate: u32) -> u32 {
+    ((block_frames as u64 * device_rate as u64 + pipeline_rate as u64 / 2)
+        / pipeline_rate.max(1) as u64)
+        .max(1) as u32
 }
 
 /// Speaker streams still able to call back into us. Counts handles rather than
@@ -262,157 +228,6 @@ impl Drop for StreamGuard {
     }
 }
 
-// Builds the speaker ring plus the cpal-side `fill` closure, a fill-level
-// handle shared with the worker's sink, and the adaptive fill target the
-// worker's clock steers toward -- one ring shape for all platforms.
-pub(super) fn speaker_ring(
-    out_channels: usize,
-    pipeline_rate: u32,
-    device_rate: u32,
-    graph_latency_frames: usize,
-) -> (
-    Producer<f32>,
-    impl FnMut(&mut [f32], usize) + Send + 'static,
-    Arc<AtomicI64>,
-    Arc<AtomicI64>,
-    SpeakerIo,
-) {
-    // One second at the actual device rate, so high-rate and wide-channel
-    // streams have the same time capacity as 48 kHz stereo.
-    let capacity_frames = ring_capacity_frames(device_rate);
-    let (producer, mut consumer) = RingBuffer::<f32>::new(capacity_frames * out_channels);
-    let level = Arc::new(AtomicI64::new(0));
-    let level_cb = level.clone();
-    let target = Arc::new(AtomicI64::new(pipeline_frames_to_device_frames(
-        SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
-        pipeline_rate,
-        device_rate,
-    ) as i64));
-    let target_cb = target.clone();
-    let io = SpeakerIo::new(device_rate, target.clone(), graph_latency_frames);
-    let io_cb = io.clone();
-    let fill = move |out: &mut [f32], callback_frames: usize| {
-        let read = streams::bulk_pop(&mut consumer, out);
-        level_cb.fetch_sub((read / out_channels) as i64, Ordering::Relaxed);
-        // Size the fill target to the device's own callback buffer so the ring
-        // always bridges one full callback. A healthy device asks for a few
-        // blocks and the floor holds; a large-buffer device (PipeWire handing
-        // out ~250 ms buffers) grows the target and runs at that latency instead
-        // of underrunning at a fraction of real time.
-        let min = pipeline_frames_to_device_frames(
-            SPEAKER_TARGET_FILL_BLOCKS * DSP_BLOCK_FRAMES,
-            pipeline_rate,
-            device_rate,
-        );
-        let margin = pipeline_frames_to_device_frames(
-            SPEAKER_TARGET_MARGIN_BLOCKS * DSP_BLOCK_FRAMES,
-            pipeline_rate,
-            device_rate,
-        );
-        let dev_frames = if callback_frames == 0 {
-            out.len() / out_channels
-        } else {
-            callback_frames
-        };
-        let max = capacity_frames.saturating_sub(dev_frames + margin).max(min);
-        target_cb.store(
-            (dev_frames + margin).clamp(min, max) as i64,
-            Ordering::Relaxed,
-        );
-        io_cb
-            .requested
-            .fetch_add(out.len() as u64, Ordering::Relaxed);
-        io_cb.read.fetch_add(read as u64, Ordering::Relaxed);
-        io_cb.callbacks.fetch_add(1, Ordering::Relaxed);
-    };
-    (producer, fill, level, target, io)
-}
-
-fn output_resampler(
-    pipeline_rate: u32,
-    device_rate: u32,
-    channels: usize,
-) -> AppResult<Option<FixedRateResampler>> {
-    if pipeline_rate == device_rate {
-        Ok(None)
-    } else {
-        FixedRateResampler::new(pipeline_rate, device_rate, DSP_BLOCK_FRAMES, channels).map(Some)
-    }
-}
-
-// Shared by both platforms' `start_speaker_stream`: a device-fill-paced
-// worker that mixes the output sub-graph and bulk-pushes blocks into the
-// speaker ring.
-pub(super) fn spawn_speaker_worker(
-    mut producer: Producer<f32>,
-    level: Arc<AtomicI64>,
-    target: Arc<AtomicI64>,
-    device_sample_rate: Arc<AtomicU32>,
-    channels: usize,
-    graph: OutputGraph,
-    meter: MeterHandle,
-) -> AppResult<(SpeakerWorker, WorkerCtrl)> {
-    let pipeline_rate = graph.sample_rate();
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_thread = stop.clone();
-    let (worker, ctrl) = dsp_worker(graph);
-    let clock: Box<dyn ClockSource> = Box::new(DeviceFillClock::new(
-        pipeline_rate,
-        device_sample_rate.clone(),
-        DSP_BLOCK_FRAMES,
-        level.clone(),
-        target,
-    ));
-    let initial_device_rate = device_sample_rate.load(Ordering::Relaxed);
-    let mut resampler = output_resampler(pipeline_rate, initial_device_rate, channels)?;
-    let mut resampled = vec![
-        0.0_f32;
-        resampler
-            .as_ref()
-            .map(|r| r.out_max() * channels)
-            .unwrap_or(DSP_BLOCK_FRAMES * channels)
-    ];
-    let mut resampled_channels = 0;
-    let join = thread::Builder::new()
-        .name(format!("speaker:{initial_device_rate}"))
-        .spawn(move || {
-            worker.run(
-                stop_thread,
-                clock,
-                Some(("speaker", pipeline_rate)),
-                |block, active_channels| {
-                    update_meter(&meter, block, channels);
-                    let device_block = if let Some(resampler) = &mut resampler {
-                        resampled_channels = resampled_channels.max(active_channels);
-                        let written = resampler.process_chunk_into(
-                            block,
-                            resampled_channels,
-                            &mut resampled,
-                        )?;
-                        &resampled[..written]
-                    } else {
-                        block
-                    };
-                    let written = streams::bulk_push_counted(
-                        &mut producer,
-                        device_block,
-                        &crate::audio::health::SPEAKER_RING_OVERRUN_SAMPLES,
-                    );
-                    level.fetch_add((written / channels) as i64, Ordering::Relaxed);
-                    Ok(())
-                },
-            );
-        })
-        .map_err(|e| AppError::Stream(format!("spawn speaker worker: {e}")))?;
-    Ok((
-        SpeakerWorker {
-            stop,
-            join: Some(join),
-        },
-        ctrl,
-    ))
-}
-
 // Drives analyzers when there's no real output; sink discards the mix.
 pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWorker, WorkerCtrl)> {
     let stop = Arc::new(AtomicBool::new(false));
@@ -422,7 +237,7 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     // keeps meters/scopes at real time and, crucially, consumes network-sourced
     // audio (WebRTC) at the rate it arrives instead of draining its jitter buffer.
     let sample_rate = graph.sample_rate();
-    let ticker = SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES);
+    let ticker = SystemClockTicker::new(sample_rate, TIMER_BLOCK_FRAMES);
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("monitor".into())
@@ -456,7 +271,7 @@ pub(super) fn start_wire_sender_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let sample_rate = graph.sample_rate();
-    let ticker = SystemClockTicker::with_catchup(sample_rate, DSP_BLOCK_FRAMES, 8);
+    let ticker = SystemClockTicker::with_catchup(sample_rate, TIMER_BLOCK_FRAMES, 8);
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("netsender".into())
@@ -496,7 +311,7 @@ pub(super) fn start_recorder_worker(
     // A file source decodes faster than real time; availability pacing would
     // drain it as fast as it arrives and over-run (a 1 s clip becomes 1:22).
     let clock: Box<dyn ClockSource> =
-        Box::new(SystemClockTicker::new(sample_rate, DSP_BLOCK_FRAMES));
+        Box::new(SystemClockTicker::new(sample_rate, TIMER_BLOCK_FRAMES));
 
     // Scope-style waveform feed, emitted to the UI by the meter tick thread.
     let wave = WaveformHandle::for_recorder(node_id.clone(), sample_rate, base_frames);
@@ -599,8 +414,6 @@ pub(super) fn start_recorder_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::pipeline::dag::RESAMPLE_CHUNK;
-    use std::collections::HashMap;
 
     fn recording_output(
         path: &std::path::Path,
@@ -667,67 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn test_output_resampler_bypassed_when_rates_match() {
-        // When initial_device_rate == pipeline_rate (e.g. 96 kHz pipeline and 96 kHz speaker),
-        // no output resampler must be allocated, preserving 1:1 bit-transparent playback.
-        for rate in [44_100, 48_000, 96_000, 192_000] {
-            let resampler = output_resampler(rate, rate, 2).unwrap();
-            assert!(
-                resampler.is_none(),
-                "output resampler should be None for matching rate {rate}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_output_resampler_only_allocated_when_rates_differ() {
-        let resampler = output_resampler(96_000, 48_000, 2).unwrap();
-        assert!(
-            resampler.is_some(),
-            "output resampler must be Some when rates differ"
-        );
-    }
-
-    #[test]
-    fn test_output_bit_transparent_sample_passthrough() {
-        // Verify that when output resampler is None, samples pass directly to the device buffer.
-        let total_samples = RESAMPLE_CHUNK * 2;
-        let mut block = vec![0.0f32; total_samples];
-        for (i, sample) in block.iter_mut().enumerate() {
-            *sample = ((i as f32) * 0.005).cos();
-        }
-
-        let mut resampler = output_resampler(96_000, 96_000, 2).unwrap();
-        let mut resampled = Vec::new();
-        let active_channels = 2;
-        let mut resampled_channels = 0;
-
-        let device_block = if let Some(resampler) = &mut resampler {
-            resampled_channels = resampled_channels.max(active_channels);
-            let written = resampler
-                .process_chunk_into(&block[..total_samples], resampled_channels, &mut resampled)
-                .unwrap();
-            &resampled[..written]
-        } else {
-            &block[..total_samples]
-        };
-
-        assert_eq!(device_block.len(), total_samples);
-        for (a, b) in device_block.iter().zip(block.iter()) {
-            assert_eq!(a.to_bits(), b.to_bits());
-        }
-    }
-
-    #[test]
-    fn pipeline_frames_convert_to_device_frames_with_rounding() {
-        assert_eq!(pipeline_frames_to_device_frames(1024, 48_000, 48_000), 1024);
-        assert_eq!(pipeline_frames_to_device_frames(1024, 48_000, 96_000), 2048);
-        assert_eq!(pipeline_frames_to_device_frames(1024, 96_000, 48_000), 512);
-        // Half-frame rounds up (512*48/96 = 256.0 → 256).
-        assert_eq!(pipeline_frames_to_device_frames(512, 96_000, 48_000), 256);
-    }
-
-    #[test]
     fn resolved_output_reports_rates() {
         assert_eq!(ResolvedOutput::WireSender(44_100).sample_rate(), 44_100);
         assert_eq!(
@@ -747,25 +499,10 @@ mod tests {
     }
 
     #[test]
-    fn speaker_ring_reads_what_was_pushed() {
-        let (mut prod, mut fill, level, target, io) = speaker_ring(2, 48_000, 48_000, 0);
-        let data: Vec<f32> = (0..1024 * 2).map(|i| i as f32 * 0.001).collect();
-        // Ring is one second at the device rate — far larger than a block.
-        assert_eq!(
-            prod.push_entire_slice(&data).ok(),
-            Some(()),
-            "ring must absorb a block"
-        );
-        let mut out = vec![0.0f32; 1024 * 2];
-        fill(&mut out, 0);
-        assert_eq!(out, data);
-        // The fill decrements the gauge; the push-side increment lives in the
-        // worker, so the standalone gauge reads -read/out_channels.
-        assert_eq!(level.load(Ordering::Relaxed), -1024);
-        assert!(target.load(Ordering::Relaxed) > 0);
-        assert!(io.requested.load(Ordering::Relaxed) > 0);
-        assert!(io.read.load(Ordering::Relaxed) > 0);
-        assert_eq!(io.callbacks.load(Ordering::Relaxed), 1);
+    fn device_block_follows_the_device_rate() {
+        assert_eq!(device_block(64, 48_000, 48_000), 64);
+        assert_eq!(device_block(64, 48_000, 96_000), 128);
+        assert_eq!(device_block(256, 48_000, 44_100), 235);
     }
 
     #[test]
@@ -779,90 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn speaker_worker_pushes_blocks_into_the_ring() {
-        use super::super::dag::build_output_graph;
-        use crate::audio::effects::EffectRegistry;
-        use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
-
-        // Build a monitor-style graph (mic source ring, no real device).
-        let g = GraphSpec {
-            sample_rate: None,
-            nodes: vec![
-                NodeSpec {
-                    id: "m".into(),
-                    kind: NodeKind::Microphone,
-                    data: serde_json::json!({ "deviceId": "dev" }),
-                },
-                NodeSpec {
-                    id: "s".into(),
-                    kind: NodeKind::Speaker,
-                    data: serde_json::json!({ "deviceId": "dev" }),
-                },
-            ],
-            edges: vec![EdgeSpec {
-                id: "e".into(),
-                source: "m".into(),
-                source_handle: None,
-                target: "s".into(),
-                target_handle: None,
-            }],
-        };
-        let valid: ValidGraph = g.validate().expect("valid");
-        let mut producer_pairs = Vec::new();
-        let native = valid
-            .inputs
-            .iter()
-            .map(|i| (i.id.clone(), 48_000))
-            .collect();
-        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
-        let mut reg = EffectRegistry::new();
-        let built = build_output_graph(
-            Some("s"),
-            48_000,
-            false,
-            &valid,
-            &native,
-            &native_ch,
-            &mut producer_pairs,
-            &mut reg,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            HashMap::new(),
-        )
-        .expect("build");
-
-        let (prod, _fill, level, target, io) = speaker_ring(2, 48_000, 48_000, 0);
-        let device_sr = Arc::new(AtomicU32::new(48_000));
-        let meter = MeterHandle::new("w".into());
-        let (_worker, _ctrl) = spawn_speaker_worker(
-            prod,
-            level.clone(),
-            target.clone(),
-            device_sr.clone(),
-            2,
-            built.graph,
-            meter,
-        )
-        .expect("spawn worker");
-        // Polled, not slept: a loaded CI runner can start the worker late.
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while level.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            level.load(Ordering::Relaxed) > 0,
-            "worker pushed audio into the ring"
-        );
-        assert_eq!(
-            io.callbacks.load(Ordering::Relaxed),
-            0,
-            "no device callback is attached"
-        );
-    }
-
-    #[test]
     fn monitor_worker_runs_at_wall_clock() {
         use super::super::dag::build_output_graph;
         use crate::audio::effects::EffectRegistry;
@@ -871,6 +524,7 @@ mod tests {
 
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 NodeSpec {
                     id: "m".into(),
@@ -903,6 +557,7 @@ mod tests {
         let built = build_output_graph(
             None,
             48_000,
+            TIMER_BLOCK_FRAMES,
             true,
             &valid,
             &native,

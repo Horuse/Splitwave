@@ -142,6 +142,11 @@ impl FixedRateResampler {
         self.out_max
     }
 
+    /// Output-rate frames between a sample entering and leaving the filter.
+    pub fn delay_frames(&self) -> usize {
+        self.inner.output_delay()
+    }
+
     pub fn process_chunk_into(
         &mut self,
         interleaved_in: &[f32],
@@ -203,6 +208,11 @@ impl MultiResampler {
 
     pub fn chunk_in(&self) -> usize {
         self.chunk_in
+    }
+
+    /// Frames between a sample entering and leaving the filter.
+    pub fn delay_frames(&self) -> usize {
+        self.inner.output_delay()
     }
     pub fn out_max(&self) -> usize {
         self.out_max
@@ -296,6 +306,38 @@ mod tests {
         let written = resampler.process_chunk_into(&input, &mut out).unwrap();
         assert!(written > 0);
         assert_eq!(written % 2, 0);
+    }
+
+    // A speaker renders one engine block per resample, so every offered buffer
+    // size has to work against every common device rate.
+    #[test]
+    fn fixed_rate_resampler_runs_at_every_buffer_size() {
+        const PAIRS: [(u32, u32); 6] = [
+            (48_000, 44_100),
+            (44_100, 48_000),
+            (48_000, 96_000),
+            (96_000, 48_000),
+            (44_100, 96_000),
+            (48_000, 192_000),
+        ];
+        for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+            for (from, to) in PAIRS {
+                let mut r = FixedRateResampler::new(from, to, block, 2)
+                    .unwrap_or_else(|e| panic!("{from}->{to} @ {block}: {e}"));
+                let input = vec![0.25_f32; block * 2];
+                let mut out = vec![0.0_f32; r.out_max() * 2];
+                let chunks = (16_384 / block).max(8);
+                let mut produced = 0usize;
+                for _ in 0..chunks {
+                    produced += r.process_chunk_into(&input, 2, &mut out).unwrap() / 2;
+                }
+                let want = (chunks * block) as f64 * to as f64 / from as f64;
+                assert!(
+                    (produced as f64 - want).abs() <= r.out_max() as f64 + r.delay_frames() as f64,
+                    "{from}->{to} @ {block}: produced {produced}, want ~{want}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -457,9 +457,11 @@ pub async fn is_pipeline_running(state: State<'_, AppState>) -> AppResult<bool> 
 }
 
 #[tauri::command]
-pub async fn output_latency_ms(state: State<'_, AppState>) -> AppResult<u32> {
+pub async fn latency_report(
+    state: State<'_, AppState>,
+) -> AppResult<crate::audio::pipeline::LatencyReport> {
     let tx = state.audio_tx.clone();
-    audio_request(tx, |reply| Command::OutputLatencyMs { reply }).await
+    audio_request(tx, |reply| Command::LatencyReport { reply }).await
 }
 
 #[tauri::command]

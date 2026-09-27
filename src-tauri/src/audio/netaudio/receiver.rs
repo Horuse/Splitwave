@@ -149,8 +149,14 @@ pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {
 
 impl NetReceiver {
     /// New output subgraph consumer at `output_sr`; wired to every live channel.
-    pub fn register_consumer(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
-        self.fanout.register_consumer(output_sr, realtime)
+    pub fn register_consumer(
+        &self,
+        output_sr: u32,
+        block_frames: usize,
+        realtime: bool,
+    ) -> ConsumerHandle {
+        self.fanout
+            .register_consumer(output_sr, block_frames, realtime)
     }
 
     fn stop(&self) {
@@ -315,7 +321,7 @@ mod tests {
     fn datagram_scenario(node: &str) -> Result<(), String> {
         let port = free_port()?;
         let rx = get_or_create(node, port);
-        let consumer = rx.register_consumer(48_000, true);
+        let consumer = rx.register_consumer(48_000, 1024, true);
         let taps = consumer.taps.clone();
         let recv = crate::audio::stream_recv::ChannelReceiver::new(consumer);
 

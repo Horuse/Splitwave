@@ -68,9 +68,9 @@ pub enum Command {
     IsRunning {
         reply: Sender<bool>,
     },
-    /// Current speaker output buffering latency in milliseconds (0 when idle).
-    OutputLatencyMs {
-        reply: Sender<u32>,
+    /// Round-trip latency, DSP load and node timings (empty when idle).
+    LatencyReport {
+        reply: Sender<crate::audio::pipeline::LatencyReport>,
     },
 }
 
@@ -173,9 +173,12 @@ pub fn run(rx: Receiver<Command>) {
             Command::IsRunning { reply } => {
                 let _ = reply.send(active.is_some());
             }
-            Command::OutputLatencyMs { reply } => {
-                let ms = active.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0);
-                let _ = reply.send(ms);
+            Command::LatencyReport { reply } => {
+                let report = active
+                    .as_mut()
+                    .map(|p| p.latency_report())
+                    .unwrap_or_default();
+                let _ = reply.send(report);
             }
         }
     }
@@ -218,12 +221,12 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(5)).expect("reply")
         }
 
-        fn output_latency(&self) -> u32 {
+        fn latency_report(&self) -> crate::audio::pipeline::LatencyReport {
             let (reply, rx) = channel();
             self.tx
                 .as_ref()
                 .expect("live sender")
-                .send(Command::OutputLatencyMs { reply })
+                .send(Command::LatencyReport { reply })
                 .expect("send");
             rx.recv_timeout(Duration::from_secs(5)).expect("reply")
         }
@@ -242,7 +245,7 @@ mod tests {
     fn idle_engine_reports_not_running_and_zero_latency() {
         let harness = EngineHarness::spawn();
         assert!(!harness.is_running());
-        assert_eq!(harness.output_latency(), 0);
+        assert_eq!(harness.latency_report().path, None);
     }
 
     #[test]

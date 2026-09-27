@@ -30,21 +30,24 @@ use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats};
 use crate::error::{AppError, AppResult};
 
 mod cue;
+mod cushion;
 pub use cue::play as play_cue;
 pub(crate) mod dag;
 mod file_reader;
 mod input;
+mod latency;
+pub use latency::LatencyReport;
 mod meter;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod native;
 mod output;
-#[cfg(target_os = "linux")]
 pub(crate) use worker::RtThread;
 mod sig;
 mod worker;
 
 use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};
-use input::{resolve_input, start_input_stream, InputHandle, ResolvedInput};
+use input::{configure_io, resolve_input, start_input_stream, InputHandle, ResolvedInput};
+use latency::{breakdown, DeviceIo, NodeTiming, PathInput, PathOutput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
     resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
@@ -90,12 +93,20 @@ pub struct ActivePipeline {
     /// `(input_id, slot)` bridges of hot-swapping outputs, kept feeding the old
     /// sub-graph while the new one's rings prefill. Removed after the swap.
     stale_bridges: Vec<(String, usize)>,
+    /// Latency and working block per effect node, for the report.
+    node_timings: HashMap<String, NodeTiming>,
+    /// Each speaker's overload count at the last report.
+    reported_overloads: HashMap<String, u64>,
 }
 
 struct InputState {
     _handle: InputHandle,
     sample_rate: u32,
     channels: u32,
+    /// The capture device's buffer and hardware latency, where known.
+    io: Option<DeviceIo>,
+    /// Frames the capture normalizer holds back, at the device's rate.
+    normalizer_frames: u64,
     bridge_tx: BroadcastTx,
     bridges_by_output: HashMap<String, Vec<usize>>,
     volume: Arc<AtomicU32>,
@@ -163,6 +174,8 @@ impl ActivePipeline {
             output_stats: Vec::new(),
             xrun_thread: None,
             stale_bridges: Vec::new(),
+            node_timings: HashMap::new(),
+            reported_overloads: HashMap::new(),
         }
     }
 
@@ -270,36 +283,62 @@ impl ActivePipeline {
         }
     }
 
-    /// Deepest speaker output latency in milliseconds, end to end: the input
-    /// side's deepest source ring backlog, the graph's own lookahead (delay
-    /// compensation aligned every path to it), and the adaptive output ring
-    /// buffer. The ring tracks the device's buffer, so a large-buffer device
-    /// runs at a higher (reported) latency than a low-latency one. Zero when
-    /// idle.
-    pub fn output_latency_ms(&self) -> u32 {
-        self.speakers
-            .iter()
-            .map(|(id, s)| {
-                let sr = s.sample_rate.max(1) as u64;
-                let buffered = s.io.target_frames.load(Ordering::Relaxed).max(0) as u64;
-                let out_ms = (buffered + s.io.graph_latency_frames as u64) * 1000 / sr;
-                // Parallel inputs don't sum: the worst source is the path that
-                // dominates the delay to this output.
-                let in_ms = self
-                    .source_stats
-                    .iter()
-                    .filter(|m| m.output_id == *id)
-                    .map(|m| {
-                        let frames =
-                            m.stats.level.load(Ordering::Relaxed) / m.channels.max(1) as u64;
-                        frames * 1000 / m.native_sr.max(1) as u64
-                    })
-                    .max()
-                    .unwrap_or(0);
-                (out_ms + in_ms) as u32
-            })
-            .max()
-            .unwrap_or(0)
+    /// Round-trip latency of the slowest input-to-speaker path, the load of
+    /// the busiest speaker callback since the last report, and every effect's
+    /// timing. Zeroed when idle.
+    pub fn latency_report(&mut self) -> LatencyReport {
+        let buffer_frames = self.current.as_ref().map_or(0, |g| g.buffer_frames);
+        let pipeline_rate = self.current.as_ref().map_or(48_000, |g| g.sample_rate);
+        let mut report = LatencyReport {
+            buffer_frames,
+            nodes: self.node_timings.values().cloned().collect(),
+            ..LatencyReport::default()
+        };
+        report.nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+        for (id, s) in &self.speakers {
+            let io = &s.io;
+            let inputs: Vec<PathInput> = self
+                .source_stats
+                .iter()
+                .filter(|m| m.output_id == *id)
+                .map(|m| {
+                    let input = m.input_id.as_ref().and_then(|i| self.inputs.get(i));
+                    PathInput {
+                        device: input.and_then(|i| i.io),
+                        queue_frames: m.stats.queue_frames.load(Ordering::Relaxed),
+                        normalizer_frames: input.map_or(0, |i| i.normalizer_frames),
+                        rate: m.native_sr,
+                    }
+                })
+                .collect();
+            let out = PathOutput {
+                pipeline_rate,
+                graph_latency_frames: io.graph_latency_frames.load(Ordering::Relaxed) as u64,
+                device_rate: io.sample_rate,
+                callback_frames: io.callback_frames.load(Ordering::Relaxed) as u64,
+                carried_frames: io.carried_frames.load(Ordering::Relaxed) as u64,
+                resampler_frames: io.resampler_delay_frames as u64,
+                hardware_frames: io.hardware_frames,
+            };
+            let path = breakdown(&inputs, &out);
+            if report
+                .path
+                .as_ref()
+                .map_or(true, |p| path.total_ms > p.total_ms)
+            {
+                report.device_buffer_frames = Some(out.callback_frames as u32);
+                report.path = Some(path);
+            }
+            let load = io.load_peak_permille.swap(0, Ordering::Relaxed) as f32 / 1000.0;
+            report.dsp_load = report.dsp_load.max(load);
+            let overloads = io.overloads.load(Ordering::Relaxed);
+            let seen = self
+                .reported_overloads
+                .insert(id.clone(), overloads)
+                .unwrap_or(0);
+            report.overloads += overloads.saturating_sub(seen) as u32;
+        }
+        report
     }
 
     fn teardown(&mut self) {
@@ -380,13 +419,15 @@ impl ActivePipeline {
             GraphSwap,
             Drop,
         }
-        let sample_rate_changed = self
+        // Rate and buffer size are negotiated with every device when its
+        // stream opens, so changing either reopens them all.
+        let engine_format_changed = self
             .current
             .as_ref()
-            .map_or(false, |c| c.sample_rate != new_graph.sample_rate);
+            .map_or(false, |c| !same_engine_format(c, new_graph));
         let mut cats: HashMap<String, Cat> = HashMap::new();
         for (id, new_sig) in &new_sigs {
-            let cat = if sample_rate_changed {
+            let cat = if engine_format_changed {
                 Cat::Drop
             } else {
                 match self.current_output_sig(id) {
@@ -488,7 +529,7 @@ impl ActivePipeline {
             .inputs
             .keys()
             .filter(|id| {
-                if sample_rate_changed {
+                if engine_format_changed {
                     return true;
                 }
                 match (
@@ -522,7 +563,7 @@ impl ActivePipeline {
         let Some(current) = &self.current else {
             return false;
         };
-        if current.sample_rate != graph.sample_rate {
+        if !same_engine_format(current, graph) {
             return false;
         }
         let cur_inputs: HashMap<&str, &InputSpec> = current
@@ -591,6 +632,10 @@ impl Drop for ActivePipeline {
     fn drop(&mut self) {
         self.teardown();
     }
+}
+
+fn same_engine_format(a: &ValidGraph, b: &ValidGraph) -> bool {
+    a.sample_rate == b.sample_rate && a.buffer_frames == b.buffer_frames
 }
 
 fn monitor_mode(graph: &ValidGraph) -> bool {
@@ -796,7 +841,7 @@ impl ActivePipeline {
         // output then node id; the consumer's build reads them as ring-sources.
         let mut pending_cuts: HashMap<String, HashMap<String, (Consumer<f32>, u32, usize)>> =
             HashMap::new();
-        for out in &graph.outputs {
+        for out in dag::owner_order(graph) {
             if !output_runtime.contains_key(&out.id) {
                 continue;
             }
@@ -817,11 +862,18 @@ impl ActivePipeline {
                 }
                 OutputSpec::WebRtcSend { .. } => pipeline_sr,
             };
+            // Only a speaker is paced by its device; every other output rides a
+            // timer, which cannot hold small blocks and whose latency nobody hears.
+            let block_frames = match &out.spec {
+                OutputSpec::Speaker { .. } => graph.buffer_frames as usize,
+                _ => dag::TIMER_BLOCK_FRAMES,
+            };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
             let mut built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
+                block_frames,
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
                 &input_native_sr,
@@ -878,6 +930,9 @@ impl ActivePipeline {
             for s in built.scopes {
                 self.scopes.insert(s.node_id.clone(), s);
             }
+            for t in built.node_timings {
+                self.node_timings.insert(t.node_id.clone(), t);
+            }
             self.source_stats.extend(built.sources);
             self.output_stats.push(built.output);
             output_stat_idx.insert(out.id.clone(), self.output_stats.len() - 1);
@@ -899,6 +954,7 @@ impl ActivePipeline {
                 let built = build_output_graph(
                     None,
                     monitor_sr,
+                    dag::TIMER_BLOCK_FRAMES,
                     true,
                     graph,
                     &input_native_sr,
@@ -934,6 +990,9 @@ impl ActivePipeline {
                 }
                 for s in built.scopes {
                     self.scopes.insert(s.node_id.clone(), s);
+                }
+                for t in built.node_timings {
+                    self.node_timings.insert(t.node_id.clone(), t);
                 }
                 self.source_stats.extend(built.sources);
                 self.output_stats.push(built.output);
@@ -1003,6 +1062,8 @@ impl ActivePipeline {
                     captured.push((input_id.clone(), out_id.clone(), capture));
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
+                let io = configure_io(&resolved, graph.buffer_frames as usize, pipeline_sr);
+                let normalizer_frames = input::normalizer_frames(&resolved, pipeline_sr);
                 let handle = start_input_stream(
                     &input_id,
                     resolved,
@@ -1018,6 +1079,8 @@ impl ActivePipeline {
                         _handle: handle,
                         sample_rate,
                         channels,
+                        io,
+                        normalizer_frames,
                         bridge_tx,
                         bridges_by_output,
                         volume,
@@ -1062,6 +1125,8 @@ impl ActivePipeline {
             let paused = new_input_paused.remove(&input_id);
             let drain = new_input_drain.remove(&input_id);
             let (bridge_tx, bridge_rx) = broadcast_channel();
+            let io = configure_io(&resolved, graph.buffer_frames as usize, pipeline_sr);
+            let normalizer_frames = input::normalizer_frames(&resolved, pipeline_sr);
             let handle = start_input_stream(
                 &input_id,
                 resolved,
@@ -1077,6 +1142,8 @@ impl ActivePipeline {
                     _handle: handle,
                     sample_rate,
                     channels,
+                    io,
+                    normalizer_frames,
                     bridge_tx,
                     bridges_by_output: HashMap::new(),
                     volume,
@@ -1238,6 +1305,9 @@ impl ActivePipeline {
             }
         }
 
+        self.node_timings
+            .retain(|id, _| graph.effects.iter().any(|e| &e.id == id));
+
         // Sync volume atomics for all surviving inputs from the new graph spec.
         for inp in &graph.inputs {
             if let Some(state) = self.inputs.get(&inp.id) {
@@ -1345,6 +1415,7 @@ mod tests {
     fn mic_to_speaker() -> ValidGraph {
         GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
             edges: vec![edge("e1", "m", "g"), edge("e2", "g", "s")],
         }
@@ -1362,12 +1433,14 @@ mod tests {
             effects: Vec::new(),
             edges: Vec::new(),
             sample_rate: 48_000,
+            buffer_frames: 256,
         };
         assert!(monitor_mode(&g));
 
         // Analyzer present even with a real output → monitor for it.
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m"),
                 speaker("s"),
@@ -1385,8 +1458,10 @@ mod tests {
 
     #[test]
     fn empty_pipeline_is_a_quiescent_noop() {
-        let p = ActivePipeline::new();
-        assert_eq!(p.output_latency_ms(), 0, "idle pipeline reports no latency");
+        let mut p = ActivePipeline::new();
+        let report = p.latency_report();
+        assert_eq!(report.path, None, "idle pipeline reports no latency");
+        assert_eq!(report.dsp_load, 0.0);
         // Every live-param command on an unknown node is a silent no-op.
         p.update_effect("ghost", &serde_json::json!({ "gainDb": -6.0 }));
         p.seek_audio_file("ghost", 100);
@@ -1424,6 +1499,18 @@ mod tests {
     fn is_structurally_current_requires_a_running_pipeline() {
         let p = ActivePipeline::new();
         assert!(!p.is_structurally_current(&mic_to_speaker()));
+    }
+
+    #[test]
+    fn buffer_or_rate_change_reopens_every_stream() {
+        let a = mic_to_speaker();
+        assert!(same_engine_format(&a, &a.clone()));
+        let mut b = a.clone();
+        b.buffer_frames = 64;
+        assert!(!same_engine_format(&a, &b), "buffer size change");
+        let mut c = a.clone();
+        c.sample_rate = 96_000;
+        assert!(!same_engine_format(&a, &c), "sample rate change");
     }
 
     #[test]
@@ -1476,6 +1563,8 @@ mod tests {
             _handle: InputHandle::AudioFile(reader),
             sample_rate: 48_000,
             channels: 2,
+            io: None,
+            normalizer_frames: 0,
             bridge_tx: broadcast_channel().0,
             bridges_by_output: HashMap::new(),
             volume: volume.clone(),

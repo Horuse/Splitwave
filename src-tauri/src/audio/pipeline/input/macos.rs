@@ -13,8 +13,11 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
+use super::super::latency::DeviceIo;
 use super::super::native::native_config;
+use super::super::output::device_block;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
+use crate::audio::macos_hal;
 
 /// The graph downstream is laid out from the format resolved before the capture
 /// started. A tap follows the default output device, so switching it between
@@ -61,6 +64,35 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
             unreachable!("network inputs have no capture device")
         }
     }
+}
+
+/// Asks a capture device for one engine block per callback and reports what
+/// it runs at. Only a cpal device has a buffer of ours to size; captures run
+/// at whatever the system tap delivers.
+pub(in crate::audio::pipeline) fn configure_io(
+    resolved: &ResolvedInput,
+    block_frames: usize,
+    pipeline_rate: u32,
+) -> Option<DeviceIo> {
+    use cpal::traits::DeviceTrait;
+    let ResolvedInput::Cpal {
+        device,
+        sample_rate,
+        ..
+    } = resolved
+    else {
+        return None;
+    };
+    let name = device.name().ok()?;
+    let requested = device_block(block_frames, pipeline_rate, *sample_rate);
+    let granted = macos_hal::set_buffer_frames(DeviceKind::Input, &name, requested);
+    tracing::info!(device = %name, requested, granted, "microphone buffer size");
+    let io = macos_hal::io_latency(DeviceKind::Input, &name)?;
+    Some(DeviceIo {
+        rate: *sample_rate,
+        buffer_frames: io.buffer_frames,
+        hardware_frames: Some(io.hardware_frames),
+    })
 }
 
 pub(in crate::audio::pipeline) fn start_input_stream(

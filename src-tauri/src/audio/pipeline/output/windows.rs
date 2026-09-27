@@ -14,7 +14,7 @@ use crate::error::AppResult;
 use super::super::dag::OutputGraph;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
+use super::{speaker_callback, speaker_renderer, SpeakerIo, SpeakerLink, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub device: cpal::Device,
@@ -24,22 +24,23 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub sample_rate: u32,
 }
 
-// The stream drops before the worker so the audio callback stops before the
-// ring is freed.
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
-    _worker: SpeakerWorker,
+    link: SpeakerLink,
     _alive: StreamGuard,
 }
 
 // `Stream::drop` isn't guaranteed to stop the underlying device (cpal's macOS
 // backend never does for a non-default device, see the macOS SpeakerHandle);
 // call `pause` explicitly so teardown doesn't depend on that guarantee here too.
+// The renderer is taken back first so the graph drops on this thread.
 impl Drop for SpeakerHandle {
     fn drop(&mut self) {
+        let renderer = self.link.retire();
         if let Err(e) = self._stream.pause() {
             warn!(error = %e, "failed to pause speaker stream on teardown");
         }
+        drop(renderer);
     }
 }
 
@@ -73,12 +74,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, fill, level, target, io) = speaker_ring(
-        spec.out_channels,
-        graph.sample_rate(),
-        spec.sample_rate,
-        graph.latency_frames(),
-    );
+    let (mut link, fill) = speaker_callback();
     let app_err = app.clone();
     let dead_cb = dead.clone();
     let node_id_cb = node_id.to_string();
@@ -103,19 +99,13 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         err_cb,
     )?;
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(
-        producer,
-        level,
-        target,
-        io.sample_rate.clone(),
-        spec.out_channels,
-        graph,
-        meter,
-    )?;
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
+    link.attach(renderer);
     Ok((
         SpeakerHandle {
             _stream: stream,
-            _worker: worker_handle,
+            link,
             _alive: StreamGuard::new(),
         },
         ctrl,

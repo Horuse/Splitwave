@@ -72,10 +72,10 @@ use model::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;
 
 use crate::audio::graph::NoiseSuppressorData;
-use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
+use crate::audio::graph::MAX_BUFFER_FRAMES;
 use crate::audio::resample::MultiResampler;
 
-use super::offload::{BlockProcessor, Offload};
+use super::offload::{pad_frames, BlockProcessor, Offload};
 use super::util::load_f32;
 use super::{Effect, EffectControl};
 
@@ -98,6 +98,8 @@ pub struct NoiseSuppressorControls {
 pub struct NoiseSuppressorEffect {
     backend: Option<Backend>,
     latency: usize,
+    /// The model's hop in output frames, when it exceeds the engine block.
+    working_block: Option<usize>,
 }
 
 enum Backend {
@@ -189,7 +191,12 @@ struct ModelState {
 }
 
 impl NoiseSuppressorEffect {
-    pub fn new(d: NoiseSuppressorData, sample_rate: u32, realtime: bool) -> (Self, EffectControl) {
+    pub fn new(
+        d: NoiseSuppressorData,
+        sample_rate: u32,
+        block_frames: usize,
+        realtime: bool,
+    ) -> (Self, EffectControl) {
         let ctl = NoiseSuppressorControls {
             atten_lim_db: Arc::new(AtomicU32::new(d.attenuation_limit_db.to_bits())),
             pf_beta: Arc::new(AtomicU32::new(d.post_filter_beta.max(0.0).to_bits())),
@@ -200,46 +207,67 @@ impl NoiseSuppressorEffect {
         let control = EffectControl::NoiseSuppressor {
             controls: ctl.clone(),
         };
-        (Self::from_state(ctl, sample_rate, realtime), control)
+        (
+            Self::from_state(ctl, sample_rate, block_frames, realtime),
+            control,
+        )
     }
 
-    pub fn from_state(ctl: NoiseSuppressorControls, sample_rate: u32, realtime: bool) -> Self {
+    pub fn from_state(
+        ctl: NoiseSuppressorControls,
+        sample_rate: u32,
+        block_frames: usize,
+        realtime: bool,
+    ) -> Self {
         let initial = Params::load(&ctl);
         let Some(state) = ModelState::build(initial, sample_rate) else {
             return Self {
                 backend: None,
                 latency: 0,
+                working_block: None,
             };
         };
         let model_latency = state.latency;
+        // The model steps in whole hops at 48 kHz: that is its working block.
+        let hop = (state.hop * sample_rate as usize).div_ceil(MODEL_SR as usize);
+        let working_block = (hop > block_frames).then_some(hop);
         let worker = ModelWorker {
             ctl,
             state,
             last: initial,
         };
         if !realtime {
-            let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
+            let out = Vec::with_capacity(MAX_BUFFER_FRAMES * 2);
             return Self {
                 backend: Some(Backend::Inline { worker, out }),
                 latency: model_latency,
+                working_block,
             };
         }
-        match Offload::spawn("noise_suppressor", worker, 2) {
-            Ok(offload) => {
-                let latency = model_latency + offload.latency_frames();
-                Self {
-                    backend: Some(Backend::Offloaded(offload)),
-                    latency,
-                }
-            }
+        // A worker that computes a hop at a time needs a hop of runway to do
+        // it in, so the pad never drops below one.
+        let pad = pad_frames(sample_rate, block_frames, hop);
+        match Offload::spawn("noise_suppressor", worker, 2, pad, sample_rate) {
+            Ok(offload) => Self {
+                latency: model_latency + offload.latency_frames(),
+                backend: Some(Backend::Offloaded(offload)),
+                working_block,
+            },
             Err(worker) => {
-                let out = Vec::with_capacity(DSP_BLOCK_FRAMES * 2);
+                let out = Vec::with_capacity(MAX_BUFFER_FRAMES * 2);
                 Self {
                     backend: Some(Backend::Inline { worker, out }),
                     latency: model_latency,
+                    working_block,
                 }
             }
         }
+    }
+
+    /// The model's hop, the smallest step it can answer in, when larger
+    /// than the engine block.
+    pub fn working_block(&self) -> Option<usize> {
+        self.working_block
     }
 }
 
@@ -399,7 +427,7 @@ mod tests {
 
     #[test]
     fn inline_backend_processes_at_48k() {
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
         assert!(e.latency_frames() > 0, "model latency must be reported");
         for k in 0..4 {
             let mut buf: Vec<f32> = (0..512 * 2)
@@ -420,7 +448,7 @@ mod tests {
     #[test]
     fn inline_backend_resamples_at_44k1() {
         // Output rate ≠ 48 kHz exercises both resamplers.
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 44_100, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 44_100, 1024, false);
         assert!(e.latency_frames() > 0);
         for _k in 0..4 {
             let mut buf = vec![0.2f32; 512 * 2];
@@ -431,7 +459,7 @@ mod tests {
 
     #[test]
     fn live_param_changes_update_the_model() {
-        let (mut e, c) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        let (mut e, c) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
         let EffectControl::NoiseSuppressor { controls } = &c else {
             panic!("variant")
         };
@@ -452,7 +480,7 @@ mod tests {
 
     #[test]
     fn zero_frames_is_noop() {
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
         let mut buf = vec![0.5f32; 32];
         e.process(&mut buf, 0);
         assert_eq!(buf, vec![0.5; 32]);

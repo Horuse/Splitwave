@@ -32,8 +32,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::resolve_input;
 use platform::start_input_stream as start_native_input_stream;
+pub(super) use platform::{configure_io, resolve_input};
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
 /// down the capture, or signals + joins the file reader thread.
@@ -198,6 +198,18 @@ pub(super) fn start_audio_file(
     Ok(InputHandle::AudioFile(reader))
 }
 
+/// Frames the capture normalizer holds back, at the device's rate: a chunk
+/// being gathered plus the resampler's filter delay. Zero when it only
+/// forwards (or is skipped entirely).
+pub(super) fn normalizer_frames(resolved: &ResolvedInput, target_sample_rate: u32) -> u64 {
+    let native = resolved.sample_rate();
+    if matches!(resolved, ResolvedInput::AudioFile { .. }) || native == target_sample_rate {
+        return 0;
+    }
+    MultiResampler::new(native, target_sample_rate, RESAMPLE_CHUNK, 1)
+        .map_or(0, |r| (RESAMPLE_CHUNK + r.delay_frames()) as u64)
+}
+
 fn input_resampler(
     native_rate: u32,
     target_sample_rate: u32,
@@ -227,6 +239,15 @@ pub(super) fn start_input_stream(
     // They must not be run through the capture normalizer thread (which drops frames
     // on overflow and breaks backpressure). DAG nodes resample file audio directly.
     if matches!(resolved, ResolvedInput::AudioFile { .. }) {
+        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+    }
+    // A device already at the pipeline rate needs no normalizing: its callback
+    // feeds the graphs' rings directly, with no thread hop in between. Only a
+    // cpal device qualifies; captures may change rate while running.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if matches!(resolved, ResolvedInput::Cpal { .. })
+        && resolved.sample_rate() == target_sample_rate
+    {
         return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
     }
     let sample_rate = resolved.sample_rate();
@@ -289,17 +310,32 @@ pub(super) fn start_input_stream(
                         );
                     }
                 }
-                if raw_consumer.slots() < input_buf.len() {
-                    thread::sleep(Duration::from_millis(1));
-                    continue;
-                }
-                let Ok(chunk) = raw_consumer.read_chunk(input_buf.len()) else {
+                // The resampler takes fixed chunks; a passthrough forwards
+                // whatever whole frames have arrived, so it adds no latency
+                // beyond its wake-up.
+                let available = raw_consumer.slots();
+                let take = if resampler.is_some() {
+                    if available < input_buf.len() {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    input_buf.len()
+                } else {
+                    let whole = available.min(input_buf.len());
+                    let whole = whole - whole % channels.max(1);
+                    if whole == 0 {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    whole
+                };
+                let Ok(chunk) = raw_consumer.read_chunk(take) else {
                     continue;
                 };
                 let (first, second) = chunk.as_slices();
                 let n = first.len();
                 input_buf[..n].copy_from_slice(first);
-                input_buf[n..].copy_from_slice(second);
+                input_buf[n..take].copy_from_slice(second);
                 chunk.commit_all();
                 let normalized = if let Some(resampler) = &mut resampler {
                     output_buf.clear();
@@ -311,7 +347,7 @@ pub(super) fn start_input_stream(
                     }
                     output_buf.as_slice()
                 } else {
-                    input_buf.as_slice()
+                    &input_buf[..take]
                 };
                 if let Some(meter) = &meter {
                     update_meter(meter, normalized, channels);

@@ -244,6 +244,7 @@ mod tests {
     fn mic_to_speaker(gain_db: f32) -> ValidGraph {
         GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", gain_db), speaker("s")],
             edges: vec![edge("e1", "m", "g"), edge("e2", "g", "s")],
         }
@@ -257,6 +258,7 @@ mod tests {
         // its own output can reach.
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m"),
                 gain_node("a", 0.0),
@@ -295,6 +297,7 @@ mod tests {
     fn mute_and_bypass_flags_are_not_structural() {
         let with_bypass = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m"),
                 node(
@@ -318,6 +321,7 @@ mod tests {
         let mk = |lookahead: f32, ceiling: f32| {
             GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![
                     mic("m"),
                     node(
@@ -347,6 +351,7 @@ mod tests {
         let mk = |state: Option<&str>| {
             GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![
                     node(
                         "p",
@@ -370,6 +375,7 @@ mod tests {
         assert_eq!(a, b, "state applies only at instantiation");
         let other_path = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 node(
                     "p",
@@ -418,6 +424,7 @@ mod tests {
     fn sidechain_edges_sort_after_main() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m1"),
                 mic("m2"),
@@ -520,6 +527,7 @@ mod tests {
             let mk = |data: serde_json::Value| {
                 GraphSpec {
                     sample_rate: None,
+                    buffer_frames: None,
                     nodes: vec![mic("m"), node("fx", kind.clone(), data), speaker("s")],
                     edges: vec![edge("e1", "m", "fx"), edge("e2", "fx", "s")],
                 }

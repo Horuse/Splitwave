@@ -8,7 +8,7 @@ use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
+use super::{speaker_callback, speaker_renderer, SpeakerIo, SpeakerLink, StreamGuard};
 
 pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub node_id: String,
@@ -18,8 +18,16 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
 
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _playback: crate::audio::playback::Playback,
-    _worker: SpeakerWorker,
+    link: SpeakerLink,
     _alive: StreamGuard,
+}
+
+// The renderer is taken back before the playback thread stops, so the graph
+// drops on this thread rather than inside the PipeWire process callback.
+impl Drop for SpeakerHandle {
+    fn drop(&mut self) {
+        drop(self.link.retire());
+    }
 }
 
 pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<SpeakerResolved> {
@@ -42,36 +50,27 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
     let dead = Arc::new(AtomicBool::new(false));
 
-    let (producer, mut fill, level, target, io) = speaker_ring(
-        spec.out_channels,
-        graph.sample_rate(),
-        spec.sample_rate,
-        graph.latency_frames(),
-    );
+    let (mut link, mut fill) = speaker_callback();
+    let channels = spec.out_channels.max(1);
     let fill_pw = move |out: &mut [f32]| {
-        fill(out, 0);
+        fill(out, out.len() / channels);
         out.len()
     };
     let playback = crate::audio::playback::Playback::start(
         &spec.node_id,
         spec.sample_rate,
         spec.out_channels,
+        graph.block_frames(),
         fill_pw,
     )?;
 
-    let (worker_handle, ctrl) = spawn_speaker_worker(
-        producer,
-        level,
-        target,
-        io.sample_rate.clone(),
-        spec.out_channels,
-        graph,
-        meter,
-    )?;
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
+    link.attach(renderer);
     Ok((
         SpeakerHandle {
             _playback: playback,
-            _worker: worker_handle,
+            link,
             _alive: StreamGuard::new(),
         },
         ctrl,

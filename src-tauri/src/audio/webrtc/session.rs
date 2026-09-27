@@ -116,8 +116,14 @@ impl WebRtcSession {
         self.output_sr.store(output_sr, Ordering::Relaxed);
     }
 
-    pub fn register_bridge(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
-        self.fanout.register_consumer(output_sr, realtime)
+    pub fn register_bridge(
+        &self,
+        output_sr: u32,
+        block_frames: usize,
+        realtime: bool,
+    ) -> ConsumerHandle {
+        self.fanout
+            .register_consumer(output_sr, block_frames, realtime)
     }
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.

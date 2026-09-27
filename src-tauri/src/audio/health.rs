@@ -19,8 +19,6 @@ macro_rules! counters {
 }
 
 counters! {
-    /// Samples zero-filled into a device output because the ring ran dry.
-    OUTPUT_UNDERRUN_SAMPLES,
     /// Samples dropped by the capture broadcast into a per-output input ring
     /// (input_bridge.rs) -- a DSP source fell behind the capture callback.
     CAPTURE_RING_OVERRUN_SAMPLES,
@@ -29,9 +27,9 @@ counters! {
     /// Samples dropped by a DAG fan-out tap or wire-sender push (dag.rs) --
     /// another output or a wire consumer fell behind this node's block rate.
     TAP_RING_OVERRUN_SAMPLES,
-    /// Samples dropped pushing into the speaker worker's output ring
-    /// (pipeline/output/mod.rs) -- the cpal callback fell behind the worker.
-    SPEAKER_RING_OVERRUN_SAMPLES,
+    /// Speaker blocks the output resampler failed to convert; the device
+    /// played silence for them (pipeline/output/render.rs).
+    SPEAKER_RENDER_FAILED_BLOCKS,
     /// Input samples discarded by a source's backlog trim (SourceState::fill_block).
     SOURCE_TRIM_DROPPED_SAMPLES,
     /// Samples dropped by a StagingRing overrun (producer outran the drain).
@@ -88,11 +86,10 @@ mod tests {
         assert_eq!(
             names,
             [
-                "OUTPUT_UNDERRUN_SAMPLES",
                 "CAPTURE_RING_OVERRUN_SAMPLES",
                 "NET_RING_OVERRUN_SAMPLES",
                 "TAP_RING_OVERRUN_SAMPLES",
-                "SPEAKER_RING_OVERRUN_SAMPLES",
+                "SPEAKER_RENDER_FAILED_BLOCKS",
                 "SOURCE_TRIM_DROPPED_SAMPLES",
                 "STAGING_OVERRUN_SAMPLES",
                 "CLOCK_LATE_BLOCKS",

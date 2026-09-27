@@ -1,7 +1,11 @@
 //! Runs an expensive effect on its own thread so a processing spike cannot
-//! cost the DSP worker its block deadline. The RT side only bulk-pushes into
-//! and bulk-pops out of a pair of SPSC rings; the return ring's prefill is
-//! declared as latency so PDC aligns parallel branches against it.
+//! cost the audio callback its deadline. The RT side only bulk-pushes into
+//! and bulk-pops out of a pair of SPSC rings; the return ring's prefill (the
+//! pad) is declared as latency so PDC aligns parallel branches against it.
+//!
+//! The pad is the effect's working block: it is how long the worker thread
+//! may take to hand a block back. It is never below the engine block (the RT
+//! side reads a whole block at once) and never below the effect's own floor.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,14 +15,23 @@ use std::time::Duration;
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
 
+use crate::audio::graph::MAX_BUFFER_FRAMES;
 use crate::audio::health;
-use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
 
-// The RT side pops a block immediately after pushing it, so the return ring
-// must already hold a full block: that prefill is the offload's latency.
-const PAD_FRAMES: usize = DSP_BLOCK_FRAMES;
-const RING_FRAMES: usize = DSP_BLOCK_FRAMES * 16;
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
+/// Floor for a worker's turnaround: its 1 ms poll plus scheduling slack plus
+/// the processing itself.
+const MIN_TURNAROUND_MS: f64 = 5.0;
+
+/// Pad for an offloaded effect at `sample_rate` driven in `block_frames`
+/// blocks, given the effect's own processing floor. A power of two, so it
+/// reads as a buffer size.
+pub fn pad_frames(sample_rate: u32, block_frames: usize, floor_frames: usize) -> usize {
+    let turnaround = (sample_rate as f64 * MIN_TURNAROUND_MS / 1000.0).ceil() as usize;
+    block_frames
+        .max(turnaround.next_power_of_two())
+        .max(floor_frames)
+}
 
 /// Interleaved block processing, run on the offload thread.
 pub trait BlockProcessor: Send {
@@ -32,6 +45,7 @@ pub struct Offload {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     width: usize,
+    pad_frames: usize,
 }
 
 // A partial write must not split a frame: a short tail would shift every later
@@ -64,20 +78,26 @@ fn push_aligned(prod: &mut Producer<f32>, samples: &[f32], width: usize) -> usiz
 }
 
 impl Offload {
+    /// `pad_frames` comes from [`pad_frames`]; `sample_rate` sizes the
+    /// worker's real-time scheduling.
     pub fn spawn<P: BlockProcessor + 'static>(
         name: &'static str,
         processor: P,
         width: usize,
+        pad_frames: usize,
+        sample_rate: u32,
     ) -> Result<Self, P> {
         if width == 0 {
             tracing::error!(name, "offload: width must be at least 1");
             return Err(processor);
         }
 
-        let (to_worker, mut worker_in) = RingBuffer::<f32>::new(RING_FRAMES * width);
-        let (mut worker_out, from_worker) = RingBuffer::<f32>::new(RING_FRAMES * width);
+        // Room for the pad, a block in flight each way, and a stall's worth.
+        let ring_frames = (pad_frames + MAX_BUFFER_FRAMES) * 4;
+        let (to_worker, mut worker_in) = RingBuffer::<f32>::new(ring_frames * width);
+        let (mut worker_out, from_worker) = RingBuffer::<f32>::new(ring_frames * width);
 
-        match worker_out.write_chunk(PAD_FRAMES * width) {
+        match worker_out.write_chunk(pad_frames * width) {
             Ok(mut chunk) => {
                 let (first, second) = chunk.as_mut_slices();
                 first.fill(0.0);
@@ -105,8 +125,15 @@ impl Offload {
                     .unwrap()
                     .take()
                     .expect("processor handed off");
-                let mut scratch = vec![0.0f32; DSP_BLOCK_FRAMES * width];
-                let mut out = Vec::with_capacity(DSP_BLOCK_FRAMES * width);
+                // The pad leaves this thread a few milliseconds per block, so
+                // it must not wait behind ordinary threads.
+                let _rt = crate::audio::pipeline::RtThread::promote(
+                    "offload",
+                    pad_frames as u32,
+                    sample_rate,
+                );
+                let mut scratch = vec![0.0f32; MAX_BUFFER_FRAMES * width];
+                let mut out = Vec::with_capacity(MAX_BUFFER_FRAMES * width);
                 while !stop_thread.load(Ordering::Relaxed) {
                     let avail = worker_in.slots();
                     let avail = avail - avail % width; // whole frames only
@@ -149,6 +176,7 @@ impl Offload {
             stop,
             join: Some(join),
             width,
+            pad_frames,
         })
     }
 
@@ -162,7 +190,7 @@ impl Offload {
 
         // A starve leaves the return ring permanently deeper than the pad; trim
         // back so the declared latency stays true.
-        let pad = PAD_FRAMES * self.width;
+        let pad = self.pad_frames * self.width;
         let avail = self.from_worker.slots();
         if avail > want + pad {
             let excess = avail - want - pad;
@@ -196,7 +224,7 @@ impl Offload {
     }
 
     pub fn latency_frames(&self) -> usize {
-        PAD_FRAMES
+        self.pad_frames
     }
 }
 
@@ -236,69 +264,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn offload_roundtrip_delays_by_pad() {
-        let Ok(mut offload) = Offload::spawn("test", Passthrough, 2) else {
+    fn roundtrip(width: usize, block: usize, pad: usize) {
+        let Ok(mut offload) = Offload::spawn("test", Passthrough, width, pad, 48_000) else {
             panic!("spawn offload")
         };
+        assert_eq!(offload.latency_frames(), pad);
 
         let mut fed = Vec::new();
         let mut got = Vec::new();
-        let mut counter = 0.0f32;
-
-        for _ in 0..8 {
-            let mut block = vec![0.0f32; DSP_BLOCK_FRAMES * 2];
-            for f in 0..DSP_BLOCK_FRAMES {
-                block[f * 2] = counter;
-                block[f * 2 + 1] = counter;
+        let mut counter = 1.0f32;
+        let blocks = (4 * pad / block).max(8);
+        for _ in 0..blocks {
+            let mut data = vec![0.0f32; block * width];
+            for frame in data.chunks_exact_mut(width) {
+                frame.fill(counter);
                 counter += 1.0;
             }
-            fed.extend_from_slice(&block);
-            offload.process(&mut block);
-            got.extend_from_slice(&block);
-            wait_for_return(&offload, block.len());
+            fed.extend_from_slice(&data);
+            offload.process(&mut data);
+            got.extend_from_slice(&data);
+            wait_for_return(&offload, data.len());
         }
 
-        let pad = PAD_FRAMES * 2;
-        for (i, &v) in got.iter().enumerate().take(pad) {
-            assert_eq!(v, 0.0, "expected zero pad at index {i}");
+        let shift = pad * width;
+        assert!(got[..shift].iter().all(|&v| v == 0.0), "pad is silence");
+        for i in shift..got.len() {
+            assert_eq!(got[i], fed[i - shift], "{block}/{pad}: mismatch at {i}");
         }
-        for i in pad..got.len() {
-            assert_eq!(got[i], fed[i - pad], "mismatch at index {i}");
+    }
+
+    #[test]
+    fn offload_delays_by_exactly_its_pad_at_every_block_size() {
+        for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+            roundtrip(2, block, pad_frames(48_000, block, 0));
         }
     }
 
     #[test]
     fn offload_roundtrip_handles_wide_blocks() {
-        const WIDTH: usize = 6;
-        let Ok(mut offload) = Offload::spawn("test-wide", Passthrough, WIDTH) else {
-            panic!("spawn offload")
-        };
+        roundtrip(6, 1024, 1024);
+    }
 
-        let mut fed = Vec::new();
-        let mut got = Vec::new();
-        let mut counter = 0.0f32;
-
-        for _ in 0..8 {
-            let mut block = vec![0.0f32; DSP_BLOCK_FRAMES * WIDTH];
-            for f in 0..DSP_BLOCK_FRAMES {
-                for c in 0..WIDTH {
-                    block[f * WIDTH + c] = counter;
-                }
-                counter += 1.0;
-            }
-            fed.extend_from_slice(&block);
-            offload.process(&mut block);
-            got.extend_from_slice(&block);
-            wait_for_return(&offload, block.len());
-        }
-
-        let pad = PAD_FRAMES * WIDTH;
-        for (i, &v) in got.iter().enumerate().take(pad) {
-            assert_eq!(v, 0.0, "expected zero pad at index {i}");
-        }
-        for i in pad..got.len() {
-            assert_eq!(got[i], fed[i - pad], "mismatch at index {i}");
-        }
+    #[test]
+    fn pad_never_drops_below_the_block_or_the_floor() {
+        assert_eq!(pad_frames(48_000, 32, 0), 256, "5 ms turnaround at 48k");
+        assert_eq!(pad_frames(96_000, 32, 0), 512);
+        assert_eq!(pad_frames(44_100, 64, 0), 256);
+        assert_eq!(pad_frames(48_000, 2048, 0), 2048, "never below the block");
+        assert_eq!(pad_frames(48_000, 64, 480), 480, "effect's own floor");
     }
 }

@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::health;
 
-use super::dag::{OutputMeta, SourceMeta, DSP_BLOCK_FRAMES};
+use super::dag::{OutputMeta, SourceMeta};
 use super::output::LIVE_SPEAKER_STREAMS;
 
 const METER_EVENT: &str = "audio://meter";
@@ -95,6 +95,8 @@ pub(super) fn spawn_xrun_thread(
                         .map_or(0, |c| c.dropped.load(Ordering::Relaxed))
                 })
                 .collect();
+            let mut announced: Vec<bool> = vec![false; sources.len()];
+            let mut last_failed: Vec<u64> = vec![0; sources.len()];
             let mut last_blocks: Vec<u64> = outputs
                 .iter()
                 .map(|o| o.blocks.load(Ordering::Relaxed))
@@ -106,11 +108,11 @@ pub(super) fn spawn_xrun_thread(
                         .map_or(0, |io| io.requested.load(Ordering::Relaxed))
                 })
                 .collect();
-            let mut last_read: Vec<u64> = outputs
+            let mut last_overloads: Vec<u64> = outputs
                 .iter()
                 .map(|o| {
                     o.io.as_ref()
-                        .map_or(0, |io| io.read.load(Ordering::Relaxed))
+                        .map_or(0, |io| io.overloads.load(Ordering::Relaxed))
                 })
                 .collect();
             let mut last_callbacks: Vec<u64> = outputs
@@ -138,6 +140,20 @@ pub(super) fn spawn_xrun_thread(
                     let stalled_now = s.stats.stalled.load(Ordering::Relaxed);
                     let trimmed_now = s.stats.trimmed.load(Ordering::Relaxed);
                     let consumed_now = s.stats.consumed.load(Ordering::Relaxed);
+                    // Logged here rather than on the audio thread that sees it.
+                    if !announced[i] && s.stats.online.load(Ordering::Relaxed) {
+                        announced[i] = true;
+                        info!(source = %s.label, "source online");
+                    }
+                    let failed_now = s.stats.failed.load(Ordering::Relaxed);
+                    if failed_now > last_failed[i] {
+                        warn!(
+                            source = %s.label,
+                            chunks = failed_now - last_failed[i],
+                            "source resampler failed; chunks dropped"
+                        );
+                        last_failed[i] = failed_now;
+                    }
                     let xrun_delta = xrun_now.saturating_sub(last_xrun[i]);
                     let stalled_delta = stalled_now.saturating_sub(last_stalled[i]);
                     let trimmed_delta = trimmed_now.saturating_sub(last_trimmed[i]);
@@ -231,33 +247,31 @@ pub(super) fn spawn_xrun_thread(
                     last_blocks[i] = blocks_now;
 
                     let expected_blocks =
-                        o.sample_rate as f64 / DSP_BLOCK_FRAMES as f64 * elapsed_secs;
+                        o.sample_rate as f64 / o.block_frames as f64 * elapsed_secs;
                     let blocks_off_rate = off_rate(blocks_delta as f64, expected_blocks, 1.0);
 
-                    // Device-pull diagnostics: distinguishes "device asking for
-                    // far more than real time implies" from "ring nobody fills",
-                    // which the global OUTPUT_UNDERRUN_SAMPLES counter can't tell
-                    // apart since it's summed across every output.
+                    // Device-pull diagnostics: tells "device asking for far more
+                    // than real time implies" apart from "graph too slow for the
+                    // buffer", which shows as overloads.
                     let io = o.io.as_ref().map(|io| {
                         let requested_now = io.requested.load(Ordering::Relaxed);
-                        let read_now = io.read.load(Ordering::Relaxed);
+                        let overloads_now = io.overloads.load(Ordering::Relaxed);
                         let callbacks_now = io.callbacks.load(Ordering::Relaxed);
                         let requested_delta = requested_now.saturating_sub(last_requested[i]);
-                        let read_delta = read_now.saturating_sub(last_read[i]);
+                        let overloads_delta = overloads_now.saturating_sub(last_overloads[i]);
                         let callbacks_delta = callbacks_now.saturating_sub(last_callbacks[i]);
                         last_requested[i] = requested_now;
-                        last_read[i] = read_now;
+                        last_overloads[i] = overloads_now;
                         last_callbacks[i] = callbacks_now;
-                        (requested_delta, read_delta, callbacks_delta)
+                        (requested_delta, overloads_delta, callbacks_delta)
                     });
                     let io_off_rate = io.is_some_and(|(requested_delta, _, callbacks_delta)| {
-                        let expected_samples = o.io.as_ref().map_or(o.sample_rate, |speaker| {
-                            speaker.sample_rate.load(Ordering::Relaxed)
-                        }) as f64
-                            * o.channels as f64
-                            * elapsed_secs;
+                        let expected_samples =
+                            o.io.as_ref().map_or(o.sample_rate, |s| s.sample_rate) as f64
+                                * o.channels as f64
+                                * elapsed_secs;
                         // The device's own buffer size, measured rather than
-                        // assumed: cpal opens with `BufferSize::Default`.
+                        // assumed: the device may not grant the requested one.
                         let quantum = if callbacks_delta > 0 {
                             requested_delta as f64 / callbacks_delta as f64
                         } else {
@@ -265,15 +279,16 @@ pub(super) fn spawn_xrun_thread(
                         };
                         off_rate(requested_delta as f64, expected_samples, quantum)
                     });
+                    let overloaded = io.is_some_and(|(_, overloads, _)| overloads > 0);
 
-                    if !warmup && (blocks_off_rate || io_off_rate) {
+                    if !warmup && (blocks_off_rate || io_off_rate || overloaded) {
                         match io {
-                            Some((requested_samples, read_samples, callbacks)) => warn!(
+                            Some((requested_samples, overloads, callbacks)) => warn!(
                                 output = %o.label,
                                 blocks = blocks_delta,
                                 expected_blocks = expected_blocks.round() as u64,
                                 requested_samples,
-                                read_samples,
+                                overloads,
                                 callbacks,
                                 "output block rate anomaly"
                             ),
@@ -287,9 +302,8 @@ pub(super) fn spawn_xrun_thread(
                     }
                 }
 
-                // A stream that outlived its worker keeps calling back and
-                // draining a ring nobody fills, which shows up in the global
-                // underrun total but in no output's own counters.
+                // A stream that outlived its handle keeps calling back into a
+                // renderer nobody owns, which shows in no output's own counters.
                 let live_streams = LIVE_SPEAKER_STREAMS.load(Ordering::Relaxed);
                 if live_streams != expected_speaker_streams {
                     warn!(

@@ -43,6 +43,16 @@ pub(in crate::audio::pipeline) fn resolve_input(
     }
 }
 
+/// The OS owns this capture's buffer size and does not report what the
+/// hardware adds, so there is nothing to configure or read back.
+pub(in crate::audio::pipeline) fn configure_io(
+    _resolved: &ResolvedInput,
+    _block_frames: usize,
+    _pipeline_rate: u32,
+) -> Option<super::super::latency::DeviceIo> {
+    None
+}
+
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,

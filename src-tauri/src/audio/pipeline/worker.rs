@@ -13,7 +13,7 @@ use audio_thread_priority::{
 use crate::audio::clock::ClockSource;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, DSP_BLOCK_FRAMES};
+use super::dag::OutputGraph;
 
 /// Let input rings collect a few cpal buffers before starting the clock --
 /// otherwise the first block is all zeros.
@@ -97,19 +97,36 @@ pub(super) fn dsp_worker(graph: OutputGraph) -> (DspWorker, WorkerCtrl) {
 
 impl DspWorker {
     /// Drain any graph swaps queued by main. RT-safe -- alloc-free pop +
-    /// alloc-free push of the displaced graph back to main.
+    /// alloc-free push of the displaced graph back to main. A swap never
+    /// changes the block size: that is an engine format change, which reopens
+    /// the stream instead.
     #[inline]
     fn drain_swaps(&mut self) {
         while let Ok(new_graph) = self.cmd_rx.pop() {
+            debug_assert_eq!(new_graph.block_frames(), self.graph.block_frames());
             let old = std::mem::replace(&mut self.graph, new_graph);
             let _ = self.old_graph_tx.push(old);
         }
     }
 
-    /// All workers ride the transport clock: produce a block each wall-clock
-    /// period. Speaker is device-paced; recording/monitoring share the same
-    /// cadence so a file source (which decodes faster than real time) can't
-    /// over-run a sink. A missed deadline becomes silence, never a rate error.
+    /// Take any queued graph swap, then render one block into `block`
+    /// (`block_frames * out_channels` long). Returns the output channels the
+    /// graph actually drives. RT-safe.
+    #[inline]
+    pub(super) fn next_block(&mut self, block: &mut [f32]) -> usize {
+        self.drain_swaps();
+        self.graph.process_block(block);
+        self.graph.active_output_channels()
+    }
+
+    pub(super) fn graph(&self) -> &OutputGraph {
+        &self.graph
+    }
+
+    /// Timer-paced workers (recording, monitoring, wire senders): produce a
+    /// block each wall-clock period, so a file source (which decodes faster
+    /// than real time) can't over-run a sink. A missed deadline becomes
+    /// silence, never a rate error. Speakers render in their device callback.
     pub(super) fn run<F>(
         mut self,
         stop: Arc<AtomicBool>,
@@ -120,7 +137,7 @@ impl DspWorker {
         F: FnMut(&[f32], usize) -> AppResult<()>,
     {
         thread::sleep(DSP_PREROLL);
-        let mut block = vec![0.0_f32; DSP_BLOCK_FRAMES * self.graph.out_channels()];
+        let mut block = vec![0.0_f32; self.graph.block_frames() * self.graph.out_channels()];
         let mut rt = None;
 
         loop {
@@ -134,14 +151,13 @@ impl DspWorker {
                 if let Some((name, sample_rate)) = realtime {
                     rt = Some(RtThread::promote(
                         name,
-                        DSP_BLOCK_FRAMES as u32,
+                        self.graph.block_frames() as u32,
                         sample_rate,
                     ));
                 }
             }
 
-            self.graph.process_block(&mut block);
-            let active_channels = self.graph.active_output_channels();
+            let active_channels = self.next_block(&mut block);
             if let Err(e) = sink(&block, active_channels) {
                 warn!(error = %e, "DSP worker sink failed; stopping");
                 break;

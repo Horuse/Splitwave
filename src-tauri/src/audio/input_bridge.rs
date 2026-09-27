@@ -284,6 +284,19 @@ impl BroadcastRx {
 mod tests {
     use super::*;
 
+    /// Drains up to `dst.len()` samples, zero-filling the rest.
+    fn pop_into(cons: &mut Consumer<f32>, dst: &mut [f32]) -> usize {
+        let n = dst.len().min(cons.slots());
+        if let Ok(chunk) = cons.read_chunk(n) {
+            let (a, b) = chunk.as_slices();
+            dst[..a.len()].copy_from_slice(a);
+            dst[a.len()..n].copy_from_slice(b);
+            chunk.commit_all();
+        }
+        dst[n..].fill(0.0);
+        n
+    }
+
     #[test]
     fn add_remove_roundtrip_bridges_audio() {
         let (mut tx, mut rx) = broadcast_channel();
@@ -299,7 +312,7 @@ mod tests {
         assert_eq!(stats.fed.load(Ordering::Relaxed), 512);
         assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
         let mut out = vec![0.0f32; 512];
-        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        let n = pop_into(&mut cons, &mut out);
         assert_eq!(n, 512);
         assert_eq!(out, block);
 
@@ -323,7 +336,7 @@ mod tests {
         assert_eq!(stats.fed.load(Ordering::Relaxed), 8);
         assert_eq!(stats.dropped.load(Ordering::Relaxed), 56);
         let mut out = vec![0.0f32; 8];
-        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut out), 8);
+        assert_eq!(pop_into(&mut cons, &mut out), 8);
         assert_eq!(out, vec![1.0; 8]);
     }
 
@@ -382,7 +395,7 @@ mod tests {
         let block = vec![0.5f32; 512];
         rx.broadcast_blocking(&block, &stop, &paused, Duration::from_micros(100));
         let mut out = vec![0.0f32; 512];
-        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        let n = pop_into(&mut cons, &mut out);
         assert_eq!(n, 512);
         assert_eq!(out, block);
 
@@ -395,7 +408,7 @@ mod tests {
             Duration::from_millis(1),
         );
         let mut stopped = vec![0.0f32; 512];
-        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut stopped), 0);
+        assert_eq!(pop_into(&mut cons, &mut stopped), 0);
     }
 
     #[test]

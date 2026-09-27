@@ -331,7 +331,7 @@ pub fn run() {
             commands::path_exists,
             commands::read_file_peaks,
             commands::is_pipeline_running,
-            commands::output_latency_ms,
+            commands::latency_report,
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::reconcile_pipeline,

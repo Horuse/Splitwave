@@ -16,9 +16,10 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use super::{ParamRing, PluginFormat, PluginNode};
+use crate::audio::effects::offload::pad_frames;
 use crate::audio::effects::offload::{BlockProcessor, Offload};
 use crate::audio::effects::Effect;
-use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
+use crate::audio::graph::MAX_BUFFER_FRAMES;
 
 /// Emitted with the node id when a plugin editor window is closed via its
 /// titlebar, so the frontend node can reset its open/close button.
@@ -146,6 +147,8 @@ pub struct HostedEffect {
     backend: HostedBackend,
     channels: usize,
     latency: usize,
+    /// The offload pad when it exceeds the engine block.
+    working_block: Option<usize>,
 }
 
 enum HostedBackend {
@@ -155,7 +158,7 @@ enum HostedBackend {
 }
 
 impl HostedEffect {
-    pub fn new(node: HostedNode, realtime: bool) -> Self {
+    pub fn new(node: HostedNode, realtime: bool, sample_rate: u32, block_frames: usize) -> Self {
         let latency = node.latency_frames();
         let width = node.channels();
         if !realtime {
@@ -163,28 +166,33 @@ impl HostedEffect {
                 backend: HostedBackend::Inline { node },
                 channels: width,
                 latency,
+                working_block: None,
             };
         }
         let processor = HostedProcessor {
             node,
             width,
-            scratch: Vec::with_capacity(DSP_BLOCK_FRAMES * width),
+            scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
         };
-        match Offload::spawn("plugin", processor, width) {
-            Ok(o) => {
-                let latency = latency + o.latency_frames();
-                Self {
-                    backend: HostedBackend::Offloaded(o),
-                    channels: width,
-                    latency,
-                }
-            }
+        let pad = pad_frames(sample_rate, block_frames, 0);
+        match Offload::spawn("plugin", processor, width, pad, sample_rate) {
+            Ok(o) => Self {
+                latency: latency + o.latency_frames(),
+                backend: HostedBackend::Offloaded(o),
+                channels: width,
+                working_block: (pad > block_frames).then_some(pad),
+            },
             Err(p) => Self {
                 backend: HostedBackend::Inline { node: p.node },
                 channels: width,
                 latency,
+                working_block: None,
             },
         }
+    }
+
+    pub fn working_block(&self) -> Option<usize> {
+        self.working_block
     }
 }
 

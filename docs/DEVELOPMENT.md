@@ -40,6 +40,7 @@ bun run tauri dev
 ```bash
 bun run check                          # svelte-check + tsc
 bun run generate                       # regenerate TypeScript types from Rust (ts-rs)
+bun run storybook                      # Storybook on :6006, nodes and shared components with mocked engine
 cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri build --bundles app      # local .app build (macOS)
 bun run tauri build --bundles appimage # local AppImage build (Linux)

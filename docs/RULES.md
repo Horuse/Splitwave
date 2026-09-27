@@ -1,6 +1,6 @@
 # RULES.md
 
-Universal rules that apply to every change in this repo. Concept and architecture background: [CONCEPT.md](CONCEPT.md). What a new feature must look like: [FEATURES.md](FEATURES.md). PR hygiene: [CONTRIBUTING.md](../CONTRIBUTING.md).
+Universal rules that apply to every change in this repo. Concept and architecture background: [CONCEPT.md](CONCEPT.md). What a new feature must look like: [FEATURES.md](FEATURES.md). How UI is built: [UI.md](UI.md). PR hygiene: [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Sections
 
@@ -47,4 +47,5 @@ type(scope): subject
 - Read the current code, not earlier explanations.
 - RT path change → `cargo check`.
 - Svelte change → `bun run check`.
+- New node or shared component → add its stories in the same commit, see [UI.md](UI.md).
 - Rust `#[derive(TS)]` change → `bun run generate`, commit the generated files with the Rust change.

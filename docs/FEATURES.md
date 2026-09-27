@@ -62,4 +62,5 @@ A platform that cannot support the feature returns a real error from that backen
 2. Confirm the category: input, effect, output, monitor, or network.
 3. Sketch the node's inline parameters — every one must fit in the node.
 4. Check which per-OS files the change reaches.
-5. Split into smallest viable PRs. Each PR follows [CONTRIBUTING.md](../CONTRIBUTING.md).
+5. Build the node from existing Storybook components and add its stories, per [UI.md](UI.md).
+6. Split into smallest viable PRs. Each PR follows [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -846,8 +846,11 @@ mod tests {
             meter,
         )
         .expect("spawn worker");
-        // The worker must pump blocks within a few hundred ms.
-        std::thread::sleep(Duration::from_millis(300));
+        // Polled, not slept: a loaded CI runner can start the worker late.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while level.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(
             level.load(Ordering::Relaxed) > 0,
             "worker pushed audio into the ring"
@@ -915,7 +918,12 @@ mod tests {
         .expect("build");
 
         let (recorder, _ctrl) = start_monitor_worker(built.graph).expect("spawn monitor");
-        std::thread::sleep(Duration::from_millis(200));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while built.output.blocks.load(Ordering::Relaxed) == 0
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(
             built.output.blocks.load(Ordering::Relaxed) > 0,
             "monitor produced blocks in real time"

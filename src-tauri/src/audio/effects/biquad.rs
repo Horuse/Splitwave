@@ -75,3 +75,66 @@ pub fn biquad_for(shape: BandShape, freq_hz: f32, q: f32, sample_rate: u32) -> B
         z2: 0.0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: u32 = 48_000;
+
+    // Steady-state amplitude of a sine at `freq` after the filter settles.
+    fn gain_at(mut f: Biquad, freq: f32) -> f32 {
+        let mut peak = 0.0f32;
+        for n in 0..SR as usize {
+            let x = (std::f32::consts::TAU * freq * n as f32 / SR as f32).sin();
+            let y = f.process(x);
+            if n > SR as usize / 2 {
+                peak = peak.max(y.abs());
+            }
+        }
+        peak
+    }
+
+    #[test]
+    fn lowpass_passes_lows_and_cuts_highs() {
+        let f = biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR);
+        assert!((gain_at(f, 100.0) - 1.0).abs() < 0.02);
+        assert!(gain_at(f, 10_000.0) < 0.02);
+    }
+
+    #[test]
+    fn highpass_passes_highs_and_cuts_lows() {
+        let f = biquad_for(BandShape::Hpf, 1_000.0, 0.707, SR);
+        assert!((gain_at(f, 10_000.0) - 1.0).abs() < 0.02);
+        assert!(gain_at(f, 50.0) < 0.01);
+    }
+
+    #[test]
+    fn butterworth_q_is_minus_3db_at_cutoff() {
+        let f = biquad_for(BandShape::Lpf, 1_000.0, std::f32::consts::FRAC_1_SQRT_2, SR);
+        assert!((gain_at(f, 1_000.0) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
+    }
+
+    #[test]
+    fn degenerate_params_stay_finite() {
+        let mut f = biquad_for(BandShape::Lpf, 0.0, 0.0, SR);
+        for _ in 0..1_000 {
+            assert!(f.process(1.0).is_finite());
+        }
+    }
+
+    #[test]
+    fn retune_keeps_state() {
+        let mut f = biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR);
+        for _ in 0..100 {
+            f.process(1.0);
+        }
+        let mut retuned = f;
+        retuned.retune(biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR));
+        assert_eq!(
+            retuned.process(1.0),
+            f.process(1.0),
+            "same coefficients, same output"
+        );
+    }
+}

@@ -253,7 +253,7 @@ mod tests {
             OpusRecorder::create(&path, 1, OpusApplication::Audio, 96_000).expect("create mono");
         let frames = 1_337usize;
         let samples: Vec<f32> = (0..frames)
-            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / 48_000.0).sin())
+            .map(|i| 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin())
             .collect();
         enc.write_interleaved(&samples[..517]).expect("first write");
         enc.write_interleaved(&samples[517..])

@@ -96,8 +96,6 @@ jobs:
           fi
           if [ "$RUNNER_OS" = "Windows" ]; then
             cargo test --no-run
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            cargo test -- --skip audio::playback::tests::playback_pulls_samples
           else
             cargo test
           fi

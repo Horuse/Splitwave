@@ -153,7 +153,10 @@ mod tests {
 
     fn sine(frames: usize, channels: u16) -> Vec<f32> {
         (0..frames * channels as usize)
-            .map(|i| 0.5 * ((i / channels as usize) as f32 * 440.0 * 6.28 / 48_000.0).sin())
+            .map(|i| {
+                0.5 * ((i / channels as usize) as f32 * 440.0 * std::f32::consts::TAU / 48_000.0)
+                    .sin()
+            })
             .collect()
     }
 

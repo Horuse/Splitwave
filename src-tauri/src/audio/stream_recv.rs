@@ -955,8 +955,6 @@ mod tests {
     fn realtime_consumer_mixes_after_prime() {
         let (_, recv) = primed_registry(960 * 40, true);
         let mut mix = vec![0.0f32; OUT_BLOCK_FRAMES * 2];
-        // Give the tap's resampler a moment to pull from the ring.
-        std::thread::sleep(std::time::Duration::from_millis(50));
         recv.mix_block(&mut mix);
         let max = mix.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!(max > 0.4, "primed tap must reach the mix: {max}");
@@ -985,7 +983,6 @@ mod tests {
         broadcast_push(&bc, 11, 1, &vec![0.7f32; 960 * 40]);
         let recv = ChannelReceiver::new(handle);
         let mut mix = vec![0.0f32; OUT_BLOCK_FRAMES * 2];
-        std::thread::sleep(std::time::Duration::from_millis(30));
         recv.mix_block(&mut mix);
         let mut tap = vec![0.0f32; OUT_BLOCK_FRAMES];
         recv.channel("0", &mut tap);

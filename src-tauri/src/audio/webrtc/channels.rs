@@ -13,6 +13,36 @@ use webrtc::peer_connection::RTCPeerConnection;
 use super::session::WebRtcSession;
 use super::tasks::{decode_and_write, spawn_encode_task};
 
+#[derive(Debug, PartialEq)]
+enum CtrlMsg<'a> {
+    Bye,
+    Ping(&'a str),
+    Pong(u64),
+    Meta { name: String, channels: u32 },
+}
+
+fn parse_ctrl(text: &str) -> Option<CtrlMsg<'_>> {
+    if text == "B" {
+        return Some(CtrlMsg::Bye);
+    }
+    if let Some(ts) = text.strip_prefix('P') {
+        return Some(CtrlMsg::Ping(ts));
+    }
+    if let Some(ts) = text.strip_prefix('Q') {
+        return ts.parse().ok().map(CtrlMsg::Pong);
+    }
+    let meta = text.strip_prefix('M')?;
+    let v = serde_json::from_str::<serde_json::Value>(meta).ok()?;
+    Some(CtrlMsg::Meta {
+        name: v
+            .get("n")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        channels: v.get("c").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+    })
+}
+
 // Ctrl DataChannel messages: "P{ts}" ping, "Q{ts}" pong, "M{json}" identity
 // ({"n":name,"c":inputCount}) resent every tick so late listeners and renames
 // converge without a one-shot race.
@@ -66,43 +96,44 @@ pub async fn wire_ctrl_channel(
         Box::pin(async move {
             if !msg.is_string { return; }
             let Ok(text) = String::from_utf8(msg.data.to_vec()) else { return };
-            if text == "B" {
-                // Peer is leaving; surface it now rather than on ICE timeout.
-                let peer = display_id.lock().unwrap().clone();
-                if let Some(app) = crate::app_handle() {
-                    let _ = app.emit(
-                        "audio://webrtc_disconnected",
-                        json!({ "nodeId": node_id, "peerId": peer }),
-                    );
+            match parse_ctrl(&text) {
+                Some(CtrlMsg::Bye) => {
+                    // Peer is leaving; surface it now rather than on ICE timeout.
+                    let peer = display_id.lock().unwrap().clone();
+                    if let Some(app) = crate::app_handle() {
+                        let _ = app.emit(
+                            "audio://webrtc_disconnected",
+                            json!({ "nodeId": node_id, "peerId": peer }),
+                        );
+                    }
                 }
-            } else if let Some(ts_str) = text.strip_prefix('P') {
-                let _ = dc.send_text(format!("Q{ts_str}")).await;
-            } else if let Some(ts_str) = text.strip_prefix('Q') {
-                if let Ok(ts) = ts_str.parse::<u64>() {
+                Some(CtrlMsg::Ping(ts)) => {
+                    let _ = dc.send_text(format!("Q{ts}")).await;
+                }
+                Some(CtrlMsg::Pong(ts)) => {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis() as u64;
                     ping_ms.store(now.saturating_sub(ts) as u32, Ordering::Relaxed);
                 }
-            } else if let Some(meta) = text.strip_prefix('M') {
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(meta) else { return };
-                let name = v.get("n").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let chans = v.get("c").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                let changed = {
-                    let mut cur = remote_name.lock().unwrap();
-                    let name_changed = *cur != name;
-                    *cur = name.clone();
-                    name_changed || remote_channels.swap(chans, Ordering::Relaxed) != chans
-                };
-                if !changed { return; }
-                let peer = display_id.lock().unwrap().clone();
-                if let Some(app) = crate::app_handle() {
-                    let _ = app.emit(
-                        "audio://webrtc_meta",
-                        json!({ "nodeId": node_id, "peerId": peer, "name": name, "channels": chans }),
-                    );
+                Some(CtrlMsg::Meta { name, channels: chans }) => {
+                    let changed = {
+                        let mut cur = remote_name.lock().unwrap();
+                        let name_changed = *cur != name;
+                        *cur = name.clone();
+                        name_changed || remote_channels.swap(chans, Ordering::Relaxed) != chans
+                    };
+                    if !changed { return; }
+                    let peer = display_id.lock().unwrap().clone();
+                    if let Some(app) = crate::app_handle() {
+                        let _ = app.emit(
+                            "audio://webrtc_meta",
+                            json!({ "nodeId": node_id, "peerId": peer, "name": name, "channels": chans }),
+                        );
+                    }
                 }
+                None => {}
             }
         })
     }));
@@ -196,4 +227,44 @@ pub fn wire_peer_events(
             }
         })
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_ctrl_message() {
+        assert_eq!(parse_ctrl("B"), Some(CtrlMsg::Bye));
+        assert_eq!(parse_ctrl("P123"), Some(CtrlMsg::Ping("123")));
+        assert_eq!(parse_ctrl("Q456"), Some(CtrlMsg::Pong(456)));
+        assert_eq!(
+            parse_ctrl(r#"M{"n":"Studio","c":4}"#),
+            Some(CtrlMsg::Meta {
+                name: "Studio".into(),
+                channels: 4
+            })
+        );
+    }
+
+    #[test]
+    fn meta_fields_default_when_missing() {
+        assert_eq!(
+            parse_ctrl("M{}"),
+            Some(CtrlMsg::Meta {
+                name: String::new(),
+                channels: 0
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_ctrl_messages_are_ignored() {
+        assert_eq!(parse_ctrl(""), None);
+        assert_eq!(parse_ctrl("Bye"), None);
+        assert_eq!(parse_ctrl("Qabc"), None, "pong needs a numeric timestamp");
+        assert_eq!(parse_ctrl("Q-1"), None);
+        assert_eq!(parse_ctrl("M{not json"), None);
+        assert_eq!(parse_ctrl("X1"), None);
+    }
 }

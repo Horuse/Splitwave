@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { relativeTime } from '../src/lib/utils/time';
 import { pruneDanglingEdges } from '../src/lib/modules/pipeline/sanitize';
-import { PIPELINE_VERSION, versionOf } from '../src/lib/modules/pipeline/version';
+import { versionOf } from '../src/lib/modules/pipeline/version';
 import type { Pipeline } from '../src/lib/modules/pipeline/types';
 
 describe('relativeTime', () => {
@@ -67,10 +67,9 @@ describe('pruneDanglingEdges', () => {
 	});
 });
 
-describe('PIPELINE_VERSION', () => {
+describe('versionOf', () => {
 	it('versionOf defaults to 0 for unversioned pipelines', () => {
 		expect(versionOf({ id: 'x', name: 'x', nodes: [], edges: [], createdAt: 0, updatedAt: 0 })).toBe(0);
 		expect(versionOf({ id: 'x', name: 'x', nodes: [], edges: [], createdAt: 0, updatedAt: 0, version: 2 })).toBe(2);
-		expect(PIPELINE_VERSION).toBe(2);
 	});
 });

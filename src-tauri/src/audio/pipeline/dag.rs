@@ -2030,7 +2030,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod graph_tests {
+pub(super) mod graph_tests {
     use super::*;
     use crate::audio::graph::{EdgeSpec, EffectSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
 
@@ -2075,7 +2075,7 @@ mod graph_tests {
     }
 
     /// mic → gain(0 dB) → speaker, validated.
-    fn passthrough_graph() -> (ValidGraph, String) {
+    pub(in crate::audio::pipeline) fn passthrough_graph() -> (ValidGraph, String) {
         let g = GraphSpec {
             sample_rate: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
@@ -2102,7 +2102,7 @@ mod graph_tests {
         EffectRegistry::new()
     }
 
-    fn build(
+    pub(in crate::audio::pipeline) fn build(
         output_id: Option<&str>,
         output_sr: u32,
         valid: &ValidGraph,

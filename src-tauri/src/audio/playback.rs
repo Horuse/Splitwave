@@ -153,6 +153,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    #[ignore = "needs a specific ALSA sink on a live PipeWire server"]
     fn playback_pulls_samples() {
         let calls = Arc::new(AtomicUsize::new(0));
         let total = Arc::new(AtomicUsize::new(0));

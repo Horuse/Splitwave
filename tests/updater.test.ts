@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 type DownloadHandler = (emit: (event: UpdateEvent) => void) => Promise<void>;
@@ -7,6 +7,7 @@ type UpdateEvent =
 	| { event: 'Progress'; data: { chunkLength: number } }
 	| { event: 'Finished'; data: Record<string, never> };
 
+const originalFetch = globalThis.fetch;
 let invokeImpl: Invoke = async () => null;
 let downloadHandler: DownloadHandler = async () => {};
 let relaunches = 0;
@@ -72,6 +73,10 @@ beforeEach(() => {
 	appSettings.includePreReleases = false;
 	updaterStore.state = { phase: 'idle' };
 	globalThis.fetch = (async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
+});
+
+afterAll(() => {
+	globalThis.fetch = originalFetch;
 });
 
 describe('update checks', () => {

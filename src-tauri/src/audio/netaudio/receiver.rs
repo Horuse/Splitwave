@@ -324,10 +324,11 @@ mod tests {
         let mut buf = Vec::new();
         let seq: u16 = 10;
         pcm_packet(&mut buf, 0, seq, &vec![0.25f32; 480]);
-        sender.send_to(&buf, &target).expect("send packet 10");
-
-        // Wait for the async recv loop to drain it.
+        // The socket binds inside a spawned task, so an early datagram can
+        // arrive before anyone listens and vanish. Resend until it is counted;
+        // a repeated seq is dropped by the timeline.
         for _ in 0..100 {
+            sender.send_to(&buf, &target).expect("send packet 10");
             std::thread::sleep(std::time::Duration::from_millis(20));
             if rx.packets.load(Ordering::Relaxed) > 0 {
                 break;

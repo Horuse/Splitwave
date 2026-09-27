@@ -106,7 +106,6 @@ mod tests {
 
     #[test]
     fn restart_run_resyncs() {
-        const RESTART_RUN: u32 = 25;
         let mut t = ChannelTimeline::default();
         let _ = t.step(100);
         // A sender restarting at 0: 25 rejected packets in a row flip to resync.
@@ -127,6 +126,47 @@ mod tests {
             }
         }
         let (run, _at) = last.expect("a long run of rejections must flip to resync");
-        assert!(run >= RESTART_RUN as u32 - 1, "rejections counted: {run}");
+        assert!(run >= RESTART_RUN - 1, "rejections counted: {run}");
+    }
+
+    #[test]
+    fn seq_wraparound_continues_the_timeline() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(u16::MAX - 1);
+        assert!(matches!(t.step(u16::MAX), SeqStep::Advance { gap: 0 }));
+        assert!(
+            matches!(t.step(0), SeqStep::Advance { gap: 0 }),
+            "65535 -> 0"
+        );
+        assert!(matches!(t.step(3), SeqStep::Advance { gap: 2 }));
+        assert!(
+            matches!(t.step(u16::MAX), SeqStep::Drop),
+            "pre-wrap straggler"
+        );
+    }
+
+    #[test]
+    fn gap_limit_is_inclusive() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(0);
+        assert!(matches!(
+            t.step(MAX_GAP_PACKETS + 1),
+            SeqStep::Advance { gap } if gap == MAX_GAP_PACKETS
+        ));
+        assert!(matches!(t.step(2 * MAX_GAP_PACKETS + 3), SeqStep::Resync));
+    }
+
+    #[test]
+    fn a_fresh_packet_ends_the_rejected_run() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(1000);
+        for _ in 0..RESTART_RUN - 1 {
+            assert!(matches!(t.step(10), SeqStep::Drop));
+        }
+        assert!(matches!(t.step(1001), SeqStep::Advance { gap: 0 }));
+        assert!(
+            matches!(t.step(10), SeqStep::Drop),
+            "run restarted from zero"
+        );
     }
 }

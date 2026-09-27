@@ -217,7 +217,7 @@ mod tests {
         let mut enc = ChannelEncoder::new(Format::Opus, 96_000, opus::Application::Audio);
         // Feed 4 chunks of a sine; each becomes one opus packet.
         let input: Vec<f32> = (0..OPUS_FRAME_SAMPLES * 3)
-            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / SR as f32).sin())
+            .map(|i| 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / SR as f32).sin())
             .collect();
         enc.push(&input, emit);
         assert_eq!(sink.borrow().len(), 3, "three opus packets");
@@ -252,7 +252,7 @@ mod tests {
         let (sink, emit) = collect();
         let mut enc = ChannelEncoder::new(Format::Opus, 96_000, opus::Application::Audio);
         let input: Vec<f32> = (0..OPUS_FRAME_SAMPLES * 2)
-            .map(|i| 0.5 * (i as f32 * 440.0 * 6.28 / SR as f32).sin())
+            .map(|i| 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / SR as f32).sin())
             .collect();
         enc.push(&input, emit);
         let mut dec = ChannelDecoder::new();

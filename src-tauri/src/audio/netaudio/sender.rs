@@ -234,3 +234,61 @@ impl NetSender {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn sends_numbered_packets_per_channel() {
+        let sink = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind sink");
+        sink.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let target = sink.local_addr().expect("sink address");
+        let sender = get_or_create(
+            "test-sender",
+            target,
+            Format::PcmF32,
+            0,
+            OpusApplication::Audio,
+            48_000,
+        );
+
+        let mut consumers = Vec::new();
+        for value in [0.25f32, -0.5] {
+            let (mut prod, cons) = rtrb::RingBuffer::new(9_600);
+            prod.write_chunk_uninit(9_600)
+                .expect("ring space")
+                .fill_from_iter(std::iter::repeat(value));
+            consumers.push(cons);
+        }
+        sender.set_send_consumers(consumers);
+
+        let mut seqs: BTreeMap<u8, Vec<u16>> = BTreeMap::new();
+        let mut buf = [0u8; 2048];
+        while seqs.values().map(Vec::len).min().unwrap_or(0) < 3 || seqs.len() < 2 {
+            let n = sink.recv(&mut buf).expect("sender went quiet");
+            let pkt = packet::parse(&buf[..n]).expect("well-formed packet");
+            assert_eq!(pkt.format, Format::PcmF32);
+            assert_eq!(pkt.sample_rate, 48_000);
+            let mut pcm = Vec::new();
+            packet::pcm_f32_decode(pkt.payload, &mut pcm);
+            let want = if pkt.channel == 0 { 0.25 } else { -0.5 };
+            assert!(
+                pcm.iter().all(|&s| s == want),
+                "channel {} payload",
+                pkt.channel
+            );
+            seqs.entry(pkt.channel).or_default().push(pkt.seq);
+        }
+        release("test-sender");
+
+        for (channel, run) in seqs {
+            for pair in run.windows(2) {
+                assert_eq!(pair[1], pair[0].wrapping_add(1), "channel {channel} seq");
+            }
+        }
+        assert!(stats("test-sender").is_none(), "release frees the node");
+    }
+}

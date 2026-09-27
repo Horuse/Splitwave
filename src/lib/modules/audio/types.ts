@@ -38,7 +38,7 @@ export interface PluginParam {
 	max: number;
 	default: number;
 	value: number;
-	stepped: boolean;
+	step: number;
 	readOnly: boolean;
 }
 

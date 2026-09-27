@@ -727,10 +727,14 @@ fn param_info(unit: AudioUnit, id: u32) -> Option<PluginParamInfo> {
         max: info.maxValue as f64,
         default: info.defaultValue as f64,
         value: value as f64,
-        stepped: matches!(
+        step: if matches!(
             info.unit,
             AudioUnitParameterUnit::Indexed | AudioUnitParameterUnit::Boolean
-        ),
+        ) {
+            1.0
+        } else {
+            0.0
+        },
         read_only: !info
             .flags
             .contains(AudioUnitParameterOptions::Flag_IsWritable),
@@ -1271,7 +1275,7 @@ mod tests {
         assert_eq!((gain.min, gain.max), (-96.0, 24.0));
         assert!(!gain.read_only);
         assert!(
-            params.iter().any(|p| p.stepped),
+            params.iter().any(|p| p.step > 0.0),
             "no stepped parameter found"
         );
 

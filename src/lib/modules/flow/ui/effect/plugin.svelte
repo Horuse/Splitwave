@@ -242,7 +242,7 @@
 							value={p.value}
 							min={p.min}
 							max={p.max}
-							step={p.stepped ? 1 : p.max > p.min ? (p.max - p.min) / 100 : 0.01}
+							step={p.step || (p.max > p.min ? (p.max - p.min) / 100 : 0.01)}
 							defaultValue={p.default}
 							onChange={(v) => setParam(p, v)} />
 					{/each}

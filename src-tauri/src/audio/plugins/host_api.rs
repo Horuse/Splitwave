@@ -34,8 +34,9 @@ pub struct PluginParamInfo {
     pub max: f64,
     pub default: f64,
     pub value: f64,
-    /// Stepped params (int/enum/toggle) render as discrete steps, not a slider.
-    pub stepped: bool,
+    /// One step in the `min..max` units for stepped params (int/enum/toggle),
+    /// 0 for continuous ones.
+    pub step: f64,
     /// Read-only params are shown but not editable.
     pub read_only: bool,
 }

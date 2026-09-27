@@ -681,7 +681,7 @@
 		const rightAnchor = Math.ceil(viewEndSeg / segsPerCol) * segsPerCol;
 		off = (rightAnchor - viewEndSeg) / segsPerCol;
 
-		const cols = plotW + 1;
+		const cols = Math.ceil(plotW) + 1;
 		colsCount = cols;
 		if (peaks.length !== channels || peaks[0]?.length !== cols) {
 			peaks = Array.from({ length: channels }, () => new Float32Array(cols));

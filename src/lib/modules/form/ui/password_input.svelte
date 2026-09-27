@@ -25,7 +25,7 @@
 	<button
 		type="button"
 		tabindex={-1}
-		class="absolute top-1/2 right-1 -translate-y-1/2 text-neutral-500 hover:text-neutral-800"
+		class="absolute top-1/2 right-1 flex -translate-y-1/2 text-neutral-500 hover:text-neutral-800"
 		title={visible ? 'Hide password' : 'Show password'}
 		onclick={() => (visible = !visible)}>
 		{#if visible}

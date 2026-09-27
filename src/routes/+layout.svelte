@@ -99,6 +99,7 @@
 
 	onMount(async () => {
 		logStore.installConsoleCapture();
+		appSettings.applyUiScale();
 		window.addEventListener('keydown', onLogsHotkey);
 		await installErrorHandlers().catch(() => {});
 		loadAppInfo().catch(() => {});

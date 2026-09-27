@@ -77,8 +77,16 @@ fn device_volume_from(volume: &ChannelVolumes, mute: bool) -> DeviceVolume {
 // "default"/"pipewire"/"sysdefault" are route aliases, not PulseAudio sink
 // names; resolve them to the server's actual default sink/source name.
 fn resolve_device(intro: &Introspector, kind: DeviceKind, name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
     if kind == DeviceKind::Input {
         if let Some(sink) = name.strip_prefix("monitor:") {
+            let sink = sink.trim();
+            if sink.is_empty() {
+                return None;
+            }
             return Some(format!("{sink}.monitor"));
         }
     }
@@ -91,7 +99,8 @@ fn resolve_device(intro: &Introspector, kind: DeviceKind, name: &str) -> Option<
                     DeviceKind::Output => info.default_sink_name.clone(),
                     DeviceKind::Input => info.default_source_name.clone(),
                 };
-                *out_cb.lock().unwrap() = n.map(|c| c.into_owned());
+                *out_cb.lock().unwrap() =
+                    n.map(|c| c.into_owned()).filter(|s| !s.trim().is_empty());
             });
             let _ = wait_done(&op);
             let result = out.lock().unwrap().take();
@@ -134,14 +143,24 @@ pub fn device_volume(kind: DeviceKind, name: &str) -> Option<DeviceVolume> {
     result
 }
 
-pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
-    let mute = scalar <= 0.0;
+fn channel_volumes_for(scalar: f32) -> ChannelVolumes {
     let mut volumes = ChannelVolumes::default();
-    if !mute {
+    if scalar <= 0.0 || scalar.is_nan() {
+        volumes.mute(ChannelVolumes::CHANNELS_MAX);
+    } else {
         let s = scalar.clamp(0.0, 1.0);
         // Inverse of the read-side cbrt: request the device volume `s`.
         let v: Volume = VolumeLinear((s * s * s) as f64).into();
         volumes.set(ChannelVolumes::CHANNELS_MAX, v);
+    }
+    volumes
+}
+
+pub fn set_device_volume(kind: DeviceKind, name: &str, scalar: f32) -> bool {
+    let mute = scalar.is_nan() || scalar <= 0.0;
+    let volumes = channel_volumes_for(scalar);
+    if !volumes.is_valid() {
+        return false;
     }
     with_connection(move |context| {
         let mut intro = context.introspect();
@@ -266,4 +285,62 @@ fn spawn_watcher() -> Option<Arc<AtomicBool>> {
         })
         .ok()?;
     Some(stop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_volumes_for_zero_is_muted_and_valid() {
+        // ChannelVolumes::default() has channels = 0 and is invalid; passing it
+        // to PulseAudio causes a NULL operation pointer and SIGABRT (issue #53).
+        assert_eq!(ChannelVolumes::default().len(), 0);
+        assert!(!ChannelVolumes::default().is_valid());
+
+        let volumes = channel_volumes_for(0.0);
+        assert!(volumes.is_valid());
+        assert_eq!(volumes.len(), ChannelVolumes::CHANNELS_MAX);
+        assert!(volumes.is_muted());
+    }
+
+    #[test]
+    fn channel_volumes_for_negative_and_nan_are_muted_and_valid() {
+        let neg = channel_volumes_for(-0.5);
+        assert!(neg.is_valid());
+        assert!(neg.is_muted());
+
+        let nan = channel_volumes_for(f32::NAN);
+        assert!(nan.is_valid());
+        assert!(nan.is_muted());
+    }
+
+    #[test]
+    fn channel_volumes_for_positive_scalar() {
+        let full = channel_volumes_for(1.0);
+        assert!(full.is_valid());
+        assert_eq!(full.len(), ChannelVolumes::CHANNELS_MAX);
+        assert!(full.is_norm());
+
+        let half = channel_volumes_for(0.5);
+        assert!(half.is_valid());
+        assert_eq!(half.len(), ChannelVolumes::CHANNELS_MAX);
+        assert!(!half.is_muted());
+    }
+
+    #[test]
+    fn device_volume_from_muted() {
+        let volumes = channel_volumes_for(0.0);
+        let dev = device_volume_from(&volumes, true);
+        assert_eq!(dev.scalar, 0.0);
+        assert_eq!(dev.db, Some(MUTED_DB));
+    }
+
+    #[test]
+    fn device_volume_from_unmuted() {
+        let volumes = channel_volumes_for(1.0);
+        let dev = device_volume_from(&volumes, false);
+        assert!((dev.scalar - 1.0).abs() < 1e-4);
+        assert_eq!(dev.db, Some(0.0));
+    }
 }

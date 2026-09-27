@@ -47,6 +47,7 @@ export async function installErrorHandlers(): Promise<void> {
 	} catch {}
 
 	window.addEventListener('error', (e) => {
+		if (e.message?.startsWith('ResizeObserver loop')) return;
 		errorStore.report({
 			source: 'jsError',
 			message: e.message || String(e.error),

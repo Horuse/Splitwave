@@ -87,3 +87,18 @@ pub trait PluginBackend {
         out
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Real plugin bundles (CLAP/VST3/AU) are not thread-safe for concurrent
+    /// host instantiation: loading several at once deadlocks inside their
+    /// editor/objc singletons. Plugin-host tests must hold this lock.
+    pub fn plugin_test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+}

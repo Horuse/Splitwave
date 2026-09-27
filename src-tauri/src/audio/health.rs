@@ -73,3 +73,76 @@ pub fn raise_max(counter: &AtomicU64, value: u64) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn snapshot_covers_every_counter_in_order() {
+        let snap = snapshot();
+        let names: Vec<&str> = snap.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "OUTPUT_UNDERRUN_SAMPLES",
+                "CAPTURE_RING_OVERRUN_SAMPLES",
+                "NET_RING_OVERRUN_SAMPLES",
+                "TAP_RING_OVERRUN_SAMPLES",
+                "SPEAKER_RING_OVERRUN_SAMPLES",
+                "SOURCE_TRIM_DROPPED_SAMPLES",
+                "STAGING_OVERRUN_SAMPLES",
+                "CLOCK_LATE_BLOCKS",
+                "CLOCK_LATE_MAX_US",
+                "STREAM_ERRORS",
+                "OFFLOAD_STARVED_SAMPLES",
+                "OFFLOAD_RESYNC_DROPPED_SAMPLES",
+                "OFFLOAD_RING_OVERRUN_SAMPLES",
+            ]
+        );
+    }
+
+    #[test]
+    fn bump_ignores_zero_adds() {
+        let counter = AtomicU64::new(7);
+        bump(&counter, 0);
+        assert_eq!(counter.load(Ordering::Relaxed), 7);
+        bump(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
+    fn raise_max_never_goes_backwards() {
+        let counter = AtomicU64::new(10);
+        raise_max(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 10);
+        raise_max(&counter, 20);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
+        raise_max(&counter, 15);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
+    }
+
+    #[test]
+    fn raise_max_survives_concurrent_bumps() {
+        // Races on the high-water mark resolve to the true maximum, not to
+        // whichever CAS got there first.
+        let counter = Arc::new(AtomicU64::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|k| {
+                let c = counter.clone();
+                thread::spawn(move || {
+                    for i in 0..100u64 {
+                        raise_max(&c, (k * 100 + i) as u64);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 799);
+    }
+}

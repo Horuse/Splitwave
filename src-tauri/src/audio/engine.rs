@@ -182,3 +182,122 @@ pub fn run(rx: Receiver<Command>) {
 
     info!("audio thread stopped");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    /// Drives `engine::run` on a thread with a command queue; returns the
+    /// sender plus a join guard that ends the run when dropped.
+    struct EngineHarness {
+        /// Taken and dropped in `Drop` BEFORE joining, so the engine's
+        /// `recv()` sees the disconnect and the run loop exits.
+        tx: Option<Sender<Command>>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl EngineHarness {
+        fn spawn() -> Self {
+            let (tx, rx) = channel::<Command>();
+            let thread = std::thread::spawn(move || run(rx));
+            Self {
+                tx: Some(tx),
+                thread: Some(thread),
+            }
+        }
+
+        fn is_running(&self) -> bool {
+            let (reply, rx) = channel();
+            self.tx
+                .as_ref()
+                .expect("live sender")
+                .send(Command::IsRunning { reply })
+                .expect("send");
+            rx.recv_timeout(Duration::from_secs(5)).expect("reply")
+        }
+
+        fn output_latency(&self) -> u32 {
+            let (reply, rx) = channel();
+            self.tx
+                .as_ref()
+                .expect("live sender")
+                .send(Command::OutputLatencyMs { reply })
+                .expect("send");
+            rx.recv_timeout(Duration::from_secs(5)).expect("reply")
+        }
+    }
+
+    impl Drop for EngineHarness {
+        fn drop(&mut self) {
+            if let Some(t) = self.thread.take() {
+                drop(self.tx.take()); // disconnect first, then join
+                let _ = t.join();
+            }
+        }
+    }
+
+    #[test]
+    fn idle_engine_reports_not_running_and_zero_latency() {
+        let harness = EngineHarness::spawn();
+        assert!(!harness.is_running());
+        assert_eq!(harness.output_latency(), 0);
+    }
+
+    #[test]
+    fn idle_commands_ack_without_a_pipeline() {
+        let harness = EngineHarness::spawn();
+        macro_rules! ok_cmd {
+            ($cmd:expr) => {{
+                let (reply, rx) = channel();
+                let cmd = $cmd(reply);
+                harness
+                    .tx
+                    .as_ref()
+                    .expect("live sender")
+                    .send(cmd)
+                    .expect("send");
+                rx.recv_timeout(Duration::from_secs(5))
+                    .expect("reply")
+                    .expect("no-op succeeds");
+            }};
+        }
+        ok_cmd!(|reply| Command::Stop { reply });
+        ok_cmd!(|reply| Command::UpdateEffect {
+            node_id: "n".into(),
+            data: serde_json::json!({}),
+            reply
+        });
+        ok_cmd!(|reply| Command::SeekAudioFile {
+            node_id: "n".into(),
+            frame: 10,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetAudioFileLoop {
+            node_id: "n".into(),
+            enabled: true,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetAudioFilePaused {
+            node_id: "n".into(),
+            paused: true,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetInputVolume {
+            node_id: "n".into(),
+            scalar: 0.5,
+            reply
+        });
+        assert!(!harness.is_running(), "still idle after all no-ops");
+    }
+
+    #[test]
+    fn run_exits_when_the_channel_closes() {
+        // Dropping the sender ends the recv loop; the thread joins cleanly in
+        // the harness Drop (no hang, no leaked audio thread).
+        let harness = EngineHarness::spawn();
+        assert!(!harness.is_running());
+        drop(harness);
+    }
+}

@@ -279,3 +279,141 @@ impl BroadcastRx {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_remove_roundtrip_bridges_audio() {
+        let (mut tx, mut rx) = broadcast_channel();
+        assert_eq!(tx.free_slots(), BRIDGE_CAPACITY);
+
+        let (prod, mut cons) = RingBuffer::<f32>::new(4096);
+        let (slot, stats) = tx.add(prod).expect("add");
+
+        rx.apply_commands();
+        // Audio broadcast before the consumer drains: fed counter grows.
+        let block: Vec<f32> = (0..512).map(|i| i as f32 * 0.001).collect();
+        rx.broadcast(&block);
+        assert_eq!(stats.fed.load(Ordering::Relaxed), 512);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
+        let mut out = vec![0.0f32; 512];
+        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        assert_eq!(n, 512);
+        assert_eq!(out, block);
+
+        // Remove; the discarded producer returns to main for teardown.
+        tx.remove(slot).expect("remove");
+        rx.apply_commands();
+        tx.drain_discarded();
+        assert_eq!(tx.free_slots(), BRIDGE_CAPACITY, "slot freed again");
+        // Broadcast after removal goes nowhere and must not panic.
+        rx.broadcast(&block);
+    }
+
+    #[test]
+    fn broadcast_counts_drops_when_the_ring_is_full() {
+        let (mut tx, mut rx) = broadcast_channel();
+        // Tiny ring: 8 samples total.
+        let (prod, mut cons) = RingBuffer::<f32>::new(8);
+        let (_, stats) = tx.add(prod).expect("add");
+        rx.apply_commands();
+        rx.broadcast(&vec![1.0f32; 64]);
+        assert_eq!(stats.fed.load(Ordering::Relaxed), 8);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 56);
+        let mut out = vec![0.0f32; 8];
+        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut out), 8);
+        assert_eq!(out, vec![1.0; 8]);
+    }
+
+    #[test]
+    fn slots_exhaust_and_free_up() {
+        let mut tx = broadcast_channel().0;
+        for _ in 0..BRIDGE_CAPACITY {
+            let (prod, _) = RingBuffer::<f32>::new(64);
+            tx.add(prod).expect("slot free");
+        }
+        assert_eq!(tx.free_slots(), 0);
+        let (prod, _) = RingBuffer::<f32>::new(64);
+        let err = match tx.add(prod) {
+            Ok(_) => panic!("no slots left"),
+            Err(err) => err,
+        };
+        assert!(format!("{err}").contains("exhausted"));
+        tx.remove(0).expect("remove");
+        assert_eq!(tx.free_slots(), 1);
+    }
+
+    #[test]
+    fn remove_is_idempotent_and_out_of_range_safe() {
+        let mut tx = broadcast_channel().0;
+        tx.remove(5).expect("no-op on free slot");
+        tx.remove(usize::MAX).expect("out of range no-op");
+    }
+
+    #[test]
+    fn max_queued_reports_the_fullest_slot() {
+        let (mut tx, mut rx) = broadcast_channel();
+        assert_eq!(rx.max_queued(), None, "nothing subscribed");
+
+        let (prod, cons) = RingBuffer::<f32>::new(1024);
+        let _keep_consumer = cons;
+        let _ = tx.add(prod).expect("add");
+        rx.apply_commands();
+        // Empty ring: queued (filled) = capacity - free = 0.
+        assert_eq!(rx.max_queued(), Some(0));
+        // Abandoned consumer (dropped) is excluded.
+        drop(_keep_consumer);
+        rx.apply_commands();
+        assert_eq!(rx.max_queued(), None, "abandoned rings are skipped");
+    }
+
+    #[test]
+    fn blocking_push_stops_before_writing() {
+        let (mut tx, mut rx) = broadcast_channel();
+        let (prod, mut cons) = RingBuffer::<f32>::new(1024);
+        let _ = tx.add(prod).expect("add");
+        rx.apply_commands();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
+        // A normal push reaches the consumer.
+        let block = vec![0.5f32; 512];
+        rx.broadcast_blocking(&block, &stop, &paused, Duration::from_micros(100));
+        let mut out = vec![0.0f32; 512];
+        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        assert_eq!(n, 512);
+        assert_eq!(out, block);
+
+        // A pre-existing stop refuses the next block.
+        let stop2 = Arc::new(AtomicBool::new(true));
+        rx.broadcast_blocking(
+            &vec![0.5f32; 2048],
+            &stop2,
+            &paused,
+            Duration::from_millis(1),
+        );
+        let mut stopped = vec![0.0f32; 512];
+        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut stopped), 0);
+    }
+
+    #[test]
+    fn blocking_push_aborts_on_abandoned_consumer() {
+        let (mut tx, mut rx) = broadcast_channel();
+        let (prod, cons) = RingBuffer::<f32>::new(64);
+        let _ = tx.add(prod).expect("add");
+        rx.apply_commands();
+        drop(cons);
+        rx.apply_commands();
+        let stop = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
+        // The ring is abandoned: push must not hang.
+        rx.broadcast_blocking(
+            &vec![0.5f32; 2048],
+            &stop,
+            &paused,
+            Duration::from_micros(50),
+        );
+    }
+}

@@ -629,6 +629,7 @@ mod tests {
     /// that wait by, so the loop simply runs well past any plausible lookahead.
     #[test]
     fn renders_signal_through_every_installed_plugin() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = installed();
         if found.is_empty() {
             return skipped("audio rendering");
@@ -688,6 +689,7 @@ mod tests {
     /// phase error on a split-and-rejoin graph rather than a missing feature.
     #[test]
     fn reported_latency_matches_when_the_signal_arrives() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = installed();
         if found.is_empty() {
             return skipped("latency reporting");
@@ -744,6 +746,7 @@ mod tests {
     /// a name to label it and a range that is not a single point.
     #[test]
     fn reports_usable_parameters() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = installed();
         if found.is_empty() {
             return skipped("parameter reporting");
@@ -781,6 +784,7 @@ mod tests {
     /// This is the path a reopened project takes.
     #[test]
     fn state_survives_a_reinstantiation() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = installed();
         if found.is_empty() {
             return skipped("state persistence");
@@ -812,6 +816,7 @@ mod tests {
     /// accept it silently and end up in a state their own editor disagrees with.
     #[test]
     fn a_state_blob_that_is_not_ours_is_refused() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = installed();
         if found.is_empty() {
             return skipped("foreign state rejection");

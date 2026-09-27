@@ -126,3 +126,197 @@ impl Effect for LimiterEffect {
         self.lookahead_frames
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::util::load_f32;
+    use super::*;
+    use proptest::prelude::*;
+
+    const SR: u32 = 48_000;
+
+    fn dc(frames: usize, amp: f32) -> Vec<f32> {
+        vec![amp; frames * 2]
+    }
+
+    fn sine(frames: usize, amp: f32, freq: f32) -> Vec<f32> {
+        (0..frames)
+            .flat_map(|i| {
+                let s = amp * (2.0 * std::f32::consts::PI * freq * i as f32 / SR as f32).sin();
+                [s, s]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn below_ceiling_is_exact_delayed_passthrough() {
+        let d = LimiterData {
+            ceiling_db: -6.0,
+            lookahead_ms: 2.0, // 96 frames @ 48k
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (mut e, _, _) = LimiterEffect::new(d, SR);
+        let input = sine(240, 0.1, 1000.0);
+        let mut buf = input.clone();
+        e.process(&mut buf, 240);
+        // First `lookahead` frames are the zero-initialised delay line.
+        assert!(buf[..96 * 2].iter().all(|s| *s == 0.0));
+        // Rest is the input, bit-exact, shifted by the lookahead.
+        for i in 0..(240 - 96) * 2 {
+            assert_eq!(buf[96 * 2 + i], input[i], "sample {i}");
+        }
+    }
+
+    #[test]
+    fn brickwall_never_exceeds_ceiling_after_lookahead() {
+        let d = LimiterData {
+            ceiling_db: -3.0,
+            lookahead_ms: 1.0,
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (mut e, _, _) = LimiterEffect::new(d, SR);
+        let input = dc(1200, 1.0); // 6 dB over a -3 dBFS ceiling
+        let mut buf = input.clone();
+        e.process(&mut buf, 1200);
+        let ceiling = db_to_linear(-3.0);
+        for (i, s) in buf.iter().enumerate().skip(48 * 2) {
+            assert!(s.abs() <= ceiling + 1e-5, "sample {i} exceeds ceiling: {s}");
+        }
+    }
+
+    #[test]
+    fn latency_equals_lookahead_frames() {
+        let d = LimiterData {
+            ceiling_db: -1.0,
+            lookahead_ms: 3.0,
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (e, _, _) = LimiterEffect::new(d, SR);
+        assert_eq!(e.latency_frames(), 144);
+        assert_eq!((3.0 * SR as f32 / 1000.0) as usize, 144);
+    }
+
+    #[test]
+    fn gain_reduction_is_reported_when_limiting() {
+        let d = LimiterData {
+            ceiling_db: -12.0,
+            lookahead_ms: 1.0,
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (mut e, _, gr) = LimiterEffect::new(d, SR);
+        let mut buf = sine(480, 1.0, 1000.0);
+        e.process(&mut buf, 240);
+        let gr_lin = load_f32(&gr);
+        assert!(gr_lin < 1.0, "GR must report reduction, got {gr_lin}");
+        // And it should be roughly ceiling / peak.
+        let expected = db_to_linear(-12.0);
+        assert!(
+            (gr_lin - expected).abs() < 0.05 * expected,
+            "gr {gr_lin} vs {expected}"
+        );
+    }
+
+    #[test]
+    fn release_recovers_after_loud_passage() {
+        let d = LimiterData {
+            ceiling_db: -3.0,
+            lookahead_ms: 1.0,
+            release_ms: 20.0,
+            bypassed: false,
+        };
+        let (mut e, _, _) = LimiterEffect::new(d, SR);
+        let mut loud = dc(240, 1.0); // 6 dB over the ceiling
+        e.process(&mut loud, 240);
+        // Loud burst gone: after the release tail the limiter must pass
+        // quiet input through unattenuated.
+        let quiet = dc(240, 0.05);
+        let mut last = vec![0.0; 240 * 2];
+        for _ in 0..30 {
+            let mut b = quiet.clone();
+            e.process(&mut b, 240);
+            last.copy_from_slice(&b);
+        }
+        // Release τ = 20 ms ≈ 960 frames; 30 blocks leave ≈ e^-6 residual.
+        let peak = last.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(
+            peak > 0.048,
+            "gain must recover to ~1.0 after release, peak {peak}"
+        );
+        assert!(peak < 0.05 * 1.01, "gain must not overshoot 1.0: {peak}");
+    }
+
+    #[test]
+    fn new_clamps_hostile_params() {
+        let d = LimiterData {
+            ceiling_db: -200.0,
+            lookahead_ms: 0.0,
+            release_ms: 0.0,
+            bypassed: false,
+        };
+        let (mut e, c, _) = LimiterEffect::new(d, SR);
+        let EffectControl::Limiter {
+            ceiling,
+            release_ms,
+        } = &c
+        else {
+            panic!("wrong control variant");
+        };
+        assert_eq!(load_f32(ceiling), db_to_linear(-60.0).max(1e-6));
+        assert_eq!(load_f32(release_ms), 0.1);
+        let mut buf = vec![0.5; 96];
+        e.process(&mut buf, 48);
+        assert!(buf.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn control_clamps_ceiling_and_release() {
+        let d = LimiterData {
+            ceiling_db: -6.0,
+            lookahead_ms: 1.0,
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (_, c, _) = LimiterEffect::new(d, SR);
+        let EffectControl::Limiter {
+            ceiling,
+            release_ms,
+        } = &c
+        else {
+            panic!("wrong control variant");
+        };
+        let mut update = serde_json::Map::new();
+        update.insert("ceilingDb".into(), serde_json::json!(-120.0));
+        update.insert("releaseMs".into(), serde_json::json!(0.0));
+        c.apply_update(&serde_json::Value::Object(update));
+        assert_eq!(load_f32(ceiling.as_ref()), 1e-6);
+        assert_eq!(load_f32(release_ms.as_ref()), 0.1);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn limiter_output_is_finite_and_bounded(
+            input in proptest::prelude::prop::collection::vec(-2.0f32..2.0, 512),
+            ceiling_db in -30.0f32..6.0,
+        ) {
+            let d = LimiterData {
+                ceiling_db,
+                lookahead_ms: 1.0,
+                release_ms: 50.0,
+                bypassed: false,
+            };
+            let (mut e, _, _) = LimiterEffect::new(d, SR);
+            let mut buf = input.clone();
+            e.process(&mut buf, 256);
+            let ceiling = db_to_linear(ceiling_db).max(1e-6);
+            for s in buf.iter().skip(48 * 2) {
+                prop_assert!(s.is_finite());
+                prop_assert!(s.abs() <= ceiling + 1e-4, "|{s}| > {ceiling}");
+            }
+            let _ = input;
+        }
+    }
+}

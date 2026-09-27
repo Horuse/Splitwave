@@ -58,3 +58,115 @@ impl ChannelTimeline {
         SeqStep::Drop
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequential_packets_advance_without_gap() {
+        let mut t = ChannelTimeline::default();
+        for seq in [0u16, 1, 2, 3] {
+            match t.step(seq) {
+                SeqStep::Advance { gap } => assert_eq!(gap, 0, "seq {seq}"),
+                _ => panic!("sequence {seq} did not advance"),
+            }
+        }
+    }
+
+    #[test]
+    fn small_gap_conceals_then_advances() {
+        let mut t = ChannelTimeline::default();
+        assert!(matches!(t.step(0), SeqStep::Advance { gap: 0 }));
+        // Packet 3 arrives after 1 was lost.
+        match t.step(3) {
+            SeqStep::Advance { gap } => assert_eq!(gap, 2),
+            _ => panic!("small gap must advance"),
+        }
+    }
+
+    #[test]
+    fn duplicate_and_reordered_are_dropped() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(5);
+        assert!(matches!(t.step(5), SeqStep::Drop), "same seq twice");
+        assert!(matches!(t.step(4), SeqStep::Drop), "late arrival");
+        assert!(matches!(t.step(3), SeqStep::Drop));
+    }
+
+    #[test]
+    fn huge_gap_is_a_resync_not_a_fill() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(0);
+        match t.step(200) {
+            SeqStep::Resync => {}
+            _ => panic!("a 200-packet outage must resync"),
+        }
+    }
+
+    #[test]
+    fn restart_run_resyncs() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(100);
+        // A sender restarting at 0: 25 rejected packets in a row flip to resync.
+        for seq in [200u16, 201] {
+            let _ = t.step(seq);
+        }
+        let mut rejected = 0;
+        let mut last = None;
+        for seq in 0..40u16 {
+            let step = t.step(seq);
+            match step {
+                SeqStep::Drop => rejected += 1,
+                SeqStep::Resync => {
+                    last = Some((rejected, seq));
+                    break;
+                }
+                SeqStep::Advance { .. } => panic!("restart must not advance timeline"),
+            }
+        }
+        let (run, _at) = last.expect("a long run of rejections must flip to resync");
+        assert!(run >= RESTART_RUN - 1, "rejections counted: {run}");
+    }
+
+    #[test]
+    fn seq_wraparound_continues_the_timeline() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(u16::MAX - 1);
+        assert!(matches!(t.step(u16::MAX), SeqStep::Advance { gap: 0 }));
+        assert!(
+            matches!(t.step(0), SeqStep::Advance { gap: 0 }),
+            "65535 -> 0"
+        );
+        assert!(matches!(t.step(3), SeqStep::Advance { gap: 2 }));
+        assert!(
+            matches!(t.step(u16::MAX), SeqStep::Drop),
+            "pre-wrap straggler"
+        );
+    }
+
+    #[test]
+    fn gap_limit_is_inclusive() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(0);
+        assert!(matches!(
+            t.step(MAX_GAP_PACKETS + 1),
+            SeqStep::Advance { gap } if gap == MAX_GAP_PACKETS
+        ));
+        assert!(matches!(t.step(2 * MAX_GAP_PACKETS + 3), SeqStep::Resync));
+    }
+
+    #[test]
+    fn a_fresh_packet_ends_the_rejected_run() {
+        let mut t = ChannelTimeline::default();
+        let _ = t.step(1000);
+        for _ in 0..RESTART_RUN - 1 {
+            assert!(matches!(t.step(10), SeqStep::Drop));
+        }
+        assert!(matches!(t.step(1001), SeqStep::Advance { gap: 0 }));
+        assert!(
+            matches!(t.step(10), SeqStep::Drop),
+            "run restarted from zero"
+        );
+    }
+}

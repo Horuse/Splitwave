@@ -28,3 +28,57 @@ pub fn decode_sdp(code: &str) -> AppResult<String> {
         .map_err(|e| AppError::Stream(format!("sdp decompress: {e}")))?;
     Ok(sdp)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_SDP: &str = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=candidate:host 1 udp 2130706431 127.0.0.1 50000 typ host\r\n";
+
+    #[test]
+    fn sdp_code_roundtrip_is_lossless() {
+        let code = encode_sdp(SAMPLE_SDP).expect("encode");
+        assert!(!code.contains('+'), "base64url alphabet");
+        assert!(!code.contains('/'));
+        assert!(!code.contains('='), "no padding");
+        let back = decode_sdp(&code).expect("decode");
+        assert_eq!(back, SAMPLE_SDP);
+    }
+
+    #[test]
+    fn repeated_encoding_is_deterministic() {
+        let a = encode_sdp(SAMPLE_SDP).unwrap();
+        let b = encode_sdp(SAMPLE_SDP).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sdp_compresses_substantially() {
+        // A realistic SDP is ~950 bytes; deflate should roughly halve it
+        // even for repetitive text.
+        let long = SAMPLE_SDP.repeat(10);
+        let code = encode_sdp(&long).unwrap();
+        assert!(
+            code.len() < long.len() / 2,
+            "compressed {} vs raw {}",
+            code.len(),
+            long.len()
+        );
+        assert_eq!(decode_sdp(&code).unwrap(), long);
+    }
+
+    #[test]
+    fn decode_rejects_garbage() {
+        assert!(decode_sdp("!!!not-base64!!!").is_err());
+        assert!(decode_sdp("aGVsbG8").is_err(), "invalid deflate stream");
+        // Whitespace around the code is tolerated (copy-paste).
+        let code = encode_sdp(SAMPLE_SDP).unwrap();
+        assert_eq!(decode_sdp(&format!("  {code} ")).unwrap(), SAMPLE_SDP);
+    }
+
+    #[test]
+    fn empty_sdp_roundtrips() {
+        let code = encode_sdp("").unwrap();
+        assert_eq!(decode_sdp(&code).unwrap(), "");
+    }
+}

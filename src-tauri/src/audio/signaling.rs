@@ -319,3 +319,62 @@ pub fn random_room_code() -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outgoing_messages_use_the_server_field_names() {
+        let msg = OutMsg {
+            kind: "answer",
+            join_id: Some("j1"),
+            peer_id: Some("p1"),
+            sdp: Some("v=0"),
+            candidate: None,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "type": "answer", "joinId": "j1", "peerId": "p1", "sdp": "v=0" }),
+            "absent fields are omitted, not sent as null"
+        );
+    }
+
+    #[test]
+    fn incoming_messages_parse_with_optional_fields() {
+        let msg = parse_msg(Message::text(
+            r#"{"type":"join","joinId":"j","peerId":"p","candidate":"c","reason":"r"}"#,
+        ))
+        .expect("parses");
+        assert_eq!(msg.kind, "join");
+        assert_eq!(msg.join_id.as_deref(), Some("j"));
+        assert_eq!(msg.peer_id.as_deref(), Some("p"));
+        assert_eq!(msg.candidate.as_deref(), Some("c"));
+        assert_eq!(msg.reason.as_deref(), Some("r"));
+        assert!(msg.sdp.is_none());
+
+        let bare = parse_msg(Message::text(r#"{"type":"ping"}"#)).expect("bare type parses");
+        assert!(bare.join_id.is_none() && bare.peer_id.is_none());
+    }
+
+    #[test]
+    fn junk_frames_are_ignored() {
+        assert!(parse_msg(Message::text("not json")).is_none());
+        assert!(
+            parse_msg(Message::text(r#"{"joinId":"j"}"#)).is_none(),
+            "type is required"
+        );
+        assert!(parse_msg(Message::binary(vec![0xff, 0xfe])).is_none());
+    }
+
+    #[test]
+    fn room_codes_are_six_digits() {
+        for _ in 0..100 {
+            let code = random_room_code();
+            assert_eq!(code.len(), 6);
+            assert!(code.bytes().all(|b| b.is_ascii_digit()), "{code}");
+        }
+    }
+}

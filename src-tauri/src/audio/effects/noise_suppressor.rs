@@ -380,3 +380,81 @@ impl Effect for NoiseSuppressorEffect {
         self.latency
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::graph::NoiseSuppressorData;
+
+    fn data() -> NoiseSuppressorData {
+        NoiseSuppressorData {
+            attenuation_limit_db: 15.0,
+            post_filter_beta: 0.0,
+            min_thresh_db: -10.0,
+            max_erb_thresh_db: 30.0,
+            max_df_thresh_db: 20.0,
+            bypassed: false,
+        }
+    }
+
+    #[test]
+    fn inline_backend_processes_at_48k() {
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        assert!(e.latency_frames() > 0, "model latency must be reported");
+        for k in 0..4 {
+            let mut buf: Vec<f32> = (0..512 * 2)
+                .map(|i| {
+                    let s = 0.3
+                        * ((2.0 * std::f32::consts::PI * 440.0 * (k * 1024 + i / 2) as f32
+                            / 48_000.0)
+                            .sin());
+                    [s, s]
+                })
+                .flatten()
+                .collect();
+            e.process(&mut buf, 512);
+            assert!(buf.iter().all(|s| s.is_finite()), "block broke");
+        }
+    }
+
+    #[test]
+    fn inline_backend_resamples_at_44k1() {
+        // Output rate ≠ 48 kHz exercises both resamplers.
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 44_100, false);
+        assert!(e.latency_frames() > 0);
+        for _k in 0..4 {
+            let mut buf = vec![0.2f32; 512 * 2];
+            e.process(&mut buf, 512);
+            assert!(buf.iter().all(|s| s.is_finite()), "block broke");
+        }
+    }
+
+    #[test]
+    fn live_param_changes_update_the_model() {
+        let (mut e, c) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        let EffectControl::NoiseSuppressor { controls } = &c else {
+            panic!("variant")
+        };
+        for _k in 0..2 {
+            let mut buf = vec![0.2f32; 512 * 2];
+            e.process(&mut buf, 512);
+        }
+        // Parameter change exercises the set_atten_lim / set_pf_beta branches.
+        use std::sync::atomic::Ordering;
+        controls
+            .atten_lim_db
+            .store(25.0f32.to_bits(), Ordering::Relaxed);
+        controls.pf_beta.store(0.4f32.to_bits(), Ordering::Relaxed);
+        let mut buf = vec![0.2f32; 512 * 2];
+        e.process(&mut buf, 512);
+        assert!(buf.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn zero_frames_is_noop() {
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, false);
+        let mut buf = vec![0.5f32; 32];
+        e.process(&mut buf, 0);
+        assert_eq!(buf, vec![0.5; 32]);
+    }
+}

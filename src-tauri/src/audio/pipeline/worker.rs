@@ -149,3 +149,53 @@ impl DspWorker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::dag::graph_tests::{build, passthrough_graph};
+    use super::*;
+
+    fn graph(channels: usize) -> OutputGraph {
+        let (valid, speaker) = passthrough_graph();
+        let (mut built, _) = build(Some(&speaker), 48_000, &valid, 48_000, false);
+        built.graph.set_out_channels(channels);
+        built.graph
+    }
+
+    #[test]
+    fn swap_hands_the_old_graph_back_to_main() {
+        let (mut worker, mut ctrl) = dsp_worker(graph(2));
+        ctrl.send_graph(graph(4)).expect("queue swap");
+        worker.drain_swaps();
+        assert_eq!(worker.graph.out_channels(), 4, "worker runs the new graph");
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            1,
+            "displaced graph goes back to main instead of dropping on the RT thread"
+        );
+        ctrl.send_graph(graph(6)).expect("queue swap");
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            0,
+            "next send drains the returned graph"
+        );
+    }
+
+    #[test]
+    fn only_the_latest_queued_graph_survives_a_drain() {
+        let (mut worker, mut ctrl) = dsp_worker(graph(2));
+        ctrl.send_graph(graph(4)).expect("first swap");
+        ctrl.send_graph(graph(6)).expect("second swap");
+        worker.drain_swaps();
+        assert_eq!(worker.graph.out_channels(), 6);
+        assert_eq!(ctrl.old_graph_rx.slots(), 2);
+    }
+
+    #[test]
+    fn full_swap_queue_is_an_error_not_a_block() {
+        let (_worker, mut ctrl) = dsp_worker(graph(2));
+        ctrl.send_graph(graph(2)).expect("first swap");
+        ctrl.send_graph(graph(2)).expect("second swap");
+        assert!(ctrl.send_graph(graph(2)).is_err());
+    }
+}

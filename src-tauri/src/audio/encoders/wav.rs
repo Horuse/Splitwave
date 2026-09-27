@@ -181,6 +181,7 @@ impl WavRecorder {
 
 impl AudioEncoder for WavRecorder {
     fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
+        super::validate_interleaved(samples, self.channels)?;
         match self.format {
             WavFormat::F32 => self.write_f32(samples)?,
             WavFormat::I24 => self.write_pcm_int(samples, 8_388_607.0, -8_388_608.0, 3)?,

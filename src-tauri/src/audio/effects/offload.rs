@@ -223,6 +223,19 @@ mod tests {
         }
     }
 
+    // Waits for the worker to hand back the block just pushed, so a slow
+    // runner cannot starve the next `process` into zeros.
+    fn wait_for_return(offload: &Offload, want: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while offload.from_worker.slots() < want {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "offload worker stalled"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     #[test]
     fn offload_roundtrip_delays_by_pad() {
         let Ok(mut offload) = Offload::spawn("test", Passthrough, 2) else {
@@ -243,7 +256,7 @@ mod tests {
             fed.extend_from_slice(&block);
             offload.process(&mut block);
             got.extend_from_slice(&block);
-            thread::sleep(Duration::from_millis(30));
+            wait_for_return(&offload, block.len());
         }
 
         let pad = PAD_FRAMES * 2;
@@ -277,7 +290,7 @@ mod tests {
             fed.extend_from_slice(&block);
             offload.process(&mut block);
             got.extend_from_slice(&block);
-            thread::sleep(Duration::from_millis(30));
+            wait_for_return(&offload, block.len());
         }
 
         let pad = PAD_FRAMES * WIDTH;

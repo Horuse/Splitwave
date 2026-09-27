@@ -45,7 +45,7 @@ type(scope): subject
 ## When in doubt
 
 - Read the current code, not earlier explanations.
-- RT path change → `cargo check`.
+- RT path change → `bun run check`.
 - Svelte change → `bun run check`.
 - New node or shared component → add its stories in the same commit, see [UI.md](UI.md).
 - Rust `#[derive(TS)]` change → `bun run generate`, commit the generated files with the Rust change.

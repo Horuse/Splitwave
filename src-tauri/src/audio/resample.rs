@@ -318,3 +318,84 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod out_resampler_tests {
+    use super::*;
+
+    const SR_IN: u32 = 44_100;
+    const SR_OUT: u32 = 48_000;
+    const CHUNK_OUT: usize = 1024;
+    const CH: usize = 2;
+
+    #[test]
+    fn produces_exactly_chunk_out_frames() {
+        let mut r = MultiResamplerOut::new(SR_IN, SR_OUT, CHUNK_OUT, CH).unwrap();
+        let mut fed = 0usize;
+        let mut produced = 0usize;
+        for _ in 0..8 {
+            let need = r.input_frames_next();
+            let input = vec![0.25f32; need * CH];
+            fed += need;
+            let mut out = Vec::with_capacity(CHUNK_OUT * CH);
+            r.process(&input, &mut out).unwrap();
+            assert_eq!(out.len() / CH, CHUNK_OUT, "fixed output must be exact");
+            produced += CHUNK_OUT;
+            assert!(out.iter().all(|s| s.is_finite()));
+        }
+        // Produced ~ fed * 48000/44100 within a block of slack.
+        let want = fed as f64 * (SR_OUT as f64 / SR_IN as f64);
+        assert!(
+            (produced as f64 - want).abs() < 2.0 * CHUNK_OUT as f64,
+            "produced {produced} vs {want}"
+        );
+    }
+
+    #[test]
+    fn constant_input_preserves_amplitude() {
+        let mut r = MultiResamplerOut::new(SR_IN, SR_OUT, CHUNK_OUT, CH).unwrap();
+        let mut last_peak = 0.0f32;
+        for _ in 0..10 {
+            let need = r.input_frames_next();
+            let input = vec![0.5f32; need * CH];
+            let mut out = Vec::with_capacity(CHUNK_OUT * CH);
+            r.process(&input, &mut out).unwrap();
+            last_peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        }
+        // Steady state: DC in → DC out at the same amplitude (sinc gain 1).
+        assert!(
+            (last_peak - 0.5).abs() < 0.05,
+            "amplitude drift: {last_peak}"
+        );
+    }
+
+    #[test]
+    fn ratio_nudge_keeps_output_exact() {
+        let mut r = MultiResamplerOut::new(SR_IN, SR_OUT, CHUNK_OUT, CH).unwrap();
+        // Nudge within the 1.05 relative bound (as clock-drift tracking would).
+        r.set_ratio(48_000.0 / 44_100.0 * 1.001);
+        for _ in 0..4 {
+            let need = r.input_frames_next();
+            let input = vec![0.25f32; need * CH];
+            let mut out = Vec::with_capacity(CHUNK_OUT * CH);
+            r.process(&input, &mut out).unwrap();
+            assert_eq!(out.len() / CH, CHUNK_OUT);
+        }
+    }
+
+    #[test]
+    fn channels_are_processed_independently() {
+        let mut r = MultiResamplerOut::new(SR_IN, SR_OUT, CHUNK_OUT, CH).unwrap();
+        let need = r.input_frames_next();
+        let mut input = vec![0.0f32; need * CH];
+        for (i, s) in input.iter_mut().enumerate() {
+            *s = if i % 2 == 0 { 0.8 } else { 0.0 };
+        }
+        let mut out = Vec::with_capacity(CHUNK_OUT * CH);
+        r.process(&input, &mut out).unwrap();
+        for f in 0..CHUNK_OUT {
+            assert!((out[f * 2] - 0.8).abs() < 0.1, "left survives");
+            assert_eq!(out[f * 2 + 1], 0.0, "right stays silent");
+        }
+    }
+}

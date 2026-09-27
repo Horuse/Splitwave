@@ -119,3 +119,100 @@ pub fn update_meter(handle: &MeterHandle, interleaved: &[f32], channels: usize) 
         store_f32(&handle.rms[c], (sum_sq[c] / frames as f64).sqrt() as f32);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn interleaved(ch: usize, frames: usize, f: impl Fn(usize, usize) -> f32) -> Vec<f32> {
+        (0..frames * ch).map(|i| f(i / ch, i % ch)).collect()
+    }
+
+    #[test]
+    fn peak_and_rms_of_constant_block() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(2, 240, |_, _| 0.5), 2);
+        let s = h.snapshot_and_decay();
+        assert_eq!(s.peaks.len(), 2);
+        assert_eq!(s.rms.len(), 2);
+        for p in &s.peaks {
+            assert_eq!(*p, 0.5);
+        }
+        for r in &s.rms {
+            assert_eq!(*r, 0.5);
+        }
+    }
+
+    #[test]
+    fn peak_is_max_across_blocks() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(2, 240, |_, _| 0.1), 2);
+        update_meter(
+            &h,
+            &interleaved(2, 240, |_, c| if c == 0 { 0.9 } else { 0.2 }),
+            2,
+        );
+        let s = h.snapshot_and_decay();
+        assert_eq!(s.peaks[0], 0.9);
+        assert_eq!(s.peaks[1], 0.2);
+        // RMS is per-block: reflects only the last block's content.
+        assert_eq!(s.rms[0], 0.9);
+        assert_eq!(s.rms[1], 0.2);
+    }
+
+    #[test]
+    fn rms_is_per_block_not_accumulated() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(2, 240, |_, _| 0.8), 2);
+        update_meter(&h, &vec![0.0; 480], 2);
+        let s = h.snapshot_and_decay();
+        for r in &s.rms {
+            assert_eq!(*r, 0.0);
+        }
+    }
+
+    #[test]
+    fn peaks_decay_per_tick() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(2, 240, |_, _| 1.0), 2);
+        let first = h.snapshot_and_decay();
+        assert_eq!(first.peaks[0], 1.0);
+        let second = h.snapshot_and_decay();
+        assert!((second.peaks[0] - METER_PEAK_DECAY).abs() < 1e-6);
+        let _ = first;
+    }
+
+    #[test]
+    fn channels_clamped_and_zero_is_noop() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(100, 4, |_, c| c as f32), 100);
+        let s = h.snapshot_and_decay();
+        assert_eq!(s.peaks.len(), MAX_METER_CHANNELS);
+        // 0 channels → early return, nothing stored.
+        let h2 = MeterHandle::new("n2".to_string());
+        update_meter(&h2, &vec![0.0; 10], 0);
+        let s2 = h2.snapshot_and_decay();
+        assert!(s2.peaks.is_empty());
+    }
+
+    #[test]
+    fn metering_does_not_modify_samples() {
+        let h = MeterHandle::new("n".to_string());
+        let mut buf = interleaved(2, 240, |f, c| (f as f32) * 0.01 + c as f32);
+        let original = buf.clone();
+        LevelMeterEffect::from_handle(h.clone()).process(&mut buf, 240);
+        assert_eq!(buf, original);
+    }
+
+    #[test]
+    fn handles_reused_across_instances_share_state() {
+        let h = MeterHandle::new("n".to_string());
+        update_meter(&h, &interleaved(2, 240, |_, _| 0.6), 2);
+        let mut e = LevelMeterEffect::from_handle(h.clone());
+        // Per-block RMS follows the newest block; peaks keep the max.
+        e.process(&mut interleaved(2, 240, |_, _| 0.4), 240);
+        let s = h.snapshot_and_decay();
+        assert_eq!(s.peaks[0], 0.6);
+        assert_eq!(s.rms[0], 0.4);
+    }
+}

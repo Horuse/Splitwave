@@ -10,6 +10,7 @@ import { isFromFuture } from '$lib/modules/pipeline/migrations';
 import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '$lib/modules/pipeline/types';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { errorStore } from '$lib/modules/error';
+import { reconcilePendingChange } from './reconnect';
 
 // Mirrors `extension()` in the File Recording node: the dialog filter must
 // match the encoder the node will actually write.
@@ -44,6 +45,7 @@ class AudioStore {
 	private lastGraph: StartPipelinePayload | null = null;
 	private fullGraph: StartPipelinePayload | null = null;
 	private reconnectTimer: ReturnType<typeof setInterval> | undefined;
+	private reconnectInFlight = false;
 	private speakerRecovering = false;
 	private inputRecovering = false;
 	private unlisten: UnlistenFn | undefined;
@@ -395,32 +397,23 @@ class AudioStore {
 	}
 
 	private async tryReconnectPending(): Promise<void> {
+		if (this.reconnectInFlight) return;
 		if (!appSettings.keepRunningOnDisconnect || this.pendingNodeIds.size === 0 || !this.fullGraph || !this.isRunning) {
 			this.stopPendingReconnectLoop();
 			return;
 		}
-		const stillUnresolved = await this.unresolvedInputIds(this.fullGraph);
-		const isUnchanged = stillUnresolved.size === this.pendingNodeIds.size && [...stillUnresolved].every((id) => this.pendingNodeIds.has(id));
-		if (isUnchanged) return;
-		this.pendingNodeIds = stillUnresolved;
-		const reduced = this.buildReducedGraph(this.fullGraph, stillUnresolved);
+		this.reconnectInFlight = true;
 		try {
-			await methods.reconcilePipeline(reduced);
+			const stillUnresolved = await this.unresolvedInputIds(this.fullGraph);
+			const reduced = this.buildReducedGraph(this.fullGraph, stillUnresolved);
+			const result = await reconcilePendingChange(this.pendingNodeIds, stillUnresolved, reduced, methods.reconcilePipeline, methods.startPipeline);
+			if (result !== 'applied') return;
+			this.pendingNodeIds = stillUnresolved;
 			this.lastGraph = reduced;
-		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : String(e);
-			if (msg.includes('not running')) {
-				try {
-					await methods.startPipeline(reduced);
-					this.lastGraph = reduced;
-				} catch {
-					return;
-				}
-			} else {
-				return;
-			}
+			if (stillUnresolved.size === 0) this.stopPendingReconnectLoop();
+		} finally {
+			this.reconnectInFlight = false;
 		}
-		if (stillUnresolved.size === 0) this.stopPendingReconnectLoop();
 	}
 
 	/** Apply a new graph to the running pipeline. Uses `reconcile_pipeline`,

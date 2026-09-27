@@ -27,3 +27,10 @@ export function migrate(pipeline: Pipeline): Pipeline {
 export function isFromFuture(pipeline: Pipeline): boolean {
 	return versionOf(pipeline) > PIPELINE_VERSION;
 }
+
+/** Applies pipeline migrations inside persisted wrappers such as history snapshots. */
+export function migrateSnapshot<T extends { pipeline: Pipeline }>(snapshot: T): T {
+	if (isFromFuture(snapshot.pipeline)) return snapshot;
+	const pipeline = migrate(snapshot.pipeline);
+	return pipeline === snapshot.pipeline ? snapshot : { ...snapshot, pipeline };
+}

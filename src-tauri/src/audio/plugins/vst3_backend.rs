@@ -591,6 +591,7 @@ mod tests {
     /// mean the first handle dropped unloads code the second is still calling.
     #[test]
     fn opening_a_bundle_twice_reuses_the_same_module() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let Some(plugin) = Vst3Backend.scan().into_iter().next() else {
             println!("SKIPPED: no vst3 plugins installed, cannot check module reuse");
             return;
@@ -612,6 +613,7 @@ mod tests {
 
     #[test]
     fn lists_installed_vst3_plugins() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = Vst3Backend.scan();
         for plugin in &found {
             assert_eq!(plugin.format, PluginFormat::Vst3);

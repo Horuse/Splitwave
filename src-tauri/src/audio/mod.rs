@@ -1,3 +1,4 @@
+pub mod adaptive_depth;
 pub mod capture;
 pub mod clock;
 pub mod device;
@@ -18,6 +19,8 @@ pub mod plugins;
 #[cfg(target_os = "linux")]
 pub mod pw_enum;
 pub mod resample;
+#[cfg(test)]
+pub mod rt_guard;
 pub mod signaling;
 pub mod stream_recv;
 pub mod streams;

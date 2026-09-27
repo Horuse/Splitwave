@@ -62,7 +62,7 @@ bun run check                                  # frontend + Rust checks in paral
 bun run format                                 # Prettier + rustfmt
 ```
 
-All checks must pass, and `format` must leave the tree clean. If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `src/lib/modules/pipeline/generated/` together with the Rust change — never by hand, and never on their own.
+All checks must pass, and `format` must leave the tree clean. A new node or shared component ships with its Storybook stories in the same PR; see [docs/UI.md](docs/UI.md). If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `src/lib/modules/pipeline/generated/` together with the Rust change — never by hand, and never on their own.
 
 Anything persisted to disk — pipeline JSON, `virtual-devices.json`, the macOS driver plist — has to keep loading for people upgrading. Add a `#[serde(default)]` or a versioned migration; do not silently change the meaning of an existing field.
 

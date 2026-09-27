@@ -5,6 +5,7 @@ Docs live in `docs/`, not here:
 - [docs/CONCEPT.md](docs/CONCEPT.md) — engine architecture: RT audio path, pacing, effects, layout, frontend conventions, Rust quirks, platforms.
 - [docs/RULES.md](docs/RULES.md) — universal rules for every change.
 - [docs/FEATURES.md](docs/FEATURES.md) — how a new feature must look (categories, inline params, scope, per-platform behaviour).
+- [docs/UI.md](docs/UI.md) — building UI: reuse Storybook components, stories required for every node and shared component.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — diff hygiene, per-OS testing, PR checklist.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build and run.
 
@@ -34,4 +35,5 @@ Without these, one chunk takes ~16 ms and the worker stalls.
 - Read the current code, not earlier explanations.
 - RT path change → `bun run check`.
 - Svelte change → `bun run check`.
+- New node or shared UI component → reuse existing Storybook components first, add its stories under `src/stories/` in the same commit (see [docs/UI.md](docs/UI.md)).
 - Rust `#[derive(TS)]` change → `bun run generate`, commit the generated files with the Rust change.

@@ -14,10 +14,11 @@
 		UI_SCALE_STEP,
 		GRID_SIZES,
 		SNAPSHOT_LIMITS,
-		PIPELINE_SAMPLE_RATE_PRESETS
+		PIPELINE_SAMPLE_RATE_PRESETS,
+		BUFFER_FRAME_PRESETS
 	} from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz, formatLatencyMs } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
@@ -61,6 +62,7 @@
 			| 'confirmOverwriteChanges'
 			| 'keepRunningOnDisconnect'
 			| 'pipelineSampleRate'
+			| 'bufferFrames'
 	>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
@@ -310,6 +312,34 @@
 					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
 				</div>
 			{/if}
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Buffer size</h2>
+				<p class="text-xs text-neutral-900">
+					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the
+					latency readout reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. Applies the next
+					time the pipeline starts.
+				</p>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2">
+				{#each BUFFER_FRAME_PRESETS as frames (frames)}
+					<button
+						type="button"
+						onclick={() => setApp('bufferFrames', frames)}
+						class={[
+							'flex flex-col items-center rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
+							appSettings.bufferFrames === frames
+								? 'border-neutral-900 bg-neutral-200 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+						]}>
+						<span>{frames}</span>
+						<span class="text-[9px] text-neutral-800">{formatLatencyMs((frames * 1000) / appSettings.pipelineSampleRate)} ms</span>
+					</button>
+				{/each}
+			</div>
 		</section>
 
 		<section class="flex flex-col gap-2">

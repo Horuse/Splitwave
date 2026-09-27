@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
+import type { LatencyReport } from '$lib/modules/pipeline/generated/LatencyReport';
+
+/** Rate and buffer every device stream opens with. */
+function engineFormat() {
+	return { sampleRate: appSettings.pipelineSampleRate, bufferFrames: appSettings.bufferFrames };
+}
 import type {
 	AudioApplication,
 	AudioDevice,
@@ -55,14 +61,14 @@ export const methods = {
 		maxs: number[][];
 	}> => invoke('read_file_peaks', { path, startFrame, framesPerBin, binCount }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
-	getOutputLatency: (): Promise<number> => invoke<number>('output_latency_ms'),
+	getLatencyReport: (): Promise<LatencyReport> => invoke<LatencyReport>('latency_report'),
 	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
-		invoke('start_pipeline', { graph: { sampleRate: appSettings.pipelineSampleRate, ...graph } }),
+		invoke('start_pipeline', { graph: { ...engineFormat(), ...graph } }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),
 	/** Hot-reconfigure a running pipeline. Errors with `NotRunning` if no
 	 *  pipeline is active — callers should fall back to `startPipeline`. */
 	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> =>
-		invoke('reconcile_pipeline', { graph: { sampleRate: appSettings.pipelineSampleRate, ...graph } }),
+		invoke('reconcile_pipeline', { graph: { ...engineFormat(), ...graph } }),
 	/** No-op when the pipeline isn't running; callers can fire-and-forget. */
 	updateEffect: (nodeId: string, data: Record<string, unknown>): Promise<void> => invoke('update_effect', { nodeId, data }),
 	/** Seek an AudioFile input. No-op when not running. */

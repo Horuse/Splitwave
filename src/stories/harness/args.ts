@@ -37,7 +37,9 @@ const ENV_ARG_TYPES: Record<keyof MockEnv, InputType> = {
 	linkChannels: { control: range(1, 8) },
 	webrtcPhase: { control: 'inline-radio', options: ['idle', 'hosting', 'joining'] },
 	webrtcPeers: { control: range(0, 5) },
-	missingFile: { control: 'boolean', description: 'Chosen file no longer exists' }
+	missingFile: { control: 'boolean', description: 'Chosen file no longer exists' },
+	bufferFrames: { control: 'select', options: [32, 64, 128, 256, 512, 1024, 2048], description: 'Engine buffer, frames' },
+	workingBlock: { control: 'select', options: [0, 256, 480, 512], description: 'Block the node reports running at; 0 keeps up' }
 };
 
 function withCategory(types: Record<string, InputType>, category: string): ArgTypes {

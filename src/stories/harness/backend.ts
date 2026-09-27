@@ -2,6 +2,7 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 import type { AudioApplication, AudioDevice, PluginDescriptor, PluginParam } from '$lib/modules/audio/types';
 import { audioStore } from '$lib/modules/audio/stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
+import type { LatencyReport } from '$lib/modules/pipeline/generated/LatencyReport';
 
 export type Platform = 'macos' | 'windows' | 'linux';
 export type LinkQuality = 'offline' | 'good' | 'lossy';
@@ -26,7 +27,13 @@ export interface MockEnv {
 	webrtcPhase: 'idle' | 'hosting' | 'joining';
 	webrtcPeers: number;
 	missingFile: boolean;
+	bufferFrames: number;
+	/** Block the story node reports running at; 0 when it keeps up. */
+	workingBlock: number;
 }
+
+/** Id of the node a story renders; the engine mocks answer for it. */
+export const STORY_NODE_ID = 'story-node';
 
 export const DEFAULT_ENV: MockEnv = {
 	platform: 'macos',
@@ -46,7 +53,9 @@ export const DEFAULT_ENV: MockEnv = {
 	linkChannels: 2,
 	webrtcPhase: 'idle',
 	webrtcPeers: 0,
-	missingFile: false
+	missingFile: false,
+	bufferFrames: 256,
+	workingBlock: 0
 };
 
 const INPUT_NAMES = ['MacBook Pro Microphone', 'Scarlett 2i2 USB', 'Splitwave', 'AirPods Pro', 'Shure MV7', 'RODECaster Pro II'];
@@ -179,6 +188,8 @@ export function installMockBackend(env: MockEnv): void {
 					return null;
 				case 'check_capture_permission':
 					return env.capturePermission === 'none' ? { kind: 'none', state: 'unknown' } : { kind: 'screenrecording', state: env.capturePermission };
+				case 'latency_report':
+					return mockLatencyReport(env);
 				case 'is_pipeline_running':
 					return env.running;
 				case 'path_exists':
@@ -255,4 +266,26 @@ export function installMockBackend(env: MockEnv): void {
 	audioStore.startedAt = env.running ? Date.now() : null;
 	audioStore.missingFilePaths = new Set(env.missingFile ? ['/Users/demo/Music/demo-track.wav'] : []);
 	appSettings.pipelineSampleRate = env.pipelineSampleRate;
+	appSettings.bufferFrames = env.bufferFrames;
+}
+
+function mockLatencyReport(env: MockEnv): LatencyReport {
+	const ms = (frames: number) => (frames * 1000) / env.pipelineSampleRate;
+	const node = env.workingBlock > 0 ? env.workingBlock : 0;
+	const path = {
+		inputDeviceMs: ms(env.bufferFrames + 400),
+		inputQueueMs: ms(env.bufferFrames * 2),
+		processingMs: ms(node),
+		outputAdapterMs: 0,
+		outputDeviceMs: ms(env.bufferFrames + 400),
+		hardwareIncluded: env.platform === 'macos'
+	};
+	return {
+		path: { ...path, totalMs: Object.values(path).reduce<number>((a, v) => a + (typeof v === 'number' ? v : 0), 0) },
+		bufferFrames: env.bufferFrames,
+		deviceBufferFrames: env.bufferFrames,
+		dspLoad: 0.18,
+		overloads: 0,
+		nodes: node ? [{ nodeId: STORY_NODE_ID, latencyFrames: node, workingBlock: node }] : []
+	};
 }

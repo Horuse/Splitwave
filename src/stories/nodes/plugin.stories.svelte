@@ -28,7 +28,7 @@
 			{ plugin: 1, showParams: false, bypassed: false }
 		),
 		wiringArgs(2),
-		envArgs(['running', 'plugins', 'pluginParams', 'pluginEditor'])
+		envArgs(['running', 'plugins', 'pluginParams', 'pluginEditor', 'bufferFrames', 'workingBlock'])
 	);
 
 	const { Story } = defineMeta({ title: 'Nodes/Effects/Plugin', argTypes, args });
@@ -44,6 +44,7 @@
 <Story name="Running with params" args={{ running: true, showParams: true }} {template} />
 <Story name="Many params" args={{ running: true, showParams: true, pluginParams: 10 }} {template} />
 <Story name="No editor" args={{ running: true, pluginEditor: false }} {template} />
+<Story name="Larger block" args={{ running: true, bufferFrames: 64, workingBlock: 256 }} {template} />
 <Story name="AU plugin" args={{ plugin: 3, running: true }} {template} />
 <Story name="No plugins installed" args={{ plugin: 0, plugins: 0 }} {template} />
 <Story name="Bypassed" args={{ bypassed: true }} {template} />

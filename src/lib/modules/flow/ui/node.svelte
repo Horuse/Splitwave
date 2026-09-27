@@ -5,7 +5,10 @@
 	import { PREVIEW_CTX } from '../utils';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
-	import { ArrowSwap } from '$lib/components/icons';
+	import { ArrowSwap, Hourglass } from '$lib/components/icons';
+	import { latencyStore } from '$lib/modules/audio/latency.svelte';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { formatLatencyMs } from '$lib/components/format';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import ChannelHandles from './_channel_handles.svelte';
 
@@ -64,6 +67,16 @@
 
 	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
 
+	// A node that cannot keep up with the engine buffer runs at a larger block
+	// of its own; say so, the way the resampling icon flags a rate change.
+	let timing = $derived(nodeId ? latencyStore.node(nodeId) : undefined);
+	let blockTooltip = $derived.by(() => {
+		const block = timing?.workingBlock;
+		if (!block || !latencyStore.report) return undefined;
+		const rate = appSettings.pipelineSampleRate;
+		return `Runs in ${block}-sample blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / rate)} ms`;
+	});
+
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
 		if (p === 'top') return Position.Top;
@@ -89,6 +102,13 @@
 				<Tooltip text={srcTooltip}>
 					<span class="inline-flex cursor-help items-center text-amber-600 transition-colors hover:text-amber-700">
 						<ArrowSwap class="size-3" />
+					</span>
+				</Tooltip>
+			{/if}
+			{#if blockTooltip}
+				<Tooltip text={blockTooltip}>
+					<span class="inline-flex cursor-help items-center text-amber-600 transition-colors hover:text-amber-700">
+						<Hourglass class="size-3" />
 					</span>
 				</Tooltip>
 			{/if}

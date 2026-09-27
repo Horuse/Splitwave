@@ -16,7 +16,7 @@
 			{ attenuationLimitDb: 100, postFilterBeta: 0, minThreshDb: -10, maxErbThreshDb: 30, maxDfThreshDb: 20, bypassed: false }
 		),
 		wiringArgs(2),
-		envArgs(['pipelineSampleRate'])
+		envArgs(['pipelineSampleRate', 'running', 'bufferFrames', 'workingBlock'])
 	);
 
 	const { Story } = defineMeta({ title: 'Nodes/Effects/Noise Suppressor', argTypes, args });
@@ -30,4 +30,5 @@
 <Story name="Gentle" args={{ attenuationLimitDb: 12 }} {template} />
 <Story name="Post filter" args={{ postFilterBeta: 0.02 }} {template} />
 <Story name="Resampling note" args={{ pipelineSampleRate: 44100 }} {template} />
+<Story name="Larger block" args={{ running: true, bufferFrames: 64, workingBlock: 480 }} {template} />
 <Story name="Bypassed" args={{ bypassed: true }} {template} />

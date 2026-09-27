@@ -14,6 +14,7 @@ interface Stored {
 	confirmOverwriteChanges: boolean;
 	keepRunningOnDisconnect: boolean;
 	pipelineSampleRate: number;
+	bufferFrames: number;
 	uiScale: number;
 }
 
@@ -27,6 +28,7 @@ const DEFAULTS: Stored = {
 	confirmOverwriteChanges: true,
 	keepRunningOnDisconnect: true,
 	pipelineSampleRate: 48_000,
+	bufferFrames: 256,
 	uiScale: 100
 };
 
@@ -36,6 +38,8 @@ export const UI_SCALE_MIN = 50;
 export const UI_SCALE_MAX = 200;
 export const UI_SCALE_STEP = 10;
 export const PIPELINE_SAMPLE_RATE_PRESETS = [44100, 48000, 88200, 96000, 176400, 192000] as const;
+/** Mirrors `BUFFER_FRAME_OPTIONS` in `src-tauri/src/audio/graph.rs`. */
+export const BUFFER_FRAME_PRESETS = [32, 64, 128, 256, 512, 1024, 2048] as const;
 
 function load(): Stored {
 	if (!browser) return DEFAULTS;
@@ -57,6 +61,11 @@ class AppSettings {
 	confirmOverwriteChanges = $state(this.#initial.confirmOverwriteChanges);
 	keepRunningOnDisconnect = $state(this.#initial.keepRunningOnDisconnect);
 	pipelineSampleRate = $state(this.#initial.pipelineSampleRate ?? 48_000);
+	// An unsupported size would fail every pipeline start, so a stale or
+	// hand-edited value falls back to the default.
+	bufferFrames = $state<number>(
+		(BUFFER_FRAME_PRESETS as readonly number[]).includes(this.#initial.bufferFrames) ? this.#initial.bufferFrames : DEFAULTS.bufferFrames
+	);
 	uiScale = $state(this.#initial.uiScale ?? 100);
 
 	persist(): void {
@@ -71,6 +80,7 @@ class AppSettings {
 			confirmOverwriteChanges,
 			keepRunningOnDisconnect,
 			pipelineSampleRate,
+			bufferFrames,
 			uiScale
 		} = this;
 		window.localStorage.setItem(
@@ -85,6 +95,7 @@ class AppSettings {
 				confirmOverwriteChanges,
 				keepRunningOnDisconnect,
 				pipelineSampleRate,
+				bufferFrames,
 				uiScale
 			})
 		);

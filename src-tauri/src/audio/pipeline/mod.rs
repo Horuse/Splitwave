@@ -454,6 +454,11 @@ impl ActivePipeline {
             }
         }
 
+        // Before any output is dismantled: a tick landing mid-teardown would
+        // count a speaker already gone against the old snapshot and report an
+        // orphan stream and a stalled output that are neither.
+        self.xrun_thread = None;
+
         let mut all_old: Vec<String> = Vec::new();
         all_old.extend(self.speakers.keys().cloned());
         all_old.extend(self.recorders.keys().cloned());
@@ -509,7 +514,6 @@ impl ActivePipeline {
         self.meter_thread = None;
         self.source_stats.clear();
         self.output_stats.clear();
-        self.xrun_thread = None;
 
         // Inputs whose spec changed (or vanished) drop here. Consumers
         // listed them in `OutputSig.inputs`, so spec change => sig change
@@ -1071,6 +1075,7 @@ impl ActivePipeline {
                     pipeline_sr,
                     paused.clone(),
                     None,
+                    graph.buffer_frames as usize,
                     &app,
                 )?;
                 self.inputs.insert(
@@ -1134,6 +1139,7 @@ impl ActivePipeline {
                 pipeline_sr,
                 paused.clone(),
                 Some(meter),
+                graph.buffer_frames as usize,
                 &app,
             )?;
             self.inputs.insert(
@@ -1178,6 +1184,18 @@ impl ActivePipeline {
                 ResolvedOutput::Speaker(spec) => {
                     let out_channels = spec.out_channels;
                     og.set_out_channels(out_channels);
+                    if let OutputSpec::Speaker { device_id } = &out.spec {
+                        let locked: HashSet<String> = graph
+                            .inputs
+                            .iter()
+                            .filter(|i| input::same_clock(&i.spec, device_id))
+                            .map(|i| i.id.clone())
+                            .collect();
+                        if !locked.is_empty() {
+                            info!(output = %out.id, ?locked, "inputs on the speaker's clock");
+                        }
+                        og.lock_inputs(&locked);
+                    }
                     if let Some(state) = self.speakers.get_mut(&out.id) {
                         if state.sample_rate == spec.sample_rate {
                             state.ctrl.send_graph(og)?;

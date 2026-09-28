@@ -937,6 +937,36 @@ pub fn set_buffer_frames(
     }
 }
 
+const K_AUDIO_DEVICE_PROPERTY_CLOCK_DOMAIN: AudioObjectPropertySelector = fourcc(b"clkd");
+const K_AUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: AudioObjectPropertySelector =
+    fourcc(b"dOut");
+
+/// The device's clock domain; devices sharing a non-zero domain run off one
+/// clock. `None` when unknown (0), which USB devices commonly report.
+pub fn clock_domain(kind: crate::audio::device::DeviceKind, name: &str) -> Option<u32> {
+    let id = find_device_id(name, scope_for(kind))?;
+    unsafe {
+        read_u32(
+            id,
+            K_AUDIO_DEVICE_PROPERTY_CLOCK_DOMAIN,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )
+    }
+    .filter(|&d| d != 0)
+}
+
+/// Name of the system's default output device, which process taps ride on.
+pub fn default_output_name() -> Option<String> {
+    unsafe {
+        let id = read_u32(
+            K_AUDIO_OBJECT_SYSTEM_OBJECT,
+            K_AUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )?;
+        device_name(id)
+    }
+}
+
 /// The device's current buffer plus everything it adds past it, for one
 /// direction.
 pub fn io_latency(kind: crate::audio::device::DeviceKind, name: &str) -> Option<IoLatency> {

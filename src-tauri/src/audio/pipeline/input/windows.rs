@@ -60,12 +60,19 @@ pub(in crate::audio::pipeline) fn configure_io(
     None
 }
 
+/// Clock sharing is not detected here yet, so every input is treated as
+/// drifting against the speaker.
+pub(in crate::audio::pipeline) fn same_clock(_input: &InputSpec, _speaker_device: &str) -> bool {
+    false
+}
+
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
     meter: Option<crate::audio::effects::MeterHandle>,
+    _io_frames: u32,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {

@@ -11,6 +11,11 @@
 //! Running dry deepens the queue only by the audio that turns out to have
 //! been late (`OutageJudge`). A source that goes quiet -- a paused app, a
 //! muted device -- leaves the depth where it was.
+//!
+//! A source on the output's own clock (`Cushion::locked`) has no drift to
+//! correct, so it is never spliced: any correction there could only chase
+//! delivery jitter, and every one is audible. Its queue is set once, when it
+//! starts or restarts from silence, and left alone while it plays.
 
 use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
 
@@ -33,8 +38,9 @@ const WINDOW_MS: f64 = 250.0;
 /// Headroom assumed before anything is measured: a typical 512-frame capture
 /// buffer at 48 kHz.
 const PRIOR_MS: f64 = 10.0;
-/// Kept above the measured dip at all times.
-const SAFETY_MS: f64 = 1.0;
+/// Kept above the measured dip at all times. A process tap's p99.9 delivery
+/// jitter is already ~1.8 ms, so a thinner margin clicks every few seconds.
+const SAFETY_MS: f64 = 2.0;
 /// One splice per this much audio at most, so time is never compressed or
 /// stretched by more than ~6% while a correction runs.
 const SPLICE_EVERY_MS: f64 = 21.0;
@@ -42,6 +48,10 @@ const SPLICE_EVERY_MS: f64 = 21.0;
 /// and a deeper target would outgrow the one-second input ring and never
 /// finish priming.
 const MAX_DEPTH_MS: f64 = 250.0;
+/// On a locked source, a late delivery deepens the queue only if another came
+/// within this long. A lone stall costs one dropout; paying for it with
+/// latency for the next minute would cost every sound after it.
+const LATE_REPEAT_MS: f64 = 60_000.0;
 
 pub(super) struct Cushion {
     need: usize,
@@ -55,8 +65,20 @@ pub(super) struct Cushion {
     cooldown: usize,
     cooldown_blocks: usize,
     primed: bool,
+    /// Has played before: a re-prime refills a stream in progress.
+    started: bool,
+    /// Same clock as the output: never splice while playing.
+    locked: bool,
+    /// A locked queue starts from the prior; the first measurement corrects
+    /// it once, the way a startup offset is removed, and never again.
+    settled: bool,
     judge: OutageJudge,
     max_depth: usize,
+    /// Blocks since the last late delivery was seen, for `LATE_REPEAT_MS`.
+    since_late: usize,
+    late_repeat_blocks: usize,
+    /// Largest recent arrival between two reads: the saw's height.
+    quantum: usize,
 }
 
 impl Cushion {
@@ -74,8 +96,26 @@ impl Cushion {
             cooldown: 0,
             cooldown_blocks: (frames(SPLICE_EVERY_MS) / need.max(1)).max(1),
             primed: false,
+            started: false,
+            locked: false,
+            settled: false,
             judge: OutageJudge::new(sample_rate),
             max_depth: frames(MAX_DEPTH_MS),
+            since_late: usize::MAX,
+            late_repeat_blocks: frames(LATE_REPEAT_MS) / need.max(1),
+            quantum: 0,
+        }
+    }
+
+    /// For a source on the output's own clock.
+    pub(super) fn locked(need: usize, sample_rate: u32) -> Self {
+        Self::new(need, sample_rate).into_locked()
+    }
+
+    pub(super) fn into_locked(self) -> Self {
+        Self {
+            locked: true,
+            ..self
         }
     }
 
@@ -96,35 +136,78 @@ impl Cushion {
     /// since the last block. A gap's verdict lands here, once the flow after
     /// it shows whether the missing audio was late or never existed.
     pub(super) fn arrived(&mut self, frames: usize) {
+        self.since_late = self.since_late.saturating_add(1);
+        // The largest single arrival is how far the queue saws between reads;
+        // it sinks back slowly if deliveries get smaller. Only steady flow
+        // counts: a catch-up burst after a gap is the gap, not the saw.
+        if self.primed && self.judge.is_clear() {
+            let steady = if self.quantum > 0 {
+                frames.min(2 * self.quantum)
+            } else {
+                frames
+            };
+            self.quantum = steady.max(self.quantum - self.quantum / 4096);
+        }
         if let Some(late) = self.judge.delivered(frames, self.need) {
             if late > 0 {
-                self.depth.underrun(late);
+                if !self.locked || self.since_late <= self.late_repeat_blocks {
+                    self.depth.underrun(late);
+                }
+                self.since_late = 0;
             }
         }
     }
 
     /// Queue to start playing from. Priming ends right after a delivery, at
-    /// the top of the saw, so it keeps the mean target plus the saw's dip:
-    /// what the queue will have drained by the time the next delivery lands.
+    /// the top of the saw, so it must last a whole saw down to the floor, plus
+    /// whatever jitter the measured dip shows beyond an ideal saw (whose dip
+    /// is half its height). Counting the dip twice would double the jitter
+    /// allowance along with the saw.
+    ///
+    /// Only a locked queue starts this tight: it is never corrected while it
+    /// plays, so the level it starts at is the level it keeps. A drifting one
+    /// starts a whole dip higher and lets its splices settle it.
     fn start_level(&self) -> usize {
-        self.target() + self.depth.depth().min(self.max_depth)
+        let dip = self.depth.depth().min(self.max_depth);
+        if !self.locked || self.quantum == 0 {
+            return self.target() + dip;
+        }
+        let jitter = dip.saturating_sub(self.quantum / 2);
+        self.floor() + self.quantum.max(dip) + jitter
     }
 
     /// Before the source's first read, and again after it ran dry. `None`
-    /// while the queue is still filling: play silence for this block. Once it
-    /// reaches the start level, everything beyond it is backlog nobody has
-    /// heard, so it can go at once: returns the frames to discard.
+    /// while the queue is still filling: play silence for this block.
+    ///
+    /// Returns the frames to discard. The first start always has them: what
+    /// piled up before anything played is backlog nobody has heard.
+    ///
+    /// After running dry it depends on the clock. A locked source realigns
+    /// here, under the silence it just played: with no drift, anything beyond
+    /// the start level is audio that arrived late for time already filled
+    /// with silence, and dropping exactly that keeps its latency where it was.
+    /// A drifting source keeps what arrived (it is the stream picking up where
+    /// it stopped) and lets the ordinary splices trim the excess.
     pub(super) fn prime(&mut self, queued: usize) -> Option<usize> {
         let start = self.start_level();
         if queued < start {
             return None;
         }
+        let excess = if self.started && !self.locked {
+            0
+        } else {
+            queued - start
+        };
+        self.started = true;
         self.primed = true;
         self.owed = 0;
         self.sum = 0.0;
         self.blocks = 0;
         self.low = usize::MAX;
-        Some(queued - start)
+        // Deliveries right after a gap come in catch-up bursts; measuring them
+        // would read the gap's aftermath as the source's everyday jitter.
+        self.depth.discard_window();
+        Some(excess)
     }
 
     pub(super) fn is_primed(&self) -> bool {
@@ -161,16 +244,28 @@ impl Cushion {
     /// Call once per block with the frames queued before the read. Returns the
     /// splice to perform now, if one is due and the queue can afford it.
     pub(super) fn observe(&mut self, queued: usize) -> Adjust {
-        self.sum += queued as f64;
-        self.blocks += 1;
-        self.low = self.low.min(queued);
-        if self.depth.observe(queued) {
+        // While a correction runs the queue moves by design, and a window
+        // holding that move would read it as jitter.
+        if self.owed != 0 {
+            self.depth.discard_window();
+            self.sum = 0.0;
+            self.blocks = 0;
+            self.low = usize::MAX;
+        } else {
+            self.sum += queued as f64;
+            self.blocks += 1;
+            self.low = self.low.min(queued);
+        }
+        if self.owed == 0 && self.depth.observe(queued) {
             let mean = self.sum / self.blocks as f64;
             let low = self.low;
             self.sum = 0.0;
             self.blocks = 0;
             self.low = usize::MAX;
-            if self.owed == 0 {
+            if self.owed == 0 && !self.locked {
+                self.owed = self.correction(mean, low);
+            } else if self.locked && !self.settled && self.depth.is_measured() {
+                self.settled = true;
                 self.owed = self.correction(mean, low);
             }
         }
@@ -459,8 +554,10 @@ mod tests {
         let steady = simulate(64, 480, 0.0, 0.0, 0, 120.0, 10.0);
         let r = simulate_with_quiet(64, 480, 0.0, 0.0, 0, 120.0, 10.0, &quiet);
         assert_eq!(r.late_underruns, 0, "underran while the app was playing");
+        // One delivery of overshoot on resuming is the onset being played,
+        // not cut; anything beyond is silence turned into latency.
         assert!(
-            r.max_queued <= steady.max_queued + 64,
+            r.max_queued <= steady.max_queued + 480,
             "pauses deepened the queue: {} vs {} frames",
             r.max_queued,
             steady.max_queued
@@ -477,11 +574,270 @@ mod tests {
         assert_eq!(r.late_underruns, 0);
     }
 
+    /// Audible events a listener would notice, after settling.
+    #[derive(Debug, Default)]
+    struct Heard {
+        splices: usize,
+        underruns: usize,
+        mean_queued: f64,
+    }
+
+    /// Plays `deliveries` (time in seconds, frames) through a cushion read
+    /// in `block`-frame blocks at 44.1 kHz.
+    fn replay(block: usize, deliveries: &[(f64, usize)], seconds: f64, settle: f64) -> Heard {
+        replay_with(
+            Cushion::new(block, 44_100),
+            block,
+            deliveries,
+            seconds,
+            settle,
+        )
+    }
+
+    fn replay_with(
+        mut c: Cushion,
+        block: usize,
+        deliveries: &[(f64, usize)],
+        seconds: f64,
+        settle: f64,
+    ) -> Heard {
+        let rate = 44_100u32;
+        let period = block as f64 / rate as f64;
+        let (mut t, mut i, mut queued, mut arrived) = (0.0, 0usize, 0usize, 0usize);
+        let mut heard = Heard::default();
+        let mut samples = 0usize;
+        while t < seconds {
+            while i < deliveries.len() && deliveries[i].0 <= t {
+                queued += deliveries[i].1;
+                arrived += deliveries[i].1;
+                i += 1;
+            }
+            c.arrived(std::mem::take(&mut arrived));
+            let counting = t >= settle;
+            if !c.is_primed() {
+                match c.prime(queued) {
+                    Some(excess) => queued -= excess,
+                    None => {
+                        t += period;
+                        continue;
+                    }
+                }
+            }
+            match c.observe(queued) {
+                Adjust::Drop(n) => {
+                    queued -= n;
+                    heard.splices += counting as usize;
+                }
+                Adjust::Insert(n) => {
+                    queued += n;
+                    heard.splices += counting as usize;
+                }
+                Adjust::None => {}
+            }
+            if queued < block {
+                heard.underruns += counting as usize;
+                c.underrun(block - queued);
+                queued = 0;
+            } else {
+                queued -= block;
+            }
+            if counting {
+                heard.mean_queued += queued as f64;
+                samples += 1;
+            }
+            t += period;
+        }
+        heard.mean_queued /= samples.max(1) as f64;
+        heard
+    }
+
+    /// A Core Audio process tap as it reaches a graph: 512-frame buffers on
+    /// the output device's clock, handed on by the normalizer thread in
+    /// 256-frame pieces after a poll of up to 1 ms, and every few seconds a
+    /// scheduling stall of 5-20 ms after which the backlog arrives at once.
+    fn tap_through_normalizer(seconds: f64, seed: u32) -> Vec<(f64, usize)> {
+        let rate = 44_100.0;
+        let mut rng = seed;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 17;
+            rng ^= rng << 5;
+            (rng % 10_000) as f64 / 10_000.0
+        };
+        let mut out = Vec::new();
+        let mut stall_until = 0.0;
+        let mut k = 0usize;
+        loop {
+            let captured = (k + 1) as f64 * 512.0 / rate;
+            if captured > seconds {
+                break;
+            }
+            if next() < 0.004 {
+                stall_until = captured + 0.005 + next() * 0.015;
+            }
+            for half in 0..2 {
+                let poll = next() * 0.001;
+                let at = (captured + poll).max(stall_until) + half as f64 * 0.00002;
+                out.push((at, 256));
+            }
+            k += 1;
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    // The chain in the field report: app audio into a speaker at 64 frames.
+    // The source runs on the speaker's own clock, so there is nothing to
+    // correct; every splice or dropout is one the listener hears.
+    #[test]
+    fn a_process_tap_on_the_output_clock_plays_clean() {
+        for seed in [1, 7, 42] {
+            let deliveries = tap_through_normalizer(180.0, seed);
+            let h = replay(64, &deliveries, 180.0, 20.0);
+            assert!(
+                h.splices + h.underruns <= 2,
+                "seed {seed}: heard {} splices and {} dropouts in 160 s",
+                h.splices,
+                h.underruns
+            );
+        }
+    }
+
+    /// Recorded from a live Core Audio process tap on Chrome at 44.1 kHz with
+    /// the HAL's default 512-frame buffer: steady 11.6 ms deliveries, one
+    /// 30 ms stall caught up by a 1536-frame delivery, a 1 s pause at 12 s and
+    /// the app stopping at 23 s.
+    fn recorded_chrome_tap() -> Vec<(f64, usize)> {
+        include_str!("testdata/chrome_tap_512.csv")
+            .lines()
+            .map(|l| {
+                let (t, n) = l.split_once(',').expect("time,frames");
+                (t.parse().expect("time"), n.parse().expect("frames"))
+            })
+            .collect()
+    }
+
+    // The field report, on real delivery timing: a tap on the speaker's own
+    // clock must play without a single splice. Dropouts are allowed only
+    // where the app itself went quiet or stalled.
+    #[test]
+    fn recorded_chrome_tap_plays_without_splices_when_locked() {
+        let trace = recorded_chrome_tap();
+        // Counting from 2 s: the one startup correction lands in the first.
+        for block in [32, 64, 128, 256] {
+            let h = replay_with(Cushion::locked(block, 44_100), block, &trace, 23.0, 2.0);
+            assert_eq!(h.splices, 0, "{block}: {h:?}");
+            assert!(h.underruns <= 2, "{block}: {h:?}");
+            // About one delivery plus its jitter, well under the 28 ms the
+            // level-chasing cushion held on this trace.
+            assert!(h.mean_queued < 44.1 * 20.0, "{block}: {h:?}");
+        }
+    }
+
+    /// The same tap with its aggregate asked for 64-frame buffers: one
+    /// delivery every 1.45 ms instead of every 11.6 ms.
+    fn recorded_chrome_tap_64() -> Vec<(f64, usize)> {
+        include_str!("testdata/chrome_tap_64.csv")
+            .lines()
+            .map(|l| {
+                let (t, n) = l.split_once(',').expect("time,frames");
+                (t.parse().expect("time"), n.parse().expect("frames"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_small_tap_buffer_brings_the_queue_down_to_a_few_ms() {
+        let trace = recorded_chrome_tap_64();
+        let end = trace.last().expect("rows").0;
+        for block in [32, 64, 128] {
+            let h = replay_with(Cushion::locked(block, 44_100), block, &trace, end, 2.0);
+            assert_eq!(h.splices, 0, "{block}: {h:?}");
+            // The recording holds one real tap stall (a 320-frame catch-up
+            // after ~6 ms of nothing): a lone stall costs one dropout rather
+            // than latency for the rest of the session.
+            assert!(h.underruns <= 1, "{block}: {h:?}");
+            // Two engine blocks of floor, then ~5 ms for the tap's own buffer,
+            // its jitter and the safety margin.
+            let bound = 2.0 * block as f64 + 44.1 * 5.0;
+            assert!(h.mean_queued < bound, "{block}: {h:?}");
+        }
+    }
+
+    #[test]
+    fn a_locked_source_realigns_only_from_silence() {
+        let mut c = Cushion::locked(64, SR);
+        let start = c.prime(20_000).expect("started");
+        assert!(start > 0, "startup backlog goes");
+        // Playing along: nothing is ever corrected.
+        for q in [100, 5_000, 20_000, 700] {
+            assert_eq!(c.observe(q), Adjust::None);
+        }
+        // Ran dry, then late audio caught up: it realigns under the silence,
+        // dropping what arrived for time already played as silence.
+        c.underrun(64);
+        let level = c.start_level();
+        assert_eq!(c.prime(level + 1_536), Some(1_536));
+    }
+
+    #[test]
+    fn only_the_first_start_discards() {
+        let mut c = Cushion::new(64, SR);
+        assert!(
+            c.prime(20_000).expect("started") > 0,
+            "startup backlog goes"
+        );
+        c.underrun(64);
+        assert_eq!(c.prime(20_000), Some(0), "a refill keeps what arrived");
+    }
+
     #[test]
     fn a_splice_waits_until_the_queue_can_afford_it() {
         let mut c = Cushion::new(64, SR);
         c.owed = -64;
         assert_eq!(c.observe(64), Adjust::None, "not enough queued to cut");
         assert_eq!(c.observe(64 + 64 + 2 * 32), Adjust::Drop(64));
+    }
+}
+
+/// Records a live tap's delivery timing (seconds,frames per line) to
+/// `TAP_OUT`, the source of `testdata/chrome_tap_512.csv`. Needs Chrome playing
+/// and the System Audio Recording permission; `TAP_FRAMES` sets its buffer.
+#[cfg(all(test, target_os = "macos"))]
+mod tap_recorder {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "records a live Chrome tap"]
+    fn record_chrome_tap() {
+        let (mut tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let (prod, cons) = rtrb::RingBuffer::<f32>::new(2_000_000);
+        tx.add(prod).unwrap();
+        let io_frames = std::env::var("TAP_FRAMES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let cap =
+            crate::audio::capture::Capture::start_app("com.google.Chrome", 44_100, io_frames, rx)
+                .expect("tap");
+        let start = Instant::now();
+        let mut rows = Vec::new();
+        let mut seen = 0usize;
+        while start.elapsed() < Duration::from_secs(30) {
+            let n = cons.slots();
+            if n > seen {
+                rows.push((start.elapsed().as_secs_f64(), (n - seen) / 2));
+                seen = n;
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        }
+        drop(cap);
+        let path = std::env::var("TAP_OUT").unwrap();
+        let mut f = std::fs::File::create(path).unwrap();
+        for (t, n) in &rows {
+            writeln!(f, "{t:.6},{n}").unwrap();
+        }
+        println!("rows {} rate {}", rows.len(), seen as f64 / 2.0 / 30.0);
     }
 }

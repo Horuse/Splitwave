@@ -332,12 +332,39 @@ mod tests {
         let (prod, mut cons) = RingBuffer::<f32>::new(8);
         let (_, stats) = tx.add(prod).expect("add");
         rx.apply_commands();
-        rx.broadcast(&vec![1.0f32; 64]);
-        assert_eq!(stats.fed.load(Ordering::Relaxed), 8);
-        assert_eq!(stats.dropped.load(Ordering::Relaxed), 56);
+        rx.broadcast(&vec![1.0f32; 6]);
+        // Does not fit whole: dropped whole, so no frame is ever split.
+        rx.broadcast(&vec![2.0f32; 4]);
+        assert_eq!(stats.fed.load(Ordering::Relaxed), 6);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 4);
         let mut out = vec![0.0f32; 8];
-        assert_eq!(pop_into(&mut cons, &mut out), 8);
-        assert_eq!(out, vec![1.0; 8]);
+        assert_eq!(pop_into(&mut cons, &mut out), 6);
+        assert_eq!(out[..6], [1.0; 6]);
+    }
+
+    // A mono 48 kHz mic normalized to 44.1 kHz: the resampler emits 235 and
+    // 236 frames in turn, and a mono frame is one sample, so half its chunks
+    // are odd. Every sample it emits must reach the graph.
+    #[test]
+    fn a_resampled_mono_mic_loses_nothing() {
+        let (mut tx, mut rx) = broadcast_channel();
+        let (prod, cons) = RingBuffer::<f32>::new(96_000);
+        let (_, stats) = tx.add(prod).expect("add");
+        rx.apply_commands();
+        let mut rs = crate::audio::resample::MultiResampler::new(48_000, 44_100, 256, 1).unwrap();
+        let input = vec![0.25f32; 256];
+        let mut out = Vec::with_capacity(rs.out_max());
+        let (mut emitted, mut odd) = (0usize, 0usize);
+        for _ in 0..48_000 / 256 {
+            out.clear();
+            rs.process_chunk(&input, &mut out).unwrap();
+            odd += out.len() % 2;
+            emitted += out.len();
+            rx.broadcast(&out);
+        }
+        assert!(odd > 0, "the case under test: odd chunks happen");
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(cons.slots(), emitted, "every resampled sample arrived");
     }
 
     #[test]

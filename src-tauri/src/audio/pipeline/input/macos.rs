@@ -95,12 +95,34 @@ pub(in crate::audio::pipeline) fn configure_io(
     })
 }
 
+/// Whether `input` runs off the same clock as the speaker `speaker_device`.
+/// A process tap is driven by the default output device; a microphone shares
+/// a clock with the speaker when it is the same device or reports the same
+/// non-zero clock domain.
+pub(in crate::audio::pipeline) fn same_clock(input: &InputSpec, speaker_device: &str) -> bool {
+    match input {
+        InputSpec::AppAudio { .. } | InputSpec::SystemAudio { .. } => {
+            crate::audio::capture::uses_taps()
+                && macos_hal::default_output_name().as_deref() == Some(speaker_device)
+        }
+        InputSpec::Microphone { device_id } => {
+            device_id == speaker_device || {
+                let mic = macos_hal::clock_domain(DeviceKind::Input, device_id);
+                mic.is_some() && mic == macos_hal::clock_domain(DeviceKind::Output, speaker_device)
+            }
+        }
+        _ => false,
+    }
+}
+
+/// `io_frames` is the capture buffer to ask for, in the source's own frames.
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
     meter: Option<MeterHandle>,
+    io_frames: u32,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -144,6 +166,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
                 sample_rate,
+                io_frames,
                 bridge,
             )?;
             check_capture_format(&capture)?;
@@ -153,8 +176,12 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             sample_rate,
             bundle_id,
         } => {
-            let capture =
-                crate::audio::capture::Capture::start_app(&bundle_id, sample_rate, bridge)?;
+            let capture = crate::audio::capture::Capture::start_app(
+                &bundle_id,
+                sample_rate,
+                io_frames,
+                bridge,
+            )?;
             check_capture_format(&capture)?;
             Ok(InputHandle::Capture(capture))
         }

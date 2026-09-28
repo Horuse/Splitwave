@@ -194,11 +194,15 @@ private final class Tap {
     private var tapChannels = 0
     private var tapBufferIndex = 0
     private var sampleRate = 0.0
+    /// IO buffer the aggregate is asked for, in frames; 0 keeps the HAL default.
+    /// Each delivery is one buffer, so it sets how bursty capture is.
+    private var ioFrames: UInt32 = 0
     /// Preallocated so the IOProc never allocates while de-interleaving.
     private var scratch = [Float]()
 
     func start(
         mode: TapMode,
+        ioFrames: UInt32,
         callback: @escaping TapSampleCallback,
         userData: UnsafeMutableRawPointer?
     ) -> Int32 {
@@ -206,6 +210,7 @@ private final class Tap {
         defer { lock.unlock() }
 
         self.mode = mode
+        self.ioFrames = ioFrames
         self.callback = callback
         self.userData = userData
 
@@ -329,6 +334,7 @@ private final class Tap {
             return RESULT_TAP_ERROR
         }
         aggregateID = aggregate
+        applyBufferSize()
 
         let maxFrames = Int(readValue(aggregateID, kAudioDevicePropertyBufferFrameSize, UInt32(0)) ?? 4096)
         scratch = [Float](repeating: 0, count: max(maxFrames, 4096) * tapChannels)
@@ -349,6 +355,19 @@ private final class Tap {
             return RESULT_TAP_ERROR
         }
         return RESULT_OK
+    }
+
+    /// Clamped to the aggregate's range. A refusal leaves the HAL default, which
+    /// only makes deliveries burstier, never wrong.
+    private func applyBufferSize() {
+        guard ioFrames > 0 else { return }
+        var frames = ioFrames
+        if let range = readValue(aggregateID, kAudioDevicePropertyBufferFrameSizeRange, AudioValueRange()),
+           range.mMinimum > 0, range.mMaximum >= range.mMinimum {
+            frames = UInt32(min(max(Double(frames), range.mMinimum), range.mMaximum))
+        }
+        var addr = address(kAudioDevicePropertyBufferFrameSize)
+        _ = AudioObjectSetPropertyData(aggregateID, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
     }
 
     /// Order matters: a tap destroyed before its aggregate leaves the aggregate
@@ -495,6 +514,7 @@ public func ba_tap_destroy(_ handle: OpaquePointer) {
 public func ba_tap_start_app(
     _ handle: OpaquePointer,
     _ bundleIDC: UnsafePointer<CChar>,
+    _ ioFrames: UInt32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
@@ -502,6 +522,7 @@ public func ba_tap_start_app(
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
             mode: .application(bundleID: String(cString: bundleIDC)),
+            ioFrames: ioFrames,
             callback: callback,
             userData: userData
         )
@@ -513,6 +534,7 @@ public func ba_tap_start_app(
 public func ba_tap_start_system(
     _ handle: OpaquePointer,
     _ excludeCurrentApp: Int32,
+    _ ioFrames: UInt32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
@@ -520,6 +542,7 @@ public func ba_tap_start_system(
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
             mode: .system(excludeCurrentApp: excludeCurrentApp != 0),
+            ioFrames: ioFrames,
             callback: callback,
             userData: userData
         )

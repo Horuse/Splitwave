@@ -18,6 +18,7 @@ use crate::error::{AppError, AppResult};
 
 use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
+use super::output::device_block;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -33,7 +34,7 @@ mod windows;
 use windows as platform;
 
 use platform::start_input_stream as start_native_input_stream;
-pub(super) use platform::{configure_io, resolve_input};
+pub(super) use platform::{configure_io, resolve_input, same_clock};
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
 /// down the capture, or signals + joins the file reader thread.
@@ -233,13 +234,16 @@ pub(super) fn start_input_stream(
     target_sample_rate: u32,
     paused: Option<Arc<AtomicBool>>,
     meter: Option<MeterHandle>,
+    block_frames: usize,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
+    // One capture buffer per engine block: deliveries no burstier than reads.
+    let io_frames = device_block(block_frames, target_sample_rate, resolved.sample_rate());
     // Audio files are decoded offline and paced by downstream consumer backpressure.
     // They must not be run through the capture normalizer thread (which drops frames
     // on overflow and breaks backpressure). DAG nodes resample file audio directly.
     if matches!(resolved, ResolvedInput::AudioFile { .. }) {
-        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+        return start_native_input_stream(node_id, resolved, bridge, paused, meter, io_frames, app);
     }
     // A device already at the pipeline rate needs no normalizing: its callback
     // feeds the graphs' rings directly, with no thread hop in between. Only a
@@ -248,7 +252,7 @@ pub(super) fn start_input_stream(
     if matches!(resolved, ResolvedInput::Cpal { .. })
         && resolved.sample_rate() == target_sample_rate
     {
-        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+        return start_native_input_stream(node_id, resolved, bridge, paused, meter, io_frames, app);
     }
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
@@ -256,7 +260,7 @@ pub(super) fn start_input_stream(
         RingBuffer::<f32>::new(ring_capacity_frames(sample_rate) * channels.max(1));
     let (mut raw_tx, raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
-    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
+    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, io_frames, app)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
@@ -265,6 +269,13 @@ pub(super) fn start_input_stream(
     let join = thread::Builder::new()
         .name(format!("normalize:{label}"))
         .spawn(move || {
+            // Sits between a capture callback and the speaker callback, so its
+            // wake-ups are audio latency: an ordinary thread adds scheduling jitter.
+            let _rt = super::worker::RtThread::promote(
+                "normalize",
+                RESAMPLE_CHUNK as u32,
+                target_sample_rate,
+            );
             let mut bridge = bridge;
             let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
             #[cfg(any(target_os = "macos", target_os = "linux"))]

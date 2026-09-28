@@ -2,6 +2,7 @@ pub mod adaptive_depth;
 pub mod capture;
 pub mod clock;
 pub mod device;
+pub mod drift_loop;
 pub mod effects;
 pub mod encoders;
 pub mod engine;

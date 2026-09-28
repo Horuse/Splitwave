@@ -118,6 +118,11 @@ impl DepthEstimator {
         self.low = usize::MAX;
     }
 
+    /// True once the depth comes from measurement rather than the prior.
+    pub fn is_measured(&self) -> bool {
+        self.measured >= PRIOR_WINDOWS
+    }
+
     /// Drops the window in progress. The queue draining because its source
     /// went quiet is not jitter, and a window holding that drain would read
     /// it as one.
@@ -211,6 +216,11 @@ impl OutageJudge {
             balance: 0,
             peak: 0,
         }
+    }
+
+    /// No gap is open or being judged: the flow is steady.
+    pub fn is_clear(&self) -> bool {
+        matches!(self.state, Judgement::Clear)
     }
 
     /// The consumer came up `frames` short: a gap starts (or grows).

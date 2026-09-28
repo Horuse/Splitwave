@@ -30,8 +30,6 @@ counters! {
     /// Speaker blocks the output resampler failed to convert; the device
     /// played silence for them (pipeline/output/render.rs).
     SPEAKER_RENDER_FAILED_BLOCKS,
-    /// Input samples discarded by a source's backlog trim (SourceState::fill_block).
-    SOURCE_TRIM_DROPPED_SAMPLES,
     /// Samples dropped by a StagingRing overrun (producer outran the drain).
     STAGING_OVERRUN_SAMPLES,
     /// Worker blocks whose wall-clock deadline had already passed on wake.
@@ -95,7 +93,6 @@ mod tests {
                 "NET_RING_OVERRUN_SAMPLES",
                 "TAP_RING_OVERRUN_SAMPLES",
                 "SPEAKER_RENDER_FAILED_BLOCKS",
-                "SOURCE_TRIM_DROPPED_SAMPLES",
                 "STAGING_OVERRUN_SAMPLES",
                 "CLOCK_LATE_BLOCKS",
                 "CLOCK_LATE_MAX_US",

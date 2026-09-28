@@ -47,8 +47,17 @@ impl Drop for RtThread {
     }
 }
 
+/// A swapped-in graph fades in over this while the one it replaces fades out,
+/// so an edit to a running pipeline never steps the output.
+const SWAP_FADE_MS: usize = 10;
+
 pub(super) struct DspWorker {
     pub graph: OutputGraph,
+    /// The graph being replaced, still rendering while it fades out.
+    fading: Option<OutputGraph>,
+    fade_pos: usize,
+    /// Holds the fading graph's block.
+    fade_block: Box<[f32]>,
     /// Hot-swap channel: main thread pushes a freshly-built `OutputGraph`
     /// here; worker takes ownership at the next block boundary.
     cmd_rx: Consumer<OutputGraph>,
@@ -81,10 +90,15 @@ impl WorkerCtrl {
 
 pub(super) fn dsp_worker(graph: OutputGraph) -> (DspWorker, WorkerCtrl) {
     let (cmd_tx, cmd_rx) = RingBuffer::<OutputGraph>::new(2);
-    let (old_tx, old_rx) = RingBuffer::<OutputGraph>::new(2);
+    // Room for a graph queued behind one still fading out.
+    let (old_tx, old_rx) = RingBuffer::<OutputGraph>::new(4);
+    let fade_block = vec![0.0; graph.block_frames() * graph.out_channels()].into_boxed_slice();
     (
         DspWorker {
             graph,
+            fading: None,
+            fade_pos: 0,
+            fade_block,
             cmd_rx,
             old_graph_tx: old_tx,
         },
@@ -105,7 +119,12 @@ impl DspWorker {
         while let Ok(new_graph) = self.cmd_rx.pop() {
             debug_assert_eq!(new_graph.block_frames(), self.graph.block_frames());
             let old = std::mem::replace(&mut self.graph, new_graph);
-            let _ = self.old_graph_tx.push(old);
+            // A swap landing mid-fade cuts the older graph short; the newer
+            // one fades from the graph that was playing.
+            if let Some(older) = self.fading.replace(old) {
+                let _ = self.old_graph_tx.push(older);
+            }
+            self.fade_pos = 0;
         }
     }
 
@@ -116,7 +135,37 @@ impl DspWorker {
     pub(super) fn next_block(&mut self, block: &mut [f32]) -> usize {
         self.drain_swaps();
         self.graph.process_block(block);
-        self.graph.active_output_channels()
+        let active = self.graph.active_output_channels();
+        let Some(old) = self.fading.as_mut() else {
+            return active;
+        };
+        let channels = self.graph.out_channels().max(1);
+        let frames = block.len() / channels;
+        let fade_len = (self.graph.sample_rate() as usize * SWAP_FADE_MS / 1000).max(1);
+        let old_active = old.active_output_channels();
+        if old.out_channels() == channels && self.fade_block.len() == block.len() {
+            old.process_block(&mut self.fade_block);
+            for (f, (new, old)) in block
+                .chunks_exact_mut(channels)
+                .zip(self.fade_block.chunks_exact(channels))
+                .enumerate()
+            {
+                let t = ((self.fade_pos + f) as f32 / fade_len as f32).min(1.0);
+                for (n, o) in new.iter_mut().zip(old) {
+                    *n = *n * t + *o * (1.0 - t);
+                }
+            }
+            self.fade_pos += frames;
+        } else {
+            self.fade_pos = fade_len;
+        }
+        if self.fade_pos >= fade_len {
+            if let Some(old) = self.fading.take() {
+                let _ = self.old_graph_tx.push(old);
+            }
+            return active;
+        }
+        active.max(old_active)
     }
 
     pub(super) fn graph(&self) -> &OutputGraph {
@@ -178,12 +227,23 @@ mod tests {
         built.graph
     }
 
+    fn block_for(worker: &DspWorker) -> Vec<f32> {
+        vec![0.0; worker.graph.block_frames() * worker.graph.out_channels()]
+    }
+
     #[test]
     fn swap_hands_the_old_graph_back_to_main() {
         let (mut worker, mut ctrl) = dsp_worker(graph(2));
         ctrl.send_graph(graph(4)).expect("queue swap");
         worker.drain_swaps();
         assert_eq!(worker.graph.out_channels(), 4, "worker runs the new graph");
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            0,
+            "the old graph is still fading out"
+        );
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
         assert_eq!(
             ctrl.old_graph_rx.slots(),
             1,
@@ -204,7 +264,63 @@ mod tests {
         ctrl.send_graph(graph(6)).expect("second swap");
         worker.drain_swaps();
         assert_eq!(worker.graph.out_channels(), 6);
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            1,
+            "the skipped graph never plays"
+        );
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
         assert_eq!(ctrl.old_graph_rx.slots(), 2);
+    }
+
+    /// A live-less passthrough at 64-frame blocks, fed `value` throughout.
+    fn constant_graph(value: f32) -> (OutputGraph, rtrb::Producer<f32>) {
+        let (valid, speaker) = passthrough_graph();
+        let (built, mut producers) = super::super::dag::graph_tests::build_with_block(
+            Some(&speaker),
+            48_000,
+            64,
+            &valid,
+            48_000,
+            false,
+        );
+        let mut input = producers.remove("m").unwrap();
+        let data = vec![value; 48_000];
+        if let Ok(mut chunk) = input.write_chunk(data.len()) {
+            let (a, b) = chunk.as_mut_slices();
+            a.copy_from_slice(&data[..a.len()]);
+            b.copy_from_slice(&data[a.len()..a.len() + b.len()]);
+            chunk.commit_all();
+        }
+        (built.graph, input)
+    }
+
+    #[test]
+    fn a_swap_crossfades_instead_of_stepping() {
+        let (old, _old_in) = constant_graph(0.5);
+        let (new, _new_in) = constant_graph(-0.5);
+        let (mut worker, mut ctrl) = dsp_worker(old);
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
+        ctrl.send_graph(new).expect("queue swap");
+        let mut played: Vec<f32> = Vec::new();
+        for _ in 0..20 {
+            worker.next_block(&mut block);
+            played.extend(block.iter().step_by(2));
+        }
+        let fade = 48_000 * SWAP_FADE_MS / 1000;
+        let worst = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst <= 1.0 / fade as f32 + 1e-6, "a step of {worst}");
+        assert_eq!(*played.last().unwrap(), -0.5, "the new graph plays alone");
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            1,
+            "the old graph went back to main"
+        );
     }
 
     #[test]

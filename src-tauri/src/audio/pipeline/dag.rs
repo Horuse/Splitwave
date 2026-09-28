@@ -204,7 +204,9 @@ pub(super) struct SourceStats {
     /// Samples silenced because the source delivered nothing for longer than
     /// `STALL_THRESHOLD`. Silent by design, but it is still missing audio.
     pub stalled: Arc<AtomicU64>,
-    /// Samples discarded by the backlog trim in `fill_block`.
+    /// Samples removed by design and never played: the startup backlog and
+    /// the one startup depth correction, and audio that arrived late for time
+    /// already played as silence.
     pub trimmed: Arc<AtomicU64>,
     /// Samples actually read out of the source ring.
     pub consumed: Arc<AtomicU64>,
@@ -626,7 +628,6 @@ impl SourceState {
         let removed = (drop + fade) as u64;
         self.stats.consumed.fetch_add(popped, Ordering::Relaxed);
         self.stats.trimmed.fetch_add(removed, Ordering::Relaxed);
-        health::bump(&health::SOURCE_TRIM_DROPPED_SAMPLES, removed);
         self.last_pop_at = Instant::now();
     }
 

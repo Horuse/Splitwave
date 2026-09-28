@@ -177,7 +177,11 @@ pub(super) fn spawn_xrun_thread(
                     });
                     let dropped_delta = capture_delta.map_or(0, |(_, d)| d);
 
-                    let consumed_frames = consumed_delta / s.channels.max(1) as u64;
+                    // Audio removed by design (the startup backlog and depth
+                    // correction, late audio realigned under silence already
+                    // played) was consumed but never played.
+                    let consumed_frames =
+                        consumed_delta.saturating_sub(trimmed_delta) / s.channels.max(1) as u64;
                     let wallclock_frames = s.native_sr as f64 * elapsed_secs;
                     // A capture-backed source is measured against what its
                     // producer actually delivered: an app playing nothing feeds
@@ -202,11 +206,7 @@ pub(super) fn spawn_xrun_thread(
 
                     if !warmup
                         && !producer_short
-                        && (xrun_delta > 0
-                            || stalled_delta > 0
-                            || trimmed_delta > 0
-                            || off_rate
-                            || dropped_delta > 0)
+                        && (xrun_delta > 0 || stalled_delta > 0 || off_rate || dropped_delta > 0)
                     {
                         let ring_level_samples = s.stats.level.load(Ordering::Relaxed);
                         match capture_delta {

@@ -29,6 +29,10 @@ use super::super::worker::{dsp_worker, DspWorker, WorkerCtrl};
 /// device calls back within one buffer; a dead one never will.
 const RETIRE_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// A starting speaker fades in, and a retiring one fades out, over this, so
+/// starting or stopping never steps a waveform mid-cycle.
+const STOP_FADE_MS: u32 = 10;
+
 /// Blocks rendered in a row without output before a callback gives up. The
 /// FFT resampler holds input until it has a whole FFT frame (160 frames for
 /// 48 -> 44.1 kHz), so several small blocks may go in before any comes out.
@@ -227,20 +231,63 @@ pub(in crate::audio::pipeline) struct SpeakerCallback {
     outgoing: Producer<SpeakerRenderer>,
     retire: Arc<AtomicBool>,
     renderer: Option<SpeakerRenderer>,
+    /// Frames of the stop fade still to play, once a retire is asked for.
+    fade_left: Option<usize>,
+    /// Frames played since the renderer arrived, while the start fade runs.
+    faded_in: usize,
 }
 
 impl SpeakerCallback {
     pub(in crate::audio::pipeline) fn fill(&mut self, out: &mut [f32], callback_frames: usize) {
         if self.retire.load(Ordering::Acquire) {
-            if let Some(r) = self.renderer.take() {
-                let _ = self.outgoing.push(r);
-            }
-        } else if self.renderer.is_none() {
+            self.fade_out(out, callback_frames);
+            return;
+        }
+        if self.renderer.is_none() {
             self.renderer = self.incoming.pop().ok();
         }
-        match &mut self.renderer {
-            Some(r) => r.render(out, callback_frames),
-            None => out.fill(0.0),
+        let Some(r) = self.renderer.as_mut() else {
+            out.fill(0.0);
+            return;
+        };
+        r.render(out, callback_frames);
+        let total = (r.io.sample_rate * STOP_FADE_MS / 1000).max(1) as usize;
+        if self.faded_in < total {
+            for frame in out.chunks_exact_mut(r.channels) {
+                let gain = (self.faded_in as f32 / total as f32).min(1.0);
+                for s in frame.iter_mut() {
+                    *s *= gain;
+                }
+                self.faded_in += 1;
+            }
+        }
+    }
+
+    /// Plays the stop fade, then hands the renderer back and goes silent.
+    fn fade_out(&mut self, out: &mut [f32], callback_frames: usize) {
+        let Some(r) = self.renderer.as_mut() else {
+            out.fill(0.0);
+            return;
+        };
+        let total = (r.io.sample_rate * STOP_FADE_MS / 1000).max(1) as usize;
+        let left = self.fade_left.get_or_insert(total);
+        if *left > 0 {
+            r.render(out, callback_frames);
+            for frame in out.chunks_exact_mut(r.channels) {
+                let gain = *left as f32 / total as f32;
+                for s in frame.iter_mut() {
+                    *s *= gain;
+                }
+                *left = left.saturating_sub(1);
+            }
+            if *left > 0 {
+                return;
+            }
+        } else {
+            out.fill(0.0);
+        }
+        if let Some(r) = self.renderer.take() {
+            let _ = self.outgoing.push(r);
         }
     }
 }
@@ -267,6 +314,8 @@ pub(in crate::audio::pipeline) fn speaker_link() -> (SpeakerLink, SpeakerCallbac
             outgoing: out_tx,
             retire,
             renderer: None,
+            fade_left: None,
+            faded_in: 0,
         },
     )
 }
@@ -429,8 +478,13 @@ mod tests {
         t.ctrl.send_graph(next).expect("swap");
         t.r.render(&mut out, 64);
         assert_eq!(blocks.load(Ordering::Relaxed), 1, "new graph renders");
-        assert_eq!(t.blocks.load(Ordering::Relaxed), 1, "old graph stopped");
-        assert_eq!(t.io.callbacks.load(Ordering::Relaxed), 2);
+        assert_eq!(t.blocks.load(Ordering::Relaxed), 2, "old graph fades out");
+        // 10 ms at 48 kHz is 7.5 blocks of 64: the old graph renders 8 more.
+        for _ in 0..20 {
+            t.r.render(&mut out, 64);
+        }
+        assert_eq!(t.blocks.load(Ordering::Relaxed), 9, "old graph stopped");
+        assert_eq!(t.io.callbacks.load(Ordering::Relaxed), 22);
     }
 
     #[test]
@@ -477,7 +531,8 @@ mod tests {
 
         link.attach(t.r);
         cb.fill(&mut out, 64);
-        assert_eq!(out[0], 1.0, "renderer arrived and plays the input");
+        assert_eq!(out[0], 0.0, "renderer arrived and fades in");
+        assert!(out[127] > 0.0, "renderer arrived and plays the input");
 
         // Retire on another thread while the "device" keeps calling back.
         let handle = std::thread::spawn(move || link.retire().is_some());
@@ -492,6 +547,37 @@ mod tests {
         );
         cb.fill(&mut out, 64);
         assert!(out.iter().all(|&s| s == 0.0), "retired callback is silent");
+    }
+
+    #[test]
+    fn starting_and_stopping_fade_instead_of_stepping() {
+        let (mut link, mut cb) = speaker_link();
+        let mut t = rig(64, SR);
+        feed(&mut t.input, &vec![0.5; 48_000]);
+        link.attach(t.r);
+        let mut out = vec![0.0; 64 * 2];
+        let mut played: Vec<f32> = Vec::new();
+        for _ in 0..20 {
+            cb.fill(&mut out, 64);
+            played.extend(out.iter().step_by(2));
+        }
+        assert_eq!(*played.last().unwrap(), 0.5, "faded in");
+        cb.retire.store(true, Ordering::Release);
+        for _ in 0..20 {
+            cb.fill(&mut out, 64);
+            played.extend(out.iter().step_by(2));
+        }
+        let fade = (SR * STOP_FADE_MS / 1000) as f32;
+        let worst = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst <= 0.5 / fade + 1e-6, "a step of {worst}");
+        assert_eq!(*played.last().unwrap(), 0.0);
+        assert!(
+            link.retire().is_some(),
+            "renderer handed back after the fade"
+        );
     }
 
     #[test]

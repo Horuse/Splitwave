@@ -107,10 +107,12 @@ pub(super) fn breakdown(inputs: &[PathInput], out: &PathOutput) -> LatencyBreakd
                 )
             });
             let queue_ms = ms(i.queue_frames + i.normalizer_frames, i.rate);
+            // A source with no capture device (a process tap, a file, the
+            // network) has no hardware of its own to report.
             (
                 device_ms,
                 queue_ms,
-                i.device.and_then(|d| d.hardware_frames).is_some(),
+                i.device.is_none_or(|d| d.hardware_frames.is_some()),
             )
         })
         .max_by(|a, b| (a.0 + a.1).total_cmp(&(b.0 + b.1)));
@@ -205,6 +207,16 @@ mod tests {
         assert!(!breakdown(&[mic(64, None, 0)], &out(64, Some(0))).hardware_included);
         assert!(!breakdown(&[mic(64, Some(0), 0)], &out(64, None)).hardware_included);
         assert!(breakdown(&[], &out(64, Some(0))).hardware_included);
+        let tap = PathInput {
+            device: None,
+            queue_frames: 300,
+            normalizer_frames: 0,
+            rate: 48_000,
+        };
+        assert!(
+            breakdown(&[tap], &out(64, Some(0))).hardware_included,
+            "a tap has no device to leave unreported"
+        );
     }
 
     #[test]

@@ -16,7 +16,6 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use super::{ParamRing, PluginFormat, PluginNode};
-use crate::audio::effects::offload::pad_frames;
 use crate::audio::effects::offload::{BlockProcessor, Offload};
 use crate::audio::effects::Effect;
 use crate::audio::graph::MAX_BUFFER_FRAMES;
@@ -174,13 +173,12 @@ impl HostedEffect {
             width,
             scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
         };
-        let pad = pad_frames(sample_rate, block_frames, 0);
-        match Offload::spawn("plugin", processor, width, pad, sample_rate) {
+        match Offload::spawn("plugin", processor, width, None, block_frames, sample_rate) {
             Ok(o) => Self {
                 latency: latency + o.latency_frames(),
+                working_block: (o.latency_frames() > block_frames).then_some(o.latency_frames()),
                 backend: HostedBackend::Offloaded(o),
                 channels: width,
-                working_block: (pad > block_frames).then_some(pad),
             },
             Err(p) => Self {
                 backend: HostedBackend::Inline { node: p.node },

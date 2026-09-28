@@ -3,14 +3,15 @@
 //! and bulk-pops out of a pair of SPSC rings; the return ring's prefill (the
 //! pad) is declared as latency so PDC aligns parallel branches against it.
 //!
-//! The pad is the effect's working block: it is how long the worker thread
-//! may take to hand a block back. It is never below the engine block (the RT
-//! side reads a whole block at once) and never below the effect's own floor.
+//! An effect that can only step in whole blocks of its own (a model hop) says
+//! so, and the worker gathers exactly those before calling it; the effect
+//! itself never buffers or pads for it. The pad is then what the gathering
+//! and the worker's turnaround cost, at the worst alignment of the effect's
+//! blocks against the engine's (see `pad_frames`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::thread::{self, JoinHandle, Thread};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
@@ -18,19 +19,43 @@ use tracing::warn;
 use crate::audio::graph::MAX_BUFFER_FRAMES;
 use crate::audio::health;
 
-const POLL_INTERVAL: Duration = Duration::from_millis(1);
-/// Floor for a worker's turnaround: its 1 ms poll plus scheduling slack plus
-/// the processing itself.
+/// Floor for a worker's turnaround: waking it, scheduling slack, and the
+/// processing itself.
 const MIN_TURNAROUND_MS: f64 = 5.0;
 
-/// Pad for an offloaded effect at `sample_rate` driven in `block_frames`
-/// blocks, given the effect's own processing floor. A power of two, so it
-/// reads as a buffer size.
-pub fn pad_frames(sample_rate: u32, block_frames: usize, floor_frames: usize) -> usize {
+/// Smallest pad that never starves the RT side, for an effect stepping in
+/// `working_frames` blocks driven by the engine in `block_frames` blocks.
+///
+/// The engine pushes a block and at once reads one back, `pad` frames older.
+/// The effect's block `j` covers frames `[j*W, (j+1)*W)`; it is complete once
+/// the engine block holding its last frame is pushed, and back a turnaround
+/// later. Its first frame is read `pad` frames after it was pushed, on a block
+/// boundary, so the pad must cover, for every `j`, the wait from pushing that
+/// frame to the first engine block starting after the result is back. The
+/// alignment of effect blocks against engine blocks repeats every
+/// `lcm(W, B)` frames, so that one period is the whole story.
+pub fn pad_frames(sample_rate: u32, block_frames: usize, working_frames: usize) -> usize {
+    let b = block_frames.max(1);
+    let w = working_frames.max(1);
     let turnaround = (sample_rate as f64 * MIN_TURNAROUND_MS / 1000.0).ceil() as usize;
-    block_frames
-        .max(turnaround.next_power_of_two())
-        .max(floor_frames)
+    let turnaround_blocks = turnaround.div_ceil(b);
+    let period = w / gcd(w, b) * b;
+    (0..period / w)
+        .map(|j| {
+            let done = ((j + 1) * w - 1) / b;
+            (done + turnaround_blocks) * b - j * w
+        })
+        .max()
+        .unwrap_or(b)
+        .max(b)
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 /// Interleaved block processing, run on the offload thread.
@@ -43,7 +68,16 @@ pub struct Offload {
     to_worker: Producer<f32>,
     from_worker: Consumer<f32>,
     stop: Arc<AtomicBool>,
+    /// Times the worker woke to find nothing to do.
+    #[cfg(test)]
+    idle_wakes: Arc<std::sync::atomic::AtomicUsize>,
+    /// Samples the worker has taken in and, for whole effect blocks, answered.
+    #[cfg(test)]
+    taken: Arc<std::sync::atomic::AtomicUsize>,
     join: Option<JoinHandle<()>>,
+    /// Woken after every push, so it sleeps until there is work instead of
+    /// polling for it.
+    worker: Thread,
     width: usize,
     pad_frames: usize,
 }
@@ -78,22 +112,25 @@ fn push_aligned(prod: &mut Producer<f32>, samples: &[f32], width: usize) -> usiz
 }
 
 impl Offload {
-    /// `pad_frames` comes from [`pad_frames`]; `sample_rate` sizes the
-    /// worker's real-time scheduling.
+    /// `working_frames` is the only block size `processor` can step in, if it
+    /// has one; otherwise it is handed each engine block as it comes.
     pub fn spawn<P: BlockProcessor + 'static>(
         name: &'static str,
         processor: P,
         width: usize,
-        pad_frames: usize,
+        working_frames: Option<usize>,
+        block_frames: usize,
         sample_rate: u32,
     ) -> Result<Self, P> {
         if width == 0 {
             tracing::error!(name, "offload: width must be at least 1");
             return Err(processor);
         }
+        let working = working_frames.unwrap_or(block_frames).max(1);
+        let pad_frames = pad_frames(sample_rate, block_frames, working);
 
         // Room for the pad, a block in flight each way, and a stall's worth.
-        let ring_frames = (pad_frames + MAX_BUFFER_FRAMES) * 4;
+        let ring_frames = (pad_frames + working + MAX_BUFFER_FRAMES) * 4;
         let (to_worker, mut worker_in) = RingBuffer::<f32>::new(ring_frames * width);
         let (mut worker_out, from_worker) = RingBuffer::<f32>::new(ring_frames * width);
 
@@ -112,6 +149,14 @@ impl Offload {
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
+        #[cfg(test)]
+        let idle_wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        #[cfg(test)]
+        let idle_wakes_thread = idle_wakes.clone();
+        #[cfg(test)]
+        let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        #[cfg(test)]
+        let taken_thread = taken.clone();
         // Handoff cell rather than moving `processor` straight into the closure:
         // a failed `Builder::spawn` drops its closure internally with no way to
         // recover a moved value, so the cell is how the caller gets it back.
@@ -132,29 +177,41 @@ impl Offload {
                     pad_frames as u32,
                     sample_rate,
                 );
-                let mut scratch = vec![0.0f32; MAX_BUFFER_FRAMES * width];
-                let mut out = Vec::with_capacity(MAX_BUFFER_FRAMES * width);
+                // One of the effect's blocks, gathered across engine blocks.
+                let mut gathered = vec![0.0f32; working * width];
+                let mut filled = 0;
+                let mut out = Vec::with_capacity(working * width);
                 while !stop_thread.load(Ordering::Relaxed) {
                     let avail = worker_in.slots();
                     let avail = avail - avail % width; // whole frames only
                     if avail == 0 {
-                        thread::sleep(POLL_INTERVAL);
+                        // A wake that lands before this parks leaves the
+                        // token set, so the park returns at once.
+                        thread::park();
+                        #[cfg(test)]
+                        idle_wakes_thread.fetch_add(1, Ordering::Relaxed);
                         continue;
                     }
-                    let n = avail.min(scratch.len());
+                    let n = avail.min(gathered.len() - filled);
                     if let Ok(chunk) = worker_in.read_chunk(n) {
                         let (first, second) = chunk.as_slices();
                         let n1 = first.len();
-                        scratch[..n1].copy_from_slice(first);
+                        gathered[filled..filled + n1].copy_from_slice(first);
                         let n2 = second.len();
                         if n2 > 0 {
-                            scratch[n1..n1 + n2].copy_from_slice(second);
+                            gathered[filled + n1..filled + n1 + n2].copy_from_slice(second);
                         }
                         chunk.commit_all();
                     }
-                    out.clear();
-                    processor.process(&scratch[..n], &mut out);
-                    push_aligned(&mut worker_out, &out, width);
+                    filled += n;
+                    if filled == gathered.len() {
+                        out.clear();
+                        processor.process(&gathered, &mut out);
+                        push_aligned(&mut worker_out, &out, width);
+                        filled = 0;
+                    }
+                    #[cfg(test)]
+                    taken_thread.fetch_add(n, Ordering::Relaxed);
                 }
             }) {
             Ok(j) => j,
@@ -174,19 +231,26 @@ impl Offload {
             to_worker,
             from_worker,
             stop,
+            #[cfg(test)]
+            idle_wakes,
+            #[cfg(test)]
+            taken,
+            worker: join.thread().clone(),
             join: Some(join),
             width,
             pad_frames,
         })
     }
 
-    /// RT thread only: no allocations, locks, or syscalls.
+    /// RT thread only: no allocations or locks. The one syscall is waking the
+    /// worker when it sleeps, which never blocks.
     pub fn process(&mut self, samples: &mut [f32]) {
         let want = samples.len();
         if want == 0 {
             return;
         }
         push_aligned(&mut self.to_worker, samples, self.width);
+        self.worker.unpark();
 
         // A starve leaves the return ring permanently deeper than the pad; trim
         // back so the declared latency stays true.
@@ -231,6 +295,7 @@ impl Offload {
 impl Drop for Offload {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.worker.unpark();
         if let Some(j) = self.join.take() {
             if j.join().is_err() {
                 warn!("offload: worker thread panicked");
@@ -242,11 +307,27 @@ impl Drop for Offload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
-    struct Passthrough;
+    /// Hands its input straight back, checking it only ever gets whole blocks
+    /// of `frames` when it has a block size of its own.
+    struct Passthrough {
+        frames: Option<usize>,
+        width: usize,
+    }
+
+    fn passthrough() -> Passthrough {
+        Passthrough {
+            frames: None,
+            width: 2,
+        }
+    }
 
     impl BlockProcessor for Passthrough {
         fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
+            if let Some(frames) = self.frames {
+                assert_eq!(input.len(), frames * self.width, "a partial block");
+            }
             output.extend_from_slice(input);
         }
     }
@@ -254,26 +335,42 @@ mod tests {
     // Waits for the worker to hand back the block just pushed, so a slow
     // runner cannot starve the next `process` into zeros.
     fn wait_for_return(offload: &Offload, want: usize) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(5);
         while offload.from_worker.slots() < want {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "offload worker stalled"
-            );
+            assert!(Instant::now() < deadline, "offload worker stalled");
             thread::sleep(Duration::from_millis(1));
         }
     }
 
-    fn roundtrip(width: usize, block: usize, pad: usize) {
-        let Ok(mut offload) = Offload::spawn("test", Passthrough, width, pad, 48_000) else {
+    /// Waits until the worker has taken everything pushed so far and answered
+    /// every whole block of it.
+    fn wait_until_taken(offload: &Offload, pushed: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while offload.taken.load(Ordering::Relaxed) < pushed {
+            assert!(Instant::now() < deadline, "offload worker stalled");
+            thread::yield_now();
+        }
+    }
+
+    fn roundtrip(width: usize, block: usize, working: Option<usize>, sample_rate: u32) {
+        let processor = Passthrough {
+            frames: working,
+            width,
+        };
+        let Ok(mut offload) = Offload::spawn("test", processor, width, working, block, sample_rate)
+        else {
             panic!("spawn offload")
         };
-        assert_eq!(offload.latency_frames(), pad);
+        let pad = offload.latency_frames();
+        assert_eq!(
+            pad,
+            pad_frames(sample_rate, block, working.unwrap_or(block))
+        );
 
         let mut fed = Vec::new();
         let mut got = Vec::new();
         let mut counter = 1.0f32;
-        let blocks = (4 * pad / block).max(8);
+        let blocks = (4 * (pad + working.unwrap_or(0)) / block).max(8);
         for _ in 0..blocks {
             let mut data = vec![0.0f32; block * width];
             for frame in data.chunks_exact_mut(width) {
@@ -283,34 +380,137 @@ mod tests {
             fed.extend_from_slice(&data);
             offload.process(&mut data);
             got.extend_from_slice(&data);
-            wait_for_return(&offload, data.len());
+            wait_until_taken(&offload, fed.len());
         }
 
         let shift = pad * width;
-        assert!(got[..shift].iter().all(|&v| v == 0.0), "pad is silence");
+        let case = format!("{block}/{working:?}");
+        assert!(
+            got[..shift].iter().all(|&v| v == 0.0),
+            "{case}: pad is silence"
+        );
         for i in shift..got.len() {
-            assert_eq!(got[i], fed[i - shift], "{block}/{pad}: mismatch at {i}");
+            assert_eq!(got[i], fed[i - shift], "{case}: mismatch at {i}");
         }
     }
 
     #[test]
     fn offload_delays_by_exactly_its_pad_at_every_block_size() {
         for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
-            roundtrip(2, block, pad_frames(48_000, block, 0));
+            roundtrip(2, block, None, 48_000);
+        }
+    }
+
+    #[test]
+    fn a_block_stepping_effect_gets_whole_blocks_and_an_exact_delay() {
+        for block in [32, 64, 256, 1024] {
+            roundtrip(2, block, Some(441), 44_100);
+            roundtrip(2, block, Some(480), 48_000);
         }
     }
 
     #[test]
     fn offload_roundtrip_handles_wide_blocks() {
-        roundtrip(6, 1024, 1024);
+        roundtrip(6, 1024, None, 48_000);
+        roundtrip(6, 64, Some(480), 48_000);
+    }
+
+    /// Whether reading with `pad` ever finds a frame not yet back, frame by
+    /// frame, with the worker taking exactly `turnaround` frames of time.
+    fn starves(pad: usize, block: usize, working: usize, turnaround: usize) -> bool {
+        // Past the pad, then two full alignment periods.
+        let blocks = (pad + working) / block + working / gcd(working, block) * 2 + 8;
+        (0..blocks).any(|k| {
+            (0..block).any(|i| {
+                let Some(frame) = (k * block + i).checked_sub(pad) else {
+                    return false;
+                };
+                let j = frame / working;
+                let done = ((j + 1) * working - 1) / block;
+                done * block + turnaround > k * block
+            })
+        })
     }
 
     #[test]
-    fn pad_never_drops_below_the_block_or_the_floor() {
-        assert_eq!(pad_frames(48_000, 32, 0), 256, "5 ms turnaround at 48k");
-        assert_eq!(pad_frames(96_000, 32, 0), 512);
-        assert_eq!(pad_frames(44_100, 64, 0), 256);
-        assert_eq!(pad_frames(48_000, 2048, 0), 2048, "never below the block");
-        assert_eq!(pad_frames(48_000, 64, 480), 480, "effect's own floor");
+    fn the_pad_is_the_least_that_never_starves() {
+        for sample_rate in [44_100, 48_000, 96_000] {
+            let turnaround = (sample_rate as f64 * MIN_TURNAROUND_MS / 1000.0).ceil() as usize;
+            for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+                for working in [block, 441, 480, 960, 100, 1_500] {
+                    let pad = pad_frames(sample_rate, block, working);
+                    let case = format!("{sample_rate}/{block}/{working}");
+                    assert!(
+                        !starves(pad, block, working, turnaround),
+                        "{case}: {pad} starves"
+                    );
+                    if pad > block {
+                        assert!(
+                            starves(pad - 1, block, working, turnaround),
+                            "{case}: {pad} is more than needed"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_model_hop_costs_its_gathering_and_a_turnaround() {
+        // DeepFilterNet at 44.1 kHz: 441-frame hops against 64-frame blocks.
+        // The hop gathered, at worst misaligned by a block, plus 5 ms.
+        let pad = pad_frames(44_100, 64, 441);
+        assert!(pad <= 441 + 64 + 256, "{pad}");
+        // An effect that takes any block pays the turnaround alone.
+        assert_eq!(pad_frames(48_000, 32, 32), 256, "5 ms turnaround at 48k");
+        assert_eq!(
+            pad_frames(48_000, 2048, 2048),
+            2048,
+            "never below the block"
+        );
+    }
+
+    #[test]
+    fn an_idle_worker_sleeps_until_woken() {
+        // A 1 ms poll wakes ~100 times in 100 ms; a parked worker only when a
+        // push wakes it (or, rarely, spuriously).
+        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, None, 64, 48_000) else {
+            panic!("spawn offload")
+        };
+        thread::sleep(Duration::from_millis(100));
+        let idle = offload.idle_wakes.load(Ordering::Relaxed);
+        assert!(idle <= 2, "woke {idle} times with nothing to do");
+        // And a push is answered without any poll to pick it up.
+        let mut data = vec![0.5f32; 64 * 2];
+        offload.process(&mut data);
+        wait_for_return(&offload, data.len());
+    }
+
+    #[test]
+    fn processing_never_touches_the_heap() {
+        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, Some(441), 64, 44_100)
+        else {
+            panic!("spawn offload")
+        };
+        let mut data = vec![0.25f32; 64 * 2];
+        crate::audio::rt_guard::assert_no_alloc("offload process", || {
+            for _ in 0..2_000 {
+                offload.process(&mut data);
+            }
+        });
+    }
+
+    #[test]
+    fn dropping_wakes_a_sleeping_worker() {
+        let Ok(offload) = Offload::spawn("test", passthrough(), 2, None, 64, 48_000) else {
+            panic!("spawn offload")
+        };
+        thread::sleep(Duration::from_millis(20));
+        let started = Instant::now();
+        drop(offload);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "join waited on a parked worker"
+        );
     }
 }

@@ -781,8 +781,8 @@ enum TapKey {
 }
 
 impl ProducerState {
-    fn process(&mut self) {
-        self.receiver.mix_block(&mut self.out_buf);
+    fn process(&mut self, now: f64) {
+        self.receiver.mix_block_at(&mut self.out_buf, now);
         for ((_, buf), key) in self.handle_bufs.iter_mut().zip(&self.wire_keys) {
             match key {
                 TapKey::Channel(k) => self.receiver.channel(k, buf),
@@ -1139,7 +1139,7 @@ impl OutputGraph {
         for node in &mut self.nodes {
             match node {
                 DagNode::Source(s) => s.fill_block(now),
-                DagNode::Producer(p) => p.process(),
+                DagNode::Producer(p) => p.process(now),
                 DagNode::Effect(_) | DagNode::Consumer(_) => {}
             }
         }

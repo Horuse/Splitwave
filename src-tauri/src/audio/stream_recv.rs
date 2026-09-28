@@ -4,10 +4,12 @@
 //! *event-driven* (on packet arrival) straight into each consumer's per-channel
 //! ring -- there is no fan-out timer and no second buffer at a different clock.
 //! Each output consumer resamples on its own audio-clock thread with a
-//! fixed-OUTPUT resampler (one block per callback), and a slow proportional
-//! loop nudges the resample ratio to hold the ring near a target fill. So clock
-//! drift is absorbed continuously by the resampler, never by dropping/inserting
-//! samples -- which is what produced the "needle" discontinuities before.
+//! fixed-OUTPUT resampler (one block per callback), and a slow PI loop
+//! (`drift_loop`) nudges the resample ratio to hold the ring near a target
+//! fill, reading it against the packets' write timing so their 20 ms arrival
+//! saw is not mistaken for drift. So clock drift is absorbed continuously by
+//! the resampler, never by dropping/inserting samples -- which is what
+//! produced the "needle" discontinuities before.
 //!
 //! Channels of one source stay in phase by position, not by arrival: each push
 //! carries the `seq` it ends at, losses are pushed as concealment of the exact
@@ -23,7 +25,9 @@ use std::sync::{Arc, Mutex, Weak};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
+use crate::audio::drift_loop::{ArrivalClock, DriftLoop};
 use crate::audio::health;
+use crate::audio::input_bridge::{now_secs, WriteClock};
 use crate::audio::resample::MultiResamplerOut;
 use crate::audio::streams::bulk_push_counted;
 
@@ -46,25 +50,12 @@ const TARGET_SAFETY: usize = 240; // ~5 ms
 const JITTER_WINDOW_MS: f64 = 500.0;
 /// A backlog jump beyond this is a re-prime refill, not drift.
 const TARGET_EVENT_MAX: usize = 4_800; // ~100 ms
-
-/// Proportional gain: backlog error (samples) -> ratio correction. A varying
-/// resample ratio IS pitch modulation, so the loop stays far slower and far
-/// narrower than the jitter it rides on: corrections clamp to +-2000 ppm (~3.5
-/// cents) and jitter is absorbed by the buffer, never by the ratio -- otherwise
-/// bursty links produce audible wow. Against the backlog integrator this gain
-/// settles in 1/(KP*SR) ~ 21 s, slow next to the ~3 s EMA below and so stable,
-/// yet quick enough to actually hand back depth the target gave up. A tenth of
-/// it could only track oscillator drift: the buffer would keep whatever a spike
-/// added for the rest of the session. Only realtime consumers steer the ratio,
-/// so recordings never see it.
-const DRIFT_KP: f64 = 1.0e-6;
-const DRIFT_MIN: f64 = 0.998;
-const DRIFT_MAX: f64 = 1.002;
-/// EMA smoothing for the backlog the drift controller sees (~3 s time constant)
-/// so it tracks real clock drift (slow) and ignores per-block fill ripple.
-const DRIFT_BACKLOG_ALPHA: f64 = 0.007;
-/// No correction while the smoothed backlog is this close to target.
-const DRIFT_DEADBAND: f64 = 240.0;
+/// The depth primed from `TARGET_INIT` is corrected once, when measured, by
+/// splices of at most this many samples under a crossfade of `SPLICE_FADE`,
+/// one per `SPLICE_EVERY_MS` at most.
+const SPLICE_MAX: usize = 64;
+const SPLICE_FADE: usize = 32;
+const SPLICE_EVERY_MS: usize = 21;
 
 /// Time without a single new sample before a channel counts as gone (the same
 /// window the DSP sources call a stall). A channel the sender never transmits
@@ -85,6 +76,8 @@ pub struct ChannelFeed {
     prods: Mutex<Vec<Producer<f32>>>,
     state: Mutex<FeedState>,
     pub sample_rate: Arc<AtomicU32>,
+    /// When the decode task pushed, for the consumers' drift loops.
+    clock: Arc<WriteClock>,
 }
 
 #[derive(Default)]
@@ -131,6 +124,19 @@ pub fn broadcast_push_sr(
     samples: &[f32],
     sample_rate: u32,
 ) {
+    broadcast_push_at(broadcast, seq, packets, samples, sample_rate, now_secs());
+}
+
+/// `broadcast_push_sr` at `at` seconds on `input_bridge::now_secs`'s clock.
+fn broadcast_push_at(
+    broadcast: &ChannelBroadcast,
+    seq: u16,
+    packets: u16,
+    samples: &[f32],
+    sample_rate: u32,
+    at: f64,
+) {
+    broadcast.clock.record(samples.len(), at);
     if sample_rate > 0 {
         broadcast.sample_rate.store(sample_rate, Ordering::Relaxed);
     }
@@ -175,6 +181,7 @@ pub struct PlaybackTap {
     last_ratio: f64,
     realtime: bool,
     drift: Arc<AtomicU32>,
+    clock: Arc<WriteClock>,
     in_buf: Vec<f32>,
     pub scratch: Vec<f32>,
     pub valid: usize,
@@ -208,6 +215,7 @@ impl PlaybackTap {
         primed: bool,
         drift: Arc<AtomicU32>,
         source_sr: Arc<AtomicU32>,
+        clock: Arc<WriteClock>,
     ) -> Self {
         let in_sr = source_sr.load(Ordering::Relaxed).max(1);
         let base_ratio = rate as f64 / in_sr as f64;
@@ -224,7 +232,8 @@ impl PlaybackTap {
             last_ratio: base_ratio,
             realtime,
             drift,
-            in_buf: Vec::with_capacity(4096),
+            clock,
+            in_buf: Vec::with_capacity(4096 + SPLICE_MAX),
             scratch: Vec::with_capacity(block_frames),
             valid: 0,
             primed,
@@ -295,9 +304,10 @@ impl PlaybackTap {
     }
 
     /// Produce one output block into `scratch` (valid = its length), resampling
-    /// 48 kHz -> consumer rate at the drift-adjusted ratio. Returns the sample
-    /// count (0 = emit silence after a sustained network underrun).
-    fn fill_block(&mut self) -> usize {
+    /// 48 kHz -> consumer rate at the drift-adjusted ratio, `splice` samples
+    /// cut out of it under a crossfade into the block's tail. Returns the
+    /// sample count (0 = emit silence after a sustained network underrun).
+    fn fill_block(&mut self, splice: usize) -> usize {
         let in_sr = self.source_sr.load(Ordering::Relaxed);
         if in_sr != 0 && in_sr != self.current_source_sr {
             self.current_source_sr = in_sr;
@@ -321,14 +331,30 @@ impl PlaybackTap {
             // Real network underrun: conceal (fade), don't step to silence.
             return self.conceal();
         }
+        let splice = if self.consumer.slots() >= need + splice {
+            splice
+        } else {
+            0
+        };
 
         self.in_buf.clear();
-        if let Ok(chunk) = self.consumer.read_chunk(need) {
+        if let Ok(chunk) = self.consumer.read_chunk(need + splice) {
             let (a, b) = chunk.as_slices();
             self.in_buf.extend_from_slice(a);
             self.in_buf.extend_from_slice(b);
             chunk.commit_all();
-            self.popped += need as u64;
+            self.popped += (need + splice) as u64;
+        }
+        if splice > 0 {
+            // The block's tail blends into the stream `splice` further on, so
+            // it ends exactly where the next block picks up.
+            let fade = SPLICE_FADE.min(need);
+            for i in 0..fade {
+                let j = need - fade + i;
+                let w = (i + 1) as f32 / fade as f32;
+                self.in_buf[j] = self.in_buf[j] * (1.0 - w) + self.in_buf[j + splice] * w;
+            }
+            self.in_buf.truncate(need);
         }
         self.scratch.clear();
         if self
@@ -479,6 +505,7 @@ impl FanoutRegistry {
                         false,
                         drift.clone(),
                         bc.sample_rate.clone(),
+                        bc.clock.clone(),
                     ),
                 );
             }
@@ -513,6 +540,7 @@ impl FanoutRegistry {
             prods: Mutex::new(Vec::new()),
             state: Mutex::new(FeedState::default()),
             sample_rate: Arc::new(AtomicU32::new(SR)),
+            clock: Arc::new(WriteClock::default()),
         });
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
@@ -568,6 +596,7 @@ impl FanoutRegistry {
                         primed,
                         c.drift.clone(),
                         bc.sample_rate.clone(),
+                        bc.clock.clone(),
                     ),
                 );
             }
@@ -635,7 +664,17 @@ pub struct ChannelReceiver {
     /// the arrival saw's dip, since priming ends right after a packet.
     start: Cell<usize>,
     ever_primed: Cell<bool>,
-    avg_backlog: Cell<f64>,
+    /// The startup depth correction has been decided; what is left of it.
+    settled: Cell<bool>,
+    owed: Cell<usize>,
+    cooldown: Cell<usize>,
+    cooldown_blocks: usize,
+    drift_loop: std::cell::RefCell<DriftLoop>,
+    /// Delivery timing of the source the loop follows.
+    arrival: std::cell::RefCell<ArrivalClock>,
+    /// That source and its rate. Following another, or the same one after it
+    /// refilled, starts the loop settling afresh.
+    steered: Cell<Option<(u64, u32)>>,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
     last_mix: std::cell::RefCell<Vec<f32>>,
@@ -648,11 +687,18 @@ pub struct ChannelReceiver {
 struct GroupPlan {
     id: u64,
     min_backlog: usize,
+    /// The emptiest channel's write count and time, and its rate.
+    written: (u64, f64),
+    rate: u32,
+    /// Primed this block, after filling from empty.
+    refilled: bool,
     /// Least any channel of the source received since the last block.
     arrived: usize,
     need: usize,
     primed: bool,
     trim: usize,
+    /// Samples to splice out of this block under a crossfade.
+    splice: usize,
     hold: bool,
     conceal: bool,
 }
@@ -679,7 +725,13 @@ impl ChannelReceiver {
             starving: Cell::new(false),
             start: Cell::new(TARGET_INIT),
             ever_primed: Cell::new(false),
-            avg_backlog: Cell::new(-1.0),
+            settled: Cell::new(false),
+            owed: Cell::new(0),
+            cooldown: Cell::new(0),
+            cooldown_blocks: (SPLICE_EVERY_MS * SR as usize / 1000 / need.max(1)).max(1),
+            drift_loop: std::cell::RefCell::new(DriftLoop::new(SR, need.max(1))),
+            arrival: std::cell::RefCell::new(ArrivalClock::new(SR)),
+            steered: Cell::new(None),
             last_mix: std::cell::RefCell::new(vec![0.0; handle.block_frames * 2]),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
         }
@@ -687,7 +739,13 @@ impl ChannelReceiver {
 
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
     /// Real-time consumers also adapt the buffer depth and drift ratio here.
+    #[cfg(test)]
     pub fn mix_block(&self, mix: &mut [f32]) {
+        self.mix_block_at(mix, now_secs());
+    }
+
+    /// `mix_block` at `now` seconds on `input_bridge::now_secs`'s clock.
+    pub fn mix_block_at(&self, mix: &mut [f32], now: f64) {
         let frames = self.block_frames;
         // The node's width is whatever its graph resolved to, not always stereo.
         let width = (mix.len() / frames).max(1);
@@ -720,6 +778,10 @@ impl ChannelReceiver {
             }
             match plans.iter_mut().find(|p| p.id == tap.group) {
                 Some(p) => {
+                    if backlog < p.min_backlog {
+                        p.written = tap.clock.read();
+                        p.rate = tap.current_source_sr;
+                    }
                     p.min_backlog = p.min_backlog.min(backlog);
                     p.arrived = p.arrived.min(tap.arrived);
                     p.need = p.need.max(need);
@@ -728,10 +790,14 @@ impl ChannelReceiver {
                 None => plans.push(GroupPlan {
                     id: tap.group,
                     min_backlog: backlog,
+                    written: tap.clock.read(),
+                    rate: tap.current_source_sr,
+                    refilled: false,
                     arrived: tap.arrived,
                     need,
                     primed: tap.primed,
                     trim: 0,
+                    splice: 0,
                     hold: false,
                     conceal: false,
                 }),
@@ -750,6 +816,7 @@ impl ChannelReceiver {
                     continue;
                 }
                 p.primed = true;
+                p.refilled = true;
             }
             // One channel short of a block stalls the whole source: a channel
             // that popped while a sibling concealed would sit a block ahead of
@@ -791,8 +858,11 @@ impl ChannelReceiver {
                 .min_by_key(|p| p.min_backlog)
                 .map_or(0, |p| p.arrived);
             self.account(starving, live.map(|p| (p.min_backlog, p.need)), arrived);
-            if let Some(p) = live {
-                self.steer(p.min_backlog);
+            let live = live.map(|p| p.id);
+            match plans.iter_mut().find(|p| Some(p.id) == live) {
+                Some(p) if !p.conceal => p.splice = self.steer(p, now),
+                Some(_) => {}
+                None => self.steered.set(None),
             }
         }
         if plans.iter().any(|p| !p.hold) {
@@ -824,7 +894,7 @@ impl ChannelReceiver {
             }
             tap.primed = true;
             tap.trim(plan.trim);
-            let n = tap.fill_block().min(frames);
+            let n = tap.fill_block(plan.splice).min(frames);
             for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
                 for s in frame.iter_mut() {
                     *s += v;
@@ -870,29 +940,57 @@ impl ChannelReceiver {
         self.start.set((target + dip).min(TARGET_MAX));
     }
 
-    /// Drift ratio from the current backlog.
-    fn steer(&self, backlog: usize) {
-        let target = self.target.load(Ordering::Relaxed) as usize;
-        // Drive the ratio from a smoothed backlog so it tracks real drift (slow)
-        // and ignores per-block fill ripple (fast). A jump far beyond jitter
-        // scale is a re-prime refill, not drift -- restart the EMA there so the
-        // controller doesn't chase the refill as a huge error.
-        let prev = self.avg_backlog.get();
-        let avg = if prev < 0.0 || (backlog as f64 - prev).abs() > TARGET_EVENT_MAX as f64 {
-            backlog as f64
-        } else {
-            prev + DRIFT_BACKLOG_ALPHA * (backlog as f64 - prev)
-        };
-        self.avg_backlog.set(avg);
-
-        let e = avg - target as f64;
-        let e = if e.abs() < DRIFT_DEADBAND {
-            0.0
-        } else {
-            e - DRIFT_DEADBAND.copysign(e)
-        };
-        let d = (1.0 - DRIFT_KP * e).clamp(DRIFT_MIN, DRIFT_MAX);
+    /// Drift ratio for the emptiest playing source. Its fill plus what its
+    /// sender has made but not yet pushed is the fill right after a packet,
+    /// the top of the arrival saw, which is where priming leaves it: the loop
+    /// holds it at the start level. Returns the samples to splice out of this
+    /// block, which only the one startup correction ever asks for; the loop
+    /// holds still while it runs.
+    fn steer(&self, p: &GroupPlan, now: f64) -> usize {
+        let mut drift = self.drift_loop.borrow_mut();
+        let mut arrival = self.arrival.borrow_mut();
+        let following = self.steered.get();
+        if p.refilled || following != Some((p.id, p.rate)) {
+            if following.map(|(_, rate)| rate) != Some(p.rate) {
+                *arrival = ArrivalClock::new(p.rate);
+            }
+            arrival.reset();
+            drift.restart();
+            self.steered.set(Some((p.id, p.rate)));
+        }
+        arrival.observe(p.written.0, p.written.1);
+        let start = self.start.get() as f64;
+        let error = p.min_backlog as f64 + arrival.pending(now, start) - start;
+        if !self.settled.get() {
+            if !self.depth.borrow().is_measured() {
+                drift.restart();
+                return 0;
+            }
+            self.settled.set(true);
+            self.owed.set(error.max(0.0).round() as usize);
+        }
+        if self.owed.get() > 0 {
+            // The queue moves by design meanwhile; a window holding that
+            // would read it as jitter.
+            self.depth.borrow_mut().discard_window();
+            drift.restart();
+            let wait = self.cooldown.get();
+            if wait > 0 {
+                self.cooldown.set(wait - 1);
+                return 0;
+            }
+            let n = self.owed.get().min(SPLICE_MAX);
+            if p.min_backlog < p.need + n {
+                return 0;
+            }
+            self.owed.set(self.owed.get() - n);
+            self.cooldown.set(self.cooldown_blocks);
+            return n;
+        }
+        let u = drift.update(error);
+        let d = 1.0 / (1.0 + u);
         self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
+        0
     }
 
     /// Copy one channel's already-resampled scratch into `out`.
@@ -959,6 +1057,8 @@ mod tests {
         gaps: usize,
         target: usize,
         target_after_outage: usize,
+        /// Largest ring fill seen after settling.
+        max_fill: usize,
     }
 
     /// One 48 kHz channel of 20 ms packets of 0.5 into a consumer rendering
@@ -999,6 +1099,7 @@ mod tests {
             gaps: 0,
             target: 0,
             target_after_outage: 0,
+            max_fill: 0,
         };
         let (mut k, mut t) = (0u32, 0.0);
         let mut mix = vec![0.0f32; block];
@@ -1010,15 +1111,22 @@ mod tests {
                 let dropped = outage.is_some_and(|(a, b)| sent >= a && sent < b)
                     || quiet.iter().any(|&(a, b)| sent >= a && sent < b);
                 if !dropped {
-                    broadcast_push(&bc, k as u16, 1, &packet);
+                    broadcast_push_at(&bc, k as u16, 1, &packet, SR, due);
                 }
                 k += 1;
                 continue;
             }
-            recv.mix_block(&mut mix);
+            recv.mix_block_at(&mut mix, t);
             let in_outage = outage.is_some_and(|(a, b)| t >= a && t < b + 1.0);
             if t > settle && !in_outage {
                 run.gaps += mix.iter().filter(|s| (*s - 0.5).abs() > 1e-3).count();
+                let fill = recv
+                    .taps
+                    .lock()
+                    .unwrap()
+                    .get("0")
+                    .map_or(0, |t| t.backlog());
+                run.max_fill = run.max_fill.max(fill);
             }
             if let Some((_, b)) = outage {
                 if t >= b + 0.3 && run.target_after_outage == 0 {
@@ -1051,6 +1159,79 @@ mod tests {
                 r.target
             );
         }
+    }
+
+    #[test]
+    fn a_drifting_sender_is_absorbed_without_gaps_or_buildup() {
+        // 300 ppm is far beyond real crystal error: two minutes drift ~1700
+        // samples, all of which the ratio has to take up.
+        for ppm in [-300.0, 300.0] {
+            let drift = move |k: u32| -(k as f64 * 0.02) * ppm * 1e-6;
+            let steady = net_sim(64, 120.0, 30.0, |_| 0.0, None);
+            let r = net_sim(64, 120.0, 30.0, drift, None);
+            assert_eq!(r.gaps, 0, "{ppm} ppm: gaps");
+            assert!(
+                r.max_fill <= steady.max_fill + 240,
+                "{ppm} ppm: fill reached {} against {} steady",
+                r.max_fill,
+                steady.max_fill
+            );
+        }
+    }
+
+    #[test]
+    fn the_startup_depth_is_corrected_quickly_and_seamlessly() {
+        // A 60 Hz sine: one period is 800 samples, so its phase is exact.
+        // Clean, it moves < 0.0071 per sample; a hard 64-sample cut would
+        // jump it by up to 0.45.
+        const PACKET: usize = 960;
+        let sine = |n: usize| ((n % 800) as f64 * std::f64::consts::TAU / 800.0).sin() as f32 * 0.9;
+        let block = 64;
+        let reg = FanoutRegistry::default();
+        let handle = reg.register_consumer(48_000, block, true);
+        let bc = reg.attach_channel("0".into(), 0);
+        let recv = ChannelReceiver::new(handle);
+        let (mut k, mut t) = (0u32, 0.0);
+        let mut mix = vec![0.0f32; block];
+        let mut packet = vec![0.0f32; PACKET];
+        let mut played = Vec::new();
+        let mut late_fill = 0;
+        while t < 12.0 {
+            let due = k as f64 * PACKET as f64 / SR as f64;
+            if due <= t {
+                for (i, s) in packet.iter_mut().enumerate() {
+                    *s = sine(k as usize * PACKET + i);
+                }
+                broadcast_push_at(&bc, k as u16, 1, &packet, SR, due);
+                k += 1;
+                continue;
+            }
+            recv.mix_block_at(&mut mix, t);
+            if t > 0.5 {
+                played.extend_from_slice(&mix);
+            }
+            if t > 6.0 {
+                let fill = recv
+                    .taps
+                    .lock()
+                    .unwrap()
+                    .get("0")
+                    .map_or(0, |t| t.backlog());
+                late_fill = late_fill.max(fill);
+            }
+            t += block as f64 / SR as f64;
+        }
+        let worst = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst < 0.03, "a step of {worst}");
+        // Primed from the 60 ms prior; within seconds of measuring, the
+        // buffer holds about one packet plus the safety margin.
+        assert!(
+            late_fill <= PACKET + TARGET_MIN + TARGET_SAFETY,
+            "still {late_fill} samples buffered"
+        );
     }
 
     #[test]

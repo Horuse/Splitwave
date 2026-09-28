@@ -37,6 +37,16 @@ mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::{device_info, find, list_inputs, list_outputs};
 
+/// The name a device goes by, which is also its id in a saved graph.
+/// `description().name()` reads the property cpal 0.15's `Device::name` did
+/// (CoreAudio `kAudioDevicePropertyDeviceNameCFString`, WASAPI
+/// `FriendlyName`), so saved ids keep resolving.
+#[cfg(not(target_os = "linux"))]
+pub fn cpal_name(device: &cpal::Device) -> Option<String> {
+    use cpal::traits::DeviceTrait;
+    device.description().ok().map(|d| d.name().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

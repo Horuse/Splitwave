@@ -40,6 +40,11 @@ counters! {
     CLOCK_LATE_MAX_US,
     /// Fatal cpal stream errors reported via the error callback.
     STREAM_ERRORS,
+    /// Device IO overloads cpal reported (a CoreAudio HAL overload, a WASAPI
+    /// capture discontinuity). The stream plays on. cpal drops a report that
+    /// lands while the previous one is still being handled, so this is a
+    /// lower bound.
+    DEVICE_XRUNS,
     /// Samples zero-filled on the RT thread because an offloaded effect's
     /// worker had not returned the block in time.
     OFFLOAD_STARVED_SAMPLES,
@@ -95,6 +100,7 @@ mod tests {
                 "CLOCK_LATE_BLOCKS",
                 "CLOCK_LATE_MAX_US",
                 "STREAM_ERRORS",
+                "DEVICE_XRUNS",
                 "OFFLOAD_STARVED_SAMPLES",
                 "OFFLOAD_RESYNC_DROPPED_SAMPLES",
                 "OFFLOAD_RING_OVERRUN_SAMPLES",

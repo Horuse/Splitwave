@@ -87,7 +87,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let dead_cb = dead.clone();
             let app_err = app.clone();
             let node_id_cb = node_id.to_string();
-            let err_cb = move |e: cpal::StreamError| {
+            let err_cb = move |e: cpal::Error| {
                 if dead_cb.swap(true, Ordering::Relaxed) {
                     return;
                 }

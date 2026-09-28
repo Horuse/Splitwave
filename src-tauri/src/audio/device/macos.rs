@@ -65,7 +65,7 @@ pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     let matches: Vec<cpal::Device> = host
         .devices()
         .map_err(|e| AppError::Host(e.to_string()))?
-        .filter(|d| d.name().map(|n| n == id).unwrap_or(false))
+        .filter(|d| super::cpal_name(d).as_deref() == Some(id))
         .collect();
     if matches.len() < 2 {
         return matches

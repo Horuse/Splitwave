@@ -14,7 +14,7 @@ pub fn device_info(kind: DeviceKind, name: &str) -> AppResult<NativeDeviceInfo> 
     }
     .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
     Ok(NativeDeviceInfo {
-        sample_rate: config.sample_rate().0,
+        sample_rate: config.sample_rate(),
         channels: config.channels(),
         sample_format: "f32",
     })
@@ -44,14 +44,14 @@ pub fn find(kind: DeviceKind, id: &str) -> AppResult<cpal::Device> {
     }
     .map_err(|e| AppError::Host(e.to_string()))?;
     devices
-        .find(|d| d.name().map(|n| n == id).unwrap_or(false))
+        .find(|d| super::cpal_name(d).as_deref() == Some(id))
         .ok_or_else(|| AppError::Device(format!("device not found: {id}")))
 }
 
 fn unique_named(devices: impl Iterator<Item = cpal::Device>, kind: DeviceKind) -> Vec<DeviceInfo> {
     let mut seen = HashSet::new();
     devices
-        .filter_map(|d| d.name().ok())
+        .filter_map(|d| super::cpal_name(&d))
         .filter(|n| seen.insert(n.clone()))
         .map(|name| DeviceInfo {
             id: name.clone(),

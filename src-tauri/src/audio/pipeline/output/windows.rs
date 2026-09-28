@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::traits::StreamTrait;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
@@ -63,7 +63,8 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     meter: crate::audio::effects::MeterHandle,
     app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
-    let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
+    let device_name =
+        crate::audio::device::cpal_name(&spec.device).unwrap_or_else(|| "<unknown>".into());
     info!(
         device = %device_name,
         sample_rate = spec.sample_rate,
@@ -78,7 +79,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let app_err = app.clone();
     let dead_cb = dead.clone();
     let node_id_cb = node_id.to_string();
-    let err_cb = move |e: cpal::StreamError| {
+    let err_cb = move |e: cpal::Error| {
         if dead_cb.swap(true, Ordering::Relaxed) {
             return;
         }

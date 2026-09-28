@@ -74,7 +74,6 @@ pub(in crate::audio::pipeline) fn configure_io(
     block_frames: usize,
     pipeline_rate: u32,
 ) -> Option<DeviceIo> {
-    use cpal::traits::DeviceTrait;
     let ResolvedInput::Cpal {
         device,
         sample_rate,
@@ -83,7 +82,7 @@ pub(in crate::audio::pipeline) fn configure_io(
     else {
         return None;
     };
-    let name = device.name().ok()?;
+    let name = crate::audio::device::cpal_name(device)?;
     let requested = device_block(block_frames, pipeline_rate, *sample_rate);
     let granted = macos_hal::set_buffer_frames(DeviceKind::Input, &name, requested);
     tracing::info!(device = %name, requested, granted, "microphone buffer size");
@@ -137,7 +136,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let dead_cb = dead.clone();
             let app_err = app.clone();
             let node_id_cb = node_id.to_string();
-            let err_cb = move |e: cpal::StreamError| {
+            let err_cb = move |e: cpal::Error| {
                 if dead_cb.swap(true, Ordering::Relaxed) {
                     return;
                 }

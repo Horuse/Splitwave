@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("audio stream error: {0}")]
     Stream(String),
 
+    #[error("audio device no longer available: {0}")]
+    DeviceUnavailable(String),
+
     #[error("plugin error: {0}")]
     Plugin(String),
 

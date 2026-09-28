@@ -8,8 +8,13 @@ use rubato::{
 use crate::error::{AppError, AppResult};
 
 fn sinc_params() -> SincInterpolationParameters {
+    sinc_params_of(256)
+}
+
+/// `sinc_len` sets quality and delay together: the filter holds half of it.
+fn sinc_params_of(sinc_len: usize) -> SincInterpolationParameters {
     SincInterpolationParameters {
-        sinc_len: 256,
+        sinc_len,
         f_cutoff: 0.95,
         interpolation: SincInterpolationType::Cubic,
         oversampling_factor: 256,
@@ -33,9 +38,34 @@ pub struct MultiResamplerOut {
 
 impl MultiResamplerOut {
     pub fn new(from_rate: u32, to_rate: u32, chunk_out: usize, channels: usize) -> AppResult<Self> {
+        Self::with_sinc(from_rate, to_rate, chunk_out, channels, 256)
+    }
+
+    /// For clock-drift correction on a live path. At equal nominal rates the
+    /// ratio only ever strays a few hundred ppm from 1, where a 64-tap sinc
+    /// is transparent and holds 32 frames instead of 128; a real rate change
+    /// keeps the full filter.
+    pub fn for_drift(
+        from_rate: u32,
+        to_rate: u32,
+        chunk_out: usize,
+        channels: usize,
+    ) -> AppResult<Self> {
+        let sinc_len = if from_rate == to_rate { 64 } else { 256 };
+        Self::with_sinc(from_rate, to_rate, chunk_out, channels, sinc_len)
+    }
+
+    fn with_sinc(
+        from_rate: u32,
+        to_rate: u32,
+        chunk_out: usize,
+        channels: usize,
+        sinc_len: usize,
+    ) -> AppResult<Self> {
         let ratio = to_rate as f64 / from_rate as f64;
-        let inner = SincFixedOut::<f32>::new(ratio, 1.05, sinc_params(), chunk_out, channels)
-            .map_err(|e| AppError::Stream(format!("resampler init: {e}")))?;
+        let inner =
+            SincFixedOut::<f32>::new(ratio, 1.05, sinc_params_of(sinc_len), chunk_out, channels)
+                .map_err(|e| AppError::Stream(format!("resampler init: {e}")))?;
         let in_max = inner.input_frames_max();
         Ok(Self {
             inner,
@@ -49,6 +79,16 @@ impl MultiResamplerOut {
     /// Frames of input the next `process` call will consume (varies with ratio).
     pub fn input_frames_next(&self) -> usize {
         self.inner.input_frames_next()
+    }
+
+    /// Largest `input_frames_next` can grow to.
+    pub fn input_frames_max(&self) -> usize {
+        self.inner.input_frames_max()
+    }
+
+    /// Output frames between a sample entering and leaving the filter.
+    pub fn delay_frames(&self) -> usize {
+        self.inner.output_delay()
     }
 
     /// Nudge the output/input ratio for clock-drift tracking (ramped, within the

@@ -1,21 +1,23 @@
-//! How much captured audio a live source keeps queued ahead of the graph.
+//! How much live audio a source keeps queued ahead of the graph.
 //!
 //! A capture device hands audio over in bursts on its own clock while the
 //! graph takes one block per output callback, so the queue saws up and down.
-//! `DepthEstimator` sizes the headroom from that saw; `Cushion` holds the
-//! queue's mean there by splicing a few frames out (capture clock faster, or
-//! startup backlog) or stretching a few in (capture clock slower), sparsely
-//! and with crossfades, so the correction is inaudible and never adds latency
-//! of its own.
+//! `DepthEstimator` sizes the headroom from that saw and the delivery jitter
+//! on top of it. `Cushion` decides when the source plays: it holds silence
+//! until the queue reaches its start level, and after running dry it realigns
+//! under the silence it is already playing, never while audio is heard.
 //!
-//! Running dry deepens the queue only by the audio that turns out to have
-//! been late (`OutageJudge`). A source that goes quiet -- a paused app, a
-//! muted device -- leaves the depth where it was.
+//! It never corrects the queue while the source plays, with one exception:
+//! the depth guessed before anything was measured is corrected once, by a
+//! splice, as soon as it is measured. Drift between clocks is the resampler's
+//! to absorb (`asrc`), and it holds still until that correction is done, so
+//! the two never act on the queue at once. A source on the output's own clock
+//! reads without one.
 //!
-//! A source on the output's own clock (`Cushion::locked`) has no drift to
-//! correct, so it is never spliced: any correction there could only chase
-//! delivery jitter, and every one is audible. Its queue is set once, when it
-//! starts or restarts from silence, and left alone while it plays.
+//! Running dry deepens the queue only by audio that turns out to have been
+//! late (`OutageJudge`), and only when it happens again within a minute: a
+//! source that goes quiet leaves the depth where it was, and a lone stall
+//! costs one dropout rather than latency for everything after it.
 
 use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
 
@@ -25,8 +27,6 @@ pub(super) enum Adjust {
     None,
     /// Splice this many frames out of the queue.
     Drop(usize),
-    /// Stretch the queue by repeating this many frames.
-    Insert(usize),
 }
 
 /// Largest single splice. Bigger corrections are spread over several.
@@ -41,16 +41,13 @@ const PRIOR_MS: f64 = 10.0;
 /// Kept above the measured dip at all times. A process tap's p99.9 delivery
 /// jitter is already ~1.8 ms, so a thinner margin clicks every few seconds.
 const SAFETY_MS: f64 = 2.0;
-/// One splice per this much audio at most, so time is never compressed or
-/// stretched by more than ~6% while a correction runs.
+/// One splice per this much audio at most while the startup correction runs.
 const SPLICE_EVERY_MS: f64 = 21.0;
 /// Ceiling on the measured headroom. Jitter beyond this is a broken capture,
 /// and a deeper target would outgrow the one-second input ring and never
 /// finish priming.
 const MAX_DEPTH_MS: f64 = 250.0;
-/// On a locked source, a late delivery deepens the queue only if another came
-/// within this long. A lone stall costs one dropout; paying for it with
-/// latency for the next minute would cost every sound after it.
+/// A late delivery deepens the queue only if another came within this long.
 const LATE_REPEAT_MS: f64 = 60_000.0;
 
 pub(super) struct Cushion {
@@ -60,17 +57,13 @@ pub(super) struct Cushion {
     sum: f64,
     blocks: usize,
     low: usize,
-    /// Correction still owed: negative drops, positive inserts.
-    owed: i64,
+    /// Startup correction still owed, as frames to drop.
+    owed: usize,
     cooldown: usize,
     cooldown_blocks: usize,
     primed: bool,
-    /// Has played before: a re-prime refills a stream in progress.
-    started: bool,
-    /// Same clock as the output: never splice while playing.
-    locked: bool,
-    /// A locked queue starts from the prior; the first measurement corrects
-    /// it once, the way a startup offset is removed, and never again.
+    /// The queue starts from the prior; the first measurement corrects it
+    /// once, the way a startup offset is removed, and never again.
     settled: bool,
     judge: OutageJudge,
     max_depth: usize,
@@ -96,26 +89,12 @@ impl Cushion {
             cooldown: 0,
             cooldown_blocks: (frames(SPLICE_EVERY_MS) / need.max(1)).max(1),
             primed: false,
-            started: false,
-            locked: false,
             settled: false,
             judge: OutageJudge::new(sample_rate),
             max_depth: frames(MAX_DEPTH_MS),
             since_late: usize::MAX,
             late_repeat_blocks: frames(LATE_REPEAT_MS) / need.max(1),
             quantum: 0,
-        }
-    }
-
-    /// For a source on the output's own clock.
-    pub(super) fn locked(need: usize, sample_rate: u32) -> Self {
-        Self::new(need, sample_rate).into_locked()
-    }
-
-    pub(super) fn into_locked(self) -> Self {
-        Self {
-            locked: true,
-            ..self
         }
     }
 
@@ -150,7 +129,7 @@ impl Cushion {
         }
         if let Some(late) = self.judge.delivered(frames, self.need) {
             if late > 0 {
-                if !self.locked || self.since_late <= self.late_repeat_blocks {
+                if self.since_late <= self.late_repeat_blocks {
                     self.depth.underrun(late);
                 }
                 self.since_late = 0;
@@ -163,13 +142,9 @@ impl Cushion {
     /// whatever jitter the measured dip shows beyond an ideal saw (whose dip
     /// is half its height). Counting the dip twice would double the jitter
     /// allowance along with the saw.
-    ///
-    /// Only a locked queue starts this tight: it is never corrected while it
-    /// plays, so the level it starts at is the level it keeps. A drifting one
-    /// starts a whole dip higher and lets its splices settle it.
-    fn start_level(&self) -> usize {
+    pub(super) fn start_level(&self) -> usize {
         let dip = self.depth.depth().min(self.max_depth);
-        if !self.locked || self.quantum == 0 {
+        if self.quantum == 0 {
             return self.target() + dip;
         }
         let jitter = dip.saturating_sub(self.quantum / 2);
@@ -179,26 +154,15 @@ impl Cushion {
     /// Before the source's first read, and again after it ran dry. `None`
     /// while the queue is still filling: play silence for this block.
     ///
-    /// Returns the frames to discard. The first start always has them: what
-    /// piled up before anything played is backlog nobody has heard.
-    ///
-    /// After running dry it depends on the clock. A locked source realigns
-    /// here, under the silence it just played: with no drift, anything beyond
-    /// the start level is audio that arrived late for time already filled
-    /// with silence, and dropping exactly that keeps its latency where it was.
-    /// A drifting source keeps what arrived (it is the stream picking up where
-    /// it stopped) and lets the ordinary splices trim the excess.
+    /// Returns the frames to discard: anything beyond the start level. On the
+    /// first start that is backlog nobody has heard; after running dry it is
+    /// audio that arrived late for time already played as silence, and
+    /// dropping exactly that, under the silence, keeps the latency where it was.
     pub(super) fn prime(&mut self, queued: usize) -> Option<usize> {
         let start = self.start_level();
         if queued < start {
             return None;
         }
-        let excess = if self.started && !self.locked {
-            0
-        } else {
-            queued - start
-        };
-        self.started = true;
         self.primed = true;
         self.owed = 0;
         self.sum = 0.0;
@@ -207,11 +171,17 @@ impl Cushion {
         // Deliveries right after a gap come in catch-up bursts; measuring them
         // would read the gap's aftermath as the source's everyday jitter.
         self.depth.discard_window();
-        Some(excess)
+        Some(queued - start)
     }
 
     pub(super) fn is_primed(&self) -> bool {
         self.primed
+    }
+
+    /// The startup correction is done: from here on only the resampler moves
+    /// the queue.
+    pub(super) fn is_settled(&self) -> bool {
+        self.settled && self.owed == 0
     }
 
     /// The graph ran `missing` frames dry mid-block: refill before playing
@@ -223,28 +193,10 @@ impl Cushion {
         self.depth.discard_window();
     }
 
-    /// Asymmetric on purpose. Running short is an audible dropout, so any
-    /// window whose emptiest point ate into half the safety is topped up.
-    /// Running long only costs latency, so the mean may overshoot by a quarter
-    /// of the headroom before frames are dropped; the saw never triggers it.
-    fn correction(&self, mean: f64, low: usize) -> i64 {
-        let floor = self.floor();
-        if low + self.safety / 2 < floor {
-            return (floor - low) as i64;
-        }
-        let over = mean - self.target() as f64;
-        let slack = (self.depth.depth() / 4).max(self.safety) as f64;
-        if over > slack {
-            // Never cut below the floor at the window's emptiest point.
-            return -(over.min((low - floor) as f64).round() as i64);
-        }
-        0
-    }
-
     /// Call once per block with the frames queued before the read. Returns the
-    /// splice to perform now, if one is due and the queue can afford it.
+    /// startup correction's next splice, if one is due.
     pub(super) fn observe(&mut self, queued: usize) -> Adjust {
-        // While a correction runs the queue moves by design, and a window
+        // While the correction runs the queue moves by design, and a window
         // holding that move would read it as jitter.
         if self.owed != 0 {
             self.depth.discard_window();
@@ -255,62 +207,190 @@ impl Cushion {
             self.sum += queued as f64;
             self.blocks += 1;
             self.low = self.low.min(queued);
-        }
-        if self.owed == 0 && self.depth.observe(queued) {
-            let mean = self.sum / self.blocks as f64;
-            let low = self.low;
-            self.sum = 0.0;
-            self.blocks = 0;
-            self.low = usize::MAX;
-            if self.owed == 0 && !self.locked {
-                self.owed = self.correction(mean, low);
-            } else if self.locked && !self.settled && self.depth.is_measured() {
-                self.settled = true;
-                self.owed = self.correction(mean, low);
+            if self.depth.observe(queued) {
+                let mean = self.sum / self.blocks as f64;
+                let low = self.low;
+                self.sum = 0.0;
+                self.blocks = 0;
+                self.low = usize::MAX;
+                if !self.settled && self.depth.is_measured() {
+                    self.settled = true;
+                    self.owed = self.startup_excess(mean, low);
+                }
             }
         }
         if self.cooldown > 0 {
             self.cooldown -= 1;
             return Adjust::None;
         }
-        let fade = super::dag::SPLICE_FADE_FRAMES;
-        if self.owed < 0 {
-            let n = ((-self.owed) as usize).min(MAX_SPLICE_FRAMES);
+        if self.owed > 0 {
+            let n = self.owed.min(MAX_SPLICE_FRAMES);
             // A drop reads a fade on each side of the cut and must leave the
             // block itself behind.
-            if queued >= n + 2 * fade + self.need {
-                self.owed += n as i64;
+            if queued >= n + 2 * super::dag::SPLICE_FADE_FRAMES + self.need {
+                self.owed -= n;
                 self.cooldown = self.cooldown_blocks;
                 return Adjust::Drop(n);
             }
-        } else if self.owed > 0 {
-            let n = (self.owed as usize).min(MAX_SPLICE_FRAMES);
-            if queued >= n + fade {
-                self.owed -= n as i64;
-                self.cooldown = self.cooldown_blocks;
-                return Adjust::Insert(n);
-            }
         }
         Adjust::None
+    }
+
+    /// How far the first measured window sat above target, never cutting the
+    /// window's emptiest point below the floor.
+    fn startup_excess(&self, mean: f64, low: usize) -> usize {
+        let over = mean - self.target() as f64;
+        let slack = (self.depth.depth() / 4).max(self.safety) as f64;
+        if over <= slack {
+            return 0;
+        }
+        over.min(low.saturating_sub(self.floor()) as f64).round() as usize
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::drift_loop::{ArrivalClock, DriftLoop};
 
     const SR: u32 = 48_000;
 
-    struct Run {
-        late_underruns: usize,
-        mean_queued: f64,
+    /// Audible events a listener would notice, after settling.
+    #[derive(Debug, Default)]
+    struct Heard {
         splices: usize,
+        underruns: usize,
+        mean_queued: f64,
         max_queued: usize,
     }
 
-    /// Event-driven model of a capture device feeding the queue in bursts on
-    /// its own clock while an output device drains one block at a time.
-    /// `jitter` delays each capture burst by a pseudo-random share of it.
+    /// How the graph reads the queue: a block at a time, either straight (a
+    /// source on the output's clock) or through the drift resampler, which
+    /// takes `block * (1 + u)` with `u` from the loop.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Read {
+        Locked,
+        Steered,
+    }
+
+    /// Plays `deliveries` (time in seconds, frames) through a cushion read in
+    /// `block`-frame blocks. Dropouts inside a `quiet` span (give or take
+    /// 50 ms) are the source's own silence and are not counted.
+    #[allow(clippy::too_many_arguments)]
+    fn play(
+        mut c: Cushion,
+        rate: u32,
+        block: usize,
+        read: Read,
+        deliveries: &[(f64, usize)],
+        seconds: f64,
+        settle: f64,
+        quiet: &[(f64, f64)],
+    ) -> Heard {
+        let period = block as f64 / rate as f64;
+        let mut drift = DriftLoop::new(rate, block);
+        let mut arrival = ArrivalClock::new(rate);
+        let (mut t, mut i, mut queued, mut arrived, mut total) = (0.0, 0, 0, 0, 0u64);
+        let mut frac = 0.0;
+        let mut steering = false;
+        let mut heard = Heard::default();
+        let mut samples = 0usize;
+        while t < seconds {
+            while i < deliveries.len() && deliveries[i].0 <= t {
+                let (at, n) = deliveries[i];
+                queued += n;
+                arrived += n;
+                total += n as u64;
+                arrival.observe(total, at);
+                i += 1;
+            }
+            c.arrived(std::mem::take(&mut arrived));
+            let quiet_now = quiet.iter().any(|&(a, b)| t >= a - 0.05 && t < b + 0.05);
+            let counting = t >= settle && !quiet_now;
+            if !c.is_primed() {
+                match c.prime(queued) {
+                    Some(excess) => {
+                        queued -= excess;
+                        drift.restart();
+                        arrival.reset();
+                    }
+                    None => {
+                        t += period;
+                        continue;
+                    }
+                }
+            }
+            if let Adjust::Drop(n) = c.observe(queued) {
+                queued -= n;
+                heard.splices += counting as usize;
+            }
+            let take = match read {
+                Read::Locked => block,
+                Read::Steered if !c.is_settled() => {
+                    steering = false;
+                    block
+                }
+                Read::Steered => {
+                    if !steering {
+                        steering = true;
+                        drift.restart();
+                    }
+                    let start = c.start_level() as f64;
+                    let u = drift.update(queued as f64 + arrival.pending(t, start) - start);
+                    frac += block as f64 * (1.0 + u);
+                    let take = frac as usize;
+                    frac -= take as f64;
+                    take
+                }
+            };
+            if queued < take {
+                heard.underruns += counting as usize;
+                c.underrun(take - queued);
+                queued = 0;
+            } else {
+                queued -= take;
+            }
+            if counting {
+                heard.mean_queued += queued as f64;
+                heard.max_queued = heard.max_queued.max(queued);
+                samples += 1;
+            }
+            t += period;
+        }
+        heard.mean_queued /= samples.max(1) as f64;
+        heard
+    }
+
+    /// A capture device delivering `burst` frames at a clock `capture_ppm`
+    /// off ours, each delivery late by a pseudo-random share `jitter` of its
+    /// period, nothing inside a `quiet` span, and `initial_backlog` frames
+    /// waiting at the start.
+    fn capture(
+        burst: usize,
+        capture_ppm: f64,
+        jitter: f64,
+        initial_backlog: usize,
+        seconds: f64,
+        quiet: &[(f64, f64)],
+    ) -> Vec<(f64, usize)> {
+        let in_period = burst as f64 / (SR as f64 * (1.0 + capture_ppm * 1e-6));
+        let mut seed: u32 = 0x2545_f491;
+        let mut out = vec![(0.0, initial_backlog)];
+        let mut next = in_period * 0.37;
+        while next < seconds {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let late = jitter * in_period * (seed % 1000) as f64 / 1000.0;
+            if !quiet.iter().any(|&(a, b)| next >= a && next < b) {
+                out.push((next + late, burst));
+            }
+            next += in_period;
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
     fn simulate(
         block: usize,
         burst: usize,
@@ -319,7 +399,7 @@ mod tests {
         initial_backlog: usize,
         seconds: f64,
         settle_s: f64,
-    ) -> Run {
+    ) -> Heard {
         simulate_with_quiet(
             block,
             burst,
@@ -332,8 +412,6 @@ mod tests {
         )
     }
 
-    /// As `simulate`, with spans where the source delivers nothing at all
-    /// (its audio does not exist, as with a paused app).
     #[allow(clippy::too_many_arguments)]
     fn simulate_with_quiet(
         block: usize,
@@ -344,78 +422,18 @@ mod tests {
         seconds: f64,
         settle_s: f64,
         quiet: &[(f64, f64)],
-    ) -> Run {
-        let mut c = Cushion::new(block, SR);
-        let out_period = block as f64 / SR as f64;
-        let in_period = burst as f64 / (SR as f64 * (1.0 + capture_ppm * 1e-6));
-        let mut queued = initial_backlog;
-        let mut next_in = in_period * 0.37;
-        let mut late = 0.0;
-        let mut t_out = 0.0;
-        let mut seed: u32 = 0x2545_f491;
-        let mut run = Run {
-            late_underruns: 0,
-            mean_queued: 0.0,
-            splices: 0,
-            max_queued: 0,
-        };
-        let mut samples = 0usize;
-        let mut arrived = 0usize;
-        while t_out < seconds {
-            if next_in + late <= t_out {
-                if !quiet.iter().any(|&(a, b)| next_in >= a && next_in < b) {
-                    queued += burst;
-                    arrived += burst;
-                }
-                next_in += in_period;
-                seed ^= seed << 13;
-                seed ^= seed >> 17;
-                seed ^= seed << 5;
-                late = jitter * in_period * (seed % 1000) as f64 / 1000.0;
-                continue;
-            }
-            c.arrived(std::mem::take(&mut arrived));
-            if !c.is_primed() {
-                match c.prime(queued) {
-                    Some(excess) => queued -= excess,
-                    None => {
-                        t_out += out_period;
-                        continue;
-                    }
-                }
-            }
-            match c.observe(queued) {
-                Adjust::Drop(n) => {
-                    queued -= n;
-                    run.splices += 1;
-                }
-                Adjust::Insert(n) => {
-                    queued += n;
-                    run.splices += 1;
-                }
-                Adjust::None => {}
-            }
-            if queued < block {
-                let quiet_now = quiet
-                    .iter()
-                    .any(|&(a, b)| t_out >= a - 0.05 && t_out < b + 0.05);
-                if t_out > settle_s && !quiet_now {
-                    run.late_underruns += 1;
-                }
-                c.underrun(block - queued);
-                queued = 0;
-            } else {
-                queued -= block;
-            }
-            if t_out > settle_s {
-                run.mean_queued += queued as f64;
-                run.max_queued = run.max_queued.max(queued);
-                samples += 1;
-            }
-            t_out += out_period;
-        }
-        run.mean_queued /= samples.max(1) as f64;
-        run
+    ) -> Heard {
+        let deliveries = capture(burst, capture_ppm, jitter, initial_backlog, seconds, quiet);
+        play(
+            Cushion::new(block, SR),
+            SR,
+            block,
+            Read::Steered,
+            &deliveries,
+            seconds,
+            settle_s,
+            quiet,
+        )
     }
 
     #[test]
@@ -432,10 +450,7 @@ mod tests {
     fn same_clock_settles_near_one_capture_burst() {
         for (block, burst) in [(32, 512), (64, 512), (128, 256), (256, 480), (1024, 512)] {
             let r = simulate(block, burst, 0.0, 0.0, 4_800, 30.0, 10.0);
-            assert_eq!(
-                r.late_underruns, 0,
-                "{block}/{burst}: underruns once settled"
-            );
+            assert_eq!(r.underruns, 0, "{block}/{burst}: underruns once settled");
             let bound = (burst + 2 * block + 2 * 48) as f64;
             assert!(
                 r.mean_queued < bound,
@@ -447,16 +462,17 @@ mod tests {
 
     #[test]
     fn drifting_capture_clock_never_starves_or_accumulates() {
-        // 200 ppm is far beyond real crystal error; 100 s drifts ~1000 frames.
+        // 500 ppm is far beyond real crystal error; 100 s drifts ~2400 frames,
+        // all of which the resampler's ratio has to absorb without a splice.
         for block in [32, 64, 256, 1024] {
             for burst in [256, 512, 960] {
-                for ppm in [-200.0, -50.0, 50.0, 200.0] {
+                for ppm in [-500.0, -50.0, 50.0, 500.0] {
                     let r = simulate(block, burst, ppm, 0.0, 0, 100.0, 10.0);
                     let case = format!("{block}/{burst} @ {ppm} ppm");
-                    assert_eq!(r.late_underruns, 0, "{case}: underran");
-                    let bound = burst + 3 * block + 1_024;
+                    assert_eq!(r.underruns, 0, "{case}: underran");
+                    assert_eq!(r.splices, 0, "{case}: spliced");
+                    let bound = burst + 3 * block + 2 * 48 + 256;
                     assert!(r.max_queued < bound, "{case}: max queue {}", r.max_queued);
-                    assert!(r.splices < 200, "{case}: {} splices", r.splices);
                 }
             }
         }
@@ -466,18 +482,20 @@ mod tests {
     fn jittery_capture_buys_headroom_instead_of_glitching() {
         // A loaded VM: every burst lands up to 80% of its period late.
         let r = simulate(64, 480, 0.0, 0.8, 0, 120.0, 30.0);
-        assert_eq!(r.late_underruns, 0);
+        assert_eq!(r.underruns, 0);
         assert!(r.mean_queued < 3.0 * 480.0, "mean queue {}", r.mean_queued);
     }
 
     #[test]
-    fn corrections_stay_sparse() {
-        let r = simulate(64, 512, 0.0, 0.0, 0, 60.0, 10.0);
-        assert!(
-            r.splices < 10,
-            "{} splices under matching clocks",
-            r.splices
-        );
+    fn nothing_is_spliced_after_the_startup_correction() {
+        // The one correction of the guessed start depth runs within the first
+        // two seconds; after that nothing is ever cut.
+        for ppm in [-100.0, 0.0, 100.0] {
+            let deliveries = capture(512, ppm, 0.3, 4_800, 60.0, &[]);
+            let c = Cushion::new(64, SR);
+            let r = play(c, SR, 64, Read::Steered, &deliveries, 60.0, 2.0, &[]);
+            assert_eq!(r.splices, 0, "{ppm} ppm");
+        }
     }
 
     /// A second of ordinary flow (`burst` frames every `burst` frames of
@@ -511,7 +529,12 @@ mod tests {
         let mut c = Cushion::new(32, SR);
         c.prime(c.start_level()).expect("primed");
         let before = c.target();
-        // 20 ms held back, then delivered all at once with the next burst.
+        // 20 ms held back, then delivered all at once with the next burst. A
+        // lone stall costs its dropout and nothing more.
+        gap_then(&mut c, 32, 960, 960, 960);
+        assert_eq!(c.target(), before, "one stall deepened the queue");
+        // The same again within a minute: this source does stall, so the
+        // queue covers it from now on.
         gap_then(&mut c, 32, 960, 960, 960);
         let grown = c.target() - before;
         assert!(grown >= 900, "depth must cover the lateness: +{grown}");
@@ -553,7 +576,7 @@ mod tests {
             .collect();
         let steady = simulate(64, 480, 0.0, 0.0, 0, 120.0, 10.0);
         let r = simulate_with_quiet(64, 480, 0.0, 0.0, 0, 120.0, 10.0, &quiet);
-        assert_eq!(r.late_underruns, 0, "underran while the app was playing");
+        assert_eq!(r.underruns, 0, "underran while the app was playing");
         // One delivery of overshoot on resuming is the onset being played,
         // not cut; anything beyond is silence turned into latency.
         assert!(
@@ -571,84 +594,18 @@ mod tests {
             .map(|k| (k as f64 * 2.0 + 1.0, k as f64 * 2.0 + 1.3))
             .collect();
         let r = simulate_with_quiet(64, 480, 0.0, 0.8, 0, 120.0, 30.0, &quiet);
-        assert_eq!(r.late_underruns, 0);
+        assert_eq!(r.underruns, 0);
     }
 
-    /// Audible events a listener would notice, after settling.
-    #[derive(Debug, Default)]
-    struct Heard {
-        splices: usize,
-        underruns: usize,
-        mean_queued: f64,
-    }
-
-    /// Plays `deliveries` (time in seconds, frames) through a cushion read
-    /// in `block`-frame blocks at 44.1 kHz.
-    fn replay(block: usize, deliveries: &[(f64, usize)], seconds: f64, settle: f64) -> Heard {
-        replay_with(
-            Cushion::new(block, 44_100),
-            block,
-            deliveries,
-            seconds,
-            settle,
-        )
-    }
-
-    fn replay_with(
-        mut c: Cushion,
+    fn replay(
         block: usize,
+        read: Read,
         deliveries: &[(f64, usize)],
         seconds: f64,
         settle: f64,
     ) -> Heard {
-        let rate = 44_100u32;
-        let period = block as f64 / rate as f64;
-        let (mut t, mut i, mut queued, mut arrived) = (0.0, 0usize, 0usize, 0usize);
-        let mut heard = Heard::default();
-        let mut samples = 0usize;
-        while t < seconds {
-            while i < deliveries.len() && deliveries[i].0 <= t {
-                queued += deliveries[i].1;
-                arrived += deliveries[i].1;
-                i += 1;
-            }
-            c.arrived(std::mem::take(&mut arrived));
-            let counting = t >= settle;
-            if !c.is_primed() {
-                match c.prime(queued) {
-                    Some(excess) => queued -= excess,
-                    None => {
-                        t += period;
-                        continue;
-                    }
-                }
-            }
-            match c.observe(queued) {
-                Adjust::Drop(n) => {
-                    queued -= n;
-                    heard.splices += counting as usize;
-                }
-                Adjust::Insert(n) => {
-                    queued += n;
-                    heard.splices += counting as usize;
-                }
-                Adjust::None => {}
-            }
-            if queued < block {
-                heard.underruns += counting as usize;
-                c.underrun(block - queued);
-                queued = 0;
-            } else {
-                queued -= block;
-            }
-            if counting {
-                heard.mean_queued += queued as f64;
-                samples += 1;
-            }
-            t += period;
-        }
-        heard.mean_queued /= samples.max(1) as f64;
-        heard
+        let c = Cushion::new(block, 44_100);
+        play(c, 44_100, block, read, deliveries, seconds, settle, &[])
     }
 
     /// A Core Audio process tap as it reaches a graph: 512-frame buffers on
@@ -693,7 +650,7 @@ mod tests {
     fn a_process_tap_on_the_output_clock_plays_clean() {
         for seed in [1, 7, 42] {
             let deliveries = tap_through_normalizer(180.0, seed);
-            let h = replay(64, &deliveries, 180.0, 20.0);
+            let h = replay(64, Read::Steered, &deliveries, 180.0, 20.0);
             assert!(
                 h.splices + h.underruns <= 2,
                 "seed {seed}: heard {} splices and {} dropouts in 160 s",
@@ -725,7 +682,7 @@ mod tests {
         let trace = recorded_chrome_tap();
         // Counting from 2 s: the one startup correction lands in the first.
         for block in [32, 64, 128, 256] {
-            let h = replay_with(Cushion::locked(block, 44_100), block, &trace, 23.0, 2.0);
+            let h = replay(block, Read::Locked, &trace, 23.0, 2.0);
             assert_eq!(h.splices, 0, "{block}: {h:?}");
             assert!(h.underruns <= 2, "{block}: {h:?}");
             // About one delivery plus its jitter, well under the 28 ms the
@@ -751,7 +708,7 @@ mod tests {
         let trace = recorded_chrome_tap_64();
         let end = trace.last().expect("rows").0;
         for block in [32, 64, 128] {
-            let h = replay_with(Cushion::locked(block, 44_100), block, &trace, end, 2.0);
+            let h = replay(block, Read::Locked, &trace, end, 2.0);
             assert_eq!(h.splices, 0, "{block}: {h:?}");
             // The recording holds one real tap stall (a 320-frame catch-up
             // after ~6 ms of nothing): a lone stall costs one dropout rather
@@ -765,8 +722,8 @@ mod tests {
     }
 
     #[test]
-    fn a_locked_source_realigns_only_from_silence() {
-        let mut c = Cushion::locked(64, SR);
+    fn the_queue_realigns_only_from_silence() {
+        let mut c = Cushion::new(64, SR);
         let start = c.prime(20_000).expect("started");
         assert!(start > 0, "startup backlog goes");
         // Playing along: nothing is ever corrected.
@@ -781,20 +738,9 @@ mod tests {
     }
 
     #[test]
-    fn only_the_first_start_discards() {
-        let mut c = Cushion::new(64, SR);
-        assert!(
-            c.prime(20_000).expect("started") > 0,
-            "startup backlog goes"
-        );
-        c.underrun(64);
-        assert_eq!(c.prime(20_000), Some(0), "a refill keeps what arrived");
-    }
-
-    #[test]
     fn a_splice_waits_until_the_queue_can_afford_it() {
         let mut c = Cushion::new(64, SR);
-        c.owed = -64;
+        c.owed = 64;
         assert_eq!(c.observe(64), Adjust::None, "not enough queued to cut");
         assert_eq!(c.observe(64 + 64 + 2 * 32), Adjust::Drop(64));
     }

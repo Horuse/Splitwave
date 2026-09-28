@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use super::asrc::Asrc;
 use super::cushion::{Adjust, Cushion, MAX_SPLICE_FRAMES};
 use super::latency::NodeTiming;
 use crate::audio::effects::{
@@ -13,7 +14,7 @@ use crate::audio::effects::{
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
 use crate::audio::health;
-use crate::audio::input_bridge::CaptureStats;
+use crate::audio::input_bridge::{now_secs, CaptureStats, WriteClock};
 use crate::audio::netaudio::packet::Format;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
@@ -213,8 +214,6 @@ pub(super) struct SourceStats {
     /// Smoothed frames queued ahead of the graph: the latency this source
     /// adds. A gauge.
     pub queue_frames: Arc<AtomicU64>,
-    /// Samples the cushion stretched in to cover a slower capture clock.
-    pub stretched: Arc<AtomicU64>,
     /// Resampler chunks that failed and were dropped.
     pub failed: Arc<AtomicU64>,
     /// Set once the source has delivered audio; the tick thread logs it.
@@ -230,7 +229,6 @@ impl SourceStats {
             consumed: Arc::new(AtomicU64::new(0)),
             level: Arc::new(AtomicU64::new(0)),
             queue_frames: Arc::new(AtomicU64::new(0)),
-            stretched: Arc::new(AtomicU64::new(0)),
             failed: Arc::new(AtomicU64::new(0)),
             online: Arc::new(AtomicBool::new(false)),
         }
@@ -287,6 +285,10 @@ struct SourceState {
     input_staging: Vec<f32>,
     /// Holds a splice's crossfaded join until the refill path picks it up.
     splice_tmp: Vec<f32>,
+    /// Reads a live source whose producer runs on another clock, absorbing
+    /// the drift in its ratio. Replaces `resampler`; `None` for file sources
+    /// and for sources on this output's own clock.
+    asrc: Option<Box<Asrc>>,
     out_pending: StagingRing,
     chunk_tmp: Vec<f32>,
     out_buf: Vec<f32>,
@@ -329,7 +331,7 @@ impl SourceState {
         }
     }
 
-    fn fill_block(&mut self) {
+    fn fill_block(&mut self, now: f64) {
         if let Some(p) = &self.paused {
             if p.load(Ordering::SeqCst) {
                 let avail = self.consumer.slots();
@@ -375,6 +377,48 @@ impl SourceState {
         }
         // Coming out of silence: the first samples ramp up rather than step.
         let fade_in = self.cushion.is_some() && !was_primed;
+        if self.asrc.is_some() {
+            self.fill_resampled(now, fade_in);
+        } else {
+            self.fill_direct(fade_in);
+        }
+        const ONE_BITS: u32 = 0x3F80_0000;
+        let vol_bits = self.volume.load(Ordering::Relaxed);
+        if vol_bits != ONE_BITS {
+            let vol = f32::from_bits(vol_bits);
+            for s in self.out_buf.iter_mut() {
+                *s *= vol;
+            }
+        }
+        if let Some(m) = &self.meter {
+            update_meter(m, &self.out_buf, self.channels);
+        }
+        if !self.handle_bufs.is_empty() {
+            let w = self.channels;
+            for (h, buf) in self.handle_bufs.iter_mut() {
+                if let Some(a) = parse_stereo(h) {
+                    let c0 = (a - 1).min(w - 1);
+                    let c1 = a.min(w - 1);
+                    for f in 0..self.frames {
+                        buf[f * 2] = self.out_buf[f * w + c0];
+                        buf[f * 2 + 1] = self.out_buf[f * w + c1];
+                    }
+                } else {
+                    let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
+                    for f in 0..self.frames {
+                        buf[f] = self.out_buf[f * w + c];
+                    }
+                }
+            }
+        }
+        self.stats
+            .level
+            .store(self.consumer.slots() as u64, Ordering::Relaxed);
+        self.publish_queue();
+    }
+
+    /// Reads the ring straight, or through the fixed-rate resampler.
+    fn fill_direct(&mut self, fade_in: bool) {
         let need = self.out_buf.len();
         let mut written = self.out_pending.pop_into(&mut self.out_buf[..]);
         while written < need {
@@ -415,39 +459,76 @@ impl SourceState {
                 ramp(&mut self.out_buf, w, frames - len, len, false);
             }
         }
-        const ONE_BITS: u32 = 0x3F80_0000;
-        let vol_bits = self.volume.load(Ordering::Relaxed);
-        if vol_bits != ONE_BITS {
-            let vol = f32::from_bits(vol_bits);
-            for s in self.out_buf.iter_mut() {
-                *s *= vol;
+    }
+
+    /// Reads the ring through the drift-steered resampler. Fades are applied
+    /// to its input, so they pass through the filter like any other audio.
+    fn fill_resampled(&mut self, now: f64, fade_in: bool) {
+        let queued = self.queued_frames();
+        let (target, start, settled) = self.cushion.as_ref().map_or((queued, queued, true), |c| {
+            (c.target(), c.start_level(), c.is_settled())
+        });
+        let Some(asrc) = self.asrc.as_mut() else {
+            return;
+        };
+        let w = self.channels;
+        if fade_in || !settled {
+            asrc.restart();
+        }
+        if settled {
+            asrc.steer(queued, target, start, now);
+        }
+        let need = asrc.need() * w;
+        asrc.input.clear();
+        // A splice staged its joined frames ahead of the ring.
+        let staged = self.input_staging.len().min(need);
+        asrc.input.extend_from_slice(&self.input_staging[..staged]);
+        self.input_staging.drain(..staged);
+        let avail = self.consumer.slots().min(need - staged);
+        let avail = avail - avail % w;
+        if avail > 0 {
+            if let Ok(chunk) = self.consumer.read_chunk(avail) {
+                let (first, second) = chunk.as_slices();
+                asrc.input.extend_from_slice(first);
+                asrc.input.extend_from_slice(second);
+                chunk.commit_all();
+                self.stats
+                    .consumed
+                    .fetch_add(avail as u64, Ordering::Relaxed);
+                self.last_pop_at = Instant::now();
             }
         }
-        if let Some(m) = &self.meter {
-            update_meter(m, &self.out_buf, self.channels);
+        let got = asrc.input.len();
+        if got > 0 {
+            self.stats.online.store(true, Ordering::Relaxed);
         }
-        if !self.handle_bufs.is_empty() {
-            let w = self.channels;
-            for (h, buf) in self.handle_bufs.iter_mut() {
-                if let Some(a) = parse_stereo(h) {
-                    let c0 = (a - 1).min(w - 1);
-                    let c1 = a.min(w - 1);
-                    for f in 0..self.frames {
-                        buf[f * 2] = self.out_buf[f * w + c0];
-                        buf[f * 2 + 1] = self.out_buf[f * w + c1];
-                    }
-                } else {
-                    let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
-                    for f in 0..self.frames {
-                        buf[f] = self.out_buf[f * w + c];
-                    }
+        if fade_in {
+            ramp(&mut asrc.input, w, 0, got / w, true);
+        }
+        if got < need {
+            let frames = got / w;
+            let len = frames.min(SPLICE_FADE_FRAMES);
+            ramp(&mut asrc.input, w, frames - len, len, false);
+            asrc.input.resize(need, 0.0);
+            let missing = need - got;
+            if self.last_pop_at.elapsed() > STALL_THRESHOLD {
+                self.stats
+                    .stalled
+                    .fetch_add(missing as u64, Ordering::Relaxed);
+            } else {
+                self.stats.xrun.fetch_add(missing as u64, Ordering::Relaxed);
+                if let Some(c) = &mut self.cushion {
+                    c.underrun(missing / w);
                 }
             }
         }
-        self.stats
-            .level
-            .store(self.consumer.slots() as u64, Ordering::Relaxed);
-        self.publish_queue();
+        match asrc.process() {
+            Ok(out) if out.len() == self.out_buf.len() => self.out_buf.copy_from_slice(out),
+            _ => {
+                self.stats.failed.fetch_add(1, Ordering::Relaxed);
+                self.out_buf.fill(0.0);
+            }
+        }
     }
 
     /// Frames waiting ahead of the graph: the ring plus anything already
@@ -458,7 +539,8 @@ impl SourceState {
 
     fn publish_queue(&mut self) {
         self.queued_after = self.queued_frames();
-        let queued = self.queued_after as f64;
+        let filter = self.asrc.as_ref().map_or(0, |a| a.delay_frames());
+        let queued = (self.queued_after + filter) as f64;
         self.queue_avg += (queued - self.queue_avg) * 0.02;
         self.stats
             .queue_frames
@@ -484,10 +566,11 @@ impl SourceState {
         }
         let queued = self.queued_frames();
         let fade = SPLICE_FADE_FRAMES * self.channels;
-        match self.cushion.as_mut().map(|c| c.observe(queued)) {
-            Some(Adjust::Drop(n)) => self.splice_trim(n * self.channels, fade),
-            Some(Adjust::Insert(n)) => self.splice_stretch(n * self.channels, fade),
-            _ => {}
+        if let Some(Adjust::Drop(n)) = self.cushion.as_mut().map(|c| c.observe(queued)) {
+            // The crossfade overlaps a fade's worth on each side of the cut
+            // into one, so that much of the `n` goes with it.
+            let fade = fade.min(n * self.channels);
+            self.splice_trim(n * self.channels - fade, fade);
         }
         true
     }
@@ -510,40 +593,6 @@ impl SourceState {
                 .fetch_add(samples as u64, Ordering::Relaxed);
             self.last_pop_at = Instant::now();
         }
-    }
-
-    /// Lengthens the stream by `insert` samples without a step: the next
-    /// `insert` samples play, then the stream replays from the start of that
-    /// stretch, the `fade` samples after the stretch crossfading into the
-    /// replay's first `fade`. Only the `fade` samples replayed are consumed.
-    fn splice_stretch(&mut self, insert: usize, fade: usize) {
-        self.splice_tmp.clear();
-        {
-            let Ok(ahead) = self.consumer.read_chunk(insert + fade) else {
-                return;
-            };
-            let (first, second) = ahead.as_slices();
-            self.splice_tmp.extend_from_slice(first);
-            self.splice_tmp.extend_from_slice(second);
-            // Dropped uncommitted: peeked, not consumed.
-        }
-        let span = (SPLICE_FADE_FRAMES - 1).max(1) as f32;
-        for i in 0..fade {
-            let w = ((i / self.channels) as f32 / span).min(1.0);
-            let out = self.splice_tmp[insert + i];
-            self.splice_tmp[insert + i] = out * (1.0 - w) + self.splice_tmp[i] * w;
-        }
-        if let Ok(replayed) = self.consumer.read_chunk(fade) {
-            replayed.commit_all();
-        }
-        self.input_staging.extend_from_slice(&self.splice_tmp);
-        self.stats
-            .consumed
-            .fetch_add(fade as u64, Ordering::Relaxed);
-        self.stats
-            .stretched
-            .fetch_add(insert as u64, Ordering::Relaxed);
-        self.last_pop_at = Instant::now();
     }
 
     /// Removes `drop` samples from the input ring, crossfading the `fade`
@@ -668,7 +717,8 @@ struct EffectState {
     // When this node fans out to several outputs it is computed once (here, in
     // its owning output's graph) and its `out_buf` is published each block into
     // one ring per other consuming output, which reads it via a ring-source.
-    taps: Vec<Producer<f32>>,
+    // The clock tells that reader when each block was written.
+    taps: Vec<(Producer<f32>, Arc<WriteClock>)>,
 }
 
 impl EffectState {
@@ -1037,35 +1087,58 @@ impl OutputGraph {
             .clamp(1, self.out_channels)
     }
 
-    /// Attach a publish ring to a fan-out effect node; its `out_buf` is pushed
-    /// there each block for another output's ring-source to read.
-    /// Marks the sources reading `inputs` as running on this output's clock,
-    /// so their queues are never spliced while they play. Call before the
-    /// graph goes live.
+    /// Marks the sources reading `inputs` as running on this output's clock:
+    /// they have no drift to absorb and read without the drift resampler.
+    /// Call before the graph goes live.
     pub(super) fn lock_inputs(&mut self, inputs: &HashSet<String>) {
         for node in &mut self.nodes {
             let DagNode::Source(s) = node else { continue };
-            if !s.input_id.as_ref().is_some_and(|id| inputs.contains(id)) {
-                continue;
+            if s.input_id.as_ref().is_some_and(|id| inputs.contains(id)) {
+                s.asrc = None;
             }
-            s.cushion = s.cushion.take().map(Cushion::into_locked);
         }
     }
 
-    pub(super) fn attach_tap(&mut self, node_idx: usize, prod: Producer<f32>) {
+    /// Gives the sources reading `input` its producer's write timing, which
+    /// the drift loop reads the queue against.
+    pub(super) fn attach_write_clock(&mut self, input: &str, clock: &Arc<WriteClock>) {
+        for node in &mut self.nodes {
+            let DagNode::Source(s) = node else { continue };
+            if s.input_id.as_deref() != Some(input) {
+                continue;
+            }
+            if let Some(asrc) = &mut s.asrc {
+                asrc.set_clock(clock.clone());
+            }
+        }
+    }
+
+    /// Attach a publish ring to a fan-out effect node; its `out_buf` is pushed
+    /// there each block for another output's ring-source to read.
+    pub(super) fn attach_tap(
+        &mut self,
+        node_idx: usize,
+        prod: Producer<f32>,
+        clock: Arc<WriteClock>,
+    ) {
         if let Some(DagNode::Effect(e)) = self.nodes.get_mut(node_idx) {
-            e.taps.push(prod);
+            e.taps.push((prod, clock));
         }
     }
 
     /// Fill `output` (`block_frames * out_channels` long) with one block of
     /// mixed audio at `sample_rate`.
     pub(super) fn process_block(&mut self, output: &mut [f32]) {
+        self.process_block_at(output, now_secs());
+    }
+
+    /// `process_block` at `now` seconds on `input_bridge::now_secs`'s clock.
+    pub(super) fn process_block_at(&mut self, output: &mut [f32], now: f64) {
         let frames = self.block_frames;
         self.blocks.fetch_add(1, Ordering::Relaxed);
         for node in &mut self.nodes {
             match node {
-                DagNode::Source(s) => s.fill_block(),
+                DagNode::Source(s) => s.fill_block(now),
                 DagNode::Producer(p) => p.process(),
                 DagNode::Effect(_) | DagNode::Consumer(_) => {}
             }
@@ -1154,7 +1227,8 @@ impl OutputGraph {
                     }
                 }
                 // Publish the processed block to every consuming output's ring.
-                for prod in eff.taps.iter_mut() {
+                for (prod, clock) in eff.taps.iter_mut() {
+                    clock.record(eff.out_buf.len(), now);
                     bulk_push_counted(prod, &eff.out_buf, &health::TAP_RING_OVERRUN_SAMPLES);
                 }
             }
@@ -1222,7 +1296,7 @@ pub(super) fn build_output_graph(
     // Effect nodes provided by a ring instead of built here: each is computed
     // once in its owning output's graph and read back as a ring-source. Maps
     // node id -> (ring consumer, owner-graph sample rate, channel width).
-    mut cut_leaves: HashMap<String, (Consumer<f32>, u32, usize)>,
+    mut cut_leaves: HashMap<String, CutLeaf>,
 ) -> AppResult<BuiltOutputGraph> {
     let cut_leaf_ids: HashSet<String> = cut_leaves.keys().cloned().collect();
     let reachable: HashSet<String> = match output_id {
@@ -1300,10 +1374,11 @@ pub(super) fn build_output_graph(
     for id in &topo {
         // A fan-out node owned by an earlier output: read its published block
         // from the ring instead of rebuilding the whole upstream chain.
-        if let Some((consumer, owner_sr, width)) = cut_leaves.remove(id) {
+        if let Some((consumer, owner_sr, width, clock)) = cut_leaves.remove(id) {
             let source = ring_source(
                 id,
                 consumer,
+                clock,
                 owner_sr,
                 output_sr,
                 block_frames,
@@ -1466,6 +1541,10 @@ pub(super) fn build_output_graph(
                 resampler,
                 input_staging: Vec::with_capacity(staging_samples(source_channels)),
                 splice_tmp: Vec::with_capacity(splice_samples(source_channels)),
+                asrc: source_realtime
+                    .then(|| Asrc::new(input_sr, output_sr, block_frames, source_channels))
+                    .transpose()?
+                    .map(Box::new),
                 out_pending: StagingRing::with_capacity(staging_cap),
                 chunk_tmp: Vec::with_capacity(out_max * source_channels),
                 out_buf: vec![0.0; block_frames * source_channels],
@@ -1901,6 +1980,10 @@ pub(super) fn build_output_graph(
     })
 }
 
+/// A fan-out node's published ring as another output reads it: the ring, the
+/// owner's rate and width, and when the owner wrote to it.
+pub(super) type CutLeaf = (Consumer<f32>, u32, usize, Arc<WriteClock>);
+
 /// Builds a `SourceState` that reads a fan-out node's published block from a
 /// ring (written at `owner_sr`) and resamples it to this graph's `output_sr`.
 /// Reuses the source machinery so per-channel taps and backlog-dropping behave
@@ -1909,6 +1992,7 @@ pub(super) fn build_output_graph(
 fn ring_source(
     id: &str,
     consumer: Consumer<f32>,
+    clock: Arc<WriteClock>,
     owner_sr: u32,
     output_sr: u32,
     block_frames: usize,
@@ -1952,6 +2036,14 @@ fn ring_source(
         })
         .collect();
 
+    let asrc = if realtime {
+        let mut asrc = Asrc::new(owner_sr, output_sr, block_frames, channels)?;
+        asrc.set_clock(clock);
+        Some(Box::new(asrc))
+    } else {
+        None
+    };
+
     Ok(SourceState {
         label: format!("cut:{id}"),
         channels,
@@ -1960,6 +2052,7 @@ fn ring_source(
         resampler,
         input_staging: Vec::with_capacity(staging_samples(channels)),
         splice_tmp: Vec::with_capacity(splice_samples(channels)),
+        asrc,
         out_pending: StagingRing::with_capacity(staging_cap),
         chunk_tmp: Vec::with_capacity(out_max * channels),
         out_buf: vec![0.0; block_frames * channels],
@@ -2692,7 +2785,9 @@ pub(super) mod graph_tests {
 
     /// Drives a live passthrough source the way a capture device and an output
     /// device do, each on its own clock: `burst`-frame deliveries against
-    /// `block`-frame reads. Returns the output after `settle` seconds.
+    /// `block`-frame reads, the source read through the drift resampler with
+    /// the capture's write timing, as the pipeline wires it. Returns the
+    /// output after `settle` seconds and the frames spliced out after it.
     fn live_capture(
         block: usize,
         burst: usize,
@@ -2700,9 +2795,11 @@ pub(super) mod graph_tests {
         seconds: f64,
         settle: f64,
         signal: impl Fn(usize) -> f32,
-    ) -> (Vec<f32>, SourceStats) {
+    ) -> (Vec<f32>, SourceStats, u64) {
         let (valid, _) = passthrough_graph();
         let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, true);
+        let clock = Arc::new(WriteClock::default());
+        built.graph.attach_write_clock("m", &clock);
         let stats = built.sources[0].stats.clone();
         let input = producers.get_mut("m").unwrap();
         let out_period = block as f64 / SR as f64;
@@ -2711,6 +2808,7 @@ pub(super) mod graph_tests {
         let mut out = vec![0.0; block * 2];
         let mut kept = Vec::new();
         let mut chunk = vec![0.0; burst * 2];
+        let mut trimmed_at_settle = 0;
         while t_out < seconds {
             if t_in <= t_out {
                 for f in 0..burst {
@@ -2718,18 +2816,23 @@ pub(super) mod graph_tests {
                     chunk[f * 2] = v;
                     chunk[f * 2 + 1] = v;
                 }
+                clock.record(chunk.len(), t_in);
                 assert_eq!(push_all(input, &chunk), chunk.len());
                 fed += burst;
                 t_in += in_period;
                 continue;
             }
-            built.graph.process_block(&mut out);
+            if t_out < settle {
+                trimmed_at_settle = stats.trimmed.load(Ordering::Relaxed);
+            }
+            built.graph.process_block_at(&mut out, t_out);
             if t_out >= settle {
                 kept.extend(out.iter().step_by(2));
             }
             t_out += out_period;
         }
-        (kept, stats)
+        let spliced = stats.trimmed.load(Ordering::Relaxed) - trimmed_at_settle;
+        (kept, stats, spliced / 2)
     }
 
     /// One observation per output block of a live source whose capture goes
@@ -2742,14 +2845,25 @@ pub(super) mod graph_tests {
         reported_queue: usize,
     }
 
+    /// `locked`: the capture runs on the output's clock and every played
+    /// sample names its frame. Otherwise it is read through the drift
+    /// resampler, whose samples are interpolated, and the delay is what it has
+    /// taken from the ring.
     fn live_capture_with_gaps(
         block: usize,
         burst: usize,
         seconds: f64,
         gaps: &[(f64, f64)],
+        locked: bool,
     ) -> Vec<Tick> {
         let (valid, _) = passthrough_graph();
         let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, true);
+        let clock = Arc::new(WriteClock::default());
+        if locked {
+            built.graph.lock_inputs(&HashSet::from(["m".to_string()]));
+        } else {
+            built.graph.attach_write_clock("m", &clock);
+        }
         let stats = built.sources[0].stats.clone();
         let input = producers.get_mut("m").unwrap();
         let out_period = block as f64 / SR as f64;
@@ -2768,17 +2882,20 @@ pub(super) mod graph_tests {
                         chunk[f * 2] = v;
                         chunk[f * 2 + 1] = v;
                     }
+                    clock.record(chunk.len(), t_in);
                     push_all(input, &chunk);
                     fed += burst;
                 }
                 t_in += in_period;
                 continue;
             }
-            built.graph.process_block(&mut out);
+            built.graph.process_block_at(&mut out, t_out);
             let last = out[(block - 1) * 2];
+            let consumed = stats.consumed.load(Ordering::Relaxed) as usize / 2;
+            let played = if locked { last as usize } else { consumed };
             ticks.push(Tick {
                 t: t_out,
-                real_delay: (last > 0.0).then(|| fed - last as usize),
+                real_delay: (last > 0.0).then(|| fed.saturating_sub(played)),
                 reported_queue: stats.queue_frames.load(Ordering::Relaxed) as usize,
             });
             t_out += out_period;
@@ -2789,7 +2906,12 @@ pub(super) mod graph_tests {
     #[test]
     fn a_paused_app_resumes_at_low_latency_every_time() {
         let gaps = [(10.0, 15.0), (25.0, 30.0), (40.0, 41.0)];
-        let ticks = live_capture_with_gaps(64, 480, 55.0, &gaps);
+        for locked in [true, false] {
+            resumes_at_low_latency(&live_capture_with_gaps(64, 480, 55.0, &gaps, locked));
+        }
+    }
+
+    fn resumes_at_low_latency(ticks: &[Tick]) {
         for (resume, until) in [(15.0, 25.0), (30.0, 40.0), (41.0, 55.0)] {
             let window: Vec<&Tick> = ticks
                 .iter()
@@ -2841,15 +2963,21 @@ pub(super) mod graph_tests {
                 (start, start + 0.06 + (k % 7) as f64 * 0.05)
             })
             .collect();
-        let steady = live_capture_with_gaps(64, 480, 125.0, &[]);
-        let gappy = live_capture_with_gaps(64, 480, 125.0, &gaps);
+        for locked in [true, false] {
+            silence_adds_no_latency(&gaps, locked);
+        }
+    }
+
+    fn silence_adds_no_latency(gaps: &[(f64, f64)], locked: bool) {
+        let steady = live_capture_with_gaps(64, 480, 125.0, &[], locked);
+        let gappy = live_capture_with_gaps(64, 480, 125.0, gaps, locked);
         let baseline = worst_delay(&steady, 3.0);
         let with_gaps = worst_delay(&gappy, 3.0);
         // A sound resuming after silence may start up to one delivery above
         // target (its onset is played, not cut); that is the whole allowance.
         assert!(
             with_gaps <= baseline + 480,
-            "silence added latency: {with_gaps} frames vs {baseline} steady"
+            "locked {locked}: silence added latency: {with_gaps} frames vs {baseline} steady"
         );
         // And it never accumulates: after a hundred pauses it is where the
         // first few left it.
@@ -2857,14 +2985,14 @@ pub(super) mod graph_tests {
         let late = worst_delay_between(&gappy, 100.0, 125.0);
         assert!(
             late <= early + 64,
-            "latency crept across pauses: {early} -> {late}"
+            "locked {locked}: latency crept across pauses: {early} -> {late}"
         );
     }
 
     #[test]
     fn readout_does_not_climb_across_pauses() {
         let gaps: Vec<(f64, f64)> = (0..40).map(|k| (5.0 + k as f64, 5.4 + k as f64)).collect();
-        let ticks = live_capture_with_gaps(64, 480, 45.0, &gaps);
+        let ticks = live_capture_with_gaps(64, 480, 45.0, &gaps, false);
         // Measured once the pauses have begun, so both sides include a resume.
         let early = ticks
             .iter()
@@ -2891,6 +3019,9 @@ pub(super) mod graph_tests {
         /// a few dozen frames under a crossfade; anything bigger is an audible
         /// jump.
         worst_jump: usize,
+        /// Largest stretch lost while audio was playing, rather than under a
+        /// dropout's silence.
+        worst_jump_heard: usize,
         /// Output samples of silence once playing, not counting pauses.
         dropouts: usize,
         worst_delay: usize,
@@ -2910,6 +3041,7 @@ pub(super) mod graph_tests {
     ) -> TapRun {
         let (valid, _) = passthrough_graph();
         let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, true);
+        built.graph.lock_inputs(&HashSet::from(["m".to_string()]));
         let input = producers.get_mut("m").unwrap();
         let out_period = block as f64 / SR as f64;
         let in_period = burst as f64 / SR as f64;
@@ -2921,11 +3053,13 @@ pub(super) mod graph_tests {
         let mut run = TapRun {
             skipped: 0,
             worst_jump: 0,
+            worst_jump_heard: 0,
             dropouts: 0,
             worst_delay: 0,
         };
         let mut last_played = 0usize;
         let mut prev_raw = 0.0f32;
+        let mut silent_since = false;
         while t_out < seconds {
             if due <= t_out {
                 for f in 0..burst {
@@ -2955,6 +3089,7 @@ pub(super) mod graph_tests {
                     if raw == 0.0 {
                         run.dropouts += 1;
                         prev_raw = 0.0;
+                        silent_since = true;
                         continue;
                     }
                     // Inside a fade the index is scaled and names no frame; a
@@ -2966,14 +3101,21 @@ pub(super) mod graph_tests {
                     }
                     let v = raw as usize;
                     if last_played > 0 && v > last_played + 1 {
-                        run.skipped += v - last_played - 1;
-                        run.worst_jump = run.worst_jump.max(v - last_played - 1);
+                        let jump = v - last_played - 1;
+                        run.skipped += jump;
+                        run.worst_jump = run.worst_jump.max(jump);
+                        if !silent_since {
+                            run.worst_jump_heard = run.worst_jump_heard.max(jump);
+                        }
                     }
                     last_played = v;
+                    silent_since = false;
                     run.worst_delay = run.worst_delay.max(fed.saturating_sub(v));
                 }
             } else {
-                last_played = out[(block - 1) * 2] as usize;
+                // Counting starts from the first frame played after settling.
+                prev_raw = out[(block - 1) * 2];
+                last_played = 0;
             }
             t_out += out_period;
         }
@@ -3047,30 +3189,36 @@ pub(super) mod graph_tests {
     }
 
     #[test]
-    fn a_stalled_tap_resumes_without_skipping_audio() {
+    fn a_stalled_tap_resumes_without_piling_up_latency() {
         // Every 5 s the tap holds its deliveries for 25 ms, then catches up.
         let stalls: Vec<(f64, f64)> = (0..12)
             .map(|k| (5.0 + k as f64 * 5.0, 5.025 + k as f64 * 5.0))
             .collect();
+        let steady = tap_capture(32, 512, 65.0, 3.0, 1.0, &[]);
         let r = tap_capture(32, 512, 65.0, 3.0, 1.0, &stalls);
-        // What came late is played, not thrown away: no stretch of audio
-        // vanishes at once, only crossfaded splices trim the excess later.
-        let splice = super::MAX_SPLICE_FRAMES + 2 * SPLICE_FADE_FRAMES;
+        // The stall is heard as a dropout. What arrived late for the time
+        // already played as silence goes under that silence: never more than
+        // the stall plus one delivery, and never while audio plays.
+        let stall = SR as usize / 40 + 512;
         assert!(
-            r.worst_jump <= splice,
+            r.worst_jump <= stall,
             "{} frames vanished at once",
             r.worst_jump
         );
+        assert_eq!(r.worst_jump_heard, 0, "audio skipped while playing");
+        // A tap that stalls again within a minute gets a queue deep enough to
+        // cover its stalls, once; nothing piles up beyond that.
         assert!(
-            r.worst_delay < 4_800,
-            "delay grew to {} frames",
-            r.worst_delay
+            r.worst_delay <= steady.worst_delay + stall,
+            "delay grew to {} frames from {}",
+            r.worst_delay,
+            steady.worst_delay
         );
     }
 
     #[test]
     fn reported_queue_tracks_the_real_delay() {
-        let ticks = live_capture_with_gaps(64, 480, 55.0, &[(10.0, 15.0), (25.0, 30.0)]);
+        let ticks = live_capture_with_gaps(64, 480, 55.0, &[(10.0, 15.0), (25.0, 30.0)], true);
         for k in ticks.iter().filter(|k| k.t > 2.0) {
             if let Some(real) = k.real_delay {
                 assert!(
@@ -3087,50 +3235,78 @@ pub(super) mod graph_tests {
 
     #[test]
     fn live_source_runs_at_capture_latency_without_glitches() {
-        for ppm in [-200.0, 0.0, 200.0] {
-            let xruns_before;
-            let (out, stats) = {
-                let r = live_capture(64, 512, ppm, 40.0, 5.0, |_| 0.5);
-                xruns_before = r.1.xrun.load(Ordering::Relaxed);
-                r
-            };
-            assert!(
-                out.iter().all(|&s| (s - 0.5).abs() < 1e-6),
-                "{ppm} ppm: gap in a constant signal"
-            );
+        for ppm in [-500.0, -200.0, 0.0, 200.0, 500.0] {
+            let (out, stats, spliced) = live_capture(64, 512, ppm, 40.0, 5.0, |_| 0.5);
+            let worst = out.iter().map(|s| (s - 0.5).abs()).fold(0.0_f32, f32::max);
+            assert!(worst < 1e-3, "{ppm} ppm: constant signal off by {worst}");
             let queue = stats.queue_frames.load(Ordering::Relaxed) as usize;
             assert!(
                 queue < 512 + 3 * 64 + 256,
                 "{ppm} ppm: {queue} frames queued"
             );
-            assert_eq!(stats.xrun.load(Ordering::Relaxed), xruns_before);
+            assert_eq!(stats.xrun.load(Ordering::Relaxed), 0, "{ppm} ppm: ran dry");
+            assert_eq!(spliced, 0, "{ppm} ppm: spliced once settled");
         }
     }
 
     #[test]
-    fn drift_corrections_are_seamless() {
-        // A 60 Hz sine moves < 0.007 per frame. A splice shifts it by up to 96
-        // frames (~0.66); spread across the 32-frame crossfade that is ~0.02
-        // per frame, while a hard cut would jump the whole 0.66 in one.
-        let sine = |f: usize| (f as f32 * std::f32::consts::TAU * 60.0 / SR as f32).sin() * 0.9;
-        let hard_cut = (0..SR as usize)
-            .map(|f| (sine(f + 96) - sine(f)).abs())
-            .fold(0.0_f32, f32::max);
-        assert!(
-            hard_cut > 0.5,
-            "the threshold below must tell a cut from a fade"
-        );
-        for ppm in [-300.0, 300.0] {
-            let (out, stats) = live_capture(64, 480, ppm, 60.0, 5.0, sine);
-            let corrected =
-                stats.trimmed.load(Ordering::Relaxed) + stats.stretched.load(Ordering::Relaxed);
-            assert!(corrected > 0, "{ppm} ppm: drift never corrected");
-            let worst = out
-                .windows(2)
-                .map(|w| (w[1] - w[0]).abs())
-                .fold(0.0_f32, f32::max);
-            assert!(worst < 0.06, "{ppm} ppm: step of {worst} at a splice");
+    fn drift_is_absorbed_without_a_step() {
+        // A 60 Hz sine's second difference never exceeds 0.9 * (2 pi 60 / SR)^2,
+        // about 6e-5. The resampler moving its ratio by a few ppm keeps it
+        // there; a splice, a repeated frame or a dropout is orders above.
+        // 800 frames is one period: the phase stays exact however long it runs.
+        let sine = |f: usize| ((f % 800) as f64 * std::f64::consts::TAU / 800.0).sin() as f32 * 0.9;
+        let ideal = 0.9 * (std::f32::consts::TAU * 60.0 / SR as f32).powi(2);
+        for block in [32, 256] {
+            for ppm in [-500.0, -300.0, 300.0, 500.0] {
+                let (out, stats, spliced) = live_capture(block, 480, ppm, 60.0, 5.0, sine);
+                assert_eq!(spliced, 0, "{block}/{ppm} ppm: spliced");
+                assert_eq!(
+                    stats.xrun.load(Ordering::Relaxed),
+                    0,
+                    "{block}/{ppm} ppm: ran dry"
+                );
+                let worst = out
+                    .windows(3)
+                    .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
+                    .fold(0.0_f32, f32::max);
+                assert!(
+                    worst < 4.0 * ideal,
+                    "{block}/{ppm} ppm: second difference {worst}, a clean sine peaks at {ideal}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn a_steered_source_never_touches_the_heap() {
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build_with_block(Some("s"), SR, 64, &valid, SR, true);
+        let clock = Arc::new(WriteClock::default());
+        built.graph.attach_write_clock("m", &clock);
+        let input = producers.get_mut("m").unwrap();
+        let chunk = vec![0.25_f32; 480 * 2];
+        let mut out = vec![0.0; 64 * 2];
+        let mut t = 0.0;
+        // Warm up: prime, settle, run dry once and restart.
+        for k in 0..2_000 {
+            if k % 7 == 0 && !(900..960).contains(&k) {
+                clock.record(chunk.len(), t);
+                push_all(input, &chunk);
+            }
+            built.graph.process_block_at(&mut out, t);
+            t += 64.0 / SR as f64;
+        }
+        crate::audio::rt_guard::assert_no_alloc("steered source", || {
+            for k in 0..4_000 {
+                if k % 7 == 0 && !(1_000..1_060).contains(&k) {
+                    clock.record(chunk.len(), t);
+                    push_all(input, &chunk);
+                }
+                built.graph.process_block_at(&mut out, t);
+                t += 64.0 / SR as f64;
+            }
+        });
     }
 
     #[test]
@@ -3269,7 +3445,7 @@ pub(super) mod graph_tests {
         assert_eq!(width, 2);
         let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
         let mut cut_leaves = HashMap::new();
-        cut_leaves.insert("g".to_string(), (cons, SR, 2));
+        cut_leaves.insert("g".to_string(), (cons, SR, 2, Arc::default()));
 
         let mut producer_pairs = Vec::new();
         let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
@@ -3296,7 +3472,7 @@ pub(super) mod graph_tests {
         assert_eq!(built_b.sources[0].channels, 2);
 
         // A publishes a block into the tap ring; B reads it back.
-        built_a.graph.attach_tap(node_idx, prod);
+        built_a.graph.attach_tap(node_idx, prod, Arc::default());
         let published = stereo_ramp(1024, 0.0);
         push_all(producers_a.get_mut("m").unwrap(), &published);
         let mut out_a = vec![0.0; TIMER_BLOCK_FRAMES * 2];
@@ -3894,7 +4070,7 @@ pub(super) mod graph_tests {
         let (node_idx, _) = built_a.node_meta["g"];
         let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
         let mut cut_leaves = HashMap::new();
-        cut_leaves.insert("g".to_string(), (cons, 44_100, 2));
+        cut_leaves.insert("g".to_string(), (cons, 44_100, 2, Arc::default()));
 
         let mut producer_pairs = Vec::new();
         let native = valid
@@ -3927,7 +4103,7 @@ pub(super) mod graph_tests {
         // exactly what A's effect produced.
         push_all(producers_a.get_mut("m").unwrap(), &stereo_ramp(4096, 0.0));
         let mut out_a = vec![0.0; TIMER_BLOCK_FRAMES * 2];
-        built_a.graph.attach_tap(node_idx, prod);
+        built_a.graph.attach_tap(node_idx, prod, Arc::default());
         built_a.graph.process_block(&mut out_a);
         // A block published at 44.1k resampled to 48k: the value must land
         // in B's output, finite and near the source level.

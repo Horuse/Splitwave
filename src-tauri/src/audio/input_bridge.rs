@@ -73,6 +73,43 @@ enum BroadcastCmd {
     },
 }
 
+/// Seconds since a process-wide epoch. Producers and consumers of audio
+/// stamp their timing on this one clock.
+pub fn now_secs() -> f64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+}
+
+/// When a producer last wrote and how much it has written in total. A
+/// consumer reads the queue as a smooth function of time from it (see
+/// `drift_loop::ArrivalClock`): the level alone saws with every delivery.
+#[derive(Default)]
+pub struct WriteClock {
+    samples: AtomicU64,
+    /// `now_secs()` of the last write, as f64 bits.
+    at: AtomicU64,
+}
+
+impl WriteClock {
+    /// RT-safe: two relaxed stores.
+    #[inline]
+    pub fn record(&self, samples: usize, at: f64) {
+        self.at.store(at.to_bits(), Ordering::Relaxed);
+        self.samples.fetch_add(samples as u64, Ordering::Release);
+    }
+
+    /// Total samples written and when the last of them was. The two are read
+    /// separately; a torn pair is one block's glitch the consumer lowpasses.
+    #[inline]
+    pub fn read(&self) -> (u64, f64) {
+        let samples = self.samples.load(Ordering::Acquire);
+        (samples, f64::from_bits(self.at.load(Ordering::Relaxed)))
+    }
+}
+
 /// Main-thread side. Tracks slot allocations and pushes Add/Remove
 /// commands to the RT callback.
 pub struct BroadcastTx {
@@ -83,6 +120,7 @@ pub struct BroadcastTx {
     /// RT returns removed producers here so they drop on main, not on the
     /// audio callback thread.
     discarded_rx: Consumer<Slot>,
+    clock: Arc<WriteClock>,
 }
 
 /// RT-thread side. Owns the Producer slot vec; lives inside the input
@@ -91,9 +129,11 @@ pub struct BroadcastRx {
     cmds: Consumer<BroadcastCmd>,
     slots: Vec<Option<Slot>>,
     discarded_tx: Producer<Slot>,
+    clock: Arc<WriteClock>,
 }
 
 pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
+    let clock = Arc::new(WriteClock::default());
     let (cmd_tx, cmd_rx) = RingBuffer::<BroadcastCmd>::new(CMD_QUEUE_CAPACITY);
     let (disc_tx, disc_rx) = RingBuffer::<Slot>::new(CMD_QUEUE_CAPACITY);
     let mut slots = Vec::with_capacity(BRIDGE_CAPACITY);
@@ -107,16 +147,23 @@ pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
             cmds: cmd_tx,
             used,
             discarded_rx: disc_rx,
+            clock: clock.clone(),
         },
         BroadcastRx {
             cmds: cmd_rx,
             slots,
             discarded_tx: disc_tx,
+            clock,
         },
     )
 }
 
 impl BroadcastTx {
+    /// The input's write timing, shared with every graph that reads it.
+    pub fn write_clock(&self) -> Arc<WriteClock> {
+        self.clock.clone()
+    }
+
     /// Register `producer` for broadcast. Returns the slot index used to
     /// remove it later, plus that slot's capture-side counters -- the
     /// caller hands these to the matching SourceMeta so the tick thread can
@@ -201,6 +248,7 @@ impl BroadcastRx {
     /// reserves via one CAS per slot and never blocks.
     #[inline]
     pub fn broadcast(&mut self, samples: &[f32]) {
+        self.clock.record(samples.len(), now_secs());
         for slot in self.slots.iter_mut() {
             if let Some((p, stats)) = slot {
                 let written = bulk_push_counted(p, samples, &health::CAPTURE_RING_OVERRUN_SAMPLES);

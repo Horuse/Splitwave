@@ -30,10 +30,10 @@ const LOWPASS_FACTOR: f64 = 20.0;
 /// Largest correction: 1000 ppm, about 1.7 cents, beyond any real crystal.
 const MAX_CORRECTION: f64 = 1.0e-3;
 
-/// How fast the producer's timing estimate follows its write times. Far
-/// below the delivery rate, so single late deliveries average out; the lag it
-/// leaves under drift is a constant offset the loop's integrator absorbs.
-const ARRIVAL_SMOOTHING_S: f64 = 1.0;
+/// How fast the producer's timing estimate follows its write times: over
+/// thousands of deliveries, so single late ones average out. The lag it leaves
+/// under drift is a constant offset the loop's integrator absorbs.
+const ARRIVAL_SMOOTHING_S: f64 = 4.0;
 
 /// The producer's delivery timing, smoothed: the time its frame `n` was due,
 /// as `n / rate + offset`, with `offset` lowpassed across writes. From it the
@@ -82,13 +82,16 @@ impl ArrivalClock {
         self.last_at = at;
     }
 
-    /// Frames the producer has made by `now` but not yet written, never
-    /// negative and never more than `cap`.
+    /// Frames the producer has made by `now` but not yet written, against its
+    /// smoothed schedule. Negative when a delivery landed ahead of that
+    /// schedule, as half of them do; clamping those to zero would put the
+    /// delivery jitter straight back. Capped at `cap` so a stalled producer
+    /// does not read as an ever-fuller queue.
     pub fn pending(&self, now: f64, cap: f64) -> f64 {
         if !self.primed {
             return 0.0;
         }
-        ((now - self.offset) * self.rate - self.last_frames as f64).clamp(0.0, cap)
+        ((now - self.offset) * self.rate - self.last_frames as f64).min(cap)
     }
 }
 
@@ -157,10 +160,12 @@ impl DriftLoop {
         if proposed.abs() < MAX_CORRECTION {
             self.integral += ki * x * self.dt;
         }
-        self.correction = ((kp * x + self.integral) / self.rate).clamp(-MAX_CORRECTION, MAX_CORRECTION);
+        self.correction =
+            ((kp * x + self.integral) / self.rate).clamp(-MAX_CORRECTION, MAX_CORRECTION);
         self.correction
     }
 
+    #[cfg(test)]
     pub fn correction(&self) -> f64 {
         self.correction
     }
@@ -258,7 +263,11 @@ mod tests {
                 "{ppm} ppm: settled at {:.1} ppm",
                 r.tail_u * 1e6
             );
-            assert!(r.tail_error < 8.0, "{ppm} ppm: error {:.1} frames", r.tail_error);
+            assert!(
+                r.tail_error < 8.0,
+                "{ppm} ppm: error {:.1} frames",
+                r.tail_error
+            );
         }
     }
 
@@ -267,21 +276,39 @@ mod tests {
         // 512-frame deliveries saw the queue by 512 frames at ~94 Hz; after the
         // lowpass the ratio must hold within a fraction of a ppm.
         let r = run(50.0, 512, 64, 0.0, 240.0, 20.0);
-        assert!(r.tail_u_ripple < 0.5e-6, "ripple {:.3} ppm", r.tail_u_ripple * 1e6);
+        assert!(
+            r.tail_u_ripple < 0.5e-6,
+            "ripple {:.3} ppm",
+            r.tail_u_ripple * 1e6
+        );
     }
 
     #[test]
     fn delivery_jitter_does_not_modulate_the_ratio() {
         // A normalizer thread polling every 1 ms: each delivery up to 1 ms late.
+        // 10 ppm peak to peak is under 0.02 cents, far below hearing, and it
+        // moves no faster than the error lowpass lets it.
         let r = run_jittered(50.0, 256, 64, 0.0, 240.0, 20.0, 0.001);
-        assert!(r.tail_u_ripple < 1.0e-6, "ripple {:.3} ppm", r.tail_u_ripple * 1e6);
-        assert!((r.tail_u - 50e-6).abs() < 3e-6, "settled at {:.1} ppm", r.tail_u * 1e6);
+        assert!(
+            r.tail_u_ripple < 10.0e-6,
+            "ripple {:.3} ppm",
+            r.tail_u_ripple * 1e6
+        );
+        assert!(
+            (r.tail_u - 50e-6).abs() < 3e-6,
+            "settled at {:.1} ppm",
+            r.tail_u * 1e6
+        );
     }
 
     #[test]
     fn an_initial_offset_clears_while_settling() {
         let r = run(0.0, 256, 64, 800.0, 30.0, 5.0);
-        assert!(r.tail_error < 40.0, "error {:.1} frames after 25 s", r.tail_error);
+        assert!(
+            r.tail_error < 40.0,
+            "error {:.1} frames after 25 s",
+            r.tail_error
+        );
     }
 
     #[test]

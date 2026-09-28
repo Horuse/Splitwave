@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use rtrb::{Consumer, Producer};
+use rtrb::Producer;
 use tauri::AppHandle;
 use tracing::{info, warn};
 
@@ -26,9 +26,10 @@ use crate::audio::effects::{
 use crate::audio::graph::{
     EffectSpec, InputSpec, NetCodec, OutputSpec, RecordingFormat, ValidGraph,
 };
-use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats};
+use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats, WriteClock};
 use crate::error::{AppError, AppResult};
 
+mod asrc;
 mod cue;
 mod cushion;
 pub use cue::play as play_cue;
@@ -843,8 +844,7 @@ impl ActivePipeline {
         self.effect_registry.begin_reconcile();
         // Ring consumers stashed by an owner build, keyed by the consuming
         // output then node id; the consumer's build reads them as ring-sources.
-        let mut pending_cuts: HashMap<String, HashMap<String, (Consumer<f32>, u32, usize)>> =
-            HashMap::new();
+        let mut pending_cuts: HashMap<String, HashMap<String, dag::CutLeaf>> = HashMap::new();
         for out in dag::owner_order(graph) {
             if !output_runtime.contains_key(&out.id) {
                 continue;
@@ -903,11 +903,12 @@ impl ActivePipeline {
                 for o2 in cons {
                     let (prod, consumer) =
                         rtrb::RingBuffer::<f32>::new(ring_capacity_frames(output_sr) * width);
-                    built.graph.attach_tap(idx, prod);
+                    let clock = Arc::new(WriteClock::default());
+                    built.graph.attach_tap(idx, prod, clock.clone());
                     pending_cuts
                         .entry(o2.clone())
                         .or_default()
-                        .insert(node.clone(), (consumer, output_sr, width));
+                        .insert(node.clone(), (consumer, output_sr, width, clock));
                 }
             }
             for (inp_id, prod) in my_pairs {
@@ -1093,6 +1094,13 @@ impl ActivePipeline {
                         drain,
                     },
                 );
+            }
+        }
+
+        for (input_id, state) in &self.inputs {
+            let clock = state.bridge_tx.write_clock();
+            for og in output_graphs.values_mut().chain(monitor_graph.as_mut()) {
+                og.attach_write_clock(input_id, &clock);
             }
         }
 

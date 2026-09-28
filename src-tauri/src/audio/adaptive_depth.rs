@@ -16,7 +16,15 @@
 //! (slow release), so a single spike cannot pin the latency high and a
 //! repeating one is not forgotten between repeats.
 //!
-//! Everything is fixed-size: `observe` and `underrun` are RT-safe.
+//! Running dry is not always lateness. A source that goes quiet (a paused
+//! app, a sender with nothing to say) leaves the queue empty too, but that
+//! audio does not exist and never arrives. `OutageJudge` tells the two apart
+//! by what follows: late audio is still owed by a clocked source, so it turns
+//! up as delivery running ahead of real time once the flow resumes; silence
+//! is followed by delivery at the ordinary rate. Only what was caught up is
+//! lateness worth buffering against.
+//!
+//! Everything is fixed-size: every method here is RT-safe.
 
 const BUCKETS: usize = 64;
 /// First non-zero bucket edge in frames; each next edge is 20% wider.
@@ -110,6 +118,15 @@ impl DepthEstimator {
         self.low = usize::MAX;
     }
 
+    /// Drops the window in progress. The queue draining because its source
+    /// went quiet is not jitter, and a window holding that drain would read
+    /// it as one.
+    pub fn discard_window(&mut self) {
+        self.blocks = 0;
+        self.sum = 0.0;
+        self.low = usize::MAX;
+    }
+
     /// Headroom to keep above one block at the queue's mean level.
     pub fn depth(&self) -> usize {
         let measured = self.measured_depth();
@@ -141,6 +158,267 @@ impl DepthEstimator {
         self.total *= self.forget;
         self.weights[bucket(dip)] += weight;
         self.total += weight;
+    }
+}
+
+/// Watch this long after the flow resumes before ruling: a capture device
+/// catches up on late callbacks within a few periods, a network within a
+/// burst, and the envelope needs a few deliveries to settle.
+const JUDGE_HORIZON_MS: f64 = 100.0;
+/// Differences this small are rounding in the envelope, not lateness.
+const JUDGE_TOLERANCE_MS: f64 = 2.0;
+
+enum Judgement {
+    Clear,
+    /// The consumer is going without audio.
+    Missing {
+        missed: usize,
+        peak_before: i64,
+    },
+    /// Flow is back; find where its envelope settles.
+    Watching {
+        missed: usize,
+        peak_before: i64,
+        peak_after: i64,
+        watched: usize,
+    },
+}
+
+/// Decides how much of a gap in delivery was late audio rather than no audio.
+///
+/// It keeps the running balance of frames delivered minus frames of time
+/// elapsed. For a clocked source that balance saws within a fixed band, and
+/// its upper envelope (the peak right after each delivery) stays put. Silence
+/// removes audio for good, so after it the envelope settles lower by the
+/// silence's length; late audio is still delivered, so the envelope comes back
+/// to where it was. Comparing the envelopes on both sides of a gap separates
+/// the two exactly, whatever size the source's deliveries are.
+pub struct OutageJudge {
+    state: Judgement,
+    horizon: usize,
+    tolerance: usize,
+    balance: i64,
+    peak: i64,
+}
+
+impl OutageJudge {
+    pub fn new(sample_rate: u32) -> Self {
+        let frames = |ms: f64| (sample_rate as f64 * ms / 1000.0).round() as usize;
+        Self {
+            state: Judgement::Clear,
+            horizon: frames(JUDGE_HORIZON_MS),
+            tolerance: frames(JUDGE_TOLERANCE_MS),
+            balance: 0,
+            peak: 0,
+        }
+    }
+
+    /// The consumer came up `frames` short: a gap starts (or grows).
+    pub fn missing(&mut self, frames: usize) {
+        self.state = match self.state {
+            Judgement::Clear => Judgement::Missing {
+                missed: frames,
+                peak_before: self.peak,
+            },
+            Judgement::Missing {
+                missed,
+                peak_before,
+            }
+            | Judgement::Watching {
+                missed,
+                peak_before,
+                ..
+            } => Judgement::Missing {
+                missed: missed + frames,
+                peak_before,
+            },
+        };
+    }
+
+    /// Once per block: `arrived` frames were delivered while `elapsed` frames
+    /// of time passed. When a gap's verdict is in, returns how many of the
+    /// frames the consumer went without had really been late (and were later
+    /// delivered), 0 when the source had simply gone quiet.
+    pub fn delivered(&mut self, arrived: usize, elapsed: usize) -> Option<usize> {
+        self.balance += arrived as i64 - elapsed as i64;
+        match &mut self.state {
+            Judgement::Clear => {
+                // The envelope follows the peaks, sinking slowly between them
+                // so it can track a capture clock drifting against ours.
+                self.peak = self.balance.max(self.peak - (elapsed / 64) as i64);
+                None
+            }
+            Judgement::Missing {
+                missed,
+                peak_before,
+            } => {
+                if arrived == 0 {
+                    *missed += elapsed;
+                } else {
+                    self.state = Judgement::Watching {
+                        missed: *missed,
+                        peak_before: *peak_before,
+                        peak_after: self.balance,
+                        watched: elapsed,
+                    };
+                }
+                None
+            }
+            Judgement::Watching {
+                missed,
+                peak_before,
+                peak_after,
+                watched,
+            } => {
+                *peak_after = (*peak_after).max(self.balance);
+                *watched += elapsed;
+                if *watched < self.horizon {
+                    return None;
+                }
+                let gone_for_good = (*peak_before - *peak_after).max(0) as usize;
+                let late = missed.saturating_sub(gone_for_good);
+                let verdict = if late > self.tolerance { late } else { 0 };
+                self.peak = *peak_after;
+                self.state = Judgement::Clear;
+                Some(verdict)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod judge_tests {
+    use super::*;
+
+    const SR: u32 = 48_000;
+    const BLOCK: usize = 64;
+
+    /// Drives a judge with a source delivering `burst` frames every
+    /// `burst` frames of time, silent in `quiet`, and holding back (then
+    /// catching up) in `late`. Returns every verdict.
+    fn run(burst: usize, seconds: f64, quiet: &[(f64, f64)], late: &[(f64, f64)]) -> Vec<usize> {
+        run_from(burst, seconds, quiet, late, 4 * burst)
+    }
+
+    /// `queue` is what the consumer holds when the run starts.
+    fn run_from(
+        burst: usize,
+        seconds: f64,
+        quiet: &[(f64, f64)],
+        late: &[(f64, f64)],
+        mut queue: usize,
+    ) -> Vec<usize> {
+        let mut j = OutageJudge::new(SR);
+        let mut verdicts = Vec::new();
+        let (mut t, mut next, mut owed_back) = (0usize, 0usize, 0usize);
+        let mut refilling = false;
+        let end = (seconds * SR as f64) as usize;
+        let secs = |f: usize| f as f64 / SR as f64;
+        while t < end {
+            let mut arrived = 0;
+            while next <= t {
+                let s = secs(next);
+                if quiet.iter().any(|&(a, b)| s >= a && s < b) {
+                    // Nothing exists to deliver.
+                } else if late.iter().any(|&(a, b)| s >= a && s < b) {
+                    owed_back += burst;
+                } else {
+                    arrived += burst + owed_back;
+                    owed_back = 0;
+                }
+                next += burst;
+            }
+            queue += arrived;
+            if let Some(v) = j.delivered(arrived, BLOCK) {
+                verdicts.push(v);
+            }
+            // Like a real consumer, one that ran dry refills a reserve of two
+            // deliveries before it plays on.
+            if refilling && queue >= 2 * burst {
+                refilling = false;
+            }
+            if !refilling {
+                if queue < BLOCK {
+                    j.missing(BLOCK - queue);
+                    queue = 0;
+                    refilling = true;
+                } else {
+                    queue -= BLOCK;
+                }
+            }
+            t += BLOCK;
+        }
+        verdicts
+    }
+
+    #[test]
+    fn a_steady_source_is_never_judged() {
+        assert!(run(480, 10.0, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_source_that_went_quiet_was_not_late() {
+        let verdicts = run(480, 20.0, &[(2.0, 7.0), (10.0, 10.08), (12.0, 12.3)], &[]);
+        assert_eq!(verdicts.len(), 3, "each gap judged once: {verdicts:?}");
+        assert!(
+            verdicts.iter().all(|&v| v == 0),
+            "silence charged: {verdicts:?}"
+        );
+    }
+
+    #[test]
+    fn late_audio_that_catches_up_is_charged() {
+        // 50 ms of deliveries held back, then released together, into a
+        // consumer holding nothing in reserve: all of it went unplayed.
+        let verdicts = run_from(480, 10.0, &[], &[(3.0, 3.05)], 0);
+        // A consumer with no reserve also runs dry once at startup, between
+        // the first two deliveries; that gap is rightly not lateness.
+        assert!(
+            verdicts[..verdicts.len() - 1].iter().all(|&v| v == 0),
+            "{verdicts:?}"
+        );
+        let late = *verdicts.last().expect("the held-back delivery was judged");
+        assert!(
+            (1_900..=2_900).contains(&late),
+            "50 ms late should charge ~2400 frames: {late}"
+        );
+        // With a reserve, only what the reserve failed to cover is charged.
+        let covered = *run_from(480, 10.0, &[], &[(3.0, 3.05)], 1_920)
+            .last()
+            .expect("judged");
+        assert!(covered < late && covered > 0, "{covered} vs {late}");
+    }
+
+    #[test]
+    fn a_quiet_spell_ending_in_late_audio_charges_only_the_lateness() {
+        // 2 s quiet, then the first 30 ms of the resumed flow arrive late.
+        let verdicts = run(480, 10.0, &[(2.0, 4.0)], &[(4.0, 4.03)]);
+        assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+        assert!(verdicts[0] < 2_400, "charged the silence: {}", verdicts[0]);
+    }
+
+    #[test]
+    fn talk_spurts_with_gaps_are_never_charged() {
+        // DTX-like: 300 ms of audio, 200 ms of nothing, for a minute.
+        let quiet: Vec<(f64, f64)> = (0..120)
+            .map(|k| (k as f64 * 0.5 + 0.3, k as f64 * 0.5 + 0.5))
+            .collect();
+        let verdicts = run(960, 60.0, &quiet, &[]);
+        assert!(!verdicts.is_empty());
+        assert!(verdicts.iter().all(|&v| v == 0), "{verdicts:?}");
+    }
+
+    #[test]
+    fn judging_never_allocates() {
+        let mut j = OutageJudge::new(SR);
+        crate::audio::rt_guard::assert_no_alloc("judge", || {
+            for i in 0..10_000 {
+                if i % 100 == 0 {
+                    j.missing(64);
+                }
+                std::hint::black_box(j.delivered(if i % 7 == 0 { 480 } else { 0 }, 64));
+            }
+        });
     }
 }
 

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::adaptive_depth::DepthEstimator;
+use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
 use crate::audio::health;
 use crate::audio::resample::MultiResamplerOut;
 use crate::audio::streams::bulk_push_counted;
@@ -46,9 +46,6 @@ const TARGET_SAFETY: usize = 240; // ~5 ms
 const JITTER_WINDOW_MS: f64 = 500.0;
 /// A backlog jump beyond this is a re-prime refill, not drift.
 const TARGET_EVENT_MAX: usize = 4_800; // ~100 ms
-/// A gap longer than this is the sender pausing, not network jitter, and
-/// must not leave the buffer deep for the minute that follows.
-const OUTAGE_MAX: usize = 48_000; // 1 s
 
 /// Proportional gain: backlog error (samples) -> ratio correction. A varying
 /// resample ratio IS pitch modulation, so the loop stays far slower and far
@@ -191,6 +188,8 @@ pub struct PlaybackTap {
     last_total: u64,
     idle_blocks: u32,
     idle_dead_blocks: u32,
+    /// Samples delivered since the previous block.
+    arrived: usize,
     // PLC: the last real output block, and whether we're currently in a gap.
     // On a network underrun we fade this out (instead of a hard silence step),
     // and fade the real audio back in on recovery.
@@ -233,6 +232,7 @@ impl PlaybackTap {
             popped: 0,
             last_total: 0,
             idle_blocks: 0,
+            arrived: 0,
             idle_dead_blocks: (IDLE_DEAD_MS * rate as usize / 1000 / block_frames.max(1)).max(2)
                 as u32,
             last_block: vec![0.0; block_frames],
@@ -259,6 +259,7 @@ impl PlaybackTap {
     /// after `snap_backlog` is taken.
     fn track_liveness(&mut self) {
         let total = self.popped + self.snap_backlog as u64;
+        self.arrived = total.saturating_sub(self.last_total) as usize;
         if total != self.last_total {
             self.last_total = total;
             self.idle_blocks = 0;
@@ -626,7 +627,13 @@ pub struct ChannelReceiver {
     block_frames: usize,
     // Adaptive-jitter state; only the single audio thread touches these.
     depth: std::cell::RefCell<DepthEstimator>,
-    starve_blocks: Cell<u32>,
+    judge: std::cell::RefCell<OutageJudge>,
+    /// Source samples one block consumes.
+    need: usize,
+    starving: Cell<bool>,
+    /// Fill a refilling source must reach before it plays: the target plus
+    /// the arrival saw's dip, since priming ends right after a packet.
+    start: Cell<usize>,
     ever_primed: Cell<bool>,
     avg_backlog: Cell<f64>,
     // Last emitted mix, held when the tap map is briefly locked for registration
@@ -641,6 +648,8 @@ pub struct ChannelReceiver {
 struct GroupPlan {
     id: u64,
     min_backlog: usize,
+    /// Least any channel of the source received since the last block.
+    arrived: usize,
     need: usize,
     primed: bool,
     trim: usize,
@@ -665,7 +674,10 @@ impl ChannelReceiver {
                 JITTER_WINDOW_MS,
                 TARGET_INIT,
             )),
-            starve_blocks: Cell::new(0),
+            judge: std::cell::RefCell::new(OutageJudge::new(SR)),
+            need: need.max(1),
+            starving: Cell::new(false),
+            start: Cell::new(TARGET_INIT),
             ever_primed: Cell::new(false),
             avg_backlog: Cell::new(-1.0),
             last_mix: std::cell::RefCell::new(vec![0.0; handle.block_frames * 2]),
@@ -709,12 +721,14 @@ impl ChannelReceiver {
             match plans.iter_mut().find(|p| p.id == tap.group) {
                 Some(p) => {
                     p.min_backlog = p.min_backlog.min(backlog);
+                    p.arrived = p.arrived.min(tap.arrived);
                     p.need = p.need.max(need);
                     p.primed &= tap.primed;
                 }
                 None => plans.push(GroupPlan {
                     id: tap.group,
                     min_backlog: backlog,
+                    arrived: tap.arrived,
                     need,
                     primed: tap.primed,
                     trim: 0,
@@ -731,7 +745,7 @@ impl ChannelReceiver {
                 // channel whose packet for this tick has already landed leads
                 // its siblings by exactly that packet, and that lead *is* the
                 // alignment.
-                if p.min_backlog < target.max(p.need) {
+                if p.min_backlog < self.start.get().max(p.need) {
                     p.hold = true;
                     continue;
                 }
@@ -770,7 +784,13 @@ impl ChannelReceiver {
             // silence is part of the outage too.
             let starving = live.is_some_and(|p| p.min_backlog < p.need)
                 || (self.ever_primed.get() && (plans.is_empty() || plans.iter().any(|p| p.hold)));
-            self.account(starving, live.map(|p| (p.min_backlog, p.need)));
+            // What the emptiest source delivered, holding or not: the judge
+            // needs the flow while a gap refills, too.
+            let arrived = plans
+                .iter()
+                .min_by_key(|p| p.min_backlog)
+                .map_or(0, |p| p.arrived);
+            self.account(starving, live.map(|p| (p.min_backlog, p.need)), arrived);
             if let Some(p) = live {
                 self.steer(p.min_backlog);
             }
@@ -819,26 +839,35 @@ impl ChannelReceiver {
     }
 
     /// Adaptive buffer depth. `live` is the emptiest source that is actually
-    /// playing, absent while every source is refilling.
-    fn account(&self, starving: bool, live: Option<(usize, usize)>) {
+    /// playing, absent while every source is refilling; `arrived` is what the
+    /// emptiest source delivered this block.
+    ///
+    /// Running dry deepens the buffer only by audio that turns out to have
+    /// been late: a sender that goes quiet (a paused peer, Opus DTX) sends
+    /// nothing because there is nothing, and waiting longer would not help.
+    fn account(&self, starving: bool, live: Option<(usize, usize)>, arrived: usize) {
+        let mut depth = self.depth.borrow_mut();
+        let mut judge = self.judge.borrow_mut();
+        if starving && !self.starving.get() {
+            judge.missing(self.need);
+            // The window holds the drain, which says nothing about jitter.
+            depth.discard_window();
+        }
+        self.starving.set(starving);
+        if let Some(late) = judge.delivered(arrived, self.need) {
+            if late > 0 {
+                depth.underrun(late);
+            }
+        }
         if starving {
-            self.starve_blocks.set(self.starve_blocks.get() + 1);
             return;
         }
         let Some((backlog, need)) = live else { return };
-        let mut depth = self.depth.borrow_mut();
-        // Charged when the outage ends, as one event sized by everything the
-        // source failed to deliver: a buffer deeper by that much is precisely
-        // the buffer that would have played straight through it.
-        let missed = self.starve_blocks.replace(0) as usize * need;
-        if missed > 0 && missed <= OUTAGE_MAX {
-            depth.underrun(missed);
-        }
-        {
-            depth.observe(backlog);
-            let target = (need + depth.depth() + TARGET_SAFETY).clamp(TARGET_MIN, TARGET_MAX);
-            self.target.store(target as u32, Ordering::Relaxed);
-        }
+        depth.observe(backlog);
+        let dip = depth.depth();
+        let target = (need + dip + TARGET_SAFETY).clamp(TARGET_MIN, TARGET_MAX);
+        self.target.store(target as u32, Ordering::Relaxed);
+        self.start.set((target + dip).min(TARGET_MAX));
     }
 
     /// Drift ratio from the current backlog.
@@ -942,6 +971,22 @@ mod tests {
         jitter: impl Fn(u32) -> f64,
         outage: Option<(f64, f64)>,
     ) -> NetRun {
+        net_sim_with(block, seconds, settle, jitter, outage, &[])
+    }
+
+    /// Steady packets, except nothing at all is sent inside `quiet`.
+    fn net_sim_quiet(block: usize, seconds: f64, settle: f64, quiet: &[(f64, f64)]) -> NetRun {
+        net_sim_with(block, seconds, settle, |_| 0.0, None, quiet)
+    }
+
+    fn net_sim_with(
+        block: usize,
+        seconds: f64,
+        settle: f64,
+        jitter: impl Fn(u32) -> f64,
+        outage: Option<(f64, f64)>,
+        quiet: &[(f64, f64)],
+    ) -> NetRun {
         const PACKET: usize = 960;
         let reg = FanoutRegistry::default();
         let handle = reg.register_consumer(48_000, block, true);
@@ -962,7 +1007,8 @@ mod tests {
             let due = k as f64 * period + jitter(k);
             if due <= t {
                 let sent = k as f64 * period;
-                let dropped = outage.is_some_and(|(a, b)| sent >= a && sent < b);
+                let dropped = outage.is_some_and(|(a, b)| sent >= a && sent < b)
+                    || quiet.iter().any(|&(a, b)| sent >= a && sent < b);
                 if !dropped {
                     broadcast_push(&bc, k as u16, 1, &packet);
                 }
@@ -1021,12 +1067,37 @@ mod tests {
     }
 
     #[test]
-    fn an_outage_deepens_the_buffer_at_once() {
-        let r = net_sim(64, 20.0, 5.0, |_| 0.0, Some((8.0, 8.15)));
+    fn a_network_stall_deepens_the_buffer_at_once() {
+        // Packets sent during a 150 ms stall reach us together when it clears.
+        let stall = |k: u32| {
+            let sent = k as f64 * 0.02;
+            if (8.0..8.15).contains(&sent) {
+                8.15 - sent
+            } else {
+                0.0
+            }
+        };
+        let before = net_sim(64, 7.9, 5.0, stall, None).target;
+        let r = net_sim(64, 20.0, 5.0, stall, Some((8.15, 8.15)));
         assert!(
-            r.target_after_outage >= 7_200,
-            "150 ms outage must buy >= 150 ms: {}",
+            r.target_after_outage >= before + 5_000,
+            "150 ms of late audio must buy most of 150 ms: {before} -> {}",
             r.target_after_outage
+        );
+    }
+
+    #[test]
+    fn a_quiet_sender_between_phrases_keeps_the_buffer_shallow() {
+        // DTX-like: 400 ms of speech, 250 ms of nothing sent, for a minute.
+        let quiet: Vec<(f64, f64)> = (0..90)
+            .map(|k| (5.0 + k as f64 * 0.65 + 0.4, 5.0 + k as f64 * 0.65 + 0.65))
+            .collect();
+        let steady = net_sim(64, 65.0, 10.0, |_| 0.0, None).target;
+        let r = net_sim_quiet(64, 65.0, 10.0, &quiet);
+        assert!(
+            r.target <= steady + 480,
+            "silence between phrases deepened the buffer: {steady} -> {}",
+            r.target
         );
     }
 

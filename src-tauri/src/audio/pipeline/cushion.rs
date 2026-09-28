@@ -7,8 +7,12 @@
 //! startup backlog) or stretching a few in (capture clock slower), sparsely
 //! and with crossfades, so the correction is inaudible and never adds latency
 //! of its own.
+//!
+//! Running dry deepens the queue only by the audio that turns out to have
+//! been late (`OutageJudge`). A source that goes quiet -- a paused app, a
+//! muted device -- leaves the depth where it was.
 
-use crate::audio::adaptive_depth::DepthEstimator;
+use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
 
 /// Correction the source should apply before reading its next block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +38,10 @@ const SAFETY_MS: f64 = 1.0;
 /// One splice per this much audio at most, so time is never compressed or
 /// stretched by more than ~6% while a correction runs.
 const SPLICE_EVERY_MS: f64 = 21.0;
+/// Ceiling on the measured headroom. Jitter beyond this is a broken capture,
+/// and a deeper target would outgrow the one-second input ring and never
+/// finish priming.
+const MAX_DEPTH_MS: f64 = 250.0;
 
 pub(super) struct Cushion {
     need: usize,
@@ -47,8 +55,8 @@ pub(super) struct Cushion {
     cooldown: usize,
     cooldown_blocks: usize,
     primed: bool,
-    /// Frames missed since the queue last ran dry, while it refills.
-    outage: Option<usize>,
+    judge: OutageJudge,
+    max_depth: usize,
 }
 
 impl Cushion {
@@ -66,7 +74,8 @@ impl Cushion {
             cooldown: 0,
             cooldown_blocks: (frames(SPLICE_EVERY_MS) / need.max(1)).max(1),
             primed: false,
-            outage: None,
+            judge: OutageJudge::new(sample_rate),
+            max_depth: frames(MAX_DEPTH_MS),
         }
     }
 
@@ -80,32 +89,42 @@ impl Cushion {
 
     /// Mean queue depth to hold: the floor plus the measured dip.
     pub(super) fn target(&self) -> usize {
-        self.floor() + self.depth.depth()
+        self.floor() + self.depth.depth().min(self.max_depth)
+    }
+
+    /// Once per block, before anything else: the frames the source delivered
+    /// since the last block. A gap's verdict lands here, once the flow after
+    /// it shows whether the missing audio was late or never existed.
+    pub(super) fn arrived(&mut self, frames: usize) {
+        if let Some(late) = self.judge.delivered(frames, self.need) {
+            if late > 0 {
+                self.depth.underrun(late);
+            }
+        }
+    }
+
+    /// Queue to start playing from. Priming ends right after a delivery, at
+    /// the top of the saw, so it keeps the mean target plus the saw's dip:
+    /// what the queue will have drained by the time the next delivery lands.
+    fn start_level(&self) -> usize {
+        self.target() + self.depth.depth().min(self.max_depth)
     }
 
     /// Before the source's first read, and again after it ran dry. `None`
     /// while the queue is still filling: play silence for this block. Once it
-    /// reaches the target, everything beyond it is backlog nobody has heard,
-    /// so it can go at once: returns the frames to discard.
-    ///
-    /// A refill after running dry is one outage, however many blocks it
-    /// spans; it is charged to the depth once, sized by everything missed.
+    /// reaches the start level, everything beyond it is backlog nobody has
+    /// heard, so it can go at once: returns the frames to discard.
     pub(super) fn prime(&mut self, queued: usize) -> Option<usize> {
-        if queued < self.target() {
-            if let Some(missed) = self.outage.as_mut() {
-                *missed += self.need;
-            }
+        let start = self.start_level();
+        if queued < start {
             return None;
-        }
-        if let Some(missed) = self.outage.take() {
-            self.depth.underrun(missed);
         }
         self.primed = true;
         self.owed = 0;
         self.sum = 0.0;
         self.blocks = 0;
         self.low = usize::MAX;
-        Some(queued.saturating_sub(self.target()))
+        Some(queued - start)
     }
 
     pub(super) fn is_primed(&self) -> bool {
@@ -116,7 +135,9 @@ impl Cushion {
     /// on, rather than limp along a starved queue one click per block.
     pub(super) fn underrun(&mut self, missing: usize) {
         self.primed = false;
-        self.outage = Some(self.outage.unwrap_or(0) + missing);
+        self.judge.missing(missing);
+        // The window holds the drain, which says nothing about jitter.
+        self.depth.discard_window();
     }
 
     /// Asymmetric on purpose. Running short is an audible dropout, so any
@@ -204,6 +225,31 @@ mod tests {
         seconds: f64,
         settle_s: f64,
     ) -> Run {
+        simulate_with_quiet(
+            block,
+            burst,
+            capture_ppm,
+            jitter,
+            initial_backlog,
+            seconds,
+            settle_s,
+            &[],
+        )
+    }
+
+    /// As `simulate`, with spans where the source delivers nothing at all
+    /// (its audio does not exist, as with a paused app).
+    #[allow(clippy::too_many_arguments)]
+    fn simulate_with_quiet(
+        block: usize,
+        burst: usize,
+        capture_ppm: f64,
+        jitter: f64,
+        initial_backlog: usize,
+        seconds: f64,
+        settle_s: f64,
+        quiet: &[(f64, f64)],
+    ) -> Run {
         let mut c = Cushion::new(block, SR);
         let out_period = block as f64 / SR as f64;
         let in_period = burst as f64 / (SR as f64 * (1.0 + capture_ppm * 1e-6));
@@ -219,9 +265,13 @@ mod tests {
             max_queued: 0,
         };
         let mut samples = 0usize;
+        let mut arrived = 0usize;
         while t_out < seconds {
             if next_in + late <= t_out {
-                queued += burst;
+                if !quiet.iter().any(|&(a, b)| next_in >= a && next_in < b) {
+                    queued += burst;
+                    arrived += burst;
+                }
                 next_in += in_period;
                 seed ^= seed << 13;
                 seed ^= seed >> 17;
@@ -229,6 +279,7 @@ mod tests {
                 late = jitter * in_period * (seed % 1000) as f64 / 1000.0;
                 continue;
             }
+            c.arrived(std::mem::take(&mut arrived));
             if !c.is_primed() {
                 match c.prime(queued) {
                     Some(excess) => queued -= excess,
@@ -250,7 +301,10 @@ mod tests {
                 Adjust::None => {}
             }
             if queued < block {
-                if t_out > settle_s {
+                let quiet_now = quiet
+                    .iter()
+                    .any(|&(a, b)| t_out >= a - 0.05 && t_out < b + 0.05);
+                if t_out > settle_s && !quiet_now {
                     run.late_underruns += 1;
                 }
                 c.underrun(block - queued);
@@ -275,7 +329,7 @@ mod tests {
         assert_eq!(c.prime(10), None, "still filling");
         assert!(!c.is_primed());
         let excess = c.prime(20_000).expect("primed");
-        assert_eq!(20_000 - excess, c.target());
+        assert_eq!(20_000 - excess, c.start_level());
         assert!(c.is_primed());
     }
 
@@ -331,22 +385,96 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_run_of_empty_blocks_is_one_outage() {
-        let mut c = Cushion::new(32, SR);
-        c.prime(c.target()).expect("primed");
-        let before = c.target();
-        c.underrun(32);
-        // 20 ms of silence while the capture refills.
-        for _ in 0..30 {
-            assert_eq!(c.prime(0), None);
+    /// A second of ordinary flow (`burst` frames every `burst` frames of
+    /// time), then `gap` frames of time with nothing delivered, then
+    /// `catch_up` extra frames on the first delivery after it, then ordinary
+    /// flow until the verdict is in. The consumer runs dry right as the gap
+    /// starts, the worst case.
+    fn gap_then(c: &mut Cushion, need: usize, burst: usize, gap: usize, catch_up: usize) {
+        let flow = |c: &mut Cushion, frames: usize, first_extra: usize| {
+            let (mut t, mut next, mut extra) = (0, 0, first_extra);
+            while t < frames {
+                let mut arrived = 0;
+                while next <= t {
+                    arrived += burst + std::mem::take(&mut extra);
+                    next += burst;
+                }
+                c.arrived(arrived);
+                t += need;
+            }
+        };
+        flow(c, SR as usize, 0);
+        c.underrun(need);
+        for _ in 0..gap / need {
+            c.arrived(0);
         }
-        let excess = c.prime(100_000).expect("refilled");
+        flow(c, SR as usize, catch_up);
+    }
+
+    #[test]
+    fn late_audio_deepens_the_queue_once_by_what_was_late() {
+        let mut c = Cushion::new(32, SR);
+        c.prime(c.start_level()).expect("primed");
+        let before = c.target();
+        // 20 ms held back, then delivered all at once with the next burst.
+        gap_then(&mut c, 32, 960, 960, 960);
         let grown = c.target() - before;
-        let missed = 32 + 30 * 32;
-        assert!(grown >= missed, "depth must cover the outage: +{grown}");
-        assert!(grown < 2 * missed, "one outage, not thirty: +{grown}");
-        assert_eq!(100_000 - excess, c.target());
+        assert!(grown >= 900, "depth must cover the lateness: +{grown}");
+        assert!(grown < 2 * 1_920, "one outage, not thirty: +{grown}");
+    }
+
+    #[test]
+    fn a_source_going_quiet_is_not_charged_as_jitter() {
+        let mut c = Cushion::new(64, SR);
+        c.prime(c.start_level()).expect("primed");
+        let before = c.target();
+        // Five seconds of a paused app, then it plays on at the ordinary rate.
+        gap_then(&mut c, 64, 480, 5 * SR as usize, 0);
+        assert_eq!(c.target(), before, "a pause left the queue deeper");
+        // And a short quiet spell between sounds, the same.
+        gap_then(&mut c, 64, 480, 384, 0);
+        assert_eq!(c.target(), before, "a 8 ms gap left the queue deeper");
+    }
+
+    #[test]
+    fn the_target_always_fits_the_input_ring() {
+        let mut c = Cushion::new(64, SR);
+        for _ in 0..50 {
+            // Huge lateness, all caught up: the worst a capture can report.
+            gap_then(&mut c, 64, 480, 320_000, 320_000);
+        }
+        assert!(c.target() < SR as usize / 2, "target {} frames", c.target());
+    }
+
+    #[test]
+    fn an_app_that_plays_and_pauses_keeps_capture_latency() {
+        // Sounds of 200 ms with 60-400 ms of nothing between them, for two
+        // minutes: none of that silence may turn into queue depth.
+        let quiet: Vec<(f64, f64)> = (0..240)
+            .map(|k| {
+                let start = k as f64 * 0.5 + 0.2;
+                (start, start + 0.06 + (k % 7) as f64 * 0.05)
+            })
+            .collect();
+        let steady = simulate(64, 480, 0.0, 0.0, 0, 120.0, 10.0);
+        let r = simulate_with_quiet(64, 480, 0.0, 0.0, 0, 120.0, 10.0, &quiet);
+        assert_eq!(r.late_underruns, 0, "underran while the app was playing");
+        assert!(
+            r.max_queued <= steady.max_queued + 64,
+            "pauses deepened the queue: {} vs {} frames",
+            r.max_queued,
+            steady.max_queued
+        );
+    }
+
+    #[test]
+    fn jitter_still_buys_headroom_between_pauses() {
+        // A jittery capture that also pauses: the jitter is still measured.
+        let quiet: Vec<(f64, f64)> = (0..60)
+            .map(|k| (k as f64 * 2.0 + 1.0, k as f64 * 2.0 + 1.3))
+            .collect();
+        let r = simulate_with_quiet(64, 480, 0.0, 0.8, 0, 120.0, 30.0, &quiet);
+        assert_eq!(r.late_underruns, 0);
     }
 
     #[test]

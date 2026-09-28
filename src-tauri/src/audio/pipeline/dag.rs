@@ -280,6 +280,9 @@ struct SourceState {
     cushion: Option<Cushion>,
     /// Smoothed frames left queued after each read: this source's latency.
     queue_avg: f64,
+    /// Frames queued when the previous block finished; what the queue holds
+    /// beyond it at the next block is what the source delivered in between.
+    queued_after: usize,
     /// >STALL_THRESHOLD since last pop => zero-fill and stop waiting on this source.
     last_pop_at: Instant,
     volume: Arc<AtomicU32>,
@@ -420,7 +423,8 @@ impl SourceState {
     }
 
     fn publish_queue(&mut self) {
-        let queued = self.queued_frames() as f64;
+        self.queued_after = self.queued_frames();
+        let queued = self.queued_after as f64;
         self.queue_avg += (queued - self.queue_avg) * 0.02;
         self.stats
             .queue_frames
@@ -435,6 +439,9 @@ impl SourceState {
         };
         let queued = (self.consumer.slots() + self.input_staging.len() + self.out_pending.len())
             / self.channels;
+        // Taken before any splice or discard this block, against where the
+        // previous block left the queue: only the source moves it in between.
+        c.arrived(queued.saturating_sub(self.queued_after));
         if !c.is_primed() {
             match c.prime(queued) {
                 None => return false,
@@ -1419,6 +1426,7 @@ pub(super) fn build_output_graph(
                 cushion: source_realtime
                     .then(|| Cushion::new(input_frames_per_block as usize, input_sr)),
                 queue_avg: 0.0,
+                queued_after: 0,
                 last_pop_at: Instant::now(),
                 volume: input_volumes
                     .get(id)
@@ -1910,6 +1918,7 @@ fn ring_source(
         input_samples_per_block,
         cushion: realtime.then(|| Cushion::new(input_frames_per_block as usize, owner_sr)),
         queue_avg: 0.0,
+        queued_after: 0,
         last_pop_at: Instant::now(),
         volume: Arc::new(AtomicU32::new(0x3F80_0000)),
         paused: None,
@@ -2672,6 +2681,157 @@ pub(super) mod graph_tests {
             t_out += out_period;
         }
         (kept, stats)
+    }
+
+    /// One observation per output block of a live source whose capture goes
+    /// quiet during `gaps` (a paused app delivers nothing at all).
+    struct Tick {
+        t: f64,
+        /// Frames between the newest captured frame and the one just played;
+        /// `None` while the output is silent.
+        real_delay: Option<usize>,
+        reported_queue: usize,
+    }
+
+    fn live_capture_with_gaps(
+        block: usize,
+        burst: usize,
+        seconds: f64,
+        gaps: &[(f64, f64)],
+    ) -> Vec<Tick> {
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, true);
+        let stats = built.sources[0].stats.clone();
+        let input = producers.get_mut("m").unwrap();
+        let out_period = block as f64 / SR as f64;
+        let in_period = burst as f64 / SR as f64;
+        let (mut t_in, mut t_out, mut fed) = (in_period * 0.37, 0.0, 0usize);
+        let mut out = vec![0.0; block * 2];
+        let mut chunk = vec![0.0; burst * 2];
+        let mut ticks = Vec::new();
+        while t_out < seconds {
+            if t_in <= t_out {
+                let paused = gaps.iter().any(|&(a, b)| t_in >= a && t_in < b);
+                if !paused {
+                    // Each sample carries its own capture index (+1, so 0 is silence).
+                    for f in 0..burst {
+                        let v = (fed + f + 1) as f32;
+                        chunk[f * 2] = v;
+                        chunk[f * 2 + 1] = v;
+                    }
+                    push_all(input, &chunk);
+                    fed += burst;
+                }
+                t_in += in_period;
+                continue;
+            }
+            built.graph.process_block(&mut out);
+            let last = out[(block - 1) * 2];
+            ticks.push(Tick {
+                t: t_out,
+                real_delay: (last > 0.0).then(|| fed - last as usize),
+                reported_queue: stats.queue_frames.load(Ordering::Relaxed) as usize,
+            });
+            t_out += out_period;
+        }
+        ticks
+    }
+
+    #[test]
+    fn a_paused_app_resumes_at_low_latency_every_time() {
+        let gaps = [(10.0, 15.0), (25.0, 30.0), (40.0, 41.0)];
+        let ticks = live_capture_with_gaps(64, 480, 55.0, &gaps);
+        for (resume, until) in [(15.0, 25.0), (30.0, 40.0), (41.0, 55.0)] {
+            let window: Vec<&Tick> = ticks
+                .iter()
+                .filter(|k| k.t >= resume + 1.0 && k.t < until)
+                .collect();
+            let playing = window.iter().filter(|k| k.real_delay.is_some()).count();
+            assert!(
+                playing * 10 >= window.len() * 9,
+                "after resuming at {resume} s only {playing}/{} blocks played",
+                window.len()
+            );
+            let worst = window
+                .iter()
+                .filter_map(|k| k.real_delay)
+                .max()
+                .unwrap_or(0);
+            assert!(
+                worst < 480 + 4 * 64 + 480,
+                "resumed at {resume} s with {worst} frames of delay"
+            );
+        }
+    }
+
+    fn worst_delay(ticks: &[Tick], from: f64) -> usize {
+        ticks
+            .iter()
+            .filter(|k| k.t >= from)
+            .filter_map(|k| k.real_delay)
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn silence_between_sounds_never_becomes_latency() {
+        // An app playing 200 ms sounds with 60-360 ms of nothing between them,
+        // for two minutes: the delay must stay what a steady source gets.
+        let gaps: Vec<(f64, f64)> = (0..240)
+            .map(|k| {
+                let start = 5.0 + k as f64 * 0.5 + 0.2;
+                (start, start + 0.06 + (k % 7) as f64 * 0.05)
+            })
+            .collect();
+        let steady = live_capture_with_gaps(64, 480, 125.0, &[]);
+        let gappy = live_capture_with_gaps(64, 480, 125.0, &gaps);
+        let baseline = worst_delay(&steady, 3.0);
+        let with_gaps = worst_delay(&gappy, 3.0);
+        assert!(
+            with_gaps <= baseline + 64,
+            "silence added latency: {with_gaps} frames vs {baseline} steady"
+        );
+        // Late in the run, after a hundred pauses, it has not crept up either.
+        assert!(worst_delay(&gappy, 100.0) <= baseline + 64);
+    }
+
+    #[test]
+    fn readout_does_not_climb_across_pauses() {
+        let gaps: Vec<(f64, f64)> = (0..40).map(|k| (5.0 + k as f64, 5.4 + k as f64)).collect();
+        let ticks = live_capture_with_gaps(64, 480, 45.0, &gaps);
+        let early = ticks
+            .iter()
+            .filter(|k| (3.0..5.0).contains(&k.t))
+            .map(|k| k.reported_queue)
+            .max()
+            .unwrap();
+        let late = ticks
+            .iter()
+            .filter(|k| k.t > 40.0)
+            .map(|k| k.reported_queue)
+            .max()
+            .unwrap();
+        assert!(
+            late <= early + 64,
+            "readout crept from {early} to {late} frames"
+        );
+    }
+
+    #[test]
+    fn reported_queue_tracks_the_real_delay() {
+        let ticks = live_capture_with_gaps(64, 480, 55.0, &[(10.0, 15.0), (25.0, 30.0)]);
+        for k in ticks.iter().filter(|k| k.t > 2.0) {
+            if let Some(real) = k.real_delay {
+                assert!(
+                    k.reported_queue <= real + 480,
+                    "{:.2} s: reported {} frames queued, real delay {real}",
+                    k.t,
+                    k.reported_queue
+                );
+            }
+        }
+        let worst = ticks.iter().map(|k| k.reported_queue).max().unwrap();
+        assert!(worst < 4 * 480, "queue readout reached {worst} frames");
     }
 
     #[test]

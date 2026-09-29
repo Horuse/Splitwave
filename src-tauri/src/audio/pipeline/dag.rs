@@ -8,6 +8,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use super::asrc::Asrc;
 use super::cushion::{Adjust, Cushion, MAX_SPLICE_FRAMES};
 use super::latency::NodeTiming;
+use super::sig::MONITOR_KEY;
 use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
     MeterHandle, RuntimeEffect, WaveformHandle,
@@ -255,8 +256,8 @@ pub(super) struct SourceMeta {
     /// for ring-sources and network producers -- they don't go through a
     /// capture broadcast.
     pub input_id: Option<String>,
-    /// Owning output id (or "monitor"), the other half of the key that
-    /// disambiguates one input feeding several outputs.
+    /// Owning output id (`MONITOR_KEY` for the monitor), the other half of
+    /// the key that disambiguates one input feeding several outputs.
     pub output_id: String,
     /// Capture-side fed/dropped counters, filled in by `pipeline/mod.rs`
     /// after `BroadcastTx::add` returns them for this source's ring.
@@ -317,9 +318,31 @@ struct SourceState {
     // Per-channel taps ("chK") drawn off this source.
     handle_bufs: Vec<(String, Vec<f32>)>,
     stats: SourceStats,
+    /// Built empty, to take over the running source it replaces (its ring,
+    /// queue and resamplers) when the graph swaps in.
+    carry_over: bool,
 }
 
 impl SourceState {
+    /// Takes over `old`'s ring and everything queued or learned about it, so
+    /// the source plays on across a graph swap as if nothing happened. What
+    /// belongs to the graph (taps, stats, labels) stays this graph's own.
+    fn take_over(&mut self, old: &mut SourceState) {
+        std::mem::swap(&mut self.consumer, &mut old.consumer);
+        std::mem::swap(&mut self.resampler, &mut old.resampler);
+        std::mem::swap(&mut self.asrc, &mut old.asrc);
+        std::mem::swap(&mut self.input_staging, &mut old.input_staging);
+        std::mem::swap(&mut self.splice_tmp, &mut old.splice_tmp);
+        std::mem::swap(&mut self.out_pending, &mut old.out_pending);
+        std::mem::swap(&mut self.chunk_tmp, &mut old.chunk_tmp);
+        std::mem::swap(&mut self.cushion, &mut old.cushion);
+        self.queue_avg = old.queue_avg;
+        self.queued_after = old.queued_after;
+        self.last_pop_at = old.last_pop_at;
+        self.last_drain_gen = old.last_drain_gen;
+        self.carry_over = false;
+    }
+
     fn is_stalled(&self) -> bool {
         self.last_pop_at.elapsed() > STALL_THRESHOLD
     }
@@ -727,6 +750,11 @@ impl EffectState {
     /// buffers are split into stereo pairs, each through its own instance so
     /// per-channel filter state never bleeds across pairs.
     fn run(&mut self, frames: usize) {
+        // A carry-over placeholder whose running node never arrived.
+        if self.effects.is_empty() {
+            self.out_buf.fill(0.0);
+            return;
+        }
         let w = self.out_buf.len() / frames;
         if self.full_width || w == 2 {
             let sc = self.sidechain_buf.as_deref();
@@ -1003,7 +1031,37 @@ struct DelayLine {
     pos: usize,
 }
 
+/// Hands each delay line of `old_edges` to the edge of `new_edges` that runs
+/// between the same nodes and handles at the same delay, so the audio it holds
+/// keeps flowing instead of restarting from silence.
+fn carry_delays(
+    new_edges: &mut [IncomingEdge],
+    new_ids: &[String],
+    old_edges: &mut [IncomingEdge],
+    old_ids: &[String],
+) {
+    for e in new_edges.iter_mut() {
+        let Some(d) = e.delay.as_mut() else { continue };
+        let src = &new_ids[e.src_idx];
+        if let Some(od) = old_edges
+            .iter_mut()
+            .filter(|o| {
+                &old_ids[o.src_idx] == src
+                    && o.source_handle == e.source_handle
+                    && o.target_handle == e.target_handle
+            })
+            .find_map(|o| o.delay.as_mut().filter(|od| od.same_shape(d)))
+        {
+            std::mem::swap(d, od);
+        }
+    }
+}
+
 impl DelayLine {
+    fn same_shape(&self, other: &DelayLine) -> bool {
+        self.buf.len() == other.buf.len() && self.scratch.len() == other.scratch.len()
+    }
+
     fn new(delay_frames: usize, channels: usize, block_frames: usize) -> Self {
         Self {
             buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
@@ -1039,6 +1097,11 @@ pub(super) struct OutputGraph {
     /// speaker sets it to the device's channel count.
     out_channels: usize,
     nodes: Vec<DagNode>,
+    /// Graph node id of each of `nodes` (empty for a wire sender's sink).
+    node_ids: Vec<String>,
+    /// What each node was built from, where a later graph may carry the node
+    /// over: equal keys build equal nodes.
+    node_keys: Vec<Option<String>>,
     terminals: Vec<TerminalEdge>,
     /// Lookahead the graph's delay compensation has aligned every path to: the
     /// deepest cumulative effect latency from any source to this output. The
@@ -1125,6 +1188,72 @@ impl OutputGraph {
         if let Some(DagNode::Effect(e)) = self.nodes.get_mut(node_idx) {
             e.taps.push((prod, clock));
         }
+    }
+
+    /// RT-safe. Takes over the running state of every node this graph was
+    /// built to carry over from `old`, the graph it replaces, and every delay
+    /// line on an edge both share at the same length. Returns whether any
+    /// node was carried over; `old` cannot render after that.
+    pub(super) fn adopt_from(&mut self, old: &mut OutputGraph) -> bool {
+        let mut carried = false;
+        for i in 0..self.nodes.len() {
+            let Some(j) = (0..old.nodes.len())
+                .find(|&j| !self.node_ids[i].is_empty() && old.node_ids[j] == self.node_ids[i])
+            else {
+                continue;
+            };
+            let same_key = self.node_keys[i].is_some() && old.node_keys[j] == self.node_keys[i];
+            match (&mut self.nodes[i], &mut old.nodes[j]) {
+                (DagNode::Source(new), DagNode::Source(prev)) if same_key && new.carry_over => {
+                    new.take_over(prev);
+                    carried = true;
+                }
+                (DagNode::Effect(new), DagNode::Effect(prev)) => {
+                    if same_key && new.effects.is_empty() {
+                        std::mem::swap(&mut new.effects, &mut prev.effects);
+                        carried = true;
+                    }
+                    carry_delays(
+                        &mut new.incoming,
+                        &self.node_ids,
+                        &mut prev.incoming,
+                        &old.node_ids,
+                    );
+                    carry_delays(
+                        &mut new.sidechain,
+                        &self.node_ids,
+                        &mut prev.sidechain,
+                        &old.node_ids,
+                    );
+                }
+                (DagNode::Consumer(new), DagNode::Consumer(prev)) => {
+                    carry_delays(
+                        &mut new.incoming,
+                        &self.node_ids,
+                        &mut prev.incoming,
+                        &old.node_ids,
+                    );
+                }
+                _ => {}
+            }
+        }
+        for t in self.terminals.iter_mut() {
+            let Some(d) = t.delay.as_mut() else { continue };
+            let src = &self.node_ids[t.src_idx];
+            if let Some(od) = old
+                .terminals
+                .iter_mut()
+                .filter(|o| {
+                    &old.node_ids[o.src_idx] == src
+                        && o.source_handle == t.source_handle
+                        && o.route == t.route
+                })
+                .find_map(|o| o.delay.as_mut().filter(|od| od.same_shape(d)))
+            {
+                std::mem::swap(d, od);
+            }
+        }
+        carried
     }
 
     /// Fill `output` (`block_frames * out_channels` long) with one block of
@@ -1268,6 +1397,32 @@ pub(super) struct BuiltOutputGraph {
     pub node_meta: HashMap<String, (usize, usize)>,
     /// Latency and working block of every effect built here.
     pub node_timings: Vec<NodeTiming>,
+    /// What the next build of this output needs to carry these nodes over.
+    pub carried: HashMap<String, CarriedNode>,
+    /// Inputs whose source this graph takes over from the one it replaces:
+    /// their rings, and the bridges feeding them, stay as they are.
+    pub carried_inputs: Vec<String>,
+}
+
+/// A node as a later build of the same output sees it: equal keys mean the
+/// node can be carried over rather than built again, and the rest is what
+/// building it produced that the placeholder must reproduce.
+#[derive(Clone)]
+pub(super) struct CarriedNode {
+    key: String,
+    effect: Option<CarriedEffect>,
+}
+
+#[derive(Clone)]
+struct CarriedEffect {
+    latency: usize,
+    working_block: Option<usize>,
+    full_width: bool,
+    bypass: Arc<AtomicBool>,
+    meter: Option<MeterHandle>,
+    lufs: Option<LufsHandle>,
+    gr: Option<GrHandle>,
+    scope: Option<WaveformHandle>,
 }
 
 /// Build the per-output DAG: walk backward from `output_id`, topo-sort the
@@ -1298,6 +1453,9 @@ pub(super) fn build_output_graph(
     // once in its owning output's graph and read back as a ring-source. Maps
     // node id -> (ring consumer, owner-graph sample rate, channel width).
     mut cut_leaves: HashMap<String, CutLeaf>,
+    // What the graph this build replaces is running, for carrying unchanged
+    // nodes over. Empty when nothing is being replaced in place.
+    previous: &HashMap<String, CarriedNode>,
 ) -> AppResult<BuiltOutputGraph> {
     let cut_leaf_ids: HashSet<String> = cut_leaves.keys().cloned().collect();
     let reachable: HashSet<String> = match output_id {
@@ -1369,6 +1527,8 @@ pub(super) fn build_output_graph(
     let mut sources: Vec<SourceMeta> = Vec::new();
     let mut node_latencies: Vec<usize> = Vec::with_capacity(topo.len());
     let mut node_timings: Vec<NodeTiming> = Vec::new();
+    let mut carried: HashMap<String, CarriedNode> = HashMap::new();
+    let mut carried_inputs: Vec<String> = Vec::new();
     // Per-node channel width; effects inherit the max width of their upstreams.
     let mut node_channels: Vec<usize> = Vec::with_capacity(topo.len());
 
@@ -1394,7 +1554,7 @@ pub(super) fn build_output_graph(
                 native_sr: owner_sr,
                 frames_per_block: source.input_samples_per_block / width.max(1),
                 input_id: None,
-                output_id: output_id.unwrap_or("monitor").to_string(),
+                output_id: output_id.unwrap_or(MONITOR_KEY).to_string(),
                 capture: None,
             });
             id_to_index.insert(id.clone(), nodes.len());
@@ -1469,11 +1629,23 @@ pub(super) fn build_output_graph(
                 .get(id)
                 .ok_or_else(|| AppError::Validation(format!("input {id} has no SR")))?;
             let source_channels = input_native_channels.get(id).copied().unwrap_or(2) as usize;
+            let key = format!(
+                "src|{:?}|{input_sr}|{source_channels}|{output_sr}|{block_frames}|{source_realtime}",
+                input.spec
+            );
+            let carry_over = previous.get(id).is_some_and(|p| p.key == key);
+            carried.insert(id.clone(), CarriedNode { key, effect: None });
             // Scale by channels to keep the buffered span constant in time; at
             // high channel counts a smaller cushion starves on capture-clock drift.
-            let (producer, consumer) =
-                RingBuffer::<f32>::new(ring_capacity_frames(input_sr) * source_channels);
-            producer_pairs.push((id.clone(), producer));
+            let consumer = if carry_over {
+                carried_inputs.push(id.clone());
+                RingBuffer::<f32>::new(1).1
+            } else {
+                let (producer, consumer) =
+                    RingBuffer::<f32>::new(ring_capacity_frames(input_sr) * source_channels);
+                producer_pairs.push((id.clone(), producer));
+                consumer
+            };
             let mut ch_handles: Vec<String> = valid
                 .edges
                 .iter()
@@ -1531,7 +1703,7 @@ pub(super) fn build_output_graph(
                 native_sr: input_sr,
                 frames_per_block: input_frames_per_block as usize,
                 input_id: Some(id.clone()),
-                output_id: output_id.unwrap_or("monitor").to_string(),
+                output_id: output_id.unwrap_or(MONITOR_KEY).to_string(),
                 capture: None,
             });
             let source = SourceState {
@@ -1566,6 +1738,7 @@ pub(super) fn build_output_graph(
                 meter: input_meters.get(id).cloned(),
                 handle_bufs: source_handle_bufs,
                 stats,
+                carry_over,
             };
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1620,38 +1793,90 @@ pub(super) fn build_output_graph(
                 .max()
                 .unwrap_or(0);
             let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            let key = format!(
+                "fx|{:?}|{eff_channels}|{output_sr}|{block_frames}|{realtime}",
+                super::sig::structural_effect(&effect.spec)
+            );
+            let previous_effect = previous
+                .get(id)
+                .filter(|p| p.key == key)
+                .and_then(|p| p.effect.clone());
+            // A node carried over is built empty and takes over the running
+            // instances when the graph swaps in; anything else is built now.
             // Built once the node's width is known: a plugin is offered that
             // width and may take it whole, the way a DAW instantiates one
             // multichannel plugin instead of several stereo ones.
-            let build = instantiate_effect(
-                &effect.spec,
-                id,
-                output_sr,
-                block_frames,
-                realtime,
-                true,
-                eff_channels,
-                registry,
-            );
-            if let Some(c) = build.control {
-                controls.push((id.clone(), c));
-            }
-            if build.bypass_is_new {
-                bypasses.push((id.clone(), build.bypass.clone()));
-            }
-            if let Some(m) = build.meter {
-                meters.push(m);
-            }
-            if let Some(l) = build.lufs {
-                lufs.push(l);
-            }
-            if let Some(g) = build.gr {
-                gr_handles.push(g);
-            }
-            if let Some(s) = build.scope {
-                scopes.push(s);
-            }
-            let bypass = build.bypass;
+            let (effects, this_effect) = match previous_effect {
+                Some(p) => (Vec::new(), p),
+                None => {
+                    let build = instantiate_effect(
+                        &effect.spec,
+                        id,
+                        output_sr,
+                        block_frames,
+                        realtime,
+                        true,
+                        eff_channels,
+                        registry,
+                    );
+                    if let Some(c) = build.control {
+                        controls.push((id.clone(), c));
+                    }
+                    if build.bypass_is_new {
+                        bypasses.push((id.clone(), build.bypass.clone()));
+                    }
+                    // Analyzers read all channels at once, and so does a plugin
+                    // that accepted the node's full width. Everything else runs
+                    // one instance per stereo pair.
+                    let full_width = build.full_width
+                        || matches!(
+                            effect.spec,
+                            EffectSpec::LevelMeter(_)
+                                | EffectSpec::Waveform(_)
+                                | EffectSpec::Spectrum(_)
+                        );
+                    let this_effect = CarriedEffect {
+                        latency: build.effect.latency_frames(),
+                        working_block: build.effect.working_block(),
+                        full_width,
+                        bypass: build.bypass,
+                        meter: build.meter,
+                        lufs: build.lufs,
+                        gr: build.gr,
+                        scope: build.scope,
+                    };
+                    let pairs = if full_width {
+                        1
+                    } else {
+                        eff_channels.div_ceil(2)
+                    };
+                    let mut effects = Vec::with_capacity(pairs);
+                    effects.push(build.effect);
+                    for _ in 1..pairs {
+                        // Extra stereo pairs are separate instances for wider
+                        // audio, never the editor target. Extra pairs exist
+                        // only when the node is driven pairwise, so each is
+                        // asked for stereo rather than the node's full width.
+                        let extra = instantiate_effect(
+                            &effect.spec,
+                            id,
+                            output_sr,
+                            block_frames,
+                            realtime,
+                            false,
+                            2,
+                            registry,
+                        );
+                        effects.push(extra.effect);
+                    }
+                    (effects, this_effect)
+                }
+            };
+            meters.extend(this_effect.meter.clone());
+            lufs.extend(this_effect.lufs.clone());
+            gr_handles.extend(this_effect.gr.clone());
+            scopes.extend(this_effect.scope.clone());
+            let bypass = this_effect.bypass.clone();
             let make_edge =
                 |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
                     let pad = max_upstream - node_latencies[src_idx];
@@ -1704,44 +1929,20 @@ pub(super) fn build_output_graph(
                     (h, vec![0.0; block_frames * w])
                 })
                 .collect();
-            // Analyzers read all channels at once, and so does a plugin that
-            // accepted the node's full width. Everything else runs one instance
-            // per stereo pair.
-            let full_width = build.full_width
-                || matches!(
-                    effect.spec,
-                    EffectSpec::LevelMeter(_) | EffectSpec::Waveform(_) | EffectSpec::Spectrum(_)
-                );
-            let pairs = if full_width {
-                1
-            } else {
-                eff_channels.div_ceil(2)
-            };
-            let mut effects = Vec::with_capacity(pairs);
-            let own = build.effect.latency_frames();
+            let own = this_effect.latency;
             node_timings.push(NodeTiming {
                 node_id: id.clone(),
                 latency_frames: own as u32,
-                working_block: build.effect.working_block().map(|w| w as u32),
+                working_block: this_effect.working_block.map(|w| w as u32),
             });
-            effects.push(build.effect);
-            for _ in 1..pairs {
-                // Extra stereo pairs are separate instances for wider audio,
-                // never the editor target.
-                // Extra pairs exist only when the node is driven pairwise, so
-                // each is asked for stereo rather than the node's full width.
-                let extra = instantiate_effect(
-                    &effect.spec,
-                    id,
-                    output_sr,
-                    block_frames,
-                    realtime,
-                    false,
-                    2,
-                    registry,
-                );
-                effects.push(extra.effect);
-            }
+            let full_width = this_effect.full_width;
+            carried.insert(
+                id.clone(),
+                CarriedNode {
+                    key,
+                    effect: Some(this_effect),
+                },
+            );
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Effect(EffectState {
                 effects,
@@ -1876,12 +2077,15 @@ pub(super) fn build_output_graph(
             send_producers,
         }));
 
+        let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
         return Ok(BuiltOutputGraph {
             graph: OutputGraph {
                 sample_rate: output_sr,
                 block_frames,
                 out_channels: 2,
                 nodes,
+                node_ids,
+                node_keys,
                 terminals: Vec::new(),
                 latency_frames: max_up,
                 blocks: blocks.clone(),
@@ -1903,6 +2107,8 @@ pub(super) fn build_output_graph(
             },
             node_meta,
             node_timings,
+            carried,
+            carried_inputs,
         });
     }
 
@@ -1951,12 +2157,15 @@ pub(super) fn build_output_graph(
         None => Vec::new(),
     };
 
+    let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
     Ok(BuiltOutputGraph {
         graph: OutputGraph {
             sample_rate: output_sr,
             block_frames,
             out_channels: 2,
             nodes,
+            node_ids,
+            node_keys,
             terminals,
             latency_frames: node_latencies.iter().copied().max().unwrap_or(0),
             blocks: blocks.clone(),
@@ -1978,7 +2187,27 @@ pub(super) fn build_output_graph(
         },
         node_meta,
         node_timings,
+        carried,
+        carried_inputs,
     })
+}
+
+/// Each node's graph id (empty for a node no graph id names) and carry-over
+/// key, by index.
+fn node_identities(
+    len: usize,
+    id_to_index: &HashMap<String, usize>,
+    carried: &HashMap<String, CarriedNode>,
+) -> (Vec<String>, Vec<Option<String>>) {
+    let mut ids = vec![String::new(); len];
+    for (id, &i) in id_to_index {
+        ids[i] = id.clone();
+    }
+    let keys = ids
+        .iter()
+        .map(|id| carried.get(id).map(|c| c.key.clone()))
+        .collect();
+    (ids, keys)
 }
 
 /// A fan-out node's published ring as another output reads it: the ring, the
@@ -2070,6 +2299,7 @@ fn ring_source(
         meter: None,
         handle_bufs,
         stats: SourceStats::new(),
+        carry_over: false,
     })
 }
 
@@ -2446,7 +2676,7 @@ pub(super) mod graph_tests {
         prod.push_partial_slice(data).1.is_empty() as usize * data.len()
     }
 
-    fn fresh_registry() -> EffectRegistry {
+    pub(in crate::audio::pipeline) fn fresh_registry() -> EffectRegistry {
         EffectRegistry::new()
     }
 
@@ -2498,6 +2728,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build succeeds");
         let mut map = HashMap::new();
@@ -2566,6 +2797,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -2610,6 +2842,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -2649,6 +2882,7 @@ pub(super) mod graph_tests {
             &drain,
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -2665,6 +2899,351 @@ pub(super) mod graph_tests {
         let mut out2 = vec![0.0; TIMER_BLOCK_FRAMES * 2];
         built.graph.process_block(&mut out2);
         assert_eq!(out2, vec![0.0; TIMER_BLOCK_FRAMES * 2]);
+    }
+
+    /// Mic into a plain gain and a limiter (2 ms lookahead) in parallel: a
+    /// source ring, an effect that holds audio, and a delay line padding the
+    /// plain branch. The branches meet at the speaker, or with `mix` at a gain
+    /// before it, so the delay line sits on a terminal or an effect's input.
+    /// `meter` adds a level meter off the mic, an edit that touches none of it.
+    pub(in crate::audio::pipeline) fn parallel_with_lookahead(
+        meter: bool,
+        lookahead_ms: f32,
+        mix: bool,
+    ) -> ValidGraph {
+        let mut nodes = vec![
+            mic("m"),
+            gain_node("g", 0.0),
+            gain_node("l", 0.0),
+            speaker("s"),
+        ];
+        let meet = if mix { "x" } else { "s" };
+        let mut edges = vec![
+            edge("e1", "m", None, "g", None),
+            edge("e2", "m", None, "l", None),
+            edge("e3", "g", None, meet, None),
+            edge("e4", "l", None, meet, None),
+        ];
+        if mix {
+            nodes.push(gain_node("x", 0.0));
+            edges.push(edge("e6", "x", None, "s", None));
+        }
+        if meter {
+            nodes.push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
+            edges.push(edge("e5", "m", None, "lm", None));
+        }
+        let mut valid = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes,
+            edges,
+        }
+        .validate()
+        .expect("valid");
+        for e in &mut valid.effects {
+            if e.id == "l" {
+                e.spec = EffectSpec::Limiter(crate::audio::graph::LimiterData {
+                    ceiling_db: 0.0,
+                    lookahead_ms,
+                    release_ms: 50.0,
+                    bypassed: false,
+                });
+            }
+        }
+        valid
+    }
+
+    /// Builds `valid` at 64-frame blocks with `registry` kept across builds,
+    /// as the pipeline keeps it, carrying over from `previous`.
+    pub(in crate::audio::pipeline) fn rebuild(
+        valid: &ValidGraph,
+        registry: &mut EffectRegistry,
+        previous: &HashMap<String, CarriedNode>,
+        realtime: bool,
+    ) -> (BuiltOutputGraph, HashMap<String, Producer<f32>>) {
+        let mut pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let built = build_output_graph(
+            Some("s"),
+            SR,
+            64,
+            realtime,
+            valid,
+            &native,
+            &native_ch,
+            &mut pairs,
+            registry,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+            previous,
+        )
+        .expect("build succeeds");
+        (built, pairs.into_iter().collect())
+    }
+
+    #[test]
+    fn an_edit_elsewhere_leaves_the_running_audio_untouched() {
+        for mix in [false, true] {
+            edit_elsewhere(mix);
+        }
+    }
+
+    fn edit_elsewhere(mix: bool) {
+        // The limiter's lookahead and the plain branch's delay line both hold
+        // 96 frames. Rebuilt from scratch they would restart from silence and
+        // the source from an empty ring; carried over, the mix goes on sample
+        // for sample as if no swap happened.
+        let mut registry = fresh_registry();
+        let (mut a, mut producers) = rebuild(
+            &parallel_with_lookahead(false, 2.0, mix),
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        let input = producers.get_mut("m").unwrap();
+        let fed = quiet_ramp(64 * 40);
+        push_all(input, &fed);
+        let mut got = render(&mut a.graph, 20);
+
+        let (mut b, fresh) = rebuild(
+            &parallel_with_lookahead(true, 2.0, mix),
+            &mut registry,
+            &a.carried,
+            false,
+        );
+        assert!(
+            !fresh.contains_key("m"),
+            "a carried source gets no new ring"
+        );
+        assert_eq!(b.carried_inputs, vec!["m".to_string()]);
+        assert_eq!(b.graph.latency_frames(), 96);
+        assert!(b.graph.adopt_from(&mut a.graph), "nodes carried over");
+        got.extend(render(&mut b.graph, 20));
+
+        let pad = 96;
+        for f in pad..64 * 40 {
+            let want = 2.0 * fed[(f - pad) * 2];
+            assert!(
+                (got[f * 2] - want).abs() < 1e-5,
+                "mix {mix}, frame {f}: got {} want {want}",
+                got[f * 2]
+            );
+        }
+    }
+
+    #[test]
+    fn a_structural_change_rebuilds_only_that_node() {
+        let mut registry = fresh_registry();
+        let (a, _) = rebuild(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        let (b, _) = rebuild(
+            &parallel_with_lookahead(false, 4.0, false),
+            &mut registry,
+            &a.carried,
+            false,
+        );
+        let effect = |g: &OutputGraph, id: &str| {
+            let i = g.node_ids.iter().position(|n| n == id).expect("node");
+            match &g.nodes[i] {
+                DagNode::Effect(e) => e.effects.len(),
+                _ => panic!("{id} is not an effect"),
+            }
+        };
+        assert_eq!(
+            effect(&b.graph, "g"),
+            0,
+            "the untouched gain is carried over"
+        );
+        assert!(
+            effect(&b.graph, "l") > 0,
+            "the changed limiter is built anew"
+        );
+        assert_eq!(b.graph.latency_frames(), 192, "4 ms lookahead @ 48k");
+    }
+
+    #[test]
+    fn a_live_source_keeps_playing_across_a_swap() {
+        // A locked live source, fed a block per block: once playing, a swap
+        // must not re-prime it (silence) or realign it (a jump).
+        let mut registry = fresh_registry();
+        let valid_a = passthrough_graph().0;
+        let valid_b = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g", 0.0),
+                speaker("s"),
+                node("lm", NodeKind::LevelMeter, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "s", None),
+                edge("e3", "m", None, "lm", None),
+            ],
+        }
+        .validate()
+        .expect("valid");
+        let (mut a, mut producers) = rebuild(&valid_a, &mut registry, &HashMap::new(), true);
+        a.graph.lock_inputs(&HashSet::from(["m".to_string()]));
+        let mut input = producers.remove("m").unwrap();
+        let mut next = 1usize;
+        let mut feed_block = |input: &mut Producer<f32>| {
+            let block: Vec<f32> = (0..64)
+                .flat_map(|i| {
+                    let v = (next + i) as f32;
+                    [v, v]
+                })
+                .collect();
+            next += 64;
+            push_all(input, &block);
+        };
+        for _ in 0..8 {
+            feed_block(&mut input);
+        }
+        let mut out = vec![0.0; 64 * 2];
+        let mut played = Vec::new();
+        for _ in 0..200 {
+            feed_block(&mut input);
+            a.graph.process_block(&mut out);
+            played.extend(out.iter().step_by(2).copied());
+        }
+        let (mut b, _) = rebuild(&valid_b, &mut registry, &a.carried, true);
+        b.graph.lock_inputs(&HashSet::from(["m".to_string()]));
+        assert!(b.graph.adopt_from(&mut a.graph));
+        for _ in 0..200 {
+            feed_block(&mut input);
+            b.graph.process_block(&mut out);
+            played.extend(out.iter().step_by(2).copied());
+        }
+        let tail = &played[100 * 64..];
+        for w in tail.windows(2) {
+            assert_eq!(w[1], w[0] + 1.0, "the source skipped or repeated audio");
+        }
+    }
+
+    /// Mic → flat EQ → Mute → 0 dB gain → speaker, with `meter` adding a
+    /// level meter off the mute: the chain from the field report.
+    fn mute_chain(meter: bool) -> ValidGraph {
+        let mut nodes = vec![
+            mic("m"),
+            node("e", NodeKind::Eq, serde_json::json!({ "gainsDb": vec![0.0; 10] })),
+            node("mu", NodeKind::Mute, serde_json::json!({ "muted": false })),
+            gain_node("g", 0.0),
+            speaker("s"),
+        ];
+        let mut edges = vec![
+            edge("e1", "m", None, "e", None),
+            edge("e2", "e", None, "mu", None),
+            edge("e3", "mu", None, "g", None),
+            edge("e4", "g", None, "s", None),
+        ];
+        if meter {
+            nodes.push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
+            edges.push(edge("e5", "mu", None, "lm", None));
+        }
+        GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes,
+            edges,
+        }
+        .validate()
+        .expect("valid")
+    }
+
+    #[test]
+    fn a_chain_through_mute_stays_at_unity() {
+        // Through a rebuild that carries the chain over, and the mute switched
+        // off and on again live, a 0.5 sine never comes out above 0.5.
+        for width in [2usize, 16] {
+            let mut registry = fresh_registry();
+            let (mut a, mut producers) =
+                rebuild(&mute_chain(false), &mut registry, &HashMap::new(), false);
+            a.graph.set_out_channels(width);
+            let muted = a
+                .controls
+                .iter()
+                .find_map(|(id, c)| match c {
+                    EffectControl::Mute { muted } if id == "mu" => Some(muted.clone()),
+                    _ => None,
+                })
+                .expect("mute control");
+            let input = producers.get_mut("m").unwrap();
+            let sine: Vec<f32> = (0..48_000)
+                .flat_map(|n| {
+                    let v = ((n % 480) as f32 / 480.0 * std::f32::consts::TAU).sin() * 0.5;
+                    [v, v]
+                })
+                .collect();
+            push_all(input, &sine);
+            let mut out = vec![0.0; 64 * width];
+            let mut peak = 0.0f32;
+            for _ in 0..200 {
+                a.graph.process_block(&mut out);
+                peak = out.iter().fold(peak, |m, s| m.max(s.abs()));
+            }
+            let (mut b, _) = rebuild(&mute_chain(true), &mut registry, &a.carried, false);
+            b.graph.set_out_channels(width);
+            assert!(b.graph.adopt_from(&mut a.graph));
+            for k in 0..500 {
+                if k == 100 {
+                    muted.store(true, Ordering::Relaxed);
+                }
+                if k == 200 {
+                    muted.store(false, Ordering::Relaxed);
+                }
+                b.graph.process_block(&mut out);
+                peak = out.iter().fold(peak, |m, s| m.max(s.abs()));
+            }
+            assert!(peak <= 0.5 + 1e-5, "{width} channels: peak {peak}");
+        }
+    }
+
+    #[test]
+    fn full_volume_is_unity_gain_into_a_wide_device() {
+        // A stereo source at 100% into a 16-channel device through a 0 dB
+        // gain: its two channels come out at exactly the level they went in,
+        // and nothing else is fed.
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build_with_block(Some("s"), SR, 64, &valid, SR, false);
+        built.graph.set_out_channels(16);
+        push_all(producers.get_mut("m").unwrap(), &vec![0.5; 64 * 2 * 8]);
+        let mut out = vec![0.0; 64 * 16];
+        for _ in 0..4 {
+            built.graph.process_block(&mut out);
+        }
+        for frame in out.chunks_exact(16) {
+            assert_eq!(&frame[..2], &[0.5, 0.5]);
+            assert!(frame[2..].iter().all(|&s| s == 0.0));
+        }
+    }
+
+    #[test]
+    fn the_monitor_sources_are_keyed_like_its_bridges() {
+        // Delivery counters are joined to a source by (input, output); the
+        // monitor's bridges are keyed by `MONITOR_KEY`, so its sources must be
+        // too, or a paused app reads as a pipeline falling behind.
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                node("lm", NodeKind::LevelMeter, serde_json::json!({})),
+            ],
+            edges: vec![edge("e1", "m", None, "lm", None)],
+        };
+        let valid = g.validate().expect("valid");
+        let (built, _) = build(None, SR, &valid, SR, true);
+        assert_eq!(built.sources[0].output_id, MONITOR_KEY);
     }
 
     #[test]
@@ -3341,6 +3920,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build");
         push_all(&mut pairs[0].1, &vec![0.5; 4 * TIMER_BLOCK_FRAMES]);
@@ -3381,6 +3961,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         );
         assert!(err.is_err(), "input without SR must fail");
     }
@@ -3467,6 +4048,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             cut_leaves,
+            &HashMap::new(),
         )
         .expect("build B");
         assert_eq!(built_b.sources.len(), 1, "the shared node is a ring source");
@@ -3573,6 +4155,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         )
         .expect("build");
         let mut a = stereo_ramp(4096, 0.0);
@@ -4096,6 +4679,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             &HashMap::new(),
             cut_leaves,
+            &HashMap::new(),
         )
         .expect("build B");
         assert_eq!(built_b.sources[0].native_sr, 44_100);

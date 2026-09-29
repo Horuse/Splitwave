@@ -466,6 +466,20 @@ mod tests {
     }
 
     #[test]
+    fn resampling_to_the_device_rate_keeps_the_level() {
+        // A 48 kHz graph into a 44.1 kHz device: a steady 0.5 comes out at 0.5.
+        let mut t = rig(64, 44_100);
+        feed(&mut t.input, &vec![0.5; 48_000]);
+        let got = play(&mut t.r, &[64], 16_000);
+        let steady = &got[8_000 * 2..];
+        let worst = steady
+            .iter()
+            .map(|s| (s - 0.5).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst < 1e-3, "off by {worst}");
+    }
+
+    #[test]
     fn graph_swap_lands_between_blocks() {
         let mut t = rig(64, SR);
         let mut out = vec![0.0; 64 * 2];

@@ -96,6 +96,12 @@ pub struct ActivePipeline {
     stale_bridges: Vec<(String, usize)>,
     /// Latency and working block per effect node, for the report.
     node_timings: HashMap<String, NodeTiming>,
+    /// What each output's running graph was built from, so the next graph
+    /// swapped in on the same worker can carry its unchanged nodes over.
+    carried_nodes: HashMap<String, HashMap<String, dag::CarriedNode>>,
+    /// Bridges of outputs being swapped in place, by (output, input): a source
+    /// carried over keeps the bridge that feeds its ring.
+    swapping_slots: HashMap<(String, String), Vec<usize>>,
     /// Each speaker's overload count at the last report.
     reported_overloads: HashMap<String, u64>,
 }
@@ -110,6 +116,9 @@ struct InputState {
     normalizer_frames: u64,
     bridge_tx: BroadcastTx,
     bridges_by_output: HashMap<String, Vec<usize>>,
+    /// Each bridge slot's delivery counters, for a source carried over into
+    /// a new graph without a new slot.
+    capture_by_slot: HashMap<usize, CaptureStats>,
     volume: Arc<AtomicU32>,
     paused: Option<Arc<AtomicBool>>,
     drain: Option<Arc<AtomicU64>>,
@@ -176,6 +185,8 @@ impl ActivePipeline {
             xrun_thread: None,
             stale_bridges: Vec::new(),
             node_timings: HashMap::new(),
+            carried_nodes: HashMap::new(),
+            swapping_slots: HashMap::new(),
             reported_overloads: HashMap::new(),
         }
     }
@@ -357,10 +368,60 @@ impl ActivePipeline {
         }
         self.tear_down_outputs();
         self.stale_bridges.clear();
+        self.carried_nodes.clear();
+        self.swapping_slots.clear();
         self.inputs.clear();
         self.meters.clear();
         self.gr_handles.clear();
         self.scopes.clear();
+    }
+
+    /// Whether `out_id`'s new graph goes to the worker already running it,
+    /// the only case in which the new graph can take over the old one's nodes.
+    fn swaps_in_place(&self, out_id: &str, resolved: Option<&ResolvedOutput>) -> bool {
+        match resolved {
+            Some(ResolvedOutput::Speaker(spec)) => self
+                .speakers
+                .get(out_id)
+                .is_some_and(|s| s.sample_rate == spec.sample_rate),
+            Some(ResolvedOutput::File { sample_rate, .. }) => self
+                .recorders
+                .get(out_id)
+                .is_some_and(|r| r.sample_rate == *sample_rate),
+            Some(ResolvedOutput::WireSender(_)) => self.wire_senders.contains_key(out_id),
+            None => false,
+        }
+    }
+
+    /// A source carried over keeps its ring, so the bridge feeding that ring
+    /// stays instead of being retired with the rest of the output's.
+    fn keep_carried_bridges(
+        &mut self,
+        out_id: &str,
+        inputs: &[String],
+        captured: &mut Vec<(String, String, CaptureStats)>,
+    ) {
+        for input_id in inputs {
+            let key = (out_id.to_string(), input_id.clone());
+            let Some(slots) = self.swapping_slots.remove(&key) else {
+                continue;
+            };
+            self.stale_bridges
+                .retain(|(id, slot)| !(id == input_id && slots.contains(slot)));
+            let Some(state) = self.inputs.get_mut(input_id) else {
+                continue;
+            };
+            for slot in &slots {
+                if let Some(c) = state.capture_by_slot.get(slot) {
+                    captured.push((input_id.clone(), out_id.to_string(), c.clone()));
+                }
+            }
+            state
+                .bridges_by_output
+                .entry(out_id.to_string())
+                .or_default()
+                .extend(slots);
+        }
     }
 
     // Signal all recorders before joining any so they cover the same wall-clock window.
@@ -481,6 +542,10 @@ impl ActivePipeline {
             let swapping = matches!(cat, Cat::GraphSwap);
             for (input_id, state) in self.inputs.iter_mut() {
                 if let Some(slots) = state.bridges_by_output.remove(id) {
+                    if swapping {
+                        self.swapping_slots
+                            .insert((id.clone(), input_id.clone()), slots.clone());
+                    }
                     for slot in slots {
                         if swapping {
                             self.stale_bridges.push((input_id.clone(), slot));
@@ -833,6 +898,9 @@ impl ActivePipeline {
         // Tag each producer with its owning output_id so per-output
         // bridges can be tracked in `InputState.bridges_by_output`.
         let mut output_graphs: HashMap<String, OutputGraph> = HashMap::new();
+        // Delivery counters of sources carried over, whose bridges are not
+        // re-added below.
+        let mut carried_captures: Vec<(String, String, CaptureStats)> = Vec::new();
         let mut all_pairs: Vec<(String, String, Producer<f32>)> = Vec::new();
         // `built.output`'s index in `self.output_stats`, by output id -- lets the
         // speaker-stream branch below fill in the real channel count and the
@@ -874,6 +942,11 @@ impl ActivePipeline {
             };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
+            let previous = if self.swaps_in_place(&out.id, output_runtime.get(&out.id)) {
+                self.carried_nodes.get(&out.id).cloned().unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
             let mut built = build_output_graph(
                 Some(out.id.as_str()),
                 output_sr,
@@ -889,7 +962,11 @@ impl ActivePipeline {
                 &input_drain,
                 &input_meters,
                 cut_leaves,
+                &previous,
             )?;
+            self.keep_carried_bridges(&out.id, &built.carried_inputs, &mut carried_captures);
+            self.carried_nodes
+                .insert(out.id.clone(), std::mem::take(&mut built.carried));
             // Wire publish taps for nodes this output owns and other outputs read.
             for (node, cons) in &cut_plan.consumers {
                 if cons.is_empty()
@@ -956,7 +1033,15 @@ impl ActivePipeline {
                 // drop backlog like any other live path. Without this its ring
                 // grows unbounded whenever the DSP cannot keep up, and latency
                 // climbs for as long as the pipeline runs.
-                let built = build_output_graph(
+                let previous = if self.monitor.is_some() {
+                    self.carried_nodes
+                        .get(MONITOR_KEY)
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    HashMap::new()
+                };
+                let mut built = build_output_graph(
                     None,
                     monitor_sr,
                     dag::TIMER_BLOCK_FRAMES,
@@ -971,7 +1056,15 @@ impl ActivePipeline {
                     &input_drain,
                     &input_meters,
                     pending_cuts.remove(MONITOR_KEY).unwrap_or_default(),
+                    &previous,
                 )?;
+                self.keep_carried_bridges(
+                    MONITOR_KEY,
+                    &built.carried_inputs,
+                    &mut carried_captures,
+                );
+                self.carried_nodes
+                    .insert(MONITOR_KEY.to_string(), std::mem::take(&mut built.carried));
                 for (inp_id, prod) in my_pairs {
                     all_pairs.push((MONITOR_KEY.to_string(), inp_id, prod));
                 }
@@ -1015,7 +1108,7 @@ impl ActivePipeline {
         // into `self.source_stats` afterward -- SourceMeta is already built by
         // `build_output_graph` above, before the bridge slot (and its counters)
         // exists, so the two have to be joined here by their shared (input, output) key.
-        let mut captured: Vec<(String, String, CaptureStats)> = Vec::new();
+        let mut captured: Vec<(String, String, CaptureStats)> = carried_captures;
         for (input_id, tagged) in by_input {
             if self.inputs.contains_key(&input_id) {
                 let state = self.inputs.get_mut(&input_id).unwrap();
@@ -1034,6 +1127,7 @@ impl ActivePipeline {
                         state.bridge_tx.drain_discarded();
                     }
                     let (slot, capture) = state.bridge_tx.add(prod)?;
+                    state.capture_by_slot.insert(slot, capture.clone());
                     captured.push((input_id.clone(), out_id.clone(), capture));
                     state
                         .bridges_by_output
@@ -1062,8 +1156,10 @@ impl ActivePipeline {
                 let drain = new_input_drain.remove(&input_id);
                 let (mut bridge_tx, bridge_rx) = broadcast_channel();
                 let mut bridges_by_output: HashMap<String, Vec<usize>> = HashMap::new();
+                let mut capture_by_slot = HashMap::new();
                 for (out_id, prod) in tagged {
                     let (slot, capture) = bridge_tx.add(prod)?;
+                    capture_by_slot.insert(slot, capture.clone());
                     captured.push((input_id.clone(), out_id.clone(), capture));
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
@@ -1089,6 +1185,7 @@ impl ActivePipeline {
                         normalizer_frames,
                         bridge_tx,
                         bridges_by_output,
+                        capture_by_slot,
                         volume,
                         paused,
                         drain,
@@ -1160,6 +1257,7 @@ impl ActivePipeline {
                     normalizer_frames,
                     bridge_tx,
                     bridges_by_output: HashMap::new(),
+                    capture_by_slot: HashMap::new(),
                     volume,
                     paused,
                     drain,
@@ -1322,6 +1420,7 @@ impl ActivePipeline {
             }
         }
 
+        self.swapping_slots.clear();
         // The swapped-in graphs own the live rings now; retire the ones that fed
         // their predecessors.
         for (input_id, slot) in std::mem::take(&mut self.stale_bridges) {
@@ -1549,6 +1648,69 @@ mod tests {
     }
 
     #[test]
+    fn a_carried_source_keeps_the_bridge_that_feeds_its_ring() {
+        use crate::audio::pipeline::file_reader::file_reader_test_emitter::TestEmitter;
+
+        let path = std::env::temp_dir().join(format!("pipeline_carry_{}.wav", std::process::id()));
+        let mut enc = crate::audio::encoders::build_encoder(
+            &path,
+            48_000,
+            2,
+            crate::audio::graph::RecordingFormat::Wav {
+                bit_depth: crate::audio::graph::WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&[0.0; 64]).unwrap();
+        enc.finalize().unwrap();
+        let reader = file_reader::start_audio_file_reader(
+            "f".into(),
+            path.clone(),
+            broadcast_channel().1,
+            false,
+            Arc::new(AtomicBool::new(true)),
+            TestEmitter::default(),
+        )
+        .expect("reader");
+        let (mut bridge_tx, _rx) = broadcast_channel();
+        let (slot, capture) = bridge_tx.add(rtrb::RingBuffer::new(8).0).unwrap();
+        let mut p = ActivePipeline::new();
+        p.inputs.insert(
+            "m".into(),
+            InputState {
+                _handle: InputHandle::AudioFile(reader),
+                sample_rate: 48_000,
+                channels: 2,
+                io: None,
+                normalizer_frames: 0,
+                bridge_tx,
+                bridges_by_output: HashMap::new(),
+                capture_by_slot: HashMap::from([(slot, capture)]),
+                volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+                paused: None,
+                drain: None,
+            },
+        );
+        // As `prepare_for_reconcile` leaves an output swapping in place.
+        p.swapping_slots
+            .insert(("s".into(), "m".into()), vec![slot]);
+        p.stale_bridges.push(("m".into(), slot));
+
+        let mut captured = Vec::new();
+        p.keep_carried_bridges("s", &["m".to_string()], &mut captured);
+
+        assert!(
+            p.stale_bridges.is_empty(),
+            "the carried ring's bridge is not retired"
+        );
+        assert_eq!(p.inputs["m"].bridges_by_output["s"], vec![slot]);
+        assert_eq!(captured.len(), 1, "its delivery counters follow it");
+        assert!(p.swapping_slots.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn file_commands_drive_the_audio_file_reader_atoms() {
         use crate::audio::pipeline::file_reader::file_reader_test_emitter::TestEmitter;
 
@@ -1593,6 +1755,7 @@ mod tests {
             normalizer_frames: 0,
             bridge_tx: broadcast_channel().0,
             bridges_by_output: HashMap::new(),
+            capture_by_slot: HashMap::new(),
             volume: volume.clone(),
             paused: Some(paused.clone()),
             drain: Some(drain.clone()),

@@ -116,9 +116,19 @@ impl DspWorker {
     /// the stream instead.
     #[inline]
     fn drain_swaps(&mut self) {
-        while let Ok(new_graph) = self.cmd_rx.pop() {
+        while let Ok(mut new_graph) = self.cmd_rx.pop() {
             debug_assert_eq!(new_graph.block_frames(), self.graph.block_frames());
+            // Nodes the new graph carries over keep playing without a seam;
+            // the old graph, emptied of them, cannot render a fade.
+            let carried = new_graph.adopt_from(&mut self.graph);
             let old = std::mem::replace(&mut self.graph, new_graph);
+            if carried {
+                if let Some(older) = self.fading.take() {
+                    let _ = self.old_graph_tx.push(older);
+                }
+                let _ = self.old_graph_tx.push(old);
+                continue;
+            }
             // A swap landing mid-fade cuts the older graph short; the newer
             // one fades from the graph that was playing.
             if let Some(older) = self.fading.replace(old) {
@@ -320,6 +330,34 @@ mod tests {
             ctrl.old_graph_rx.slots(),
             1,
             "the old graph went back to main"
+        );
+    }
+
+    #[test]
+    fn a_swap_that_carries_nodes_over_does_not_fade() {
+        use super::super::dag::graph_tests::{fresh_registry, parallel_with_lookahead, rebuild};
+        let mut registry = fresh_registry();
+        let (a, _producers) = rebuild(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut registry,
+            &std::collections::HashMap::new(),
+            false,
+        );
+        let (b, _) = rebuild(
+            &parallel_with_lookahead(true, 2.0, false),
+            &mut registry,
+            &a.carried,
+            false,
+        );
+        let (mut worker, mut ctrl) = dsp_worker(a.graph);
+        ctrl.send_graph(b.graph).expect("queue swap");
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
+        assert!(worker.fading.is_none(), "an emptied graph cannot fade out");
+        assert_eq!(
+            ctrl.old_graph_rx.slots(),
+            1,
+            "the old graph went back at once"
         );
     }
 

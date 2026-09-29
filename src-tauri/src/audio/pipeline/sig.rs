@@ -95,7 +95,7 @@ pub(super) fn compute_output_sig(graph: &ValidGraph, output_id: &str) -> OutputS
 ///
 /// A field is structural unless zeroed below, so an unhandled field forces a
 /// rebuild rather than being silently dropped from the signature.
-fn structural_effect(spec: &EffectSpec) -> EffectSpec {
+pub(super) fn structural_effect(spec: &EffectSpec) -> EffectSpec {
     use EffectSpec as E;
     let mut s = spec.clone();
     match &mut s {

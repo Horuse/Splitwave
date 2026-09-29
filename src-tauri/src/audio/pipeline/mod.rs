@@ -1711,6 +1711,72 @@ mod tests {
     }
 
     #[test]
+    fn carrying_one_output_leaves_the_others_bridges_to_retire() {
+        use crate::audio::pipeline::file_reader::file_reader_test_emitter::TestEmitter;
+
+        let path =
+            std::env::temp_dir().join(format!("pipeline_carry_two_{}.wav", std::process::id()));
+        let mut enc = crate::audio::encoders::build_encoder(
+            &path,
+            48_000,
+            2,
+            crate::audio::graph::RecordingFormat::Wav {
+                bit_depth: crate::audio::graph::WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&[0.0; 64]).unwrap();
+        enc.finalize().unwrap();
+        let reader = file_reader::start_audio_file_reader(
+            "f".into(),
+            path.clone(),
+            broadcast_channel().1,
+            false,
+            Arc::new(AtomicBool::new(true)),
+            TestEmitter::default(),
+        )
+        .expect("reader");
+        let (mut bridge_tx, _rx) = broadcast_channel();
+        let (kept, kept_capture) = bridge_tx.add(rtrb::RingBuffer::new(8).0).unwrap();
+        let (retired, retired_capture) = bridge_tx.add(rtrb::RingBuffer::new(8).0).unwrap();
+        let mut p = ActivePipeline::new();
+        p.inputs.insert(
+            "m".into(),
+            InputState {
+                _handle: InputHandle::AudioFile(reader),
+                sample_rate: 48_000,
+                channels: 2,
+                io: None,
+                normalizer_frames: 0,
+                bridge_tx,
+                bridges_by_output: HashMap::new(),
+                capture_by_slot: HashMap::from([(kept, kept_capture), (retired, retired_capture)]),
+                volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+                paused: None,
+                drain: None,
+            },
+        );
+        // Both outputs swap in place; only "s" carries its source over.
+        p.swapping_slots
+            .insert(("s".into(), "m".into()), vec![kept]);
+        p.swapping_slots
+            .insert(("r".into(), "m".into()), vec![retired]);
+        p.stale_bridges.push(("m".into(), kept));
+        p.stale_bridges.push(("m".into(), retired));
+
+        let mut captured = Vec::new();
+        p.keep_carried_bridges("s", &["m".to_string()], &mut captured);
+
+        assert_eq!(p.stale_bridges, vec![("m".to_string(), retired)]);
+        assert_eq!(p.inputs["m"].bridges_by_output["s"], vec![kept]);
+        assert!(!p.inputs["m"].bridges_by_output.contains_key("r"));
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].1, "s", "stats follow the carried output only");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn file_commands_drive_the_audio_file_reader_atoms() {
         use crate::audio::pipeline::file_reader::file_reader_test_emitter::TestEmitter;
 

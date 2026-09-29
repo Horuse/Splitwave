@@ -47,22 +47,25 @@ impl Drop for RtThread {
     }
 }
 
-/// A swapped-in graph fades in over this while the one it replaces fades out,
-/// so an edit to a running pipeline never steps the output.
+/// A swap that changes what is heard fades the running graph out over this,
+/// swaps, and fades the new one in over it again, so an edit never steps the
+/// output.
 const SWAP_FADE_MS: usize = 10;
 
 pub(super) struct DspWorker {
     pub graph: OutputGraph,
-    /// The graph being replaced, still rendering while it fades out.
-    fading: Option<OutputGraph>,
-    fade_pos: usize,
-    /// Holds the fading graph's block.
-    fade_block: Box<[f32]>,
+    /// A graph waiting for the running one to fade out.
+    pending: Option<OutputGraph>,
+    /// Gain the running graph plays at: ramping to 0 while `pending` waits,
+    /// back to 1 after the swap.
+    gain: f32,
     /// Hot-swap channel: main thread pushes a freshly-built `OutputGraph`
     /// here; worker takes ownership at the next block boundary.
     cmd_rx: Consumer<OutputGraph>,
     /// Returns the old `OutputGraph` to main so its `Drop` (which may free
-    /// ring buffers) doesn't run on the RT thread.
+    /// ring buffers) doesn't run on the RT thread. At most three go back
+    /// between two sends (two queued swaps and one pending), so it never
+    /// fills.
     old_graph_tx: Producer<OutputGraph>,
 }
 
@@ -90,15 +93,12 @@ impl WorkerCtrl {
 
 pub(super) fn dsp_worker(graph: OutputGraph) -> (DspWorker, WorkerCtrl) {
     let (cmd_tx, cmd_rx) = RingBuffer::<OutputGraph>::new(2);
-    // Room for a graph queued behind one still fading out.
     let (old_tx, old_rx) = RingBuffer::<OutputGraph>::new(4);
-    let fade_block = vec![0.0; graph.block_frames() * graph.out_channels()].into_boxed_slice();
     (
         DspWorker {
             graph,
-            fading: None,
-            fade_pos: 0,
-            fade_block,
+            pending: None,
+            gain: 1.0,
             cmd_rx,
             old_graph_tx: old_tx,
         },
@@ -114,28 +114,34 @@ impl DspWorker {
     /// alloc-free push of the displaced graph back to main. A swap never
     /// changes the block size: that is an engine format change, which reopens
     /// the stream instead.
+    ///
+    /// A graph that plays exactly what is heard now, only carried over, goes
+    /// in at once. Any other waits for the running graph to fade out; later
+    /// swaps wait behind it, since each was built against the one before.
     #[inline]
     fn drain_swaps(&mut self) {
-        while let Ok(mut new_graph) = self.cmd_rx.pop() {
+        while self.pending.is_none() {
+            let Ok(new_graph) = self.cmd_rx.pop() else {
+                return;
+            };
             debug_assert_eq!(new_graph.block_frames(), self.graph.block_frames());
-            // Nodes the new graph carries over keep playing without a seam;
-            // the old graph, emptied of them, cannot render a fade.
-            let carried = new_graph.adopt_from(&mut self.graph);
-            let old = std::mem::replace(&mut self.graph, new_graph);
-            if carried {
-                if let Some(older) = self.fading.take() {
-                    let _ = self.old_graph_tx.push(older);
-                }
-                let _ = self.old_graph_tx.push(old);
-                continue;
+            // A different width cannot share the caller's block, so it goes in
+            // at once.
+            if new_graph.plays_like(&self.graph)
+                || new_graph.out_channels() != self.graph.out_channels()
+            {
+                self.swap_in(new_graph);
+            } else {
+                self.pending = Some(new_graph);
             }
-            // A swap landing mid-fade cuts the older graph short; the newer
-            // one fades from the graph that was playing.
-            if let Some(older) = self.fading.replace(old) {
-                let _ = self.old_graph_tx.push(older);
-            }
-            self.fade_pos = 0;
         }
+    }
+
+    /// Makes `new_graph` the running one, carrying over what it can.
+    fn swap_in(&mut self, mut new_graph: OutputGraph) {
+        new_graph.adopt_from(&mut self.graph);
+        let old = std::mem::replace(&mut self.graph, new_graph);
+        let _ = self.old_graph_tx.push(old);
     }
 
     /// Take any queued graph swap, then render one block into `block`
@@ -146,36 +152,28 @@ impl DspWorker {
         self.drain_swaps();
         self.graph.process_block(block);
         let active = self.graph.active_output_channels();
-        let Some(old) = self.fading.as_mut() else {
-            return active;
-        };
-        let channels = self.graph.out_channels().max(1);
-        let frames = block.len() / channels;
-        let fade_len = (self.graph.sample_rate() as usize * SWAP_FADE_MS / 1000).max(1);
-        let old_active = old.active_output_channels();
-        if old.out_channels() == channels && self.fade_block.len() == block.len() {
-            old.process_block(&mut self.fade_block);
-            for (f, (new, old)) in block
-                .chunks_exact_mut(channels)
-                .zip(self.fade_block.chunks_exact(channels))
-                .enumerate()
-            {
-                let t = ((self.fade_pos + f) as f32 / fade_len as f32).min(1.0);
-                for (n, o) in new.iter_mut().zip(old) {
-                    *n = *n * t + *o * (1.0 - t);
+        let target = if self.pending.is_some() { 0.0 } else { 1.0 };
+        if self.gain != target || self.gain != 1.0 {
+            let channels = self.graph.out_channels().max(1);
+            let fade_len = (self.graph.sample_rate() as usize * SWAP_FADE_MS / 1000).max(1);
+            let step = 1.0 / fade_len as f32;
+            for frame in block.chunks_exact_mut(channels) {
+                self.gain = if target > self.gain {
+                    (self.gain + step).min(target)
+                } else {
+                    (self.gain - step).max(target)
+                };
+                for s in frame.iter_mut() {
+                    *s *= self.gain;
                 }
             }
-            self.fade_pos += frames;
-        } else {
-            self.fade_pos = fade_len;
         }
-        if self.fade_pos >= fade_len {
-            if let Some(old) = self.fading.take() {
-                let _ = self.old_graph_tx.push(old);
+        if self.gain <= 0.0 {
+            if let Some(new_graph) = self.pending.take() {
+                self.swap_in(new_graph);
             }
-            return active;
         }
-        active.max(old_active)
+        active
     }
 
     pub(super) fn graph(&self) -> &OutputGraph {
@@ -246,14 +244,8 @@ mod tests {
         let (mut worker, mut ctrl) = dsp_worker(graph(2));
         ctrl.send_graph(graph(4)).expect("queue swap");
         worker.drain_swaps();
+        // A new width cannot share the caller's block, so it goes in at once.
         assert_eq!(worker.graph.out_channels(), 4, "worker runs the new graph");
-        assert_eq!(
-            ctrl.old_graph_rx.slots(),
-            0,
-            "the old graph is still fading out"
-        );
-        let mut block = block_for(&worker);
-        worker.next_block(&mut block);
         assert_eq!(
             ctrl.old_graph_rx.slots(),
             1,
@@ -274,13 +266,6 @@ mod tests {
         ctrl.send_graph(graph(6)).expect("second swap");
         worker.drain_swaps();
         assert_eq!(worker.graph.out_channels(), 6);
-        assert_eq!(
-            ctrl.old_graph_rx.slots(),
-            1,
-            "the skipped graph never plays"
-        );
-        let mut block = block_for(&worker);
-        worker.next_block(&mut block);
         assert_eq!(ctrl.old_graph_rx.slots(), 2);
     }
 
@@ -307,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn a_swap_crossfades_instead_of_stepping() {
+    fn a_swap_that_changes_the_sound_dips_instead_of_stepping() {
         let (old, _old_in) = constant_graph(0.5);
         let (new, _new_in) = constant_graph(-0.5);
         let (mut worker, mut ctrl) = dsp_worker(old);
@@ -353,12 +338,113 @@ mod tests {
         ctrl.send_graph(b.graph).expect("queue swap");
         let mut block = block_for(&worker);
         worker.next_block(&mut block);
-        assert!(worker.fading.is_none(), "an emptied graph cannot fade out");
+        assert!(
+            worker.pending.is_none(),
+            "an edit nobody hears goes in at once"
+        );
         assert_eq!(
             ctrl.old_graph_rx.slots(),
             1,
             "the old graph went back at once"
         );
+    }
+
+    /// `valid` at 64-frame blocks with `previous` to carry from, its mic fed
+    /// `value` throughout.
+    fn carrying_graph(
+        valid: &crate::audio::graph::ValidGraph,
+        registry: &mut crate::audio::effects::EffectRegistry,
+        previous: &std::collections::HashMap<String, super::super::dag::CarriedNode>,
+        value: f32,
+    ) -> (super::super::dag::BuiltOutputGraph, rtrb::Producer<f32>) {
+        let (built, mut producers) =
+            super::super::dag::graph_tests::rebuild(valid, registry, previous, false);
+        let mut input = producers
+            .remove("m")
+            .unwrap_or_else(|| RingBuffer::new(1).0);
+        let _ = input.push_partial_slice(&vec![value; 48_000]);
+        (built, input)
+    }
+
+    #[test]
+    fn a_carrying_swap_mid_crossfade_does_not_step() {
+        // An edit lands while the previous one is still fading: the graph
+        // fading out must finish its fade, not stop dead.
+        use super::super::dag::graph_tests::{
+            fresh_registry, passthrough_graph, passthrough_with_meter,
+        };
+        let none = std::collections::HashMap::new();
+        let mut reg_a = fresh_registry();
+        let (a, _in_a) = carrying_graph(&passthrough_graph().0, &mut reg_a, &none, 0.25);
+        let mut reg_b = fresh_registry();
+        let (b, _in_b) = carrying_graph(&passthrough_graph().0, &mut reg_b, &none, -0.25);
+        let (c, _) = carrying_graph(&passthrough_with_meter(), &mut reg_b, &b.carried, 0.0);
+        let (mut worker, mut ctrl) = dsp_worker(a.graph);
+        let mut block = block_for(&worker);
+        let mut played: Vec<f32> = Vec::new();
+        let mut play = |worker: &mut DspWorker, played: &mut Vec<f32>| {
+            worker.next_block(&mut block);
+            played.extend(block.iter().step_by(2));
+        };
+        for _ in 0..8 {
+            play(&mut worker, &mut played);
+        }
+        ctrl.send_graph(b.graph).expect("first swap");
+        play(&mut worker, &mut played);
+        play(&mut worker, &mut played);
+        ctrl.send_graph(c.graph).expect("second swap");
+        for _ in 0..12 {
+            play(&mut worker, &mut played);
+        }
+        let worst = played[64 * 6..]
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        let fade = 48_000 * SWAP_FADE_MS / 1000;
+        assert!(worst <= 1.0 / fade as f32 + 1e-4, "a step of {worst}");
+    }
+
+    #[test]
+    fn swapping_never_touches_the_heap() {
+        // Adopting carried nodes, crossfading and handing old graphs back all
+        // happen on the audio thread.
+        use super::super::dag::graph_tests::{fresh_registry, parallel_with_lookahead};
+        let none = std::collections::HashMap::new();
+        let mut reg = fresh_registry();
+        let (a, _in_a) = carrying_graph(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut reg,
+            &none,
+            0.25,
+        );
+        let mut reg_fresh = fresh_registry();
+        let (fresh, _in_fresh) = carrying_graph(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut reg_fresh,
+            &none,
+            -0.25,
+        );
+        let (carried, _) = carrying_graph(
+            &parallel_with_lookahead(true, 2.0, false),
+            &mut reg_fresh,
+            &fresh.carried,
+            0.0,
+        );
+        let (mut worker, mut ctrl) = dsp_worker(a.graph);
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
+        ctrl.send_graph(fresh.graph).expect("fresh swap");
+        crate::audio::rt_guard::assert_no_alloc("crossfading swap", || {
+            for _ in 0..4 {
+                worker.next_block(&mut block);
+            }
+        });
+        ctrl.send_graph(carried.graph).expect("carrying swap");
+        crate::audio::rt_guard::assert_no_alloc("carrying swap", || {
+            for _ in 0..16 {
+                worker.next_block(&mut block);
+            }
+        });
     }
 
     #[test]

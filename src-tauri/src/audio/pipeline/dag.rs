@@ -330,11 +330,20 @@ impl SourceState {
     fn take_over(&mut self, old: &mut SourceState) {
         std::mem::swap(&mut self.consumer, &mut old.consumer);
         std::mem::swap(&mut self.resampler, &mut old.resampler);
-        std::mem::swap(&mut self.asrc, &mut old.asrc);
+        // Whether the source reads through the drift resampler is this graph's
+        // decision: the output may have moved to another clock since.
+        if self.asrc.is_some() == old.asrc.is_some() {
+            std::mem::swap(&mut self.asrc, &mut old.asrc);
+        }
         std::mem::swap(&mut self.input_staging, &mut old.input_staging);
         std::mem::swap(&mut self.splice_tmp, &mut old.splice_tmp);
         std::mem::swap(&mut self.out_pending, &mut old.out_pending);
         std::mem::swap(&mut self.chunk_tmp, &mut old.chunk_tmp);
+        // Only the fixed-rate path queues resampled output; the drift
+        // resampler never reads it.
+        if self.asrc.is_some() {
+            self.out_pending.clear();
+        }
         std::mem::swap(&mut self.cushion, &mut old.cushion);
         self.queue_avg = old.queue_avg;
         self.queued_after = old.queued_after;
@@ -1015,12 +1024,18 @@ fn add_block_at(src: &[f32], dst: &mut [f32], off: usize, frames: usize) {
 /// as a ring's two halves. Both ends stay continuous: frame 0 is pure `dst` and
 /// the last frame is pure incoming, so neither join is a step.
 fn crossfade_into(dst: &mut [f32], first: &[f32], second: &[f32], channels: usize) {
-    let span = (SPLICE_FADE_FRAMES - 1).max(1) as f32;
+    // A join shorter than a fade still has to end fully on the incoming
+    // audio; a single frame is all incoming.
+    let span = (dst.len() / channels.max(1)).saturating_sub(1) as f32;
     for (i, s) in first.iter().chain(second.iter()).enumerate() {
         if i >= dst.len() {
             break;
         }
-        let w = ((i / channels) as f32 / span).min(1.0);
+        let w = if span == 0.0 {
+            1.0
+        } else {
+            ((i / channels) as f32 / span).min(1.0)
+        };
         dst[i] = dst[i] * (1.0 - w) + s * w;
     }
 }
@@ -1029,6 +1044,29 @@ struct DelayLine {
     buf: Box<[f32]>,
     scratch: Box<[f32]>,
     pos: usize,
+}
+
+fn delay_len(d: &Option<DelayLine>) -> usize {
+    d.as_ref().map_or(0, |d| d.buf.len())
+}
+
+/// Whether two nodes are fed by the same edges from the same nodes, at the
+/// same delays.
+fn same_edges(
+    new_edges: &[IncomingEdge],
+    new_ids: &[String],
+    old_edges: &[IncomingEdge],
+    old_ids: &[String],
+) -> bool {
+    new_edges.len() == old_edges.len()
+        && new_edges.iter().all(|e| {
+            old_edges.iter().any(|o| {
+                old_ids[o.src_idx] == new_ids[e.src_idx]
+                    && o.source_handle == e.source_handle
+                    && o.target_handle == e.target_handle
+                    && delay_len(&o.delay) == delay_len(&e.delay)
+            })
+        })
 }
 
 /// Hands each delay line of `old_edges` to the edge of `new_edges` that runs
@@ -1102,6 +1140,8 @@ pub(super) struct OutputGraph {
     /// What each node was built from, where a later graph may carry the node
     /// over: equal keys build equal nodes.
     node_keys: Vec<Option<String>>,
+    /// Whether each node is heard: it reaches a terminal or a wire sink.
+    audible: Vec<bool>,
     terminals: Vec<TerminalEdge>,
     /// Lookahead the graph's delay compensation has aligned every path to: the
     /// deepest cumulative effect latency from any source to this output. The
@@ -1188,6 +1228,54 @@ impl OutputGraph {
         if let Some(DagNode::Effect(e)) = self.nodes.get_mut(node_idx) {
             e.taps.push((prod, clock));
         }
+    }
+
+    /// RT-safe. Whether swapping this graph in for `old` changes nothing that
+    /// is heard: every node that reaches the output is carried over from
+    /// `old` and fed by the same edges at the same delays, and nothing heard
+    /// in `old` is gone. Call before `adopt_from`.
+    pub(super) fn plays_like(&self, old: &OutputGraph) -> bool {
+        let heard = |g: &OutputGraph| g.audible.iter().filter(|&&a| a).count();
+        if heard(self) != heard(old) || self.terminals.len() != old.terminals.len() {
+            return false;
+        }
+        for i in (0..self.nodes.len()).filter(|&i| self.audible[i]) {
+            let Some(j) = (0..old.nodes.len()).find(|&j| {
+                old.audible[j]
+                    && !self.node_ids[i].is_empty()
+                    && old.node_ids[j] == self.node_ids[i]
+            }) else {
+                return false;
+            };
+            if self.node_keys[i].is_none() || old.node_keys[j] != self.node_keys[i] {
+                return false;
+            }
+            let same = match (&self.nodes[i], &old.nodes[j]) {
+                (DagNode::Source(new), DagNode::Source(_)) => new.carry_over,
+                (DagNode::Effect(new), DagNode::Effect(prev)) => {
+                    new.effects.is_empty()
+                        && same_edges(&new.incoming, &self.node_ids, &prev.incoming, &old.node_ids)
+                        && same_edges(
+                            &new.sidechain,
+                            &self.node_ids,
+                            &prev.sidechain,
+                            &old.node_ids,
+                        )
+                }
+                _ => false,
+            };
+            if !same {
+                return false;
+            }
+        }
+        self.terminals.iter().all(|t| {
+            old.terminals.iter().any(|o| {
+                old.node_ids[o.src_idx] == self.node_ids[t.src_idx]
+                    && o.source_handle == t.source_handle
+                    && o.route == t.route
+                    && delay_len(&o.delay) == delay_len(&t.delay)
+            })
+        })
     }
 
     /// RT-safe. Takes over the running state of every node this graph was
@@ -2078,6 +2166,7 @@ pub(super) fn build_output_graph(
         }));
 
         let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
+        let audible = audible_nodes(&nodes, &[]);
         return Ok(BuiltOutputGraph {
             graph: OutputGraph {
                 sample_rate: output_sr,
@@ -2086,6 +2175,7 @@ pub(super) fn build_output_graph(
                 nodes,
                 node_ids,
                 node_keys,
+                audible,
                 terminals: Vec::new(),
                 latency_frames: max_up,
                 blocks: blocks.clone(),
@@ -2158,6 +2248,7 @@ pub(super) fn build_output_graph(
     };
 
     let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
+    let audible = audible_nodes(&nodes, &terminals);
     Ok(BuiltOutputGraph {
         graph: OutputGraph {
             sample_rate: output_sr,
@@ -2166,6 +2257,7 @@ pub(super) fn build_output_graph(
             nodes,
             node_ids,
             node_keys,
+            audible,
             terminals,
             latency_frames: node_latencies.iter().copied().max().unwrap_or(0),
             blocks: blocks.clone(),
@@ -2190,6 +2282,34 @@ pub(super) fn build_output_graph(
         carried,
         carried_inputs,
     })
+}
+
+/// Which nodes reach a terminal or a wire sink. Nodes come in topological
+/// order, so walking them backwards visits every consumer before its inputs.
+fn audible_nodes(nodes: &[DagNode], terminals: &[TerminalEdge]) -> Vec<bool> {
+    let mut audible = vec![false; nodes.len()];
+    for t in terminals {
+        audible[t.src_idx] = true;
+    }
+    for i in (0..nodes.len()).rev() {
+        let edges: &[IncomingEdge] = match &nodes[i] {
+            DagNode::Consumer(c) => {
+                audible[i] = true;
+                &c.incoming
+            }
+            DagNode::Effect(e) if audible[i] => {
+                for s in &e.sidechain {
+                    audible[s.src_idx] = true;
+                }
+                &e.incoming
+            }
+            _ => continue,
+        };
+        for e in edges {
+            audible[e.src_idx] = true;
+        }
+    }
+    audible
 }
 
 /// Each node's graph id (empty for a node no graph id names) and carry-over
@@ -2571,6 +2691,21 @@ mod tests {
         for f in 1..SPLICE_FADE_FRAMES {
             assert!(dst[f * CH] < dst[(f - 1) * CH], "fade must be monotonic");
             assert_eq!(dst[f * CH], dst[f * CH + 1], "channels share a weight");
+        }
+    }
+
+    // The last splice of the startup correction carries what is left of it,
+    // often less than a whole fade; its join must still end on the incoming
+    // audio, which is what the stream continues with.
+    #[test]
+    fn a_short_splice_still_ends_on_the_incoming_audio() {
+        const CH: usize = 2;
+        for frames in [1, 4, SPLICE_FADE_FRAMES / 2, SPLICE_FADE_FRAMES - 1] {
+            let mut dst = vec![1.0_f32; frames * CH];
+            let incoming = vec![0.0_f32; frames * CH];
+            crossfade_into(&mut dst, &incoming, &[], CH);
+            let last = (frames - 1) * CH;
+            assert_eq!(dst[last], 0.0, "{frames}-frame join ends at {}", dst[last]);
         }
     }
 
@@ -3130,12 +3265,259 @@ pub(super) mod graph_tests {
         }
     }
 
+    /// `passthrough_graph` plus a level meter off the mic: an edit that
+    /// leaves the audible chain as it was.
+    pub(in crate::audio::pipeline) fn passthrough_with_meter() -> ValidGraph {
+        GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g", 0.0),
+                speaker("s"),
+                node("lm", NodeKind::LevelMeter, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "s", None),
+                edge("e3", "m", None, "lm", None),
+            ],
+        }
+        .validate()
+        .expect("valid")
+    }
+
+    fn worst_step(samples: &[f32]) -> f32 {
+        samples
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max)
+    }
+
+    #[test]
+    fn inserting_an_effect_on_a_carried_source_does_not_step() {
+        // The mic is carried over, so the swap does not crossfade; the gain
+        // put in its path must still come in without a step.
+        let mut registry = fresh_registry();
+        let valid_b = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g", 0.0),
+                gain_node("g2", -20.0),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("e1", "m", None, "g", None),
+                edge("e2", "g", None, "g2", None),
+                edge("e3", "g2", None, "s", None),
+            ],
+        }
+        .validate()
+        .expect("valid");
+        let (mut a, mut producers) = rebuild(
+            &passthrough_graph().0,
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        push_all(producers.get_mut("m").unwrap(), &vec![0.5; 64 * 2 * 60]);
+        let (b, _) = rebuild(&valid_b, &mut registry, &a.carried, false);
+        assert!(
+            !b.graph.plays_like(&a.graph),
+            "the gain changes what is heard"
+        );
+        let mut played = Vec::new();
+        played.extend(render(&mut a.graph, 10).into_iter().step_by(2));
+        let (mut worker, mut ctrl) = super::super::worker::dsp_worker(a.graph);
+        ctrl.send_graph(b.graph).expect("swap");
+        let mut out = vec![0.0; 64 * 2];
+        for _ in 0..30 {
+            worker.next_block(&mut out);
+            played.extend(out.iter().step_by(2));
+        }
+        assert!(
+            (played[played.len() - 1] - 0.05).abs() < 1e-4,
+            "the new gain plays"
+        );
+        let worst = worst_step(&played[64 * 4..]);
+        let fade = (SR as usize * 10 / 1000) as f32;
+        assert!(worst <= 0.5 / fade + 1e-4, "a step of {worst}");
+    }
+
+    #[test]
+    fn a_carried_source_follows_the_new_graphs_clock_lock() {
+        // The tap was on the speaker's clock; the default output moved, so the
+        // new graph reads it through the drift resampler. Carrying the source
+        // over must not bring the old lock with it.
+        let mut registry = fresh_registry();
+        let (mut a, _p) = rebuild(&passthrough_graph().0, &mut registry, &HashMap::new(), true);
+        a.graph.lock_inputs(&HashSet::from(["m".to_string()]));
+        let (mut b, _) = rebuild(&passthrough_with_meter(), &mut registry, &a.carried, true);
+        b.graph.lock_inputs(&HashSet::new());
+        assert!(b.graph.adopt_from(&mut a.graph), "the mic is carried over");
+        let steered = b
+            .graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n, DagNode::Source(s) if s.asrc.is_some()));
+        assert!(steered, "the carried source still reads locked");
+    }
+
+    #[test]
+    fn live_updates_reach_a_carried_effect() {
+        // A carried gain keeps the instance the pipeline's control drives.
+        let mut registry = fresh_registry();
+        let (mut a, mut producers) = rebuild(
+            &passthrough_graph().0,
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        let control = a
+            .controls
+            .iter()
+            .find(|(id, _)| id == "g")
+            .map(|(_, c)| c.clone())
+            .expect("gain control");
+        let bypass = a
+            .bypasses
+            .iter()
+            .find(|(id, _)| id == "g")
+            .map(|(_, b)| b.clone())
+            .expect("gain bypass");
+        push_all(producers.get_mut("m").unwrap(), &vec![0.5; 64 * 2 * 60]);
+        render(&mut a.graph, 4);
+        let (mut b, _) = rebuild(&passthrough_with_meter(), &mut registry, &a.carried, false);
+        assert!(b.graph.adopt_from(&mut a.graph));
+
+        control.apply_update(&serde_json::json!({ "gainDb": -6.0 }));
+        let got = render(&mut b.graph, 20);
+        let want = 0.5 * 10f32.powf(-6.0 / 20.0);
+        assert!(
+            (got[got.len() - 1] - want).abs() < 1e-3,
+            "gain update: got {} want {want}",
+            got[got.len() - 1]
+        );
+
+        bypass.store(true, Ordering::Relaxed);
+        let got = render(&mut b.graph, 4);
+        assert!(
+            (got[got.len() - 1] - 0.5).abs() < 1e-6,
+            "bypass: got {}",
+            got[got.len() - 1]
+        );
+    }
+
+    #[test]
+    fn a_chain_of_carried_swaps_keeps_every_node() {
+        // Two edits queued before the worker takes either: the second graph
+        // was built against the first, which was built against the running
+        // one, and the worker adopts them in order in one drain.
+        let mut registry = fresh_registry();
+        let (mut a, mut producers) = rebuild(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        let fed = quiet_ramp(64 * 60);
+        push_all(producers.get_mut("m").unwrap(), &fed);
+        let mut got = render(&mut a.graph, 20);
+        let (mut b, _) = rebuild(
+            &parallel_with_lookahead(true, 2.0, false),
+            &mut registry,
+            &a.carried,
+            false,
+        );
+        let (mut c, _) = rebuild(
+            &parallel_with_lookahead(false, 2.0, false),
+            &mut registry,
+            &b.carried,
+            false,
+        );
+        assert!(b.graph.adopt_from(&mut a.graph));
+        assert!(c.graph.adopt_from(&mut b.graph));
+        for n in &c.graph.nodes {
+            if let DagNode::Effect(e) = n {
+                assert!(!e.effects.is_empty(), "a placeholder was never filled");
+            }
+        }
+        got.extend(render(&mut c.graph, 20));
+        let pad = 96;
+        for f in pad..64 * 40 {
+            let want = 2.0 * fed[(f - pad) * 2];
+            assert!(
+                (got[f * 2] - want).abs() < 1e-5,
+                "frame {f}: got {} want {want}",
+                got[f * 2]
+            );
+        }
+    }
+
+    #[test]
+    fn a_resampled_source_that_goes_quiet_keeps_its_queue() {
+        // A 44.1 kHz capture read into a 48 kHz graph: the judge counts time
+        // in the capture's frames, which a block covers only approximately.
+        // Pauses in its delivery must still not deepen its queue.
+        const IN_SR: u32 = 44_100;
+        const BURST: usize = 441;
+        let worst_queue = |gaps: &[(f64, f64)]| -> u64 {
+            let (valid, _) = passthrough_graph();
+            let (mut built, mut producers) =
+                build_with_block(Some("s"), SR, 64, &valid, IN_SR, true);
+            let clock = Arc::new(WriteClock::default());
+            built.graph.attach_write_clock("m", &clock);
+            let stats = built.sources[0].stats.clone();
+            let input = producers.get_mut("m").unwrap();
+            let out_period = 64.0 / SR as f64;
+            let in_period = BURST as f64 / IN_SR as f64;
+            let (mut t_in, mut t_out) = (in_period * 0.37, 0.0);
+            let chunk = vec![0.25_f32; BURST * 2];
+            let mut out = vec![0.0; 64 * 2];
+            let mut worst = 0;
+            while t_out < 60.0 {
+                if t_in <= t_out {
+                    if !gaps.iter().any(|&(a, b)| t_in >= a && t_in < b) {
+                        clock.record(chunk.len(), t_in);
+                        push_all(input, &chunk);
+                    }
+                    t_in += in_period;
+                    continue;
+                }
+                built.graph.process_block_at(&mut out, t_out);
+                if t_out >= 5.0 {
+                    worst = worst.max(stats.queue_frames.load(Ordering::Relaxed));
+                }
+                t_out += out_period;
+            }
+            worst
+        };
+        let gaps: Vec<(f64, f64)> = (0..100)
+            .map(|k| {
+                let start = 5.0 + k as f64 * 0.5 + 0.2;
+                (start, start + 0.06 + (k % 7) as f64 * 0.05)
+            })
+            .collect();
+        let steady = worst_queue(&[]);
+        let gappy = worst_queue(&gaps);
+        assert!(
+            gappy <= steady + BURST as u64,
+            "silence deepened the queue: {gappy} frames vs {steady} steady"
+        );
+    }
+
     /// Mic → flat EQ → Mute → 0 dB gain → speaker, with `meter` adding a
     /// level meter off the mute: the chain from the field report.
     fn mute_chain(meter: bool) -> ValidGraph {
         let mut nodes = vec![
             mic("m"),
-            node("e", NodeKind::Eq, serde_json::json!({ "gainsDb": vec![0.0; 10] })),
+            node(
+                "e",
+                NodeKind::Eq,
+                serde_json::json!({ "gainsDb": vec![0.0; 10] }),
+            ),
             node("mu", NodeKind::Mute, serde_json::json!({ "muted": false })),
             gain_node("g", 0.0),
             speaker("s"),

@@ -48,6 +48,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     _app: &AppHandle,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
+    // Built before playback starts: a renderer that cannot be built must not
+    // leave a PipeWire stream running.
+    let block_frames = graph.block_frames();
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
     let dead = Arc::new(AtomicBool::new(false));
 
     let (mut link, mut fill) = speaker_callback();
@@ -60,12 +65,9 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         &spec.node_id,
         spec.sample_rate,
         spec.out_channels,
-        graph.block_frames(),
+        block_frames,
         fill_pw,
     )?;
-
-    let (renderer, ctrl, io) =
-        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
     link.attach(renderer);
     Ok((
         SpeakerHandle {

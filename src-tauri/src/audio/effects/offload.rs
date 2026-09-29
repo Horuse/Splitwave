@@ -12,6 +12,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle, Thread};
+use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::warn;
@@ -22,6 +23,12 @@ use crate::audio::health;
 /// Floor for a worker's turnaround: waking it, scheduling slack, and the
 /// processing itself.
 const MIN_TURNAROUND_MS: f64 = 5.0;
+/// Longest the worker runs without blocking. Linux charges real-time CPU time
+/// between blocking calls against `RLIMIT_RTTIME` and kills the process past
+/// it; a worker whose effect cannot keep up never runs out of input to park
+/// on, so it sleeps briefly instead. It is starving the output either way.
+const MAX_BUSY: Duration = Duration::from_millis(20);
+const BREATHER: Duration = Duration::from_millis(1);
 
 /// Smallest pad that never starves the RT side, for an effect stepping in
 /// `working_frames` blocks driven by the engine in `block_frames` blocks.
@@ -74,6 +81,9 @@ pub struct Offload {
     /// Samples the worker has taken in and, for whole effect blocks, answered.
     #[cfg(test)]
     taken: Arc<std::sync::atomic::AtomicUsize>,
+    /// Times an overloaded worker stopped to block.
+    #[cfg(test)]
+    breathers: Arc<std::sync::atomic::AtomicUsize>,
     join: Option<JoinHandle<()>>,
     /// Woken after every push, so it sleeps until there is work instead of
     /// polling for it.
@@ -157,6 +167,10 @@ impl Offload {
         let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         #[cfg(test)]
         let taken_thread = taken.clone();
+        #[cfg(test)]
+        let breathers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        #[cfg(test)]
+        let breathers_thread = breathers.clone();
         // Handoff cell rather than moving `processor` straight into the closure:
         // a failed `Builder::spawn` drops its closure internally with no way to
         // recover a moved value, so the cell is how the caller gets it back.
@@ -181,6 +195,7 @@ impl Offload {
                 let mut gathered = vec![0.0f32; working * width];
                 let mut filled = 0;
                 let mut out = Vec::with_capacity(working * width);
+                let mut busy_since = Instant::now();
                 while !stop_thread.load(Ordering::Relaxed) {
                     let avail = worker_in.slots();
                     let avail = avail - avail % width; // whole frames only
@@ -188,6 +203,7 @@ impl Offload {
                         // A wake that lands before this parks leaves the
                         // token set, so the park returns at once.
                         thread::park();
+                        busy_since = Instant::now();
                         #[cfg(test)]
                         idle_wakes_thread.fetch_add(1, Ordering::Relaxed);
                         continue;
@@ -209,6 +225,12 @@ impl Offload {
                         processor.process(&gathered, &mut out);
                         push_aligned(&mut worker_out, &out, width);
                         filled = 0;
+                        if busy_since.elapsed() >= MAX_BUSY {
+                            thread::sleep(BREATHER);
+                            busy_since = Instant::now();
+                            #[cfg(test)]
+                            breathers_thread.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     #[cfg(test)]
                     taken_thread.fetch_add(n, Ordering::Relaxed);
@@ -235,6 +257,8 @@ impl Offload {
             idle_wakes,
             #[cfg(test)]
             taken,
+            #[cfg(test)]
+            breathers,
             worker: join.thread().clone(),
             join: Some(join),
             width,
@@ -307,7 +331,6 @@ impl Drop for Offload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
 
     /// Hands its input straight back, checking it only ever gets whole blocks
     /// of `frames` when it has a block size of its own.
@@ -467,6 +490,44 @@ mod tests {
             pad_frames(48_000, 2048, 2048),
             2048,
             "never below the block"
+        );
+    }
+
+    /// Takes `cost` of CPU per block, never blocking: an effect slower than
+    /// real time.
+    struct Slow {
+        cost: Duration,
+    }
+
+    impl BlockProcessor for Slow {
+        fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
+            let started = Instant::now();
+            while started.elapsed() < self.cost {
+                std::hint::spin_loop();
+            }
+            output.extend_from_slice(input);
+        }
+    }
+
+    #[test]
+    fn an_overloaded_worker_still_blocks_now_and_then() {
+        // A backlog it cannot clear keeps it from ever finding its input
+        // empty; it must still block within the busy limit.
+        let slow = Slow {
+            cost: Duration::from_millis(2),
+        };
+        let Ok(mut offload) = Offload::spawn("test", slow, 2, None, 64, 48_000) else {
+            panic!("spawn offload")
+        };
+        let mut data = vec![0.0f32; 64 * 2];
+        for _ in 0..60 {
+            offload.process(&mut data);
+        }
+        thread::sleep(Duration::from_millis(100));
+        let breathers = offload.breathers.load(Ordering::Relaxed);
+        assert!(
+            breathers >= 2,
+            "ran {breathers} breathers in 100 ms of backlog"
         );
     }
 

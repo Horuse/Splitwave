@@ -146,8 +146,6 @@ pub struct HostedEffect {
     backend: HostedBackend,
     channels: usize,
     latency: usize,
-    /// The offload pad when it exceeds the engine block.
-    working_block: Option<usize>,
 }
 
 enum HostedBackend {
@@ -165,7 +163,6 @@ impl HostedEffect {
                 backend: HostedBackend::Inline { node },
                 channels: width,
                 latency,
-                working_block: None,
             };
         }
         let processor = HostedProcessor {
@@ -173,10 +170,11 @@ impl HostedEffect {
             width,
             scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
         };
+        // A plugin takes the engine's blocks as they come; the offload's pad is
+        // latency it adds, not a block it works in.
         match Offload::spawn("plugin", processor, width, None, block_frames, sample_rate) {
             Ok(o) => Self {
                 latency: latency + o.latency_frames(),
-                working_block: (o.latency_frames() > block_frames).then_some(o.latency_frames()),
                 backend: HostedBackend::Offloaded(o),
                 channels: width,
             },
@@ -184,13 +182,8 @@ impl HostedEffect {
                 backend: HostedBackend::Inline { node: p.node },
                 channels: width,
                 latency,
-                working_block: None,
             },
         }
-    }
-
-    pub fn working_block(&self) -> Option<usize> {
-        self.working_block
     }
 }
 

@@ -104,7 +104,6 @@ impl RuntimeEffect {
     pub fn working_block(&self) -> Option<usize> {
         match self {
             RuntimeEffect::NoiseSuppressor(e) => e.working_block(),
-            RuntimeEffect::HostedPlugin(e) => e.working_block(),
             _ => None,
         }
     }

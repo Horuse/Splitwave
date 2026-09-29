@@ -73,6 +73,11 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         "opening speaker stream (WASAPI)",
     );
 
+    // Built before the stream opens: a renderer that cannot be built must not
+    // leave behind a stream nothing pauses.
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
+
     let dead = Arc::new(AtomicBool::new(false));
 
     let (mut link, fill) = speaker_callback();
@@ -99,9 +104,6 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         fill,
         err_cb,
     )?;
-
-    let (renderer, ctrl, io) =
-        speaker_renderer(graph, spec.sample_rate, spec.out_channels, None, meter)?;
     link.attach(renderer);
     Ok((
         SpeakerHandle {

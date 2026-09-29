@@ -96,6 +96,7 @@ A backend that cannot support the feature returns an error; it does not substitu
 - PipeWire process callbacks and promoted DSP workers are RT code. They may touch only preallocated buffers, SPSC rings and relaxed atomics.
 - `audio_thread_priority` obtains real-time scheduling through RTKit. Its frame argument is the maximum uninterrupted render quantum, not a latency target. Pass the actual known block size; pass `0` when PipeWire owns an unknown callback quantum.
 - Linux `RLIMIT_RTTIME` measures CPU time spent under real-time scheduling without a blocking syscall. Crossing the soft limit sends `SIGXCPU`; crossing the hard limit sends `SIGKILL`. Preemption and `sched_yield` do not reset it. Startup prefill runs before promotion, and deadline catch-up must block between blocks. Never raise or disable the OS limit to hide an overload.
+- An offload worker runs promoted but parks only when its input is empty; one whose effect cannot keep up would never park, so after 20 ms of uninterrupted work it sleeps 1 ms (`effects/offload.rs`).
 - A `SIGXCPU` followed by `SIGKILL` from the audio thread with `si_code=SI_KERNEL` is an RT-budget failure. A Rust panic hook and in-process crash modal cannot observe `SIGKILL`; preserve the previous-run unexpected-exit report.
 
 ### macOS: CoreAudio

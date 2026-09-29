@@ -147,6 +147,8 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                     json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
                 );
             };
+            let name = crate::audio::device::cpal_name(&device).unwrap_or_default();
+            let formats = macos_hal::physical_formats(DeviceKind::Input, &name);
             let stream = streams::build_input_stream(
                 &device,
                 &config,
@@ -156,6 +158,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 meter,
                 err_cb,
             )?;
+            macos_hal::warn_if_physical_format_changed(DeviceKind::Input, &name, &formats);
             Ok(InputHandle::Cpal(stream))
         }
         ResolvedInput::SystemAudio {

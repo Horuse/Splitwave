@@ -119,6 +119,14 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let granted = macos_hal::set_buffer_frames(DeviceKind::Output, &device_name, requested);
     info!(device = %device_name, requested, granted, "speaker buffer size");
 
+    // Built before the stream opens: a renderer that cannot be built must not
+    // leave behind a stream whose AudioUnit nothing stops.
+    let hardware =
+        macos_hal::io_latency(DeviceKind::Output, &device_name).map(|l| l.hardware_frames);
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, hardware, meter)?;
+
+    let formats = macos_hal::physical_formats(DeviceKind::Output, &device_name);
     let dead = Arc::new(AtomicBool::new(false));
 
     let mut opened: Option<(cpal::Stream, SpeakerLink)> = None;
@@ -162,11 +170,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         }
     }
     let (stream, mut link) = opened.expect("loop opens the stream or returns Err");
-
-    let hardware =
-        macos_hal::io_latency(DeviceKind::Output, &device_name).map(|l| l.hardware_frames);
-    let (renderer, ctrl, io) =
-        speaker_renderer(graph, spec.sample_rate, spec.out_channels, hardware, meter)?;
+    macos_hal::warn_if_physical_format_changed(DeviceKind::Output, &device_name, &formats);
     link.attach(renderer);
     Ok((
         SpeakerHandle {

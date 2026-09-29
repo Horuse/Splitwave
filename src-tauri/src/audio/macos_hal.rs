@@ -996,10 +996,127 @@ pub fn io_latency(kind: crate::audio::device::DeviceKind, name: &str) -> Option<
     }
 }
 
+/// A stream's format as the hardware runs it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalFormat {
+    pub sample_rate: f64,
+    pub bits: u32,
+    pub channels: u32,
+    pub float: bool,
+}
+
+/// The physical format of each of the device's streams in `kind`'s direction.
+pub fn physical_formats(kind: crate::audio::device::DeviceKind, name: &str) -> Vec<PhysicalFormat> {
+    use objc2_core_audio::{
+        kAudioDevicePropertyStreams, kAudioObjectPropertyElementMain,
+        kAudioObjectPropertyScopeGlobal, kAudioStreamPropertyPhysicalFormat,
+        AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
+    };
+    use objc2_core_audio_types::{kAudioFormatFlagIsFloat, AudioStreamBasicDescription};
+    use std::ptr::NonNull;
+
+    let scope = scope_for(kind);
+    let Some(device) = find_device_id(name, scope) else {
+        return Vec::new();
+    };
+    let streams_addr = AudioObjectPropertyAddress {
+        mSelector: kAudioDevicePropertyStreams,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain,
+    };
+    let mut size = 0u32;
+    // SAFETY: plain property reads into buffers sized from the reported size.
+    unsafe {
+        if AudioObjectGetPropertyDataSize(
+            device,
+            NonNull::from(&streams_addr),
+            0,
+            ptr::null(),
+            NonNull::from(&mut size),
+        ) != 0
+        {
+            return Vec::new();
+        }
+        let mut streams = vec![0u32; size as usize / mem::size_of::<u32>()];
+        if streams.is_empty()
+            || AudioObjectGetPropertyData(
+                device,
+                NonNull::from(&streams_addr),
+                0,
+                ptr::null(),
+                NonNull::from(&mut size),
+                NonNull::new_unchecked(streams.as_mut_ptr().cast()),
+            ) != 0
+        {
+            return Vec::new();
+        }
+        let format_addr = AudioObjectPropertyAddress {
+            mSelector: kAudioStreamPropertyPhysicalFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        streams
+            .iter()
+            .filter_map(|&stream| {
+                let mut asbd: AudioStreamBasicDescription = mem::zeroed();
+                let mut size = mem::size_of::<AudioStreamBasicDescription>() as u32;
+                let status = AudioObjectGetPropertyData(
+                    stream,
+                    NonNull::from(&format_addr),
+                    0,
+                    ptr::null(),
+                    NonNull::from(&mut size),
+                    NonNull::from(&mut asbd).cast(),
+                );
+                (status == 0).then_some(PhysicalFormat {
+                    sample_rate: asbd.mSampleRate,
+                    bits: asbd.mBitsPerChannel,
+                    channels: asbd.mChannelsPerFrame,
+                    float: asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+                })
+            })
+            .collect()
+    }
+}
+
+/// cpal sets a device's physical format when it opens a stream on it, for
+/// every app, and never sets it back. Call with what the device ran before
+/// opening; says so when opening changed it.
+pub fn warn_if_physical_format_changed(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+    before: &[PhysicalFormat],
+) {
+    let after = physical_formats(kind, name);
+    if after != before {
+        tracing::warn!(
+            device = %name,
+            ?before,
+            ?after,
+            "opening the stream changed the device's physical format; it stays changed for every app"
+        );
+    }
+}
+
 #[cfg(test)]
 mod io_tests {
     use super::*;
     use crate::audio::device::DeviceKind;
+
+    #[test]
+    #[ignore = "needs a real output device"]
+    fn physical_formats_are_read() {
+        let dev = list_output_devices()
+            .into_iter()
+            .next()
+            .expect("an output device");
+        let formats = physical_formats(DeviceKind::Output, &dev.name);
+        println!("{}: {formats:?}", dev.name);
+        assert!(!formats.is_empty(), "no stream format read");
+        assert!(formats
+            .iter()
+            .all(|f| f.sample_rate > 0.0 && f.channels > 0));
+    }
 
     #[test]
     #[ignore = "needs a real output device"]

@@ -971,11 +971,14 @@ impl ActivePipeline {
                 }
                 OutputSpec::WebRtcSend { .. } => pipeline_sr,
             };
-            // Only a speaker is paced by its device; every other output rides a
-            // timer, which cannot hold small blocks and whose latency nobody hears.
+            // A speaker is paced by its device. A wire sender rides a timer,
+            // but its latency is heard at the other end, so it runs the engine
+            // block too. Recordings run large timer blocks nobody hears.
             let block_frames = match &out.spec {
-                OutputSpec::Speaker { .. } => graph.buffer_frames as usize,
-                _ => dag::TIMER_BLOCK_FRAMES,
+                OutputSpec::Speaker { .. }
+                | OutputSpec::NetSender { .. }
+                | OutputSpec::WebRtcSend { .. } => graph.buffer_frames as usize,
+                OutputSpec::FileRecording { .. } => dag::TIMER_BLOCK_FRAMES,
             };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();

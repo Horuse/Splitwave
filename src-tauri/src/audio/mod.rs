@@ -28,5 +28,6 @@ pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;
 pub mod volume;
+pub mod wake;
 pub mod webrtc;
 pub mod webrtc_codec;

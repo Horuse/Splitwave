@@ -94,6 +94,11 @@ impl ChannelEnc {
     }
 }
 
+/// Longest the encode thread sleeps without being rung.
+const IDLE_WAKE: Duration = Duration::from_millis(20);
+
+/// One encode thread per session. The DAG rings it after each block it pushes,
+/// so audio goes out as soon as it exists; it ends with the session.
 pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     let bitrate = session.opus_bitrate;
     let application = match session.opus_application {
@@ -101,81 +106,90 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
         OpusApplication::Audio => opus::Application::Audio,
         OpusApplication::LowDelay => opus::Application::LowDelay,
     };
+    let bell = session.send_bell.clone();
+    let session = Arc::downgrade(&session);
 
-    tauri::async_runtime::spawn(async move {
-        let mut encs: Vec<ChannelEnc> = Vec::new();
-        let mut seqs: Vec<u16> = Vec::new();
-        let mut seen_gen = u64::MAX;
-        let mut interval = tokio::time::interval(Duration::from_millis(20));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let spawned = std::thread::Builder::new()
+        .name("webrtc-send".into())
+        .spawn(move || {
+            bell.answer_here();
+            let mut encs: Vec<ChannelEnc> = Vec::new();
+            let mut seqs: Vec<u16> = Vec::new();
+            let mut seen_gen = u64::MAX;
 
-        loop {
-            interval.tick().await;
-            let sr = session.output_sr.load(Ordering::Relaxed);
-            let format =
-                Format::from_byte(session.codec.load(Ordering::Relaxed)).unwrap_or(Format::Opus);
+            loop {
+                bell.wait(IDLE_WAKE);
+                let Some(session) = session.upgrade() else {
+                    return;
+                };
+                let sr = session.output_sr.load(Ordering::Relaxed);
+                let format = Format::from_byte(session.codec.load(Ordering::Relaxed))
+                    .unwrap_or(Format::Opus);
 
-            // Drain each channel's send ring under the lock, then release it
-            // before the async resample/encode/send work.
-            {
-                let mut cons = session.send_consumers.lock().unwrap();
-                // Each encoder holds a partial Opus frame and a resampler tail;
-                // keeping them across a ring swap would leave a channel added
-                // now offset from its siblings by whatever they had buffered.
-                let gen = session.send_gen.load(Ordering::SeqCst);
-                if gen != seen_gen {
-                    seen_gen = gen;
-                    encs.clear();
-                    seqs.clear();
-                }
-                while encs.len() < cons.len() {
-                    encs.push(ChannelEnc::new(format, bitrate, application));
-                    seqs.push(0);
-                }
-                encs.truncate(cons.len());
-                seqs.truncate(cons.len());
-                for (i, c) in cons.iter_mut().enumerate() {
-                    let take = c.slots();
-                    if take > 0 {
-                        if let Ok(chunk) = c.read_chunk(take) {
-                            let (a, b) = chunk.as_slices();
-                            encs[i].in_acc.extend_from_slice(a);
-                            encs[i].in_acc.extend_from_slice(b);
-                            chunk.commit_all();
+                // Drain each channel's send ring under the lock, then release it
+                // before the async resample/encode/send work.
+                {
+                    let mut cons = session.send_consumers.lock().unwrap();
+                    // Each encoder holds a partial Opus frame and a resampler tail;
+                    // keeping them across a ring swap would leave a channel added
+                    // now offset from its siblings by whatever they had buffered.
+                    let gen = session.send_gen.load(Ordering::SeqCst);
+                    if gen != seen_gen {
+                        seen_gen = gen;
+                        encs.clear();
+                        seqs.clear();
+                    }
+                    while encs.len() < cons.len() {
+                        encs.push(ChannelEnc::new(format, bitrate, application));
+                        seqs.push(0);
+                    }
+                    encs.truncate(cons.len());
+                    seqs.truncate(cons.len());
+                    for (i, c) in cons.iter_mut().enumerate() {
+                        let take = c.slots();
+                        if take > 0 {
+                            if let Ok(chunk) = c.read_chunk(take) {
+                                let (a, b) = chunk.as_slices();
+                                encs[i].in_acc.extend_from_slice(a);
+                                encs[i].in_acc.extend_from_slice(b);
+                                chunk.commit_all();
+                            }
                         }
                     }
                 }
-            }
 
-            for (i, enc) in encs.iter_mut().enumerate() {
-                enc.ensure_format(format);
-                enc.ensure_resampler(sr);
-                enc.resample();
-                let channel = i as u8;
-                let seq = &mut seqs[i];
-                let mut frames: Vec<Bytes> = Vec::new();
-                enc.encoder.push(&enc.out_acc, |payload| {
-                    let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
-                    packet::write_header(
-                        &mut d,
-                        format,
-                        channel,
-                        *seq,
-                        OPUS_SR,
-                        (bitrate / 1000) as u16,
-                        1,
-                    );
-                    *seq = seq.wrapping_add(1);
-                    d.extend_from_slice(payload);
-                    frames.push(Bytes::copy_from_slice(&d));
-                });
-                enc.out_acc.clear();
-                for b in frames {
-                    send_to_peers(&b, &session).await;
+                for (i, enc) in encs.iter_mut().enumerate() {
+                    enc.ensure_format(format);
+                    enc.ensure_resampler(sr);
+                    enc.resample();
+                    let channel = i as u8;
+                    let seq = &mut seqs[i];
+                    let mut frames: Vec<Bytes> = Vec::new();
+                    enc.encoder.push(&enc.out_acc, |payload| {
+                        let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
+                        packet::write_header(
+                            &mut d,
+                            format,
+                            channel,
+                            *seq,
+                            OPUS_SR,
+                            (bitrate / 1000) as u16,
+                            1,
+                        );
+                        *seq = seq.wrapping_add(1);
+                        d.extend_from_slice(payload);
+                        frames.push(Bytes::copy_from_slice(&d));
+                    });
+                    enc.out_acc.clear();
+                    for b in frames {
+                        tauri::async_runtime::block_on(send_to_peers(&b, &session));
+                    }
                 }
             }
-        }
-    });
+        });
+    if let Err(e) = spawned {
+        warn!(error = %e, "webrtc encode thread failed to start");
+    }
 }
 
 async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {

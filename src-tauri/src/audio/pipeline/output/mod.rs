@@ -271,7 +271,7 @@ pub(super) fn start_wire_sender_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let sample_rate = graph.sample_rate();
-    let ticker = SystemClockTicker::with_catchup(sample_rate, TIMER_BLOCK_FRAMES, 8);
+    let ticker = SystemClockTicker::with_catchup(sample_rate, graph.block_frames(), 8);
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("netsender".into())

@@ -1,23 +1,29 @@
 //! UDP audio sender. One instance per NetSender node (keyed by node id) owns a
-//! send socket and a background task that drains per-channel send rings, encodes
-//! each channel (Opus or raw PCM) and transmits it to the configured target as
-//! self-describing packets. The DAG runs a NetSender output at 48 kHz, so the
-//! task encodes the drained samples directly with no resample.
+//! send socket and a thread that drains per-channel send rings, encodes each
+//! channel (Opus or raw PCM) and transmits it to the configured target as
+//! self-describing packets. The DAG rings the thread every block it leaves in
+//! the rings, so audio goes out as soon as it exists rather than on a timer.
+//! The DAG runs a NetSender output at 48 kHz, so the thread encodes the drained
+//! samples directly with no resample.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::UdpSocket;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use rtrb::Consumer;
-use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 use crate::audio::graph::OpusApplication;
+use crate::audio::wake::Doorbell;
 
 use super::codec::ChannelEncoder;
 use super::packet::{self, Format};
+
+/// Longest the send thread sleeps without being rung.
+const IDLE_WAKE: Duration = Duration::from_millis(20);
 
 /// Immutable config; a change (target, codec, bitrate, application) rebuilds the
 /// sender so the encoder and socket are recreated cleanly.
@@ -36,7 +42,12 @@ pub struct NetSender {
     /// Bumped whenever the send rings are replaced, so the task rebuilds every
     /// channel's encode state together.
     consumers_gen: Arc<AtomicU64>,
-    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Rung by the DAG after each block it pushes.
+    bell: Arc<Doorbell>,
+    stopped: Arc<AtomicBool>,
+    /// Wakes that came from a ring rather than the idle timeout.
+    #[cfg(test)]
+    rung: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
     packets: Arc<AtomicU64>,
 }
@@ -95,7 +106,10 @@ pub fn get_or_create(
         config,
         send_consumers: Arc::new(Mutex::new(Vec::new())),
         consumers_gen: Arc::new(AtomicU64::new(0)),
-        task: Mutex::new(None),
+        bell: Arc::default(),
+        stopped: Arc::new(AtomicBool::new(false)),
+        #[cfg(test)]
+        rung: Arc::new(AtomicU64::new(0)),
         bytes: Arc::new(AtomicU64::new(0)),
         packets: Arc::new(AtomicU64::new(0)),
     });
@@ -112,19 +126,28 @@ impl NetSender {
         self.consumers_gen.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// What the DAG rings once it has pushed a block into the send rings.
+    pub fn bell(&self) -> Arc<Doorbell> {
+        self.bell.clone()
+    }
+
     fn stop(&self) {
-        if let Some(t) = self.task.lock().unwrap().take() {
-            t.abort();
-        }
+        self.stopped.store(true, Ordering::SeqCst);
+        self.bell.ring();
     }
 
     fn spawn_send(self: Arc<Self>) {
-        let handle = tauri::async_runtime::spawn(self.clone().send_loop());
-        *self.task.lock().unwrap() = Some(handle);
+        if let Err(e) = std::thread::Builder::new()
+            .name("net-send".into())
+            .spawn(move || self.send_loop())
+        {
+            warn!(error = %e, "net sender thread failed to start");
+        }
     }
 
-    async fn send_loop(self: Arc<Self>) {
-        let socket = match UdpSocket::bind(("0.0.0.0", 0)).await {
+    fn send_loop(&self) {
+        self.bell.answer_here();
+        let socket = match UdpSocket::bind(("0.0.0.0", 0)) {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "net sender bind failed");
@@ -148,11 +171,17 @@ impl NetSender {
         let mut encoders: Vec<ChannelEncoder> = Vec::new();
         let mut ins: Vec<Vec<f32>> = Vec::new();
         let mut seqs: Vec<u16> = Vec::new();
-        let mut interval = tokio::time::interval(Duration::from_millis(20));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        loop {
-            interval.tick().await;
+        while !self.stopped.load(Ordering::SeqCst) {
+            // Woken by each block the DAG pushes; the timeout only matters if
+            // the DAG stops.
+            #[cfg(test)]
+            let started = std::time::Instant::now();
+            self.bell.wait(IDLE_WAKE);
+            #[cfg(test)]
+            if started.elapsed() < IDLE_WAKE / 2 {
+                self.rung.fetch_add(1, Ordering::Relaxed);
+            }
 
             // Drain each channel's send ring under the lock, then release it
             // before the encode / send work.
@@ -223,7 +252,7 @@ impl NetSender {
                 });
             }
             for p in &packets {
-                match socket.send_to(p, target).await {
+                match socket.send_to(p, target) {
                     Ok(_) => {
                         self.bytes.fetch_add(p.len() as u64, Ordering::Relaxed);
                         self.packets.fetch_add(1, Ordering::Relaxed);
@@ -290,5 +319,32 @@ mod tests {
             }
         }
         assert!(stats("test-sender").is_none(), "release frees the node");
+    }
+
+    #[test]
+    fn a_ring_sends_at_once_instead_of_on_the_idle_tick() {
+        let sink = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind sink");
+        let sender = get_or_create(
+            "test-rung-sender",
+            sink.local_addr().expect("sink address"),
+            Format::PcmF32,
+            0,
+            OpusApplication::Audio,
+            48_000,
+        );
+        let (mut prod, cons) = rtrb::RingBuffer::new(9_600);
+        sender.set_send_consumers(vec![cons]);
+        let bell = sender.bell();
+        std::thread::sleep(Duration::from_millis(50));
+        for _ in 0..5 {
+            prod.write_chunk_uninit(64)
+                .expect("ring space")
+                .fill_from_iter(std::iter::repeat(0.5));
+            bell.ring();
+            std::thread::sleep(Duration::from_millis(3));
+        }
+        let rung = sender.rung.load(Ordering::Relaxed);
+        release("test-rung-sender");
+        assert!(rung >= 3, "only {rung} of 5 rings woke the sender");
     }
 }

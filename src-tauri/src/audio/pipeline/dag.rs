@@ -839,6 +839,8 @@ struct ConsumerState {
     incoming: Vec<IncomingEdge>,
     channel_bufs: Vec<(String, Vec<f32>)>,
     send_producers: Vec<Producer<f32>>,
+    /// Wakes the thread that sends what the rings hold.
+    bell: Arc<crate::audio::wake::Doorbell>,
 }
 
 /// `delay` is `Some` when this path is shorter than the longest reaching the
@@ -1394,6 +1396,7 @@ impl OutputGraph {
                         bulk_push_counted(prod, buf, &health::TAP_RING_OVERRUN_SAMPLES);
                     }
                 }
+                cons.bell.ring();
                 continue;
             }
             if let DagNode::Effect(eff) = &mut tail[0] {
@@ -2139,7 +2142,7 @@ pub(super) fn build_output_graph(
             send_producers.push(prod);
             send_consumers.push(cons);
         }
-        match &spec {
+        let bell = match &spec {
             OutputSpec::NetSender {
                 node_id,
                 target,
@@ -2162,6 +2165,7 @@ pub(super) fn build_output_graph(
                     output_sr,
                 );
                 sender.set_send_consumers(send_consumers);
+                sender.bell()
             }
             OutputSpec::WebRtcSend {
                 node_id,
@@ -2174,14 +2178,16 @@ pub(super) fn build_output_graph(
                 // This graph already runs at the wire rate, so the encode task's
                 // own resampler stays out of the path.
                 session.set_send_consumers(send_consumers, output_sr);
+                session.send_bell.clone()
             }
             _ => unreachable!("wire sender spec"),
-        }
+        };
 
         nodes.push(DagNode::Consumer(ConsumerState {
             incoming,
             channel_bufs,
             send_producers,
+            bell,
         }));
 
         let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
@@ -4523,6 +4529,59 @@ pub(super) mod graph_tests {
         // Send-side graph is driven like any output.
         let mut out = vec![0.0; TIMER_BLOCK_FRAMES * 2];
         built.graph.process_block(&mut out);
+    }
+
+    #[test]
+    fn a_net_sender_graph_streams_to_a_local_receiver_at_the_engine_block() {
+        // Chrome to a Net Sender on 127.0.0.1 and a Net Receiver on its port,
+        // the way the field report wired it, at 64-frame blocks.
+        let port = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let rx = crate::audio::netaudio::receiver::get_or_create("loop-rx", port);
+        let _consumer = rx.register_consumer(SR, 64, true);
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                node(
+                    "loop-tx",
+                    NodeKind::NetSender,
+                    serde_json::json!({
+                        "targetIp": "127.0.0.1",
+                        "port": port,
+                        "codec": "pcm-f32",
+                        "opusBitrate": 96_000,
+                        "opusApplication": "audio",
+                        "channels": 2
+                    }),
+                ),
+            ],
+            edges: vec![
+                edge("e1", "m", Some("ch1"), "loop-tx", Some("ch1")),
+                edge("e2", "m", Some("ch2"), "loop-tx", Some("ch2")),
+            ],
+        };
+        let valid = g.validate().expect("send graph valid");
+        let (built, mut producers) = build_with_block(Some("loop-tx"), SR, 64, &valid, SR, true);
+        assert_eq!(built.graph.block_frames(), 64);
+        let (worker, _ctrl) =
+            super::super::output::start_wire_sender_worker(built.graph).expect("worker");
+        let input = producers.get_mut("m").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut packets = 0;
+        while packets < 20 && Instant::now() < deadline {
+            push_all(input, &vec![0.3; 480 * 2]);
+            std::thread::sleep(Duration::from_millis(10));
+            packets = crate::audio::netaudio::receiver::stats("loop-rx").map_or(0, |s| s.packets);
+        }
+        worker.stop.store(true, Ordering::SeqCst);
+        crate::audio::netaudio::receiver::release("loop-rx");
+        crate::audio::netaudio::sender::release("loop-tx");
+        assert!(packets >= 20, "only {packets} packets arrived");
     }
 
     #[test]

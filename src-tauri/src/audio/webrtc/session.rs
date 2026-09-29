@@ -25,6 +25,8 @@ pub struct WebRtcSession {
     /// Bumped whenever the send rings are replaced, so the encode task rebuilds
     /// every channel's encode state together.
     pub send_gen: AtomicU64,
+    /// Rung by the DAG after each block it pushes into the send rings.
+    pub send_bell: Arc<crate::audio::wake::Doorbell>,
     // Each output subgraph builds its own bridge, so received audio fans out to
     // per-bridge rings (keyed "peer:ch") rather than being drained once.
     pub fanout: FanoutRegistry,
@@ -88,6 +90,7 @@ impl WebRtcSession {
             opus_application,
             send_consumers: Mutex::new(Vec::new()),
             send_gen: AtomicU64::new(0),
+            send_bell: Arc::default(),
             fanout: FanoutRegistry::default(),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),

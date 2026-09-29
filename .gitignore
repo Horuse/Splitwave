@@ -24,4 +24,3 @@ vite.config.ts.timestamp-*
 
 # storybook
 /storybook-static
-/src-tauri/src/audio/pipeline/testdata

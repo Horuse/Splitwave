@@ -675,6 +675,10 @@ pub struct ChannelReceiver {
     /// That source and its rate. Following another, or the same one after it
     /// refilled, starts the loop settling afresh.
     steered: Cell<Option<(u64, u32)>>,
+    /// Smoothed fill of the emptiest playing source, in 48 kHz samples: the
+    /// latency the receive buffer adds. A gauge for the latency report.
+    fill: Arc<AtomicU32>,
+    fill_avg: Cell<f64>,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
     last_mix: std::cell::RefCell<Vec<f32>>,
@@ -732,6 +736,8 @@ impl ChannelReceiver {
             drift_loop: std::cell::RefCell::new(DriftLoop::new(SR, need.max(1))),
             arrival: std::cell::RefCell::new(ArrivalClock::new(SR)),
             steered: Cell::new(None),
+            fill: Arc::new(AtomicU32::new(0)),
+            fill_avg: Cell::new(0.0),
             last_mix: std::cell::RefCell::new(vec![0.0; handle.block_frames * 2]),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
         }
@@ -858,6 +864,12 @@ impl ChannelReceiver {
                 .min_by_key(|p| p.min_backlog)
                 .map_or(0, |p| p.arrived);
             self.account(starving, live.map(|p| (p.min_backlog, p.need)), arrived);
+            if let Some(p) = live {
+                let avg = self.fill_avg.get();
+                let avg = avg + (p.min_backlog as f64 - avg) * 0.02;
+                self.fill_avg.set(avg);
+                self.fill.store(avg.round() as u32, Ordering::Relaxed);
+            }
             let live = live.map(|p| p.id);
             match plans.iter_mut().find(|p| Some(p.id) == live) {
                 Some(p) if !p.conceal => p.splice = self.steer(p, now),
@@ -991,6 +1003,11 @@ impl ChannelReceiver {
         let d = 1.0 / (1.0 + u);
         self.drift.store((d as f32).to_bits(), Ordering::Relaxed);
         0
+    }
+
+    /// Smoothed receive-buffer fill in 48 kHz samples, for the latency report.
+    pub fn fill_gauge(&self) -> Arc<AtomicU32> {
+        self.fill.clone()
     }
 
     /// Copy one channel's already-resampled scratch into `out`.

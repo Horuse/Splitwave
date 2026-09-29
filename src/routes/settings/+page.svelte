@@ -20,6 +20,7 @@
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz, formatLatencyMs } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
 		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },
@@ -45,9 +46,23 @@
 	];
 
 	function resetAll() {
+		const rate = appSettings.pipelineSampleRate;
+		const frames = appSettings.bufferFrames;
 		edgeSettings.reset();
 		appSettings.reset();
 		void disableAutostart();
+		if (appSettings.pipelineSampleRate !== rate || appSettings.bufferFrames !== frames) applyEngineFormat();
+	}
+
+	/** Every device reopens at the new format, so a running pipeline takes it now. */
+	function applyEngineFormat() {
+		audioStore.applyEngineFormat().catch((e) => audioStore.reportError(e));
+	}
+
+	function setEngine<K extends 'pipelineSampleRate' | 'bufferFrames'>(key: K, value: (typeof appSettings)[K]) {
+		if (appSettings[key] === value) return;
+		setApp(key, value);
+		applyEngineFormat();
 	}
 
 	let customRateSelected = $state(false);
@@ -275,7 +290,7 @@
 						type="button"
 						onclick={() => {
 							customRateSelected = false;
-							setApp('pipelineSampleRate', rate);
+							setEngine('pipelineSampleRate', rate);
 						}}
 						class={[
 							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
@@ -308,7 +323,7 @@
 						max={384000}
 						step={1}
 						label="Custom sample rate"
-						onchange={(v) => setApp('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
+						onchange={(v) => setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
 					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
 				</div>
 			{/if}
@@ -319,8 +334,8 @@
 				<h2 class="text-sm font-semibold text-theme">Buffer size</h2>
 				<p class="text-xs text-neutral-900">
 					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the
-					latency readout reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. Applies the next
-					time the pipeline starts.
+					latency readout reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running
+					pipeline reopens its devices at the new size right away.
 				</p>
 			</div>
 
@@ -328,7 +343,7 @@
 				{#each BUFFER_FRAME_PRESETS as frames (frames)}
 					<button
 						type="button"
-						onclick={() => setApp('bufferFrames', frames)}
+						onclick={() => setEngine('bufferFrames', frames)}
 						class={[
 							'flex flex-col items-center rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
 							appSettings.bufferFrames === frames

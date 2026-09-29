@@ -416,6 +416,13 @@ class AudioStore {
 		}
 	}
 
+	/** Reopens every device of the running pipeline at the current engine
+	 * sample rate and buffer size. No-op when nothing is running. */
+	async applyEngineFormat(): Promise<void> {
+		if (!this.isRunning || !this.fullGraph) return;
+		await this.restartPipeline(this.fullGraph);
+	}
+
 	/** Apply a new graph to the running pipeline. Uses `reconcile_pipeline`,
 	 * which diffs the new graph and only touches what changed — input
 	 * streams stay alive across edits when their spec is unchanged.

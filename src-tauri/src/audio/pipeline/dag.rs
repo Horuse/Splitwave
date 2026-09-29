@@ -224,7 +224,7 @@ pub(super) struct SourceStats {
 }
 
 impl SourceStats {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             xrun: Arc::new(AtomicU64::new(0)),
             stalled: Arc::new(AtomicU64::new(0)),
@@ -262,6 +262,8 @@ pub(super) struct SourceMeta {
     /// Capture-side fed/dropped counters, filled in by `pipeline/mod.rs`
     /// after `BroadcastTx::add` returns them for this source's ring.
     pub capture: Option<CaptureStats>,
+    /// For a ring-source reading a fan-out node, the path before the ring.
+    pub upstream: Option<Upstream>,
 }
 
 /// Identifies one output for the tick thread: its per-block counter plus the
@@ -1482,7 +1484,10 @@ pub(super) struct BuiltOutputGraph {
     pub output: OutputMeta,
     /// Effect node id -> (node index, channel width). Used to attach publish
     /// taps to nodes that fan out to other outputs.
-    pub node_meta: HashMap<String, (usize, usize)>,
+    pub node_meta: HashMap<String, (usize, usize, usize)>,
+    /// Fill gauges of the network receive buffers this graph reads, in
+    /// 48 kHz samples.
+    pub receive_buffers: Vec<Arc<AtomicU32>>,
     /// Latency and working block of every effect built here.
     pub node_timings: Vec<NodeTiming>,
     /// What the next build of this output needs to carry these nodes over.
@@ -1605,7 +1610,8 @@ pub(super) fn build_output_graph(
     let mut id_to_index: HashMap<String, usize> = HashMap::new();
     // Effect node id -> (index in `nodes`, channel width). Lets the caller wire
     // publish taps onto a node that fans out to other outputs' ring-sources.
-    let mut node_meta: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut node_meta: HashMap<String, (usize, usize, usize)> = HashMap::new();
+    let mut receive_buffers: Vec<Arc<AtomicU32>> = Vec::new();
     let mut controls: Vec<(String, EffectControl)> = Vec::new();
     let mut bypasses: Vec<(String, Arc<AtomicBool>)> = Vec::new();
     let mut meters: Vec<MeterHandle> = Vec::new();
@@ -1623,7 +1629,14 @@ pub(super) fn build_output_graph(
     for id in &topo {
         // A fan-out node owned by an earlier output: read its published block
         // from the ring instead of rebuilding the whole upstream chain.
-        if let Some((consumer, owner_sr, width, clock)) = cut_leaves.remove(id) {
+        if let Some(CutLeaf {
+            consumer,
+            owner_sr,
+            width,
+            clock,
+            upstream,
+        }) = cut_leaves.remove(id)
+        {
             let source = ring_source(
                 id,
                 consumer,
@@ -1644,6 +1657,7 @@ pub(super) fn build_output_graph(
                 input_id: None,
                 output_id: output_id.unwrap_or(MONITOR_KEY).to_string(),
                 capture: None,
+                upstream: Some(upstream),
             });
             id_to_index.insert(id.clone(), nodes.len());
             nodes.push(DagNode::Source(source));
@@ -1684,6 +1698,7 @@ pub(super) fn build_output_graph(
                 _ => None,
             };
             if let Some(receiver) = network {
+                receive_buffers.push(receiver.fill_gauge());
                 let mut handles: Vec<String> = valid
                     .edges
                     .iter()
@@ -1793,6 +1808,7 @@ pub(super) fn build_output_graph(
                 input_id: Some(id.clone()),
                 output_id: output_id.unwrap_or(MONITOR_KEY).to_string(),
                 capture: None,
+                upstream: None,
             });
             let source = SourceState {
                 label,
@@ -2045,7 +2061,10 @@ pub(super) fn build_output_graph(
                 handle_bufs,
                 taps: Vec::new(),
             }));
-            node_meta.insert(id.clone(), (nodes.len() - 1, eff_channels));
+            node_meta.insert(
+                id.clone(),
+                (nodes.len() - 1, eff_channels, max_upstream + own),
+            );
             node_latencies.push(max_upstream + own);
             node_channels.push(eff_channels);
         }
@@ -2196,6 +2215,7 @@ pub(super) fn build_output_graph(
                 io: None,
             },
             node_meta,
+            receive_buffers,
             node_timings,
             carried,
             carried_inputs,
@@ -2278,6 +2298,7 @@ pub(super) fn build_output_graph(
             io: None,
         },
         node_meta,
+        receive_buffers,
         node_timings,
         carried,
         carried_inputs,
@@ -2331,8 +2352,22 @@ fn node_identities(
 }
 
 /// A fan-out node's published ring as another output reads it: the ring, the
-/// owner's rate and width, and when the owner wrote to it.
-pub(super) type CutLeaf = (Consumer<f32>, u32, usize, Arc<WriteClock>);
+/// owner's rate and width, when the owner wrote to it, and what came before.
+pub(super) struct CutLeaf {
+    pub consumer: Consumer<f32>,
+    pub owner_sr: u32,
+    pub width: usize,
+    pub clock: Arc<WriteClock>,
+    pub upstream: Upstream,
+}
+
+/// Where a fan-out node's audio was before its ring: the output that owns
+/// it, and that graph's delay compensation up to the node, in its frames.
+#[derive(Clone)]
+pub(super) struct Upstream {
+    pub owner: String,
+    pub frames: usize,
+}
 
 /// Builds a `SourceState` that reads a fan-out node's published block from a
 /// ring (written at `owner_sr`) and resamples it to this graph's `output_sr`.
@@ -4405,11 +4440,23 @@ pub(super) mod graph_tests {
 
         // Building B with the cut leaf: A's published block feeds B.
         let (mut built_a, mut producers_a) = build(Some("a"), SR, &valid, SR, false);
-        let (node_idx, width) = built_a.node_meta["g"];
+        let (node_idx, width, _) = built_a.node_meta["g"];
         assert_eq!(width, 2);
         let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
         let mut cut_leaves = HashMap::new();
-        cut_leaves.insert("g".to_string(), (cons, SR, 2, Arc::default()));
+        cut_leaves.insert(
+            "g".to_string(),
+            CutLeaf {
+                consumer: cons,
+                owner_sr: SR,
+                width: 2,
+                clock: Arc::default(),
+                upstream: Upstream {
+                    owner: "a".into(),
+                    frames: 0,
+                },
+            },
+        );
 
         let mut producer_pairs = Vec::new();
         let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
@@ -5033,10 +5080,22 @@ pub(super) mod graph_tests {
         };
         let valid = g.validate().expect("valid");
         let (mut built_a, mut producers_a) = build(Some("a"), 44_100, &valid, 44_100, false);
-        let (node_idx, _) = built_a.node_meta["g"];
+        let (node_idx, _, _) = built_a.node_meta["g"];
         let (prod, cons) = RingBuffer::<f32>::new(SR as usize * 2);
         let mut cut_leaves = HashMap::new();
-        cut_leaves.insert("g".to_string(), (cons, 44_100, 2, Arc::default()));
+        cut_leaves.insert(
+            "g".to_string(),
+            CutLeaf {
+                consumer: cons,
+                owner_sr: 44_100,
+                width: 2,
+                clock: Arc::default(),
+                upstream: Upstream {
+                    owner: "a".into(),
+                    frames: 0,
+                },
+            },
+        );
 
         let mut producer_pairs = Vec::new();
         let native = valid

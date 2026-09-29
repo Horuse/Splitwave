@@ -102,6 +102,8 @@ pub struct ActivePipeline {
     /// Bridges of outputs being swapped in place, by (output, input): a source
     /// carried over keeps the bridge that feeds its ring.
     swapping_slots: HashMap<(String, String), Vec<usize>>,
+    /// Fill gauges of the network receive buffers each output reads.
+    receive_buffers: HashMap<String, Vec<Arc<AtomicU32>>>,
     /// Each speaker's overload count at the last report.
     reported_overloads: HashMap<String, u64>,
 }
@@ -187,6 +189,7 @@ impl ActivePipeline {
             node_timings: HashMap::new(),
             carried_nodes: HashMap::new(),
             swapping_slots: HashMap::new(),
+            receive_buffers: HashMap::new(),
             reported_overloads: HashMap::new(),
         }
     }
@@ -309,20 +312,21 @@ impl ActivePipeline {
         report.nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
         for (id, s) in &self.speakers {
             let io = &s.io;
-            let inputs: Vec<PathInput> = self
+            let mut inputs: Vec<PathInput> = self
                 .source_stats
                 .iter()
                 .filter(|m| m.output_id == *id)
-                .map(|m| {
-                    let input = m.input_id.as_ref().and_then(|i| self.inputs.get(i));
-                    PathInput {
-                        device: input.and_then(|i| i.io),
-                        queue_frames: m.stats.queue_frames.load(Ordering::Relaxed),
-                        normalizer_frames: input.map_or(0, |i| i.normalizer_frames),
-                        rate: m.native_sr,
-                    }
-                })
+                .map(|m| self.path_input(m))
                 .collect();
+            // A network input's latency is the receive buffer it plays from.
+            for fill in self.receive_buffers.get(id).into_iter().flatten() {
+                inputs.push(PathInput {
+                    device: None,
+                    queue_frames: fill.load(Ordering::Relaxed) as u64,
+                    normalizer_frames: 0,
+                    rate: crate::audio::stream_recv::SR,
+                });
+            }
             let out = PathOutput {
                 pipeline_rate,
                 graph_latency_frames: io.graph_latency_frames.load(Ordering::Relaxed) as u64,
@@ -353,6 +357,38 @@ impl ActivePipeline {
         report
     }
 
+    /// One source's share of a path. A ring-source reading a fan-out node
+    /// carries on from the slowest source of the graph that owns the node,
+    /// through that graph's delay compensation up to it, all counted in the
+    /// ring's own rate.
+    fn path_input(&self, m: &SourceMeta) -> PathInput {
+        let input = m.input_id.as_ref().and_then(|i| self.inputs.get(i));
+        let own = PathInput {
+            device: input.and_then(|i| i.io),
+            queue_frames: m.stats.queue_frames.load(Ordering::Relaxed),
+            normalizer_frames: input.map_or(0, |i| i.normalizer_frames),
+            rate: m.native_sr,
+        };
+        let Some(up) = &m.upstream else {
+            return own;
+        };
+        let in_rate = |frames: u64, rate: u32| frames * m.native_sr as u64 / rate.max(1) as u64;
+        let before = self
+            .source_stats
+            .iter()
+            .filter(|s| s.output_id == up.owner)
+            .map(|s| self.path_input(s))
+            .max_by_key(|p| in_rate(p.queue_frames + p.normalizer_frames, p.rate));
+        PathInput {
+            device: before.and_then(|b| b.device),
+            queue_frames: own.queue_frames
+                + up.frames as u64
+                + before.map_or(0, |b| in_rate(b.queue_frames, b.rate)),
+            normalizer_frames: before.map_or(0, |b| in_rate(b.normalizer_frames, b.rate)),
+            rate: m.native_sr,
+        }
+    }
+
     fn teardown(&mut self) {
         if let Some(current) = &self.current {
             for inp in &current.inputs {
@@ -370,6 +406,7 @@ impl ActivePipeline {
         self.stale_bridges.clear();
         self.carried_nodes.clear();
         self.swapping_slots.clear();
+        self.receive_buffers.clear();
         self.inputs.clear();
         self.meters.clear();
         self.gr_handles.clear();
@@ -967,6 +1004,8 @@ impl ActivePipeline {
             self.keep_carried_bridges(&out.id, &built.carried_inputs, &mut carried_captures);
             self.carried_nodes
                 .insert(out.id.clone(), std::mem::take(&mut built.carried));
+            self.receive_buffers
+                .insert(out.id.clone(), std::mem::take(&mut built.receive_buffers));
             // Wire publish taps for nodes this output owns and other outputs read.
             for (node, cons) in &cut_plan.consumers {
                 if cons.is_empty()
@@ -974,7 +1013,7 @@ impl ActivePipeline {
                 {
                     continue;
                 }
-                let Some(&(idx, width)) = built.node_meta.get(node) else {
+                let Some(&(idx, width, latency)) = built.node_meta.get(node) else {
                     continue;
                 };
                 for o2 in cons {
@@ -982,10 +1021,19 @@ impl ActivePipeline {
                         rtrb::RingBuffer::<f32>::new(ring_capacity_frames(output_sr) * width);
                     let clock = Arc::new(WriteClock::default());
                     built.graph.attach_tap(idx, prod, clock.clone());
-                    pending_cuts
-                        .entry(o2.clone())
-                        .or_default()
-                        .insert(node.clone(), (consumer, output_sr, width, clock));
+                    pending_cuts.entry(o2.clone()).or_default().insert(
+                        node.clone(),
+                        dag::CutLeaf {
+                            consumer,
+                            owner_sr: output_sr,
+                            width,
+                            clock,
+                            upstream: dag::Upstream {
+                                owner: out.id.clone(),
+                                frames: latency,
+                            },
+                        },
+                    );
                 }
             }
             for (inp_id, prod) in my_pairs {
@@ -1645,6 +1693,42 @@ mod tests {
         p.tear_down_outputs();
         assert!(p.inputs.is_empty());
         assert!(p.speakers.is_empty());
+    }
+
+    #[test]
+    fn a_fan_out_path_counts_the_owner_graph_before_its_ring() {
+        // Output b reads node g from a ring that output a publishes: its path
+        // is a's slowest source, a's compensation up to g, then b's ring.
+        let meta = |output: &str, queue: u64, upstream: Option<dag::Upstream>| {
+            let stats = dag::SourceStats::new();
+            stats.queue_frames.store(queue, Ordering::Relaxed);
+            SourceMeta {
+                label: String::new(),
+                stats,
+                channels: 2,
+                native_sr: 48_000,
+                frames_per_block: 64,
+                input_id: None,
+                output_id: output.into(),
+                capture: None,
+                upstream,
+            }
+        };
+        let mut p = ActivePipeline::new();
+        p.source_stats = vec![
+            meta("a", 480, None),
+            meta("a", 200, None),
+            meta(
+                "b",
+                100,
+                Some(dag::Upstream {
+                    owner: "a".into(),
+                    frames: 96,
+                }),
+            ),
+        ];
+        let path = p.path_input(&p.source_stats[2]);
+        assert_eq!(path.queue_frames, 480 + 96 + 100);
     }
 
     #[test]

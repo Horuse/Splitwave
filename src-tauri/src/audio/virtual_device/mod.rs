@@ -14,11 +14,11 @@ fn default_channels() -> u32 {
 }
 
 fn default_sample_rate() -> u32 {
-    48_000
+    crate::audio::graph::DEFAULT_SAMPLE_RATE
 }
 
 // Bump with any driver bundle change; keep in sync with Info.plist CFBundleVersion.
-pub const DRIVER_VERSION: u32 = 5;
+pub const DRIVER_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

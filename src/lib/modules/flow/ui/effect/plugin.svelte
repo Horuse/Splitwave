@@ -82,14 +82,18 @@
 		if (!path || !audioStore.isRunning) return;
 		// A single probe would race the rebuild and read the outgoing plugin's
 		// answer, which then never gets corrected; polling settles on the new
-		// instance instead.
+		// instance instead, and stops once it has.
+		let timer: ReturnType<typeof setInterval> | undefined;
 		const probe = () =>
 			audioMethods
 				.pluginStatus(id)
-				.then((v) => (status = v))
+				.then((v) => {
+					status = v;
+					if (v.path === path) clearInterval(timer);
+				})
 				.catch(() => {});
+		timer = setInterval(probe, 400);
 		probe();
-		const timer = setInterval(probe, 400);
 		return () => clearInterval(timer);
 	});
 

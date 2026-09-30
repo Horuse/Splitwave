@@ -6,7 +6,7 @@ use crate::audio::graph::DelayData;
 use super::util::load_f32;
 use super::{Effect, EffectControl};
 
-const MAX_DELAY_MS: f32 = 2000.0;
+pub(crate) const MAX_DELAY_MS: f32 = 2000.0;
 
 /// Stereo delay line with feedback and dry/wet mix. Ring sized to 2 s @ build
 /// SR — live `time_ms` changes just shift the read offset, no realloc.

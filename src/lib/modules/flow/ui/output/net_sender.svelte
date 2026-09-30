@@ -10,6 +10,7 @@
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
 	let { id, data }: NodeProps<NetSenderNodeType> = $props();
@@ -30,13 +31,16 @@
 	let prevBytes = 0;
 	let prevAt = 0;
 
-	const interval = setInterval(async () => {
+	function reset(now: number) {
+		rate = 0;
+		prevBytes = 0;
+		prevAt = now;
+	}
+	async function poll() {
 		const s = await audioMethods.netSenderStats(id).catch(() => null);
 		const now = performance.now();
 		if (!s) {
-			rate = 0;
-			prevBytes = 0;
-			prevAt = now;
+			reset(now);
 			return;
 		}
 		if (prevAt > 0 && s.bytes >= prevBytes) {
@@ -44,12 +48,21 @@
 		}
 		prevBytes = s.bytes;
 		prevAt = now;
-	}, 1000);
+	}
+	// Stats exist only while the pipeline runs.
+	$effect(() => {
+		if (!audioStore.isRunning) {
+			untrack(() => reset(performance.now()));
+			return;
+		}
+		poll();
+		const interval = setInterval(poll, 1000);
+		return () => clearInterval(interval);
+	});
 
 	let isDestroyed = false;
 	onDestroy(() => {
 		isDestroyed = true;
-		clearInterval(interval);
 	});
 
 	const MAX_CHANNELS = 255;

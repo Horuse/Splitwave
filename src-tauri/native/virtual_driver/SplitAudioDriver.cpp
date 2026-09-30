@@ -20,15 +20,27 @@
 static const char* kConfigDir  = "/Library/Application Support/Splitwave";
 static const char* kConfigPath = "/Library/Application Support/Splitwave/devices.plist";
 
+// The ring holds this much audio at any rate, rounded up to a power of two of
+// frames so a position maps to a slot with a mask.
+static constexpr double kRingSeconds = 0.25;
+
+static uint64_t RingFrames(uint32_t sampleRate) {
+    const uint64_t want = (uint64_t)std::ceil(sampleRate * kRingSeconds);
+    uint64_t frames = 1;
+    while (frames < want) frames <<= 1;
+    return frames;
+}
+
 struct DeviceRing {
-    static constexpr uint32_t kFrames = 16384;
     uint32_t channels;
-    uint32_t nSamples;
+    uint64_t frames;
+    uint64_t mask;
     std::vector<float> buf;
     std::atomic<int64_t> lastOutFrame{0};
 
-    explicit DeviceRing(uint32_t ch)
-        : channels(ch), nSamples(kFrames * ch), buf(kFrames * ch, 0.0f) {}
+    DeviceRing(uint32_t ch, uint32_t sampleRate)
+        : channels(ch), frames(RingFrames(sampleRate)), mask(frames - 1),
+          buf(frames * ch, 0.0f) {}
 };
 
 class SplitIOHandler : public aspl::IORequestHandler,
@@ -46,13 +58,14 @@ public:
         const void* buff, UInt32 bytes) override
     {
         const float* src = static_cast<const float*>(buff);
-        const uint32_t n = bytes / sizeof(float);
+        const uint32_t ch = ring_.channels;
+        const int64_t frames = bytes / sizeof(float) / ch;
         const int64_t frame = llround(timestamp);
-        const uint64_t base = (uint64_t)frame * ring_.channels;
-        for (uint32_t i = 0; i < n; ++i) {
-            ring_.buf[(base + i) % ring_.nSamples] = src[i];
+        for (int64_t f = 0; f < frames; ++f) {
+            float* slot = &ring_.buf[((uint64_t)(frame + f) & ring_.mask) * ch];
+            memcpy(slot, src + f * ch, ch * sizeof(float));
         }
-        ring_.lastOutFrame.store(frame + n / ring_.channels, std::memory_order_release);
+        ring_.lastOutFrame.store(frame + frames, std::memory_order_release);
     }
 
     void OnReadClientInput(
@@ -62,16 +75,19 @@ public:
         void* buff, UInt32 bytes) override
     {
         float* dst = static_cast<float*>(buff);
-        const uint32_t n = bytes / sizeof(float);
+        const uint32_t ch = ring_.channels;
         const int64_t frame = llround(timestamp);
-        const int64_t frames = n / ring_.channels;
-        if (ring_.lastOutFrame.load(std::memory_order_acquire) - frames < frame) {
+        const int64_t frames = bytes / sizeof(float) / ch;
+        const int64_t last = ring_.lastOutFrame.load(std::memory_order_acquire);
+        // Not written yet, or already written over by newer audio: a reader
+        // this far behind gets silence rather than audio from another moment.
+        if (last - frames < frame || frame < last - (int64_t)ring_.frames) {
             memset(dst, 0, bytes);
             return;
         }
-        const uint64_t base = (uint64_t)frame * ring_.channels;
-        for (uint32_t i = 0; i < n; ++i) {
-            dst[i] = ring_.buf[(base + i) % ring_.nSamples];
+        for (int64_t f = 0; f < frames; ++f) {
+            const float* slot = &ring_.buf[((uint64_t)(frame + f) & ring_.mask) * ch];
+            memcpy(dst + f * ch, slot, ch * sizeof(float));
         }
     }
 };
@@ -167,7 +183,7 @@ static AudioStreamBasicDescription FloatFormat(UInt32 channels, Float64 sampleRa
 }
 
 static DeviceEntry BuildDevice(const DeviceConfig& cfg) {
-    auto ring    = std::make_shared<DeviceRing>(cfg.channels);
+    auto ring    = std::make_shared<DeviceRing>(cfg.channels, cfg.sampleRate);
     auto handler = std::make_shared<SplitIOHandler>(ring);
 
     aspl::DeviceParameters params;

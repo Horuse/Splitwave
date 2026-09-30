@@ -7,7 +7,6 @@
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import { ArrowSwap, Hourglass } from '$lib/components/icons';
 	import { latencyStore } from '$lib/modules/audio/latency.svelte';
-	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatLatencyMs } from '$lib/components/format';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import ChannelHandles from './_channel_handles.svelte';
@@ -73,8 +72,9 @@
 	let blockTooltip = $derived.by(() => {
 		const block = timing?.workingBlock;
 		if (!block || !latencyStore.report) return undefined;
-		const rate = appSettings.pipelineSampleRate;
-		return `Runs in ${block}-sample blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / rate)} ms`;
+		const rate = latencyStore.report.sampleRate;
+		if (!rate) return undefined;
+		return `Runs in ${block}-frame blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / rate)} ms`;
 	});
 
 	function pos(p: InputHandleConfig['position']): Position {

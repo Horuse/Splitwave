@@ -166,8 +166,8 @@ pub(super) fn structural_effect(spec: &EffectSpec) -> EffectSpec {
             d.bypassed = false;
         }
         E::Declick(d) => {
+            // max_width_ms sizes the delay line at build time -- keep it structural.
             d.sensitivity = 0.0;
-            d.max_width_ms = 0.0;
             d.bypassed = false;
         }
         E::DeEsser(d) => {
@@ -347,6 +347,38 @@ mod tests {
     }
 
     #[test]
+    fn declick_width_is_structural_but_sensitivity_is_not() {
+        let mk = |width: f32, sensitivity: f32| {
+            GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![
+                    mic("m"),
+                    node(
+                        "d",
+                        NodeKind::Declick,
+                        serde_json::json!({ "sensitivity": sensitivity, "maxWidthMs": width }),
+                    ),
+                    speaker("s"),
+                ],
+                edges: vec![edge("e1", "m", "d"), edge("e2", "d", "s")],
+            }
+            .validate()
+            .expect("valid")
+        };
+        let base = compute_output_sig(&mk(2.0, 0.5), "s");
+        assert_eq!(
+            base,
+            compute_output_sig(&mk(2.0, 0.9), "s"),
+            "sensitivity is live"
+        );
+        assert!(
+            base != compute_output_sig(&mk(4.0, 0.5), "s"),
+            "width sizes the delay line"
+        );
+    }
+
+    #[test]
     fn plugin_state_is_not_structural_path_is() {
         let mk = |state: Option<&str>| {
             GraphSpec {
@@ -503,8 +535,8 @@ mod tests {
             ),
             (
                 NodeKind::Declick,
-                serde_json::json!({ "sensitivity": 0.9, "maxWidthMs": 5.0 }),
-                serde_json::json!({ "sensitivity": 0.0, "maxWidthMs": 0.3 }),
+                serde_json::json!({ "sensitivity": 0.9, "maxWidthMs": 2.0 }),
+                serde_json::json!({ "sensitivity": 0.0, "maxWidthMs": 2.0 }),
             ),
             (
                 NodeKind::DeEsser,

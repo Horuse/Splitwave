@@ -26,6 +26,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::health;
 use crate::audio::streams::bulk_push_counted;
+use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
 /// Maximum subscribers per input. 32 covers any plausible pipeline (each
@@ -130,6 +131,8 @@ pub struct BroadcastRx {
     slots: Vec<Option<Slot>>,
     discarded_tx: Producer<Slot>,
     clock: Arc<WriteClock>,
+    /// Rung after every broadcast, for a thread that waits on this bridge.
+    bell: Option<Arc<Doorbell>>,
 }
 
 pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
@@ -154,6 +157,7 @@ pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
             slots,
             discarded_tx: disc_tx,
             clock,
+            bell: None,
         },
     )
 }
@@ -259,6 +263,14 @@ impl BroadcastRx {
                 }
             }
         }
+        if let Some(bell) = &self.bell {
+            bell.ring();
+        }
+    }
+
+    /// Wakes whoever answers `bell` after every broadcast.
+    pub fn ring_after_broadcast(&mut self, bell: Arc<Doorbell>) {
+        self.bell = Some(bell);
     }
 
     /// Samples queued in the fullest active slot, or `None` when nothing is

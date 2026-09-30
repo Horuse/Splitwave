@@ -6,8 +6,9 @@ use crate::audio::graph::DeclickData;
 use super::util::load_f32;
 use super::{Effect, EffectControl};
 
-/// Longest click the node repairs; also fixes the added latency. 5 ms covers
-/// mouse pops and mic taps; wider bursts are dropouts, not clicks.
+/// Longest click the node can be set to repair. 5 ms covers mouse pops and
+/// mic taps; wider bursts are dropouts, not clicks. The node's own setting
+/// sizes its delay, so a narrower one costs less latency.
 const MAX_MS: f32 = 5.0;
 /// Consecutive quiet samples that confirm a click has ended.
 const CLOSE_HOLD: usize = 3;
@@ -65,20 +66,30 @@ impl DeclickEffect {
             sensitivity: sensitivity.clone(),
             max_width_ms: max_width_ms.clone(),
         };
-        (Self::build(sensitivity, max_width_ms, sample_rate), control)
+        (
+            Self::build(sensitivity, max_width_ms, sample_rate, d.max_width_ms),
+            control,
+        )
     }
 
+    /// `width_ms` is the node's configured width, which sizes the delay.
     pub fn from_state(
         sensitivity: Arc<AtomicU32>,
         max_width_ms: Arc<AtomicU32>,
         sample_rate: u32,
+        width_ms: f32,
     ) -> Self {
-        Self::build(sensitivity, max_width_ms, sample_rate)
+        Self::build(sensitivity, max_width_ms, sample_rate, width_ms)
     }
 
-    fn build(sensitivity: Arc<AtomicU32>, max_width_ms: Arc<AtomicU32>, sample_rate: u32) -> Self {
+    fn build(
+        sensitivity: Arc<AtomicU32>,
+        max_width_ms: Arc<AtomicU32>,
+        sample_rate: u32,
+        width_ms: f32,
+    ) -> Self {
         let sr = sample_rate as f32;
-        let max_w_cap = ((sr * MAX_MS * 0.001) as usize).max(2);
+        let max_w_cap = ((sr * width_ms.clamp(0.3, MAX_MS) * 0.001) as usize).max(2);
         let delay = max_w_cap + CLOSE_HOLD + 4;
         let cap = delay + 8;
         let a_lp = 1.0 - (-2.0 * std::f32::consts::PI * HP_CUTOFF_HZ / sr).exp();
@@ -203,6 +214,24 @@ fn repair(buf: &mut [f32], cap: usize, s: u64, e: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_delay_follows_the_configured_width() {
+        let latency = |width: f32| {
+            DeclickEffect::new(
+                DeclickData {
+                    sensitivity: 0.5,
+                    max_width_ms: width,
+                    bypassed: false,
+                },
+                48_000,
+            )
+            .0
+            .latency_frames()
+        };
+        assert!(latency(2.0) < latency(5.0));
+        assert!(latency(2.0) <= 96 + CLOSE_HOLD + 4, "{}", latency(2.0));
+    }
 
     fn declick(sensitivity: f32) -> DeclickEffect {
         DeclickEffect::new(

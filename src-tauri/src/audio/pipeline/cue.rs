@@ -21,6 +21,10 @@ const BEEP_OFF_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_off.mp3");
 const BEEP_ON_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_on.mp3");
 
 const RESAMPLE_CHUNK: usize = 1024;
+/// Quantum asked of PipeWire for a cue. Nobody waits on a cue, so it asks for
+/// a large one rather than pull the whole graph down to a small quantum.
+#[cfg(target_os = "linux")]
+const CUE_QUANTUM: usize = 1024;
 // Slack after the clip ends so the device drains before the stream is dropped.
 const DRAIN: Duration = Duration::from_millis(120);
 
@@ -68,6 +72,7 @@ pub fn play(device_id: &str, muted: bool, gain: f32, beep: bool) -> AppResult<()
             &spec.node_id,
             spec.sample_rate,
             channels,
+            CUE_QUANTUM,
             move |out| {
                 let frames = out.len() / channels;
                 render(out, frames);

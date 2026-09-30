@@ -119,7 +119,10 @@
 	}
 
 	function addNode(kind: NodeKind, position?: { x: number; y: number }) {
-		addNodeWithData(kind, defaultDataFor(kind), position);
+		const data = defaultDataFor(kind);
+		// A new recording pins the rate the pipeline runs at, not a fixed one.
+		if (kind === 'fileRecording') Object.assign(data, { sampleRate: appSettings.pipelineSampleRate });
+		addNodeWithData(kind, data, position);
 	}
 
 	function addNodeWithData(kind: NodeKind, data: Record<string, unknown>, position?: { x: number; y: number }) {
@@ -512,27 +515,37 @@
 	}
 
 	let lastRoutingSig = untrack(routingSignature);
-	let restartTimer: ReturnType<typeof setTimeout> | undefined;
-	// No teardown on re-run: node measurement re-fires this effect constantly and
-	// would cancel the pending reconcile before it ever reaches the backend.
+	// An edit goes to the backend at once. Edits made while a reconcile is
+	// still running collapse into one, sent with the graph as it is by then.
+	let restartInFlight = false;
+	let restartQueued = false;
+	async function pushRestart() {
+		if (restartInFlight) {
+			restartQueued = true;
+			return;
+		}
+		restartInFlight = true;
+		try {
+			do {
+				restartQueued = false;
+				await audioStore.restartPipeline({
+					nodes: fromXyNodes(nodes),
+					edges: fromXyEdges(edges)
+				});
+			} while (restartQueued && audioStore.isRunning);
+		} catch (e) {
+			audioStore.reportError(e);
+		} finally {
+			restartInFlight = false;
+		}
+	}
+	// No teardown on re-run: node measurement re-fires this effect constantly.
 	$effect(() => {
 		const sig = routingSignature();
 		if (sig === lastRoutingSig) return;
 		lastRoutingSig = sig;
 		if (!audioStore.isRunning) return;
-		clearTimeout(restartTimer);
-		restartTimer = setTimeout(() => {
-			untrack(async () => {
-				try {
-					await audioStore.restartPipeline({
-						nodes: fromXyNodes(nodes),
-						edges: fromXyEdges(edges)
-					});
-				} catch (e) {
-					audioStore.reportError(e);
-				}
-			});
-		}, 400);
+		untrack(() => void pushRestart());
 	});
 
 	// The Tauri WebView (and historic browser behavior) treats Backspace outside
@@ -620,7 +633,6 @@
 
 	onDestroy(() => {
 		flushPendingCommit();
-		clearTimeout(restartTimer);
 		unlistenAudioFile?.();
 		if (pipelineStore.editorActions?.getSnapshot === getSnapshot) {
 			pipelineStore.editorActions = null;

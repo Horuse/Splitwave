@@ -12,6 +12,10 @@ path: LatencyBreakdown | null,
  */
 bufferFrames: number, 
 /**
+ * Rate the engine runs at, which every frame count here is in.
+ */
+sampleRate: number, 
+/**
  * Buffer the slowest speaker actually runs at, in its own frames.
  */
 deviceBufferFrames: number | null, 

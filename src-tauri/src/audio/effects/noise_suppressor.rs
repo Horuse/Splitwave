@@ -94,7 +94,6 @@ const DF_SILENCE_GATE: f32 = 1e-7;
 /// Below this limit DeepFilterNet passes the input through undelayed, which
 /// would move the output by the model's latency whenever the limit crossed it.
 const MIN_ATTEN_DB: f32 = 0.01;
-const CAP: usize = 8192;
 
 #[derive(Clone)]
 pub struct NoiseSuppressorControls {
@@ -326,9 +325,13 @@ impl ModelState {
             queued += hop_out;
         }
 
-        let mut in_q = VecDeque::with_capacity(CAP);
+        // Either queue holds its prefill, a hop being gathered or answered,
+        // and a whole engine block on top: sized so the audio thread never
+        // grows them.
+        let cap = (preroll + queued + 2 * hop_out + MAX_BUFFER_FRAMES) * 2;
+        let mut in_q = VecDeque::with_capacity(cap);
         in_q.extend(std::iter::repeat_n(0.0, preroll * 2));
-        let mut out = VecDeque::with_capacity(CAP);
+        let mut out = VecDeque::with_capacity(cap);
         out.extend(std::iter::repeat_n(0.0, queued * 2));
 
         Some(Self {

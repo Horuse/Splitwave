@@ -37,25 +37,32 @@ pub const SR: u32 = 48_000;
 /// deep adaptive target plus a burst after a latency spike.
 pub const CONSUMER_RING: usize = 96_000;
 
-/// Jitter-buffer depth (mono samples at 48 kHz) the drift loop steers the
-/// fill toward and the buffer primes to. Sized by `DepthEstimator` from the
-/// arrival jitter actually measured; these bound it.
-const TARGET_INIT: usize = 2_880; // ~60 ms, until the first second is measured
-const TARGET_MIN: usize = 960; // ~20 ms: one packet of the default codec
-const TARGET_MAX: usize = 19_200; // ~400 ms
-/// Kept above the measured jitter.
-const TARGET_SAFETY: usize = 240; // ~5 ms
+/// Jitter-buffer depth the drift loop steers the fill toward and the buffer
+/// primes to, in the source's own samples. Sized by `DepthEstimator` from the
+/// arrival jitter actually measured, packet size included: a link that
+/// delivers small packets steadily gets a shallow buffer, whatever the codec.
+const TARGET_INIT_MS: f64 = 60.0; // until the first packets are seen
+const TARGET_MAX_MS: f64 = 400.0;
+/// Kept above the measured jitter, as the live input queues keep theirs.
+const TARGET_SAFETY_MS: f64 = 2.0;
 /// One jitter measurement spans this long: many packets, so one late packet
 /// shows as a dip rather than as the whole window.
 const JITTER_WINDOW_MS: f64 = 500.0;
 /// A backlog jump beyond this is a re-prime refill, not drift.
-const TARGET_EVENT_MAX: usize = 4_800; // ~100 ms
-/// The depth primed from `TARGET_INIT` is corrected once, when measured, by
-/// splices of at most this many samples under a crossfade of `SPLICE_FADE`,
-/// one per `SPLICE_EVERY_MS` at most.
-const SPLICE_MAX: usize = 64;
-const SPLICE_FADE: usize = 32;
-const SPLICE_EVERY_MS: usize = 21;
+const TARGET_EVENT_MAX_MS: f64 = 100.0;
+/// The depth primed from `TARGET_INIT_MS` is corrected once, when measured,
+/// by splices of at most `SPLICE_MAX_MS` under a crossfade of
+/// `SPLICE_FADE_MS`, one per `SPLICE_EVERY_MS` at most.
+const SPLICE_MAX_MS: f64 = 1.33;
+const SPLICE_FADE_MS: f64 = 0.67;
+const SPLICE_EVERY_MS: f64 = 21.0;
+/// Time constant of the fill gauge.
+const FILL_SMOOTHING_MS: f64 = 250.0;
+
+/// `ms` in samples at `rate`.
+const fn frames_at(ms: f64, rate: u32) -> usize {
+    (ms * rate as f64 / 1000.0 + 0.5) as usize
+}
 
 /// Time without a single new sample before a channel counts as gone (the same
 /// window the DSP sources call a stall). A channel the sender never transmits
@@ -94,6 +101,13 @@ struct FeedState {
 fn extend_seq(seq: u16, near: u64) -> u64 {
     let delta = seq.wrapping_sub(near as u16) as i16;
     near.wrapping_add(delta as i64 as u64)
+}
+
+/// A receiver's smoothed buffer fill, in samples at `rate`.
+#[derive(Clone)]
+pub struct FillGauge {
+    pub frames: Arc<AtomicU32>,
+    pub rate: Arc<AtomicU32>,
 }
 
 /// A consumer's per-channel playback taps, keyed by channel id.
@@ -219,8 +233,10 @@ impl PlaybackTap {
     ) -> Self {
         let in_sr = source_sr.load(Ordering::Relaxed).max(1);
         let base_ratio = rate as f64 / in_sr as f64;
-        let resampler =
-            MultiResamplerOut::new(in_sr, rate, block_frames, 1).expect("mono resampler init");
+        let resampler = MultiResamplerOut::for_drift(in_sr, rate, block_frames, 1)
+            .expect("mono resampler init");
+        let in_buf =
+            Vec::with_capacity(resampler.input_frames_max() + frames_at(SPLICE_MAX_MS, in_sr));
         Self {
             group,
             consumer,
@@ -233,7 +249,7 @@ impl PlaybackTap {
             realtime,
             drift,
             clock,
-            in_buf: Vec::with_capacity(4096 + SPLICE_MAX),
+            in_buf,
             scratch: Vec::with_capacity(block_frames),
             valid: 0,
             primed,
@@ -313,7 +329,11 @@ impl PlaybackTap {
             self.current_source_sr = in_sr;
             self.base_ratio = self.rate as f64 / in_sr as f64;
             self.last_ratio = self.base_ratio;
-            if let Ok(r) = MultiResamplerOut::new(in_sr, self.rate, self.last_block.len(), 1) {
+            if let Ok(r) = MultiResamplerOut::for_drift(in_sr, self.rate, self.last_block.len(), 1)
+            {
+                self.in_buf.clear();
+                self.in_buf
+                    .reserve(r.input_frames_max() + frames_at(SPLICE_MAX_MS, in_sr));
                 self.resampler = r;
             }
         }
@@ -348,7 +368,9 @@ impl PlaybackTap {
         if splice > 0 {
             // The block's tail blends into the stream `splice` further on, so
             // it ends exactly where the next block picks up.
-            let fade = SPLICE_FADE.min(need);
+            let fade = frames_at(SPLICE_FADE_MS, self.current_source_sr)
+                .max(1)
+                .min(need);
             for i in 0..fade {
                 let j = need - fade + i;
                 let w = (i + 1) as f32 / fade as f32;
@@ -452,7 +474,7 @@ impl FanoutRegistry {
     ) -> ConsumerHandle {
         let map: TapMap = Arc::new(Mutex::new(HashMap::new()));
         let drift = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-        let target = Arc::new(AtomicU32::new(TARGET_INIT as u32));
+        let target = Arc::new(AtomicU32::new(frames_at(TARGET_INIT_MS, SR) as u32));
         let mut consumers = self.consumers.lock().unwrap();
         consumers.retain(|c| c.taps.strong_count() > 0);
         // A source's rings are created together under its push lock, so they all
@@ -654,12 +676,20 @@ pub struct ChannelReceiver {
     target: Arc<AtomicU32>,
     realtime: bool,
     block_frames: usize,
+    output_rate: u32,
+    /// Rate of the sources this consumer plays, which every count below is
+    /// in. Changing it starts the adaptive state afresh.
+    rate: Cell<u32>,
     // Adaptive-jitter state; only the single audio thread touches these.
     depth: std::cell::RefCell<DepthEstimator>,
     judge: std::cell::RefCell<OutageJudge>,
     /// Source samples one block consumes.
-    need: usize,
+    need: Cell<usize>,
     starving: Cell<bool>,
+    /// Largest delivery between two blocks while the depth is unmeasured,
+    /// and whether the first (possibly a backlog) has gone by.
+    packet: Cell<usize>,
+    seen_arrival: Cell<bool>,
     /// Fill a refilling source must reach before it plays: the target plus
     /// the arrival saw's dip, since priming ends right after a packet.
     start: Cell<usize>,
@@ -668,17 +698,20 @@ pub struct ChannelReceiver {
     settled: Cell<bool>,
     owed: Cell<usize>,
     cooldown: Cell<usize>,
-    cooldown_blocks: usize,
+    cooldown_blocks: Cell<usize>,
     drift_loop: std::cell::RefCell<DriftLoop>,
     /// Delivery timing of the source the loop follows.
     arrival: std::cell::RefCell<ArrivalClock>,
     /// That source and its rate. Following another, or the same one after it
     /// refilled, starts the loop settling afresh.
     steered: Cell<Option<(u64, u32)>>,
-    /// Smoothed fill of the emptiest playing source, in 48 kHz samples: the
+    /// Smoothed fill of the emptiest playing source, in its samples: the
     /// latency the receive buffer adds. A gauge for the latency report.
     fill: Arc<AtomicU32>,
+    fill_rate: Arc<AtomicU32>,
     fill_avg: Cell<f64>,
+    /// Share of the gap `fill_avg` closes per block, for `FILL_SMOOTHING_MS`.
+    fill_alpha: f64,
     // Last emitted mix, held when the tap map is briefly locked for registration
     // so a lock miss is an inaudible repeat rather than a silent click.
     last_mix: std::cell::RefCell<Vec<f32>>,
@@ -709,38 +742,64 @@ struct GroupPlan {
 
 impl ChannelReceiver {
     pub fn new(handle: ConsumerHandle) -> Self {
-        // The fill is counted in 48 kHz source samples; one block takes the
-        // output block's worth of them.
-        let need = handle.block_frames * SR as usize / handle.output_rate.max(1) as usize;
-        Self {
+        let block_secs = handle.block_frames as f64 / handle.output_rate.max(1) as f64;
+        let receiver = Self {
             taps: handle.taps,
             drift: handle.drift,
             target: handle.target,
             realtime: handle.realtime,
             block_frames: handle.block_frames,
-            depth: std::cell::RefCell::new(DepthEstimator::new(
-                SR,
-                need.max(1),
-                JITTER_WINDOW_MS,
-                TARGET_INIT,
-            )),
+            output_rate: handle.output_rate,
+            rate: Cell::new(SR),
+            depth: std::cell::RefCell::new(DepthEstimator::new(SR, 1, JITTER_WINDOW_MS, 0)),
             judge: std::cell::RefCell::new(OutageJudge::new(SR)),
-            need: need.max(1),
+            need: Cell::new(1),
             starving: Cell::new(false),
-            start: Cell::new(TARGET_INIT),
+            packet: Cell::new(0),
+            seen_arrival: Cell::new(false),
+            start: Cell::new(0),
             ever_primed: Cell::new(false),
             settled: Cell::new(false),
             owed: Cell::new(0),
             cooldown: Cell::new(0),
-            cooldown_blocks: (SPLICE_EVERY_MS * SR as usize / 1000 / need.max(1)).max(1),
-            drift_loop: std::cell::RefCell::new(DriftLoop::new(SR, need.max(1))),
+            cooldown_blocks: Cell::new(1),
+            drift_loop: std::cell::RefCell::new(DriftLoop::new(SR, 1)),
             arrival: std::cell::RefCell::new(ArrivalClock::new(SR)),
             steered: Cell::new(None),
             fill: Arc::new(AtomicU32::new(0)),
+            fill_rate: Arc::new(AtomicU32::new(SR)),
             fill_avg: Cell::new(0.0),
+            fill_alpha: 1.0 - (-block_secs * 1000.0 / FILL_SMOOTHING_MS).exp(),
             last_mix: std::cell::RefCell::new(vec![0.0; handle.block_frames * 2]),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
-        }
+        };
+        receiver.retime(SR);
+        receiver
+    }
+
+    /// Counts everything in `rate` samples from here on, starting the
+    /// adaptive state afresh: what was learnt at another rate says nothing
+    /// in these units. RT-safe; none of the state allocates.
+    fn retime(&self, rate: u32) {
+        let need = (self.block_frames * rate as usize / self.output_rate.max(1) as usize).max(1);
+        let init = frames_at(TARGET_INIT_MS, rate);
+        self.rate.set(rate);
+        self.fill_rate.store(rate, Ordering::Relaxed);
+        self.need.set(need);
+        *self.depth.borrow_mut() = DepthEstimator::new(rate, need, JITTER_WINDOW_MS, init);
+        *self.judge.borrow_mut() = OutageJudge::new(rate);
+        *self.drift_loop.borrow_mut() = DriftLoop::new(rate, need);
+        self.cooldown_blocks
+            .set((frames_at(SPLICE_EVERY_MS, rate) / need).max(1));
+        self.packet.set(0);
+        self.seen_arrival.set(false);
+        self.start.set(init);
+        self.target.store(init as u32, Ordering::Relaxed);
+        self.settled.set(false);
+        self.owed.set(0);
+        self.cooldown.set(0);
+        self.steered.set(None);
+        self.fill_avg.set(0.0);
     }
 
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
@@ -810,6 +869,14 @@ impl ChannelReceiver {
             }
         }
 
+        // Every count is in the sources' own samples; a source at another
+        // rate starts the adaptive state afresh in its units.
+        if let Some(p) = plans.iter().min_by_key(|p| p.min_backlog) {
+            if p.rate != 0 && p.rate != self.rate.get() {
+                self.retime(p.rate);
+            }
+        }
+        let rate = self.rate.get();
         let target = self.target.load(Ordering::Relaxed) as usize;
         for p in plans.iter_mut() {
             if !p.primed {
@@ -834,7 +901,7 @@ impl ChannelReceiver {
             // Safety net only (abnormal burst): the drift loop normally keeps
             // the ring near target. Generous headroom -- sender catch-up bursts
             // after a scheduler stall are legitimate and must not get spliced.
-            let hard_cap = (target * 2).max(target + TARGET_EVENT_MAX * 4);
+            let hard_cap = (target * 2).max(target + frames_at(TARGET_EVENT_MAX_MS, rate) * 4);
             if p.min_backlog > hard_cap {
                 p.trim = p.min_backlog - target;
             }
@@ -866,7 +933,7 @@ impl ChannelReceiver {
             self.account(starving, live.map(|p| (p.min_backlog, p.need)), arrived);
             if let Some(p) = live {
                 let avg = self.fill_avg.get();
-                let avg = avg + (p.min_backlog as f64 - avg) * 0.02;
+                let avg = avg + (p.min_backlog as f64 - avg) * self.fill_alpha;
                 self.fill_avg.set(avg);
                 self.fill.store(avg.round() as u32, Ordering::Relaxed);
             }
@@ -931,25 +998,40 @@ impl ChannelReceiver {
         let mut depth = self.depth.borrow_mut();
         let mut judge = self.judge.borrow_mut();
         if starving && !self.starving.get() {
-            judge.missing(self.need);
+            judge.missing(self.need.get());
             // The window holds the drain, which says nothing about jitter.
             depth.discard_window();
         }
         self.starving.set(starving);
-        if let Some(late) = judge.delivered(arrived, self.need) {
+        if let Some(late) = judge.delivered(arrived, self.need.get()) {
             if late > 0 {
                 depth.underrun(late);
             }
         }
+        // Until the jitter is measured, a whole delivery stands in for it:
+        // twice an ideal saw's dip, room for jitter not yet measured.
+        if !depth.is_measured() && arrived > 0 && self.seen_arrival.replace(true) {
+            let packet = self.packet.get();
+            let cap = if packet > 0 { 2 * packet } else { usize::MAX };
+            self.packet.set(packet.max(arrived.min(cap)));
+            depth.set_prior(self.packet.get());
+        }
         if starving {
             return;
         }
-        let Some((backlog, need)) = live else { return };
-        depth.observe(backlog);
+        let need = match live {
+            Some((backlog, need)) => {
+                depth.observe(backlog);
+                need
+            }
+            None => self.need.get(),
+        };
         let dip = depth.depth();
-        let target = (need + dip + TARGET_SAFETY).clamp(TARGET_MIN, TARGET_MAX);
+        let rate = self.rate.get();
+        let max = frames_at(TARGET_MAX_MS, rate);
+        let target = (need + dip + frames_at(TARGET_SAFETY_MS, rate)).min(max);
         self.target.store(target as u32, Ordering::Relaxed);
-        self.start.set((target + dip).min(TARGET_MAX));
+        self.start.set((target + dip).min(max));
     }
 
     /// Drift ratio for the emptiest playing source. Its fill plus what its
@@ -991,12 +1073,15 @@ impl ChannelReceiver {
                 self.cooldown.set(wait - 1);
                 return 0;
             }
-            let n = self.owed.get().min(SPLICE_MAX);
+            let n = self
+                .owed
+                .get()
+                .min(frames_at(SPLICE_MAX_MS, self.rate.get()));
             if p.min_backlog < p.need + n {
                 return 0;
             }
             self.owed.set(self.owed.get() - n);
-            self.cooldown.set(self.cooldown_blocks);
+            self.cooldown.set(self.cooldown_blocks.get());
             return n;
         }
         let u = drift.update(error);
@@ -1005,9 +1090,13 @@ impl ChannelReceiver {
         0
     }
 
-    /// Smoothed receive-buffer fill in 48 kHz samples, for the latency report.
-    pub fn fill_gauge(&self) -> Arc<AtomicU32> {
-        self.fill.clone()
+    /// Smoothed receive-buffer fill and the rate it counts in, for the
+    /// latency report.
+    pub fn fill_gauge(&self) -> FillGauge {
+        FillGauge {
+            frames: self.fill.clone(),
+            rate: self.fill_rate.clone(),
+        }
     }
 
     /// Copy one channel's already-resampled scratch into `out`.
@@ -1051,6 +1140,9 @@ impl ChannelReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TARGET_INIT: usize = frames_at(TARGET_INIT_MS, SR);
+    const TARGET_SAFETY: usize = frames_at(TARGET_SAFETY_MS, SR);
 
     const BLOCK: usize = 1024;
 
@@ -1104,13 +1196,25 @@ mod tests {
         outage: Option<(f64, f64)>,
         quiet: &[(f64, f64)],
     ) -> NetRun {
-        const PACKET: usize = 960;
+        net_sim_packets(block, 960, seconds, settle, jitter, outage, quiet)
+    }
+
+    /// As `net_sim_with`, with `packet_len`-sample packets.
+    fn net_sim_packets(
+        block: usize,
+        packet_len: usize,
+        seconds: f64,
+        settle: f64,
+        jitter: impl Fn(u32) -> f64,
+        outage: Option<(f64, f64)>,
+        quiet: &[(f64, f64)],
+    ) -> NetRun {
         let reg = FanoutRegistry::default();
         let handle = reg.register_consumer(48_000, block, true);
         let target = handle.target.clone();
         let bc = reg.attach_channel("0".into(), 0);
         let recv = ChannelReceiver::new(handle);
-        let period = PACKET as f64 / SR as f64;
+        let period = packet_len as f64 / SR as f64;
         let out_period = block as f64 / SR as f64;
         let mut run = NetRun {
             gaps: 0,
@@ -1120,7 +1224,7 @@ mod tests {
         };
         let (mut k, mut t) = (0u32, 0.0);
         let mut mix = vec![0.0f32; block];
-        let packet = vec![0.5f32; PACKET];
+        let packet = vec![0.5f32; packet_len];
         while t < seconds {
             let due = k as f64 * period + jitter(k);
             if due <= t {
@@ -1246,9 +1350,72 @@ mod tests {
         // Primed from the 60 ms prior; within seconds of measuring, the
         // buffer holds about one packet plus the safety margin.
         assert!(
-            late_fill <= PACKET + TARGET_MIN + TARGET_SAFETY,
+            late_fill <= 2 * PACKET + TARGET_SAFETY,
             "still {late_fill} samples buffered"
         );
+    }
+
+    #[test]
+    fn a_clean_local_link_buffers_only_a_few_milliseconds() {
+        // PCM packets (300 samples, 6.25 ms) on a loopback link into a
+        // 32-frame speaker: nothing on the link needs more than one packet's
+        // saw and the safety margin, no fixed codec-sized floor.
+        let r = net_sim_packets(32, 300, 30.0, 10.0, |_| 0.0, None, &[]);
+        assert_eq!(r.gaps, 0, "gaps on a clean link");
+        assert!(
+            r.target <= 300 + 32 + TARGET_SAFETY,
+            "buffers {} samples",
+            r.target
+        );
+        // Scheduling jitter on the sending side, up to 1 ms per packet.
+        let r = net_sim_packets(32, 300, 30.0, 10.0, |k| noise(k) * 0.001, None, &[]);
+        assert_eq!(r.gaps, 0, "gaps with 1 ms of jitter");
+        assert!(r.target < 480, "buffers {} samples", r.target);
+    }
+
+    #[test]
+    fn small_packets_start_shallow_before_anything_is_measured() {
+        let reg = FanoutRegistry::default();
+        let recv = ChannelReceiver::new(reg.register_consumer(48_000, 32, true));
+        let bc = reg.attach_channel("0".into(), 0);
+        let mut mix = vec![0.0f32; 32];
+        let packet = vec![0.5f32; 32];
+        for k in 0..100u16 {
+            let t = k as f64 * 32.0 / SR as f64;
+            broadcast_push_at(&bc, k, 1, &packet, SR, t);
+            recv.mix_block_at(&mut mix, t);
+        }
+        assert!(!recv.depth.borrow().is_measured());
+        assert!(
+            recv.start.get() < TARGET_INIT / 8,
+            "starts at {} samples",
+            recv.start.get()
+        );
+    }
+
+    #[test]
+    fn the_buffer_holds_the_same_time_at_any_source_rate() {
+        let depth_ms = |rate: u32| {
+            let reg = FanoutRegistry::default();
+            let recv = ChannelReceiver::new(reg.register_consumer(48_000, 64, true));
+            let bc = reg.attach_channel("0".into(), 0);
+            let mut mix = vec![0.0f32; 64];
+            // 5 ms packets for ten seconds, read every 64 output frames.
+            let packet = vec![0.5f32; rate as usize / 200];
+            let (mut k, mut t) = (0u16, 0.0);
+            while t < 10.0 {
+                if k as f64 * 0.005 <= t {
+                    broadcast_push_at(&bc, k, 1, &packet, rate, t);
+                    k = k.wrapping_add(1);
+                    continue;
+                }
+                recv.mix_block_at(&mut mix, t);
+                t += 64.0 / 48_000.0;
+            }
+            recv.target.load(Ordering::Relaxed) as f64 * 1000.0 / rate as f64
+        };
+        let (at48, at96) = (depth_ms(48_000), depth_ms(96_000));
+        assert!((at48 - at96).abs() < 1.5, "{at48:.2} ms vs {at96:.2} ms");
     }
 
     #[test]

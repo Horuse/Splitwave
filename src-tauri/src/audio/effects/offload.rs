@@ -20,9 +20,16 @@ use tracing::warn;
 use crate::audio::graph::MAX_BUFFER_FRAMES;
 use crate::audio::health;
 
-/// Floor for a worker's turnaround: waking it, scheduling slack, and the
-/// processing itself.
-const MIN_TURNAROUND_MS: f64 = 5.0;
+/// Waking a parked real-time thread and its scheduling slack, on top of the
+/// processing the worker measures for itself.
+const WAKE: Duration = Duration::from_millis(1);
+/// Processing is timed over this many of the effect's blocks, after the
+/// first few (which warm caches and lazy state) are left out.
+const CALIBRATION_RUNS: usize = 8;
+const CALIBRATION_WARMUP: usize = 2;
+/// Headroom over the slowest timed block, for the effect sharing the CPU
+/// with the rest of the graph later on.
+const PROCESSING_MARGIN: f64 = 2.0;
 /// Longest the worker runs without blocking. Linux charges real-time CPU time
 /// between blocking calls against `RLIMIT_RTTIME` and kills the process past
 /// it; a worker whose effect cannot keep up never runs out of input to park
@@ -41,11 +48,10 @@ const BREATHER: Duration = Duration::from_millis(1);
 /// frame to the first engine block starting after the result is back. The
 /// alignment of effect blocks against engine blocks repeats every
 /// `lcm(W, B)` frames, so that one period is the whole story.
-pub fn pad_frames(sample_rate: u32, block_frames: usize, working_frames: usize) -> usize {
+pub fn pad_frames(block_frames: usize, working_frames: usize, turnaround_frames: usize) -> usize {
     let b = block_frames.max(1);
     let w = working_frames.max(1);
-    let turnaround = (sample_rate as f64 * MIN_TURNAROUND_MS / 1000.0).ceil() as usize;
-    let turnaround_blocks = turnaround.div_ceil(b);
+    let turnaround_blocks = turnaround_frames.div_ceil(b);
     let period = w / gcd(w, b) * b;
     (0..period / w)
         .map(|j| {
@@ -55,6 +61,30 @@ pub fn pad_frames(sample_rate: u32, block_frames: usize, working_frames: usize) 
         .max()
         .unwrap_or(b)
         .max(b)
+}
+
+/// The worker's turnaround in frames: its wake-up plus the slowest of a few
+/// timed runs of `processor` on silence, with headroom. Run on the worker
+/// itself, after its promotion, so the timing is the thread's own.
+fn turnaround_frames<P: BlockProcessor + ?Sized>(
+    processor: &mut P,
+    working: usize,
+    width: usize,
+    sample_rate: u32,
+) -> usize {
+    let input = vec![0.0f32; working * width];
+    let mut out = Vec::with_capacity(working * width);
+    let mut slowest = Duration::ZERO;
+    for run in 0..CALIBRATION_RUNS {
+        out.clear();
+        let started = Instant::now();
+        processor.process(&input, &mut out);
+        if run >= CALIBRATION_WARMUP {
+            slowest = slowest.max(started.elapsed());
+        }
+    }
+    let secs = WAKE.as_secs_f64() + slowest.as_secs_f64() * PROCESSING_MARGIN;
+    (sample_rate as f64 * secs).ceil() as usize
 }
 
 fn gcd(a: usize, b: usize) -> usize {
@@ -137,25 +167,10 @@ impl Offload {
             return Err(processor);
         }
         let working = working_frames.unwrap_or(block_frames).max(1);
-        let pad_frames = pad_frames(sample_rate, block_frames, working);
-
-        // Room for the pad, a block in flight each way, and a stall's worth.
-        let ring_frames = (pad_frames + working + MAX_BUFFER_FRAMES) * 4;
-        let (to_worker, mut worker_in) = RingBuffer::<f32>::new(ring_frames * width);
-        let (mut worker_out, from_worker) = RingBuffer::<f32>::new(ring_frames * width);
-
-        match worker_out.write_chunk(pad_frames * width) {
-            Ok(mut chunk) => {
-                let (first, second) = chunk.as_mut_slices();
-                first.fill(0.0);
-                second.fill(0.0);
-                chunk.commit_all();
-            }
-            Err(e) => {
-                tracing::error!(name, error = %e, "offload: failed to prefill return ring pad");
-                return Err(processor);
-            }
-        }
+        // The worker times the effect, sizes the pad from it, and hands back
+        // the RT side of its rings.
+        let (ready_tx, ready_rx) =
+            std::sync::mpsc::sync_channel::<(usize, Producer<f32>, Consumer<f32>)>(1);
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
@@ -179,18 +194,39 @@ impl Offload {
         let join = match thread::Builder::new()
             .name(format!("offload:{name}"))
             .spawn(move || {
+                // The pad leaves this thread a few milliseconds per block, so
+                // it must not wait behind ordinary threads.
+                let _rt = crate::audio::pipeline::RtThread::promote(
+                    "offload",
+                    working as u32,
+                    sample_rate,
+                );
+                // Timed in place: a processor that panics stays in the cell
+                // for the caller to take back.
+                let turnaround = {
+                    let mut cell = handoff_thread.lock().unwrap();
+                    let processor = cell.as_mut().expect("processor handed off");
+                    turnaround_frames(processor, working, width, sample_rate)
+                };
                 let mut processor = handoff_thread
                     .lock()
                     .unwrap()
                     .take()
                     .expect("processor handed off");
-                // The pad leaves this thread a few milliseconds per block, so
-                // it must not wait behind ordinary threads.
-                let _rt = crate::audio::pipeline::RtThread::promote(
-                    "offload",
-                    pad_frames as u32,
-                    sample_rate,
-                );
+                let pad_frames = pad_frames(block_frames, working, turnaround);
+                // Room for the pad, a block in flight each way, and a stall's worth.
+                let ring_frames = (pad_frames + working + MAX_BUFFER_FRAMES) * 4;
+                let (to_worker, mut worker_in) = RingBuffer::<f32>::new(ring_frames * width);
+                let (mut worker_out, from_worker) = RingBuffer::<f32>::new(ring_frames * width);
+                if let Ok(mut chunk) = worker_out.write_chunk(pad_frames * width) {
+                    let (first, second) = chunk.as_mut_slices();
+                    first.fill(0.0);
+                    second.fill(0.0);
+                    chunk.commit_all();
+                }
+                if ready_tx.send((pad_frames, to_worker, from_worker)).is_err() {
+                    return;
+                }
                 // One of the effect's blocks, gathered across engine blocks.
                 let mut gathered = vec![0.0f32; working * width];
                 let mut filled = 0;
@@ -247,6 +283,16 @@ impl Offload {
                     .expect("processor handed off");
                 return Err(processor);
             }
+        };
+        let Ok((pad_frames, to_worker, from_worker)) = ready_rx.recv() else {
+            let _ = join.join();
+            warn!(name, "offload: worker died while timing the effect");
+            let processor = handoff
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+                .expect("processor stays in the cell until timed");
+            return Err(processor);
         };
 
         Ok(Self {
@@ -385,10 +431,7 @@ mod tests {
             panic!("spawn offload")
         };
         let pad = offload.latency_frames();
-        assert_eq!(
-            pad,
-            pad_frames(sample_rate, block, working.unwrap_or(block))
-        );
+        assert!(pad >= pad_frames(block, working.unwrap_or(block), 1));
 
         let mut fed = Vec::new();
         let mut got = Vec::new();
@@ -457,12 +500,11 @@ mod tests {
 
     #[test]
     fn the_pad_is_the_least_that_never_starves() {
-        for sample_rate in [44_100, 48_000, 96_000] {
-            let turnaround = (sample_rate as f64 * MIN_TURNAROUND_MS / 1000.0).ceil() as usize;
+        for turnaround in [1, 48, 221, 240, 480] {
             for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
                 for working in [block, 441, 480, 960, 100, 1_500] {
-                    let pad = pad_frames(sample_rate, block, working);
-                    let case = format!("{sample_rate}/{block}/{working}");
+                    let pad = pad_frames(block, working, turnaround);
+                    let case = format!("{turnaround}/{block}/{working}");
                     assert!(
                         !starves(pad, block, working, turnaround),
                         "{case}: {pad} starves"
@@ -482,14 +524,30 @@ mod tests {
     fn a_model_hop_costs_its_gathering_and_a_turnaround() {
         // DeepFilterNet at 44.1 kHz: 441-frame hops against 64-frame blocks.
         // The hop gathered, at worst misaligned by a block, plus 5 ms.
-        let pad = pad_frames(44_100, 64, 441);
+        let pad = pad_frames(64, 441, 221);
         assert!(pad <= 441 + 64 + 256, "{pad}");
         // An effect that takes any block pays the turnaround alone.
-        assert_eq!(pad_frames(48_000, 32, 32), 256, "5 ms turnaround at 48k");
-        assert_eq!(
-            pad_frames(48_000, 2048, 2048),
-            2048,
-            "never below the block"
+        assert_eq!(pad_frames(32, 32, 240), 256, "5 ms turnaround at 48k");
+        assert_eq!(pad_frames(2048, 2048, 1), 2048, "never below the block");
+    }
+
+    #[test]
+    fn the_pad_follows_what_the_effect_costs() {
+        let Ok(cheap) = Offload::spawn("test", passthrough(), 2, None, 32, 48_000) else {
+            panic!("spawn offload")
+        };
+        let slow = Slow {
+            cost: Duration::from_millis(3),
+        };
+        let Ok(dear) = Offload::spawn("test", slow, 2, None, 32, 48_000) else {
+            panic!("spawn offload")
+        };
+        // Old fixed floor: 5 ms, 256 frames at a 32-frame block.
+        assert!(cheap.latency_frames() < 256, "{}", cheap.latency_frames());
+        assert!(
+            dear.latency_frames() >= 2 * 144,
+            "3 ms of work, twice over: {}",
+            dear.latency_frames()
         );
     }
 

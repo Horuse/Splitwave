@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SPECTRUM_FRAMES } from '$lib/modules/pipeline/generated/engine';
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
@@ -26,7 +27,7 @@
 	// The engine ships one contiguous 4096-frame window per spectrum node
 	// (SPECTRUM_FRAMES) so the low end resolves (~11.7 Hz/bin at 48 kHz) without
 	// the discontinuities that concatenating separate 1024 snapshots would cause.
-	const FFT_SIZE = 4096;
+	const FFT_SIZE = SPECTRUM_FRAMES;
 	const BINS = FFT_SIZE / 2;
 	const MAX_CH = 8; // per-channel FFTs beyond this cost more than they reveal
 	const F_MIN = 20;

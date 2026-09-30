@@ -118,6 +118,11 @@ impl DepthEstimator {
         self.low = usize::MAX;
     }
 
+    /// Replaces the depth assumed until enough has been measured.
+    pub fn set_prior(&mut self, prior_frames: usize) {
+        self.prior = prior_frames;
+    }
+
     /// True once the depth comes from measurement rather than the prior.
     pub fn is_measured(&self) -> bool {
         self.measured >= PRIOR_WINDOWS

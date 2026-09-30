@@ -14,9 +14,10 @@ use tracing::warn;
 use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
 use crate::audio::resample::MultiResampler;
+use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
+use super::dag::ring_capacity_frames;
 use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
 use super::output::device_block;
 
@@ -50,12 +51,14 @@ pub(super) enum InputHandle {
 pub(super) struct NormalizedInput {
     _input: Box<InputHandle>,
     stop: Arc<AtomicBool>,
+    bell: Arc<Doorbell>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Drop for NormalizedInput {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.bell.ring();
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -199,27 +202,39 @@ pub(super) fn start_audio_file(
     Ok(InputHandle::AudioFile(reader))
 }
 
+/// Longest the normalizer sleeps without its capture ringing: only a capture
+/// that stopped delivering waits this long.
+const NORMALIZER_IDLE_WAKE: Duration = Duration::from_millis(20);
+
 /// Frames the capture normalizer holds back, at the device's rate: a chunk
 /// being gathered plus the resampler's filter delay. Zero when it only
 /// forwards (or is skipped entirely).
-pub(super) fn normalizer_frames(resolved: &ResolvedInput, target_sample_rate: u32) -> u64 {
+pub(super) fn normalizer_frames(
+    resolved: &ResolvedInput,
+    target_sample_rate: u32,
+    block_frames: usize,
+) -> u64 {
     let native = resolved.sample_rate();
     if matches!(resolved, ResolvedInput::AudioFile { .. }) || native == target_sample_rate {
         return 0;
     }
-    MultiResampler::new(native, target_sample_rate, RESAMPLE_CHUNK, 1)
-        .map_or(0, |r| (RESAMPLE_CHUNK + r.delay_frames()) as u64)
+    let chunk = device_block(block_frames, target_sample_rate, native) as usize;
+    MultiResampler::new(native, target_sample_rate, chunk, 1)
+        .map_or(0, |r| (chunk + r.delay_frames()) as u64)
 }
 
+/// Resamples `chunk` frames at a time: one capture buffer, so a chunk is
+/// ready as soon as a delivery lands.
 fn input_resampler(
     native_rate: u32,
     target_sample_rate: u32,
+    chunk: usize,
     channels: usize,
 ) -> AppResult<Option<MultiResampler>> {
     if native_rate == target_sample_rate {
         Ok(None)
     } else {
-        MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, channels).map(Some)
+        MultiResampler::new(native_rate, target_sample_rate, chunk, channels).map(Some)
     }
 }
 
@@ -258,34 +273,36 @@ pub(super) fn start_input_stream(
     let channels = resolved.native_channels() as usize;
     let (raw_producer, mut raw_consumer) =
         RingBuffer::<f32>::new(ring_capacity_frames(sample_rate) * channels.max(1));
-    let (mut raw_tx, raw_rx) = broadcast_channel();
+    let (mut raw_tx, mut raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
+    let bell = Arc::new(Doorbell::default());
+    raw_rx.ring_after_broadcast(bell.clone());
+    let chunk = io_frames as usize;
     let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, io_frames, app)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let bell_thread = bell.clone();
     let label = node_id.to_string();
     let join = thread::Builder::new()
         .name(format!("normalize:{label}"))
         .spawn(move || {
             // Sits between a capture callback and the speaker callback, so its
             // wake-ups are audio latency: an ordinary thread adds scheduling jitter.
-            let _rt = super::worker::RtThread::promote(
-                "normalize",
-                RESAMPLE_CHUNK as u32,
-                target_sample_rate,
-            );
+            let _rt = super::worker::RtThread::promote("normalize", io_frames, sample_rate);
+            bell_thread.answer_here();
             let mut bridge = bridge;
-            let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            let mut input_buf = vec![0.0; chunk * channels];
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             let mut native_rate = sample_rate;
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let native_rate = sample_rate;
-            let mut resampler = match input_resampler(native_rate, target_sample_rate, channels) {
-                Ok(resampler) => resampler,
-                Err(_) => return,
-            };
+            let mut resampler =
+                match input_resampler(native_rate, target_sample_rate, chunk, channels) {
+                    Ok(resampler) => resampler,
+                    Err(_) => return,
+                };
             let mut output_buf = Vec::with_capacity(
                 resampler
                     .as_ref()
@@ -310,7 +327,7 @@ pub(super) fn start_input_stream(
                             }
                         }
                         native_rate = rate;
-                        resampler = input_resampler(rate, target_sample_rate, channels)
+                        resampler = input_resampler(rate, target_sample_rate, chunk, channels)
                             .ok()
                             .flatten();
                         output_buf = Vec::with_capacity(
@@ -327,7 +344,7 @@ pub(super) fn start_input_stream(
                 let available = raw_consumer.slots();
                 let take = if resampler.is_some() {
                     if available < input_buf.len() {
-                        thread::sleep(Duration::from_millis(1));
+                        bell_thread.wait(NORMALIZER_IDLE_WAKE);
                         continue;
                     }
                     input_buf.len()
@@ -335,7 +352,7 @@ pub(super) fn start_input_stream(
                     let whole = available.min(input_buf.len());
                     let whole = whole - whole % channels.max(1);
                     if whole == 0 {
-                        thread::sleep(Duration::from_millis(1));
+                        bell_thread.wait(NORMALIZER_IDLE_WAKE);
                         continue;
                     }
                     whole
@@ -370,6 +387,7 @@ pub(super) fn start_input_stream(
     Ok(InputHandle::Normalized(NormalizedInput {
         _input: Box::new(input),
         stop,
+        bell,
         join: Some(join),
     }))
 }
@@ -383,7 +401,7 @@ mod tests {
         // When native_rate == target_sample_rate (e.g. 96 kHz App Audio and 96 kHz pipeline),
         // no resampler must be allocated, ensuring bit-transparent passthrough with zero quality loss.
         for rate in [44_100, 48_000, 96_000, 192_000] {
-            let resampler = input_resampler(rate, rate, 2).unwrap();
+            let resampler = input_resampler(rate, rate, 256, 2).unwrap();
             assert!(
                 resampler.is_none(),
                 "resampler should be None for matching rate {rate}"
@@ -393,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_input_resampler_only_allocated_when_rates_differ() {
-        let resampler = input_resampler(48_000, 96_000, 2).unwrap();
+        let resampler = input_resampler(48_000, 96_000, 256, 2).unwrap();
         assert!(
             resampler.is_some(),
             "resampler must be Some when rates differ"
@@ -403,12 +421,12 @@ mod tests {
     #[test]
     fn test_input_bit_transparent_sample_passthrough() {
         // Verify that when resampler is None, samples pass through bit-for-bit without any modification.
-        let mut input_buf = vec![0.0f32; RESAMPLE_CHUNK * 2];
+        let mut input_buf = vec![0.0f32; 256 * 2];
         for (i, sample) in input_buf.iter_mut().enumerate() {
             *sample = ((i as f32) * 0.001).sin();
         }
 
-        let mut resampler = input_resampler(96_000, 96_000, 2).unwrap();
+        let mut resampler = input_resampler(96_000, 96_000, 256, 2).unwrap();
         let mut output_buf = Vec::new();
 
         let normalized = if let Some(resampler) = &mut resampler {

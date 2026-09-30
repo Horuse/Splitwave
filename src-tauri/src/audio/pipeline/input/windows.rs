@@ -15,8 +15,6 @@ use crate::error::AppResult;
 use super::super::native::native_config;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
-const LOOPBACK_CHANNELS: usize = 2;
-
 pub(in crate::audio::pipeline) fn resolve_input(
     inp: &ValidInput,
     target_sample_rate: u32,
@@ -72,7 +70,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
     meter: Option<crate::audio::effects::MeterHandle>,
-    _io_frames: u32,
+    io_frames: u32,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -120,7 +118,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
                 sample_rate,
-                LOOPBACK_CHANNELS as u32,
+                io_frames,
                 bridge,
             )?;
             Ok(InputHandle::Capture(capture))
@@ -133,7 +131,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let capture = crate::audio::capture::Capture::start_app(
                 &bundle_id,
                 sample_rate,
-                LOOPBACK_CHANNELS as u32,
+                io_frames,
                 bridge,
             )?;
             Ok(InputHandle::Capture(capture))

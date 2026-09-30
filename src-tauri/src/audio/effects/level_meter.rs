@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::audio::graph::LevelMeterData;
@@ -20,6 +20,10 @@ pub struct MeterHandle {
     channels: Arc<AtomicUsize>,
     peaks: Arc<Vec<AtomicU32>>,
     rms: Arc<Vec<AtomicU32>>,
+    /// Squared sums (f64 bits) and frames metered since the last tick: RMS
+    /// covers the time between ticks, whatever the block size.
+    sum_sq: Arc<Vec<AtomicU64>>,
+    frames: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +42,8 @@ impl MeterHandle {
             channels: Arc::new(AtomicUsize::new(0)),
             peaks: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
             rms: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
+            sum_sq: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU64::new(0)).collect()),
+            frames: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -50,10 +56,16 @@ impl MeterHandle {
             .min(MAX_METER_CHANNELS);
         let mut peaks = Vec::with_capacity(n);
         let mut rms = Vec::with_capacity(n);
+        // Nothing metered since the last tick keeps the last reading.
+        let frames = self.frames.swap(0, Ordering::Relaxed);
         for c in 0..n {
             let p = load_f32(&self.peaks[c]);
             store_f32(&self.peaks[c], p * METER_PEAK_DECAY);
             peaks.push(p);
+            let sum = f64::from_bits(self.sum_sq[c].swap(0, Ordering::Relaxed));
+            if frames > 0 {
+                store_f32(&self.rms[c], (sum / frames as f64).sqrt() as f32);
+            }
             rms.push(load_f32(&self.rms[c]));
         }
         MeterSnapshot { peaks, rms }
@@ -88,8 +100,8 @@ impl Effect for LevelMeterEffect {
     }
 }
 
-/// Meter `channels`-wide interleaved f32. Peaks accumulate (max) since the last
-/// tick; RMS is per-block. RT-safe: fixed stack scratch, no allocation.
+/// Meter `channels`-wide interleaved f32. Peaks (max) and squared sums
+/// accumulate since the last tick. RT-safe: fixed stack scratch, no allocation.
 pub fn update_meter(handle: &MeterHandle, interleaved: &[f32], channels: usize) {
     let channels = channels.min(MAX_METER_CHANNELS);
     if channels == 0 {
@@ -116,8 +128,10 @@ pub fn update_meter(handle: &MeterHandle, interleaved: &[f32], channels: usize) 
     for c in 0..channels {
         let existing = load_f32(&handle.peaks[c]);
         store_f32(&handle.peaks[c], existing.max(peak[c]));
-        store_f32(&handle.rms[c], (sum_sq[c] / frames as f64).sqrt() as f32);
+        let sum = f64::from_bits(handle.sum_sq[c].load(Ordering::Relaxed)) + sum_sq[c];
+        handle.sum_sq[c].store(sum.to_bits(), Ordering::Relaxed);
     }
+    handle.frames.fetch_add(frames as u64, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -155,20 +169,26 @@ mod tests {
         let s = h.snapshot_and_decay();
         assert_eq!(s.peaks[0], 0.9);
         assert_eq!(s.peaks[1], 0.2);
-        // RMS is per-block: reflects only the last block's content.
-        assert_eq!(s.rms[0], 0.9);
-        assert_eq!(s.rms[1], 0.2);
     }
 
     #[test]
-    fn rms_is_per_block_not_accumulated() {
+    fn rms_covers_the_time_since_the_last_tick() {
         let h = MeterHandle::new("n".to_string());
-        update_meter(&h, &interleaved(2, 240, |_, _| 0.8), 2);
-        update_meter(&h, &vec![0.0; 480], 2);
-        let s = h.snapshot_and_decay();
-        for r in &s.rms {
-            assert_eq!(*r, 0.0);
+        // Half the tick at 0.8, half silent: whatever the block size.
+        for block in [32, 2048] {
+            for _ in 0..4096 / block {
+                update_meter(&h, &interleaved(2, block, |_, _| 0.8), 2);
+            }
+            for _ in 0..4096 / block {
+                update_meter(&h, &vec![0.0; 2 * block], 2);
+            }
+            let s = h.snapshot_and_decay();
+            let want = (0.8f32 * 0.8 / 2.0).sqrt();
+            assert!((s.rms[0] - want).abs() < 1e-5, "{block}: {}", s.rms[0]);
         }
+        // The next tick starts afresh.
+        update_meter(&h, &vec![0.0; 480], 2);
+        assert_eq!(h.snapshot_and_decay().rms[0], 0.0);
     }
 
     #[test]
@@ -209,10 +229,11 @@ mod tests {
         let h = MeterHandle::new("n".to_string());
         update_meter(&h, &interleaved(2, 240, |_, _| 0.6), 2);
         let mut e = LevelMeterEffect::from_handle(h.clone());
-        // Per-block RMS follows the newest block; peaks keep the max.
+        // Both feed one reading: peaks keep the max, RMS spans both blocks.
         e.process(&mut interleaved(2, 240, |_, _| 0.4), 240);
         let s = h.snapshot_and_decay();
         assert_eq!(s.peaks[0], 0.6);
-        assert_eq!(s.rms[0], 0.4);
+        let want = ((0.36f32 + 0.16) / 2.0).sqrt();
+        assert!((s.rms[0] - want).abs() < 1e-6, "{}", s.rms[0]);
     }
 }

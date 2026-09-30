@@ -13,7 +13,11 @@ use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry
 
 use super::codec::ChannelDecoder;
 use super::packet;
-use super::timeline::{ChannelTimeline, SeqStep};
+use super::timeline::{max_gap_packets, ChannelTimeline, SeqStep};
+
+/// Pause after a failed receive, so an error that repeats cannot spin the
+/// loop; short enough that a one-off costs the next packet next to nothing.
+const RECV_ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(1);
 
 struct ChannelState {
     decoder: Mutex<ChannelDecoder>,
@@ -185,7 +189,13 @@ impl NetReceiver {
         loop {
             let n = match socket.recv_from(&mut buf).await {
                 Ok((n, _)) => n,
-                Err(_) => continue,
+                // A datagram-level error (an ICMP reset from a stale peer)
+                // passes; one that repeats would spin the loop, so it is paced.
+                Err(e) => {
+                    tracing::debug!(port = self.port, error = %e, "net receiver recv failed");
+                    tokio::time::sleep(RECV_ERROR_PAUSE).await;
+                    continue;
+                }
             };
             let Some(pkt) = packet::parse(&buf[..n]) else {
                 continue;
@@ -203,7 +213,11 @@ impl NetReceiver {
                 self.opus_app.store(app as u32, Ordering::Relaxed);
             }
             let channel = self.channel(pkt.channel, pkt.seq);
-            let step = channel.timeline.lock().unwrap().step(pkt.seq);
+            let max_gap = max_gap_packets(
+                pkt.sample_rate,
+                channel.decoder.lock().unwrap().packet_samples(),
+            );
+            let step = channel.timeline.lock().unwrap().step(pkt.seq, max_gap);
             match step {
                 SeqStep::Drop => continue,
                 // The break is longer than concealment covers, so this channel

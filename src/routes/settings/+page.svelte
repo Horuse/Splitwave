@@ -21,6 +21,7 @@
 	import { formatHz, formatLatencyMs } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
 		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },
@@ -319,11 +320,11 @@
 					<span class="text-xs text-neutral-900">Custom frequency</span>
 					<NumberStepper
 						value={appSettings.pipelineSampleRate}
-						min={8000}
-						max={384000}
+						min={MIN_SAMPLE_RATE}
+						max={MAX_SAMPLE_RATE}
 						step={1}
 						label="Custom sample rate"
-						onchange={(v) => setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
+						onchange={(v) => setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
 					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
 				</div>
 			{/if}

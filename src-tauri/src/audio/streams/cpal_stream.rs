@@ -74,7 +74,7 @@ where
     T: Sample + cpal::SizedSample + Send + 'static,
     f32: cpal::FromSample<T>,
 {
-    let mut staging: Vec<f32> = vec![0.0; 16384];
+    let mut staging: Vec<f32> = vec![0.0; scratch_frames(config) * src_channels.max(1)];
     let stream = device
         .build_input_stream::<T, _, _>(
             *config,
@@ -83,17 +83,16 @@ where
                 if src_channels == 0 || data.is_empty() {
                     return;
                 }
-                let needed = data.len();
-                if staging.len() < needed {
-                    staging.resize(needed, 0.0);
+                for chunk in data.chunks(staging.len()) {
+                    let staged = &mut staging[..chunk.len()];
+                    for (o, &s) in staged.iter_mut().zip(chunk) {
+                        *o = s.to_sample::<f32>();
+                    }
+                    if let Some(m) = &meter {
+                        update_meter(m, staged, src_channels);
+                    }
+                    bridge.broadcast(staged);
                 }
-                for (o, &s) in staging[..needed].iter_mut().zip(data) {
-                    *o = s.to_sample::<f32>();
-                }
-                if let Some(m) = &meter {
-                    update_meter(m, &staging[..needed], src_channels);
-                }
-                bridge.broadcast(&staging[..needed]);
             },
             fatal_only(err_cb),
             None,
@@ -153,13 +152,7 @@ where
     T: Sample + cpal::SizedSample + cpal::FromSample<f32> + Send + 'static,
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
-    const DEFAULT_SCRATCH_FRAMES: usize = 1024;
-    let configured_frames = match config.buffer_size {
-        cpal::BufferSize::Fixed(frames) => frames as usize,
-        cpal::BufferSize::Default => DEFAULT_SCRATCH_FRAMES,
-    };
-    let scratch_samples = configured_frames.max(1) * out_channels.max(1);
-    let mut buf: Vec<f32> = vec![0.0; scratch_samples];
+    let mut buf: Vec<f32> = vec![0.0; scratch_frames(config) * out_channels.max(1)];
     let stream = device
         .build_output_stream::<T, _, _>(
             *config,
@@ -195,6 +188,15 @@ where
         })?;
     stream.play().map_err(|e| stream_error("output play", e))?;
     Ok(stream)
+}
+
+/// Frames converted at a time. A callback larger than asked for is handled
+/// in pieces of this size, never by growing the buffer on the audio thread.
+fn scratch_frames(config: &StreamConfig) -> usize {
+    match config.buffer_size {
+        cpal::BufferSize::Fixed(frames) => (frames as usize).max(1),
+        cpal::BufferSize::Default => crate::audio::graph::MAX_BUFFER_FRAMES,
+    }
 }
 
 /// Passes on only the errors that end the stream. A device overload leaves it

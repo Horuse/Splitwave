@@ -79,6 +79,8 @@ pub struct LatencyReport {
     pub path: Option<LatencyBreakdown>,
     /// Engine buffer the settings asked for.
     pub buffer_frames: u32,
+    /// Rate the engine runs at, which every frame count here is in.
+    pub sample_rate: u32,
     /// Buffer the slowest speaker actually runs at, in its own frames.
     pub device_buffer_frames: Option<u32>,
     /// Peak share of the audio period spent rendering since the last report

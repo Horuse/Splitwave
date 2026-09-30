@@ -78,7 +78,10 @@ fn build_plist(devices: &[VirtualDeviceConfig]) -> String {
             xml_escape(&d.id),
             xml_escape(&d.name),
             d.channels.clamp(1, 256),
-            d.sample_rate.clamp(8_000, 384_000)
+            d.sample_rate.clamp(
+                crate::audio::graph::MIN_SAMPLE_RATE,
+                crate::audio::graph::MAX_SAMPLE_RATE
+            )
         ));
     }
     plist.push_str("</array>\n</plist>\n");

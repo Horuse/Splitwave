@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { isEnabled } from '@tauri-apps/plugin-autostart';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { BUFFER_FRAME_OPTIONS, DEFAULT_BUFFER_FRAMES, DEFAULT_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 
 const KEY = 'app:settings';
 
@@ -27,8 +28,8 @@ const DEFAULTS: Stored = {
 	launchOnStartup: false,
 	confirmOverwriteChanges: true,
 	keepRunningOnDisconnect: true,
-	pipelineSampleRate: 48_000,
-	bufferFrames: 256,
+	pipelineSampleRate: DEFAULT_SAMPLE_RATE,
+	bufferFrames: DEFAULT_BUFFER_FRAMES,
 	uiScale: 100
 };
 
@@ -38,8 +39,7 @@ export const UI_SCALE_MIN = 50;
 export const UI_SCALE_MAX = 200;
 export const UI_SCALE_STEP = 10;
 export const PIPELINE_SAMPLE_RATE_PRESETS = [44100, 48000, 88200, 96000, 176400, 192000] as const;
-/** Mirrors `BUFFER_FRAME_OPTIONS` in `src-tauri/src/audio/graph.rs`. */
-export const BUFFER_FRAME_PRESETS = [32, 64, 128, 256, 512, 1024, 2048] as const;
+export const BUFFER_FRAME_PRESETS = BUFFER_FRAME_OPTIONS;
 
 function load(): Stored {
 	if (!browser) return DEFAULTS;
@@ -60,7 +60,7 @@ class AppSettings {
 	launchOnStartup = $state(this.#initial.launchOnStartup);
 	confirmOverwriteChanges = $state(this.#initial.confirmOverwriteChanges);
 	keepRunningOnDisconnect = $state(this.#initial.keepRunningOnDisconnect);
-	pipelineSampleRate = $state(this.#initial.pipelineSampleRate ?? 48_000);
+	pipelineSampleRate = $state(this.#initial.pipelineSampleRate ?? DEFAULT_SAMPLE_RATE);
 	// An unsupported size would fail every pipeline start, so a stale or
 	// hand-edited value falls back to the default.
 	bufferFrames = $state<number>(

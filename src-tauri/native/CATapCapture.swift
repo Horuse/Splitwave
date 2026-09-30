@@ -92,6 +92,9 @@ private func inputBufferCount(_ deviceID: AudioDeviceID) -> Int {
     return Int(raw.assumingMemoryBound(to: AudioBufferList.self).pointee.mNumberBuffers)
 }
 
+/// How often a tap re-reads which of its app's processes render output.
+private let processPollInterval: DispatchTimeInterval = .milliseconds(200)
+
 private func defaultOutputDevice() -> AudioDeviceID? {
     guard let id = readValue(systemObject, kAudioHardwarePropertyDefaultOutputDevice, AudioDeviceID(0)),
           id != AudioDeviceID(kAudioObjectUnknown) else { return nil }
@@ -190,6 +193,9 @@ private final class Tap {
     /// aggregate is created without error but its IOProc never fires.
     private var active: Set<AudioObjectID> = []
     private var pollTimer: DispatchSourceTimer?
+    /// The output device whose start is observed, and its listener.
+    private var runningDevice = AudioDeviceID(0)
+    private var runningBlock: AudioObjectPropertyListenerBlock?
 
     private var tapChannels = 0
     private var tapBufferIndex = 0
@@ -394,10 +400,14 @@ private final class Tap {
     /// when the app opens a new audio process (extra browser tab) and when one
     /// of its processes starts or stops rendering output.
     ///
-    /// The process list posts change notifications, but `IsRunningOutput` was
-    /// observed never to post one, so a long-lived process going from paused to
-    /// playing would be missed. Both are therefore re-evaluated on a timer;
-    /// these are cheap property reads off the IO queue.
+    /// The process list posts change notifications, but `IsRunningOutput`
+    /// never posts one (its listener registers and stays silent), so a
+    /// long-lived process going from paused to playing would be missed. The
+    /// output device says when it starts running, but not for whom, and says
+    /// nothing while it already runs for someone else. What is left is read
+    /// on a timer: cheap property reads off the IO queue, short enough that a
+    /// process joining the HAL (100-200 ms before it sounds) is picked up
+    /// about as it starts.
     private func observeProcesses() {
         guard case .application = mode else { return }
         var addr = address(kAudioHardwarePropertyProcessObjectList)
@@ -407,8 +417,19 @@ private final class Tap {
         listenerBlock = block
         AudioObjectAddPropertyListenerBlock(systemObject, &addr, controlQueue, block)
 
+        if let device = defaultOutputDevice() {
+            var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+            let running: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                self?.rebuildIfTargetChanged()
+            }
+            if AudioObjectAddPropertyListenerBlock(device, &runningAddr, controlQueue, running) == noErr {
+                runningDevice = device
+                runningBlock = running
+            }
+        }
+
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
-        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.schedule(deadline: .now() + processPollInterval, repeating: processPollInterval)
         timer.setEventHandler { [weak self] in self?.rebuildIfTargetChanged() }
         timer.resume()
         pollTimer = timer
@@ -417,6 +438,12 @@ private final class Tap {
     private func removeProcessObservers() {
         pollTimer?.cancel()
         pollTimer = nil
+        if let running = runningBlock {
+            var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+            AudioObjectRemovePropertyListenerBlock(runningDevice, &runningAddr, controlQueue, running)
+            runningBlock = nil
+            runningDevice = AudioDeviceID(0)
+        }
         guard let block = listenerBlock else { return }
         var addr = address(kAudioHardwarePropertyProcessObjectList)
         AudioObjectRemovePropertyListenerBlock(systemObject, &addr, controlQueue, block)

@@ -30,14 +30,26 @@ pub(super) enum Adjust {
 }
 
 /// Largest single splice. Bigger corrections are spread over several.
-pub(super) const MAX_SPLICE_FRAMES: usize = 64;
+const MAX_SPLICE_MS: f64 = 1.33;
+
+/// `MAX_SPLICE_MS` in frames at `rate`.
+pub(super) const fn max_splice_frames(rate: u32) -> usize {
+    let frames = (rate as f64 * MAX_SPLICE_MS / 1000.0 + 0.5) as usize;
+    if frames == 0 {
+        1
+    } else {
+        frames
+    }
+}
 
 /// One dip measurement spans this long; it has to cover the slowest capture
 /// burst (Bluetooth and ScreenCaptureKit deliver every ~20 ms).
 const WINDOW_MS: f64 = 250.0;
-/// Headroom assumed before anything is measured: a typical 512-frame capture
-/// buffer at 48 kHz.
+/// Headroom assumed before the first deliveries have been seen. Once they
+/// have, the guess is their size (see `arrived`).
 const PRIOR_MS: f64 = 10.0;
+/// How fast the saw's height sinks back once deliveries get smaller.
+const QUANTUM_RELEASE_S: f64 = 30.0;
 /// Kept above the measured dip at all times. A process tap's p99.9 delivery
 /// jitter is already ~1.8 ms, so a thinner margin clicks every few seconds.
 const SAFETY_MS: f64 = 2.0;
@@ -61,6 +73,9 @@ pub(super) struct Cushion {
     owed: usize,
     cooldown: usize,
     cooldown_blocks: usize,
+    /// Largest splice, and the fade each side of it, in frames.
+    max_splice: usize,
+    splice_fade: usize,
     primed: bool,
     /// The queue starts from the prior; the first measurement corrects it
     /// once, the way a startup offset is removed, and never again.
@@ -71,7 +86,13 @@ pub(super) struct Cushion {
     since_late: usize,
     late_repeat_blocks: usize,
     /// Largest recent arrival between two reads: the saw's height.
-    quantum: usize,
+    quantum: f64,
+    /// Share of `quantum` kept per block, for `QUANTUM_RELEASE_S`.
+    quantum_keep: f64,
+    /// A delivery has arrived since the queue was created.
+    seen_delivery: bool,
+    /// Primed at least once.
+    started: bool,
 }
 
 impl Cushion {
@@ -88,13 +109,19 @@ impl Cushion {
             owed: 0,
             cooldown: 0,
             cooldown_blocks: (frames(SPLICE_EVERY_MS) / need.max(1)).max(1),
+            max_splice: max_splice_frames(sample_rate),
+            splice_fade: super::dag::splice_fade_frames(sample_rate),
             primed: false,
             settled: false,
             judge: OutageJudge::new(sample_rate),
             max_depth: frames(MAX_DEPTH_MS),
             since_late: usize::MAX,
             late_repeat_blocks: frames(LATE_REPEAT_MS) / need.max(1),
-            quantum: 0,
+            quantum: 0.0,
+            quantum_keep: (-(need.max(1) as f64) / sample_rate.max(1) as f64 / QUANTUM_RELEASE_S)
+                .exp(),
+            seen_delivery: false,
+            started: false,
         }
     }
 
@@ -111,21 +138,41 @@ impl Cushion {
         self.floor() + self.depth.depth().min(self.max_depth)
     }
 
+    fn quantum(&self) -> usize {
+        self.quantum.round() as usize
+    }
+
     /// Once per block, before anything else: the frames the source delivered
     /// since the last block. A gap's verdict lands here, once the flow after
     /// it shows whether the missing audio was late or never existed.
     pub(super) fn arrived(&mut self, frames: usize) {
         self.since_late = self.since_late.saturating_add(1);
         // The largest single arrival is how far the queue saws between reads;
-        // it sinks back slowly if deliveries get smaller. Only steady flow
-        // counts: a catch-up burst after a gap is the gap, not the saw.
-        if self.primed && self.judge.is_clear() {
-            let steady = if self.quantum > 0 {
-                frames.min(2 * self.quantum)
+        // it sinks back over `QUANTUM_RELEASE_S` if deliveries get smaller.
+        // Only steady flow counts: a catch-up burst after a gap is the gap,
+        // not the saw. While first filling, the first delivery may be
+        // backlog from before the first read; later ones are the saw, and
+        // until the dip is measured a whole saw of them stands in for it:
+        // twice an ideal saw's dip, room for jitter not yet measured.
+        self.quantum *= self.quantum_keep;
+        let steady = if self.primed {
+            self.judge.is_clear()
+        } else {
+            !self.started && self.seen_delivery
+        };
+        if frames > 0 {
+            self.seen_delivery = true;
+        }
+        if steady && frames > 0 {
+            let cap = if self.quantum > 0.0 {
+                2.0 * self.quantum
             } else {
-                frames
+                f64::INFINITY
             };
-            self.quantum = steady.max(self.quantum - self.quantum / 4096);
+            self.quantum = self.quantum.max((frames as f64).min(cap));
+            if !self.started {
+                self.depth.set_prior(self.quantum());
+            }
         }
         if let Some(late) = self.judge.delivered(frames, self.need) {
             if late > 0 {
@@ -144,11 +191,12 @@ impl Cushion {
     /// allowance along with the saw.
     pub(super) fn start_level(&self) -> usize {
         let dip = self.depth.depth().min(self.max_depth);
-        if self.quantum == 0 {
+        let quantum = self.quantum();
+        if quantum == 0 {
             return self.target() + dip;
         }
-        let jitter = dip.saturating_sub(self.quantum / 2);
-        self.floor() + self.quantum.max(dip) + jitter
+        let jitter = dip.saturating_sub(quantum / 2);
+        self.floor() + quantum.max(dip) + jitter
     }
 
     /// Before the source's first read, and again after it ran dry. `None`
@@ -164,6 +212,7 @@ impl Cushion {
             return None;
         }
         self.primed = true;
+        self.started = true;
         self.owed = 0;
         self.sum = 0.0;
         self.blocks = 0;
@@ -224,10 +273,10 @@ impl Cushion {
             return Adjust::None;
         }
         if self.owed > 0 {
-            let n = self.owed.min(MAX_SPLICE_FRAMES);
+            let n = self.owed.min(self.max_splice);
             // A drop reads a fade on each side of the cut and must leave the
             // block itself behind.
-            if queued >= n + 2 * super::dag::SPLICE_FADE_FRAMES + self.need {
+            if queued >= n + 2 * self.splice_fade + self.need {
                 self.owed -= n;
                 self.cooldown = self.cooldown_blocks;
                 return Adjust::Drop(n);
@@ -735,6 +784,35 @@ mod tests {
         c.underrun(64);
         let level = c.start_level();
         assert_eq!(c.prime(level + 1_536), Some(1_536));
+    }
+
+    #[test]
+    fn small_deliveries_start_below_the_prior() {
+        let mut c = Cushion::new(32, SR);
+        let guessed = c.start_level();
+        for _ in 0..4 {
+            c.arrived(32);
+        }
+        assert!(
+            c.start_level() < guessed / 2,
+            "{} vs {guessed}",
+            c.start_level()
+        );
+    }
+
+    #[test]
+    fn the_saw_height_sinks_back_at_the_same_pace_at_any_block() {
+        let sunk = |need: usize| {
+            let mut c = Cushion::new(need, SR);
+            c.arrived(512);
+            c.arrived(512);
+            for _ in 0..(10 * SR as usize) / need {
+                c.arrived(0);
+            }
+            c.quantum
+        };
+        let (small, large) = (sunk(32), sunk(1_024));
+        assert!((small - large).abs() < 1.0, "{small} vs {large}");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rtrb::Consumer;
@@ -41,6 +41,8 @@ pub struct WebRtcSession {
     // DSP graph rate the bridge feeds/reads at; the async paths resample it to
     // 48 kHz for Opus. Defaults to 48 kHz until the bridge is instantiated.
     pub output_sr: Arc<AtomicU32>,
+    // The DAG's block at `output_sr`; one packet carries one block.
+    pub block_frames: AtomicUsize,
     // Guard so only one encode loop runs regardless of how many peers connect.
     pub encoder_started: AtomicBool,
     // "idle" | "hosting" | "joining".
@@ -97,6 +99,7 @@ impl WebRtcSession {
             local_channels: Arc::new(AtomicU32::new(1)),
             codec: AtomicU8::new(Format::Opus.to_byte()),
             output_sr: Arc::new(AtomicU32::new(OPUS_SR)),
+            block_frames: AtomicUsize::new(crate::audio::graph::MAX_BUFFER_FRAMES),
             encoder_started: AtomicBool::new(false),
             phase: Mutex::new("idle"),
             room_code: Mutex::new(None),
@@ -113,10 +116,16 @@ impl WebRtcSession {
         self.codec.store(f.to_byte(), Ordering::Relaxed);
     }
 
-    pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>, output_sr: u32) {
+    pub fn set_send_consumers(
+        &self,
+        consumers: Vec<Consumer<f32>>,
+        output_sr: u32,
+        block_frames: usize,
+    ) {
         *self.send_consumers.lock().unwrap() = consumers;
-        self.send_gen.fetch_add(1, Ordering::SeqCst);
         self.output_sr.store(output_sr, Ordering::Relaxed);
+        self.block_frames.store(block_frames, Ordering::Relaxed);
+        self.send_gen.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn register_bridge(

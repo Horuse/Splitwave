@@ -42,6 +42,9 @@ impl Drop for XrunTickThread {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
+            // Woken rather than waited out: a reconcile drops this thread and
+            // must not sit through the rest of its tick.
+            j.thread().unpark();
             let _ = j.join();
         }
     }
@@ -130,7 +133,10 @@ pub(super) fn spawn_xrun_thread(
             // it so the second window starts clean.
             let mut warmup = true;
             while !stop_thread.load(Ordering::SeqCst) {
-                thread::sleep(XRUN_TICK);
+                thread::park_timeout(XRUN_TICK);
+                if stop_thread.load(Ordering::SeqCst) {
+                    break;
+                }
                 let now = Instant::now();
                 let elapsed_secs = now.duration_since(last_tick).as_secs_f64();
                 last_tick = now;

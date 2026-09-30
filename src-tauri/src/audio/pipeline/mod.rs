@@ -57,9 +57,9 @@ use output::{
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
 
-/// Overlap between a hot-swapped output's old and new bridges: one DSP block at
-/// 48 kHz plus slack, so the incoming sub-graph starts with its rings primed.
-const SWAP_PREFILL: std::time::Duration = std::time::Duration::from_millis(25);
+/// Longest a hot swap waits for its fresh bridges to collect a block. Only an
+/// input that delivers nothing (paused, or a quiet tap) waits this long.
+const SWAP_PREFILL_MAX: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
 /// thread, the meter tick thread, and the effect parameter registry.
@@ -103,7 +103,7 @@ pub struct ActivePipeline {
     /// carried over keeps the bridge that feeds its ring.
     swapping_slots: HashMap<(String, String), Vec<usize>>,
     /// Fill gauges of the network receive buffers each output reads.
-    receive_buffers: HashMap<String, Vec<Arc<AtomicU32>>>,
+    receive_buffers: HashMap<String, Vec<crate::audio::stream_recv::FillGauge>>,
     /// Each speaker's overload count at the last report.
     reported_overloads: HashMap<String, u64>,
 }
@@ -306,6 +306,7 @@ impl ActivePipeline {
         let pipeline_rate = self.current.as_ref().map_or(48_000, |g| g.sample_rate);
         let mut report = LatencyReport {
             buffer_frames,
+            sample_rate: self.current.as_ref().map_or(0, |g| g.sample_rate),
             nodes: self.node_timings.values().cloned().collect(),
             ..LatencyReport::default()
         };
@@ -322,9 +323,9 @@ impl ActivePipeline {
             for fill in self.receive_buffers.get(id).into_iter().flatten() {
                 inputs.push(PathInput {
                     device: None,
-                    queue_frames: fill.load(Ordering::Relaxed) as u64,
+                    queue_frames: fill.frames.load(Ordering::Relaxed) as u64,
                     normalizer_frames: 0,
-                    rate: crate::audio::stream_recv::SR,
+                    rate: fill.rate.load(Ordering::Relaxed),
                 });
             }
             let out = PathOutput {
@@ -1092,10 +1093,12 @@ impl ActivePipeline {
                 } else {
                     HashMap::new()
                 };
+                // Meters and scopes read the same instant the speakers play,
+                // so the monitor runs the engine block too.
                 let mut built = build_output_graph(
                     None,
                     monitor_sr,
-                    dag::TIMER_BLOCK_FRAMES,
+                    graph.buffer_frames as usize,
                     true,
                     graph,
                     &input_native_sr,
@@ -1160,6 +1163,9 @@ impl ActivePipeline {
         // `build_output_graph` above, before the bridge slot (and its counters)
         // exists, so the two have to be joined here by their shared (input, output) key.
         let mut captured: Vec<(String, String, CaptureStats)> = carried_captures;
+        // Bridges added beside a running one, and the samples that make one
+        // engine block of their input.
+        let mut fresh: Vec<(CaptureStats, u64)> = Vec::new();
         for (input_id, tagged) in by_input {
             if self.inputs.contains_key(&input_id) {
                 let state = self.inputs.get_mut(&input_id).unwrap();
@@ -1179,6 +1185,12 @@ impl ActivePipeline {
                     }
                     let (slot, capture) = state.bridge_tx.add(prod)?;
                     state.capture_by_slot.insert(slot, capture.clone());
+                    let block = output::device_block(
+                        graph.buffer_frames as usize,
+                        pipeline_sr,
+                        state.sample_rate,
+                    );
+                    fresh.push((capture.clone(), block as u64 * state.channels as u64));
                     captured.push((input_id.clone(), out_id.clone(), capture));
                     state
                         .bridges_by_output
@@ -1215,7 +1227,8 @@ impl ActivePipeline {
                     bridges_by_output.entry(out_id).or_default().push(slot);
                 }
                 let io = configure_io(&resolved, graph.buffer_frames as usize, pipeline_sr);
-                let normalizer_frames = input::normalizer_frames(&resolved, pipeline_sr);
+                let normalizer_frames =
+                    input::normalizer_frames(&resolved, pipeline_sr, graph.buffer_frames as usize);
                 let handle = start_input_stream(
                     &input_id,
                     resolved,
@@ -1287,7 +1300,8 @@ impl ActivePipeline {
             let drain = new_input_drain.remove(&input_id);
             let (bridge_tx, bridge_rx) = broadcast_channel();
             let io = configure_io(&resolved, graph.buffer_frames as usize, pipeline_sr);
-            let normalizer_frames = input::normalizer_frames(&resolved, pipeline_sr);
+            let normalizer_frames =
+                input::normalizer_frames(&resolved, pipeline_sr, graph.buffer_frames as usize);
             let handle = start_input_stream(
                 &input_id,
                 resolved,
@@ -1322,7 +1336,14 @@ impl ActivePipeline {
         // sub-graph whose sources are empty emits zero-fill until the input
         // callback catches up, which is an audible dropout on every edit.
         if !self.stale_bridges.is_empty() {
-            std::thread::sleep(SWAP_PREFILL);
+            let deadline = std::time::Instant::now() + SWAP_PREFILL_MAX;
+            while fresh
+                .iter()
+                .any(|(c, block)| c.fed.load(Ordering::Relaxed) < *block)
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
         }
 
         // Hot-swap the new sub-graph into an existing worker when

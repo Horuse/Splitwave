@@ -19,7 +19,7 @@ use tracing::{info, warn};
 use crate::audio::graph::OpusApplication;
 use crate::audio::wake::Doorbell;
 
-use super::codec::ChannelEncoder;
+use super::codec::{opus_application, opus_application_byte, ChannelEncoder};
 use super::packet::{self, Format};
 
 /// Longest the send thread sleeps without being rung.
@@ -34,6 +34,8 @@ struct Config {
     opus_bitrate: u32,
     opus_application: OpusApplication,
     sample_rate: u32,
+    /// The DAG's block at `sample_rate`; one packet carries one block.
+    block_frames: usize,
 }
 
 pub struct NetSender {
@@ -78,7 +80,7 @@ pub fn release(node_id: &str) {
 }
 
 /// Returns the sender for `node_id`, binding the send socket on first use. A
-/// config change (target / codec / bitrate / sample rate) tears the old task down and rebuilds.
+/// config change (target / codec / bitrate / sample rate / block) tears the old task down and rebuilds.
 pub fn get_or_create(
     node_id: &str,
     target: SocketAddr,
@@ -86,6 +88,7 @@ pub fn get_or_create(
     opus_bitrate: u32,
     opus_application: OpusApplication,
     sample_rate: u32,
+    block_frames: usize,
 ) -> Arc<NetSender> {
     let config = Config {
         target,
@@ -93,6 +96,7 @@ pub fn get_or_create(
         opus_bitrate,
         opus_application,
         sample_rate,
+        block_frames,
     };
     let mut reg = registry().lock().unwrap();
     if let Some(s) = reg.get(node_id) {
@@ -155,11 +159,8 @@ impl NetSender {
             }
         };
         let target = self.config.target;
-        let application = match self.config.opus_application {
-            OpusApplication::Voip => opus::Application::Voip,
-            OpusApplication::Audio => opus::Application::Audio,
-            OpusApplication::LowDelay => opus::Application::LowDelay,
-        };
+        let application = opus_application(self.config.opus_application);
+        let block_frames = self.config.block_frames;
         info!(%target, "net sender started");
 
         let consumers = self.send_consumers.clone();
@@ -199,7 +200,12 @@ impl NetSender {
                 }
                 let n = cons.len();
                 while encoders.len() < n {
-                    encoders.push(ChannelEncoder::new(format, bitrate, application));
+                    encoders.push(ChannelEncoder::new(
+                        format,
+                        bitrate,
+                        application,
+                        block_frames,
+                    ));
                     ins.push(Vec::new());
                     seqs.push(0);
                 }
@@ -223,12 +229,10 @@ impl NetSender {
             let mut packets: Vec<Vec<u8>> = Vec::new();
             let sample_rate = self.config.sample_rate;
             let (opus_bitrate_kbps, opus_app_byte) = if format == Format::Opus {
-                let app = match self.config.opus_application {
-                    OpusApplication::Voip => 1,
-                    OpusApplication::Audio => 2,
-                    OpusApplication::LowDelay => 3,
-                };
-                ((self.config.opus_bitrate / 1000) as u16, app)
+                (
+                    (self.config.opus_bitrate / 1000) as u16,
+                    opus_application_byte(self.config.opus_application),
+                )
             } else {
                 (0, 0)
             };
@@ -282,6 +286,7 @@ mod tests {
             0,
             OpusApplication::Audio,
             48_000,
+            256,
         );
 
         let mut consumers = Vec::new();
@@ -331,6 +336,7 @@ mod tests {
             0,
             OpusApplication::Audio,
             48_000,
+            256,
         );
         let (mut prod, cons) = rtrb::RingBuffer::new(9_600);
         sender.set_send_consumers(vec![cons]);

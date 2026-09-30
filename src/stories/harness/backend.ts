@@ -283,6 +283,7 @@ function mockLatencyReport(env: MockEnv): LatencyReport {
 	return {
 		path: { ...path, totalMs: Object.values(path).reduce<number>((a, v) => a + (typeof v === 'number' ? v : 0), 0) },
 		bufferFrames: env.bufferFrames,
+		sampleRate: env.pipelineSampleRate,
 		deviceBufferFrames: env.bufferFrames,
 		dspLoad: 0.18,
 		overloads: 0,

@@ -32,9 +32,23 @@ const RETIRE_TIMEOUT: Duration = Duration::from_millis(500);
 const STOP_FADE_MS: u32 = 10;
 
 /// Blocks rendered in a row without output before a callback gives up. The
-/// FFT resampler holds input until it has a whole FFT frame (160 frames for
-/// 48 -> 44.1 kHz), so several small blocks may go in before any comes out.
-const MAX_SILENT_BLOCKS: usize = 64;
+/// FFT resampler holds input until it has a whole FFT frame, a multiple of the
+/// rates' input period (160 frames for 48 -> 44.1 kHz) no longer than a block
+/// past it, so small blocks may go in before any comes out. Twice that, for
+/// room.
+fn max_silent_blocks(pipeline_rate: u32, device_rate: u32, block_frames: usize) -> usize {
+    let (a, b) = (pipeline_rate.max(1) as usize, device_rate.max(1) as usize);
+    let period = a / gcd(a, b);
+    2 * (period.div_ceil(block_frames.max(1)) + 2)
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
+}
 
 /// Per-speaker counters, written relaxed by the callback and read by the
 /// non-RT tick thread and the latency report.
@@ -76,6 +90,7 @@ pub(in crate::audio::pipeline) struct SpeakerRenderer {
     pending_pos: usize,
     pending_len: usize,
     channels: usize,
+    max_silent_blocks: usize,
     meter: MeterHandle,
     io: SpeakerIo,
 }
@@ -129,6 +144,7 @@ impl SpeakerRenderer {
                 pending_pos: 0,
                 pending_len: 0,
                 channels,
+                max_silent_blocks: max_silent_blocks(pipeline_rate, device_rate, block_frames),
                 meter,
                 io: io.clone(),
             },
@@ -158,7 +174,7 @@ impl SpeakerRenderer {
         let mut silent_blocks = 0;
         while written < out.len() {
             if self.pending_pos == self.pending_len {
-                if !self.produce() || silent_blocks == MAX_SILENT_BLOCKS {
+                if !self.produce() || silent_blocks == self.max_silent_blocks {
                     out[written..].fill(0.0);
                     break;
                 }
@@ -229,8 +245,10 @@ impl SpeakerRenderer {
 type Slot = Arc<Mutex<Option<SpeakerRenderer>>>;
 
 /// How long a retire waits without a single callback before calling the
-/// device dead and taking the renderer back anyway.
+/// device dead and taking the renderer back anyway: this, or a few of its
+/// callback periods when those are longer.
 const DEAD_DEVICE_AFTER: Duration = Duration::from_millis(100);
+const DEAD_DEVICE_PERIODS: u32 = 3;
 
 /// The audio-thread end of a speaker: renders once the renderer has arrived,
 /// silence before that and after a retire.
@@ -303,6 +321,8 @@ pub(in crate::audio::pipeline) struct SpeakerLink {
     retire: Arc<AtomicBool>,
     faded: Arc<AtomicBool>,
     calls: Arc<AtomicU64>,
+    /// The attached renderer's device callback size and rate.
+    period: Option<(Arc<AtomicU32>, u32)>,
 }
 
 pub(in crate::audio::pipeline) fn speaker_link() -> (SpeakerLink, SpeakerCallback) {
@@ -316,6 +336,7 @@ pub(in crate::audio::pipeline) fn speaker_link() -> (SpeakerLink, SpeakerCallbac
             retire: retire.clone(),
             faded: faded.clone(),
             calls: calls.clone(),
+            period: None,
         },
         SpeakerCallback {
             slot,
@@ -332,6 +353,7 @@ impl SpeakerLink {
     /// Hand the renderer to the callback. Call once the stream is open, so a
     /// failed open never takes the graph down with its closure.
     pub(in crate::audio::pipeline) fn attach(&mut self, renderer: SpeakerRenderer) {
+        self.period = Some((renderer.io.callback_frames.clone(), renderer.io.sample_rate));
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
         if slot.replace(renderer).is_some() {
             tracing::error!("speaker renderer attached twice");
@@ -344,6 +366,16 @@ impl SpeakerLink {
     /// has stopped calling gets no fade, but still gives the renderer back.
     pub(in crate::audio::pipeline) fn retire(&mut self) -> Option<SpeakerRenderer> {
         self.retire.store(true, Ordering::Release);
+        let period = self
+            .period
+            .as_ref()
+            .map_or(Duration::ZERO, |(frames, rate)| {
+                Duration::from_secs_f64(
+                    frames.load(Ordering::Relaxed) as f64 / (*rate).max(1) as f64,
+                )
+            });
+        let dead_after = DEAD_DEVICE_AFTER.max(period * DEAD_DEVICE_PERIODS);
+        let timeout = RETIRE_TIMEOUT.max(2 * dead_after);
         let started = Instant::now();
         let mut calls = self.calls.load(Ordering::Relaxed);
         let mut last_call = started;
@@ -354,7 +386,7 @@ impl SpeakerLink {
                 calls = seen;
                 last_call = now;
             }
-            if now - last_call >= DEAD_DEVICE_AFTER || now - started >= RETIRE_TIMEOUT {
+            if now - last_call >= dead_after || now - started >= timeout {
                 tracing::warn!("speaker stopped calling back; taking its renderer without a fade");
                 break;
             }

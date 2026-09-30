@@ -543,7 +543,7 @@ pub fn instantiate_effect(
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Gain { linear }) => mk(
-                RuntimeEffect::Gain(GainEffect::from_state(linear.clone())),
+                RuntimeEffect::Gain(GainEffect::from_state(linear.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -551,14 +551,14 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = GainEffect::new(d);
+                let (e, c) = GainEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Gain(e), Some(c), None, None, None, None)
             }
         },
         EffectSpec::Mute(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Mute { muted }) => mk(
-                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone())),
+                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -566,7 +566,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = MuteEffect::new(d);
+                let (e, c) = MuteEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Mute(e), Some(c), None, None, None, None)
             }
@@ -984,6 +984,7 @@ pub fn instantiate_effect(
                     sensitivity.clone(),
                     max_width_ms.clone(),
                     sample_rate,
+                    d.max_width_ms,
                 )),
                 None,
                 None,
@@ -1034,7 +1035,7 @@ pub fn instantiate_effect(
                 crate::audio::plugins::registry::forget(node_id);
                 let muted = Arc::new(AtomicBool::new(false));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1048,7 +1049,7 @@ pub fn instantiate_effect(
                 tracing::error!(node_id, path, "plugin node has no format");
                 let muted = Arc::new(AtomicBool::new(true));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1112,7 +1113,7 @@ pub fn instantiate_effect(
                     crate::audio::plugins::registry::forget(node_id);
                     let muted = Arc::new(AtomicBool::new(true));
                     mk(
-                        RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                        RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                         None,
                         None,
                         None,

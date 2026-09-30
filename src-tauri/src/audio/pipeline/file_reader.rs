@@ -27,6 +27,8 @@ const BACKOFF_WHEN_FULL: Duration = Duration::from_micros(200);
 /// source's backlog cushion, deep enough that a scheduler hiccup on either side
 /// never runs it dry.
 const PACE_QUEUE_MS: usize = 120;
+/// The last frame fades to silence over this at end of file.
+const EOF_FADE_MS: usize = 3;
 /// Cap on how long end-of-file waits for the queued tail to play out.
 const EOF_DRAIN_MAX: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -546,10 +548,10 @@ fn run<E: ProgressEmitter>(
                 continue;
             }
             // Fade out to avoid a hard click at end of file.
-            const FADE_FRAMES: usize = 128;
-            let mut fade_buf = vec![0.0f32; FADE_FRAMES * ch];
-            for f in 0..FADE_FRAMES {
-                let t = 1.0 - (f as f32 + 1.0) / FADE_FRAMES as f32;
+            let fade_frames = (od.sample_rate as usize * EOF_FADE_MS / 1000).max(1);
+            let mut fade_buf = vec![0.0f32; fade_frames * ch];
+            for f in 0..fade_frames {
+                let t = 1.0 - (f as f32 + 1.0) / fade_frames as f32;
                 for c in 0..ch {
                     fade_buf[f * ch + c] = last_frame[c] * t;
                 }

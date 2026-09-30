@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::asrc::Asrc;
-use super::cushion::{Adjust, Cushion, MAX_SPLICE_FRAMES};
+use super::cushion::{max_splice_frames, Adjust, Cushion};
 use super::latency::NodeTiming;
 use super::sig::MONITOR_KEY;
 use crate::audio::effects::{
@@ -30,9 +30,8 @@ pub(super) fn ring_capacity_frames(sample_rate: u32) -> usize {
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
 
-/// Block of the timer-paced workers (recording, monitoring, wire senders).
-/// Nobody hears their latency, and a timer cannot pace small blocks reliably.
-/// Speaker graphs run at the engine buffer size instead.
+/// Block of a recording's worker: nobody hears its latency, and large blocks
+/// cost the least. Every other graph runs at the engine buffer size.
 pub const TIMER_BLOCK_FRAMES: usize = 1024;
 
 const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;
@@ -46,12 +45,22 @@ const STALL_THRESHOLD: Duration = Duration::from_millis(150);
 
 /// Crossfade length across a trim's cut. Long enough to kill the step, short
 /// enough that the replayed audio reads as texture rather than an echo.
-pub(super) const SPLICE_FADE_FRAMES: usize = 32;
+const SPLICE_FADE_MS: f64 = 0.67;
+
+/// `SPLICE_FADE_MS` in frames at `rate`.
+pub(super) const fn splice_fade_frames(rate: u32) -> usize {
+    let frames = (rate as f64 * SPLICE_FADE_MS / 1000.0 + 0.5) as usize;
+    if frames == 0 {
+        1
+    } else {
+        frames
+    }
+}
 
 /// Fades `len` frames of interleaved `buf` starting at frame `from`, in
-/// (`up`) or out, over at most `SPLICE_FADE_FRAMES`.
-fn ramp(buf: &mut [f32], channels: usize, from: usize, len: usize, up: bool) {
-    let len = len.min(SPLICE_FADE_FRAMES);
+/// (`up`) or out, over at most `max_len`.
+fn ramp(buf: &mut [f32], channels: usize, from: usize, len: usize, max_len: usize, up: bool) {
+    let len = len.min(max_len);
     if len == 0 {
         return;
     }
@@ -64,15 +73,23 @@ fn ramp(buf: &mut [f32], channels: usize, from: usize, len: usize, up: bool) {
     }
 }
 
-/// A splice reads its span plus a fade on each side.
-fn splice_samples(channels: usize) -> usize {
-    (MAX_SPLICE_FRAMES + 2 * SPLICE_FADE_FRAMES) * channels
+/// A splice reads its span plus a fade on each side, at the ring's `rate`.
+fn splice_samples(channels: usize, rate: u32) -> usize {
+    (max_splice_frames(rate) + 2 * splice_fade_frames(rate)) * channels
 }
 
 /// Holds a resampler chunk being gathered, or a splice's join, plus the rest
 /// of the chunk the splice landed in.
-fn staging_samples(channels: usize) -> usize {
-    (RESAMPLE_CHUNK + MAX_SPLICE_FRAMES + 2 * SPLICE_FADE_FRAMES) * channels + 8
+fn staging_samples(channels: usize, rate: u32) -> usize {
+    RESAMPLE_CHUNK * channels + splice_samples(channels, rate) + 8
+}
+
+/// Time constant of a source's queue gauge.
+const QUEUE_SMOOTHING_MS: f64 = 250.0;
+
+fn queue_alpha(block_frames: usize, rate: u32) -> f64 {
+    let block_ms = block_frames as f64 * 1000.0 / rate.max(1) as f64;
+    1.0 - (-block_ms / QUEUE_SMOOTHING_MS).exp()
 }
 
 /// Fixed-capacity FIFO; allocates once. Overrun clamps and counts drops --
@@ -303,8 +320,12 @@ struct SourceState {
     cushion: Option<Cushion>,
     /// The captured input this source reads; `None` for a ring-source.
     input_id: Option<String>,
+    /// Fade length at the ring's rate, for splices and for running dry.
+    fade_frames: usize,
     /// Smoothed frames left queued after each read: this source's latency.
     queue_avg: f64,
+    /// Share of the gap `queue_avg` closes per block, for `QUEUE_SMOOTHING_MS`.
+    queue_alpha: f64,
     /// Frames queued when the previous block finished; what the queue holds
     /// beyond it at the next block is what the source delivered in between.
     queued_after: usize,
@@ -485,14 +506,14 @@ impl SourceState {
         if self.cushion.is_some() {
             let w = self.channels;
             if fade_in {
-                ramp(&mut self.out_buf, w, 0, written / w, true);
+                ramp(&mut self.out_buf, w, 0, written / w, self.fade_frames, true);
             }
             if written < need {
                 // Running dry mid-block: the audio fades into the silence
                 // instead of stopping on a step.
                 let frames = written / w;
-                let len = frames.min(SPLICE_FADE_FRAMES);
-                ramp(&mut self.out_buf, w, frames - len, len, false);
+                let len = frames.min(self.fade_frames);
+                ramp(&mut self.out_buf, w, frames - len, len, len, false);
             }
         }
     }
@@ -539,12 +560,12 @@ impl SourceState {
             self.stats.online.store(true, Ordering::Relaxed);
         }
         if fade_in {
-            ramp(&mut asrc.input, w, 0, got / w, true);
+            ramp(&mut asrc.input, w, 0, got / w, self.fade_frames, true);
         }
         if got < need {
             let frames = got / w;
-            let len = frames.min(SPLICE_FADE_FRAMES);
-            ramp(&mut asrc.input, w, frames - len, len, false);
+            let len = frames.min(self.fade_frames);
+            ramp(&mut asrc.input, w, frames - len, len, len, false);
             asrc.input.resize(need, 0.0);
             let missing = need - got;
             if self.last_pop_at.elapsed() > STALL_THRESHOLD {
@@ -577,7 +598,7 @@ impl SourceState {
         self.queued_after = self.queued_frames();
         let filter = self.asrc.as_ref().map_or(0, |a| a.delay_frames());
         let queued = (self.queued_after + filter) as f64;
-        self.queue_avg += (queued - self.queue_avg) * 0.02;
+        self.queue_avg += (queued - self.queue_avg) * self.queue_alpha;
         self.stats
             .queue_frames
             .store(self.queue_avg.round() as u64, Ordering::Relaxed);
@@ -601,7 +622,7 @@ impl SourceState {
             }
         }
         let queued = self.queued_frames();
-        let fade = SPLICE_FADE_FRAMES * self.channels;
+        let fade = self.fade_frames * self.channels;
         if let Some(Adjust::Drop(n)) = self.cushion.as_mut().map(|c| c.observe(queued)) {
             // The crossfade overlaps a fade's worth on each side of the cut
             // into one, so that much of the `n` goes with it.
@@ -757,9 +778,12 @@ struct EffectState {
 }
 
 impl EffectState {
-    /// Run the effect chain over `out_buf`. Width <= 2 processes in place; wider
-    /// buffers are split into stereo pairs, each through its own instance so
-    /// per-channel filter state never bleeds across pairs.
+    /// Run the effect chain over `out_buf`. Width 2 processes in place; any
+    /// other width is split into stereo pairs, each through its own instance so
+    /// per-channel filter state never bleeds across pairs. A channel without a
+    /// partner (mono, or the last of an odd width) fills both sides of its
+    /// pair: an effect that links its channels hears it at its own level, as a
+    /// centred signal, rather than beside a silent one.
     fn run(&mut self, frames: usize) {
         // A carry-over placeholder whose running node never arrived.
         if self.effects.is_empty() {
@@ -777,13 +801,13 @@ impl EffectState {
             for f in 0..frames {
                 let base = f * w;
                 self.pair_main[f * 2] = self.out_buf[base + c0];
-                self.pair_main[f * 2 + 1] = if c1 < w { self.out_buf[base + c1] } else { 0.0 };
+                self.pair_main[f * 2 + 1] = self.out_buf[base + if c1 < w { c1 } else { c0 }];
             }
             let sc = if let Some(scb) = self.sidechain_buf.as_ref() {
                 for f in 0..frames {
                     let base = f * w;
                     self.pair_side[f * 2] = scb[base + c0];
-                    self.pair_side[f * 2 + 1] = if c1 < w { scb[base + c1] } else { 0.0 };
+                    self.pair_side[f * 2 + 1] = scb[base + if c1 < w { c1 } else { c0 }];
                 }
                 Some(self.pair_side.as_slice())
             } else {
@@ -1490,7 +1514,7 @@ pub(super) struct BuiltOutputGraph {
     pub node_meta: HashMap<String, (usize, usize, usize)>,
     /// Fill gauges of the network receive buffers this graph reads, in
     /// 48 kHz samples.
-    pub receive_buffers: Vec<Arc<AtomicU32>>,
+    pub receive_buffers: Vec<crate::audio::stream_recv::FillGauge>,
     /// Latency and working block of every effect built here.
     pub node_timings: Vec<NodeTiming>,
     /// What the next build of this output needs to carry these nodes over.
@@ -1614,7 +1638,7 @@ pub(super) fn build_output_graph(
     // Effect node id -> (index in `nodes`, channel width). Lets the caller wire
     // publish taps onto a node that fans out to other outputs' ring-sources.
     let mut node_meta: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    let mut receive_buffers: Vec<Arc<AtomicU32>> = Vec::new();
+    let mut receive_buffers: Vec<crate::audio::stream_recv::FillGauge> = Vec::new();
     let mut controls: Vec<(String, EffectControl)> = Vec::new();
     let mut bypasses: Vec<(String, Arc<AtomicBool>)> = Vec::new();
     let mut meters: Vec<MeterHandle> = Vec::new();
@@ -1819,8 +1843,9 @@ pub(super) fn build_output_graph(
                 frames: block_frames,
                 consumer,
                 resampler,
-                input_staging: Vec::with_capacity(staging_samples(source_channels)),
-                splice_tmp: Vec::with_capacity(splice_samples(source_channels)),
+                input_staging: Vec::with_capacity(staging_samples(source_channels, input_sr)),
+                splice_tmp: Vec::with_capacity(splice_samples(source_channels, input_sr)),
+                fade_frames: splice_fade_frames(input_sr),
                 asrc: source_realtime
                     .then(|| Asrc::new(input_sr, output_sr, block_frames, source_channels))
                     .transpose()?
@@ -1832,6 +1857,7 @@ pub(super) fn build_output_graph(
                 cushion: source_realtime
                     .then(|| Cushion::new(input_frames_per_block as usize, input_sr)),
                 queue_avg: 0.0,
+                queue_alpha: queue_alpha(block_frames, output_sr),
                 queued_after: 0,
                 input_id: Some(id.clone()),
                 last_pop_at: Instant::now(),
@@ -2163,6 +2189,7 @@ pub(super) fn build_output_graph(
                     *opus_bitrate,
                     *opus_application,
                     output_sr,
+                    block_frames,
                 );
                 sender.set_send_consumers(send_consumers);
                 sender.bell()
@@ -2177,7 +2204,7 @@ pub(super) fn build_output_graph(
                     crate::audio::webrtc::get_or_create(node_id, *opus_bitrate, *opus_application);
                 // This graph already runs at the wire rate, so the encode task's
                 // own resampler stays out of the path.
-                session.set_send_consumers(send_consumers, output_sr);
+                session.set_send_consumers(send_consumers, output_sr, block_frames);
                 session.send_bell.clone()
             }
             _ => unreachable!("wire sender spec"),
@@ -2441,8 +2468,9 @@ fn ring_source(
         frames: block_frames,
         consumer,
         resampler,
-        input_staging: Vec::with_capacity(staging_samples(channels)),
-        splice_tmp: Vec::with_capacity(splice_samples(channels)),
+        input_staging: Vec::with_capacity(staging_samples(channels, owner_sr)),
+        splice_tmp: Vec::with_capacity(splice_samples(channels, owner_sr)),
+        fade_frames: splice_fade_frames(owner_sr),
         asrc,
         out_pending: StagingRing::with_capacity(staging_cap),
         chunk_tmp: Vec::with_capacity(out_max * channels),
@@ -2451,6 +2479,7 @@ fn ring_source(
         cushion: realtime.then(|| Cushion::new(input_frames_per_block as usize, owner_sr)),
         input_id: None,
         queue_avg: 0.0,
+        queue_alpha: queue_alpha(block_frames, output_sr),
         queued_after: 0,
         last_pop_at: Instant::now(),
         volume: Arc::new(AtomicU32::new(0x3F80_0000)),
@@ -2654,7 +2683,9 @@ pub(super) fn inputs_feeding_output<'a>(output_id: &str, valid: &'a ValidGraph) 
 
 #[cfg(test)]
 mod tests {
-    use super::{add_mapped, crossfade_into, DelayLine, SPLICE_FADE_FRAMES, TIMER_BLOCK_FRAMES};
+    use super::{add_mapped, crossfade_into, splice_fade_frames, DelayLine, TIMER_BLOCK_FRAMES};
+
+    const SPLICE_FADE_FRAMES: usize = splice_fade_frames(48_000);
 
     // Latency compensation on a branch that bypasses a latent effect must be a
     // pure delay: same samples, same order, only shifted.
@@ -2788,6 +2819,7 @@ pub(super) mod graph_tests {
     use crate::audio::graph::{EdgeSpec, EffectSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
 
     const SR: u32 = 48_000;
+    const SPLICE_FADE_FRAMES: usize = splice_fade_frames(SR);
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {
@@ -2881,13 +2913,38 @@ pub(super) mod graph_tests {
         input_sr: u32,
         realtime: bool,
     ) -> (BuiltOutputGraph, HashMap<String, Producer<f32>>) {
+        build_wide(
+            output_id,
+            output_sr,
+            block_frames,
+            valid,
+            input_sr,
+            realtime,
+            2,
+        )
+    }
+
+    /// `build_with_block` with every input delivering `channels` channels.
+    fn build_wide(
+        output_id: Option<&str>,
+        output_sr: u32,
+        block_frames: usize,
+        valid: &ValidGraph,
+        input_sr: u32,
+        realtime: bool,
+        channels: u32,
+    ) -> (BuiltOutputGraph, HashMap<String, Producer<f32>>) {
         let mut producer_pairs = Vec::new();
         let native = valid
             .inputs
             .iter()
             .map(|i| (i.id.clone(), input_sr))
             .collect();
-        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let native_ch = valid
+            .inputs
+            .iter()
+            .map(|i| (i.id.clone(), channels))
+            .collect();
         let mut reg = fresh_registry();
         let built = build_output_graph(
             output_id,
@@ -5205,5 +5262,252 @@ pub(super) mod graph_tests {
             "B must receive the owner's audio resampled to 48k, peak {peak}"
         );
         assert!(out_b.iter().all(|s| s.is_finite()));
+    }
+
+    /// Every effect with its default parameters, as the editor creates it.
+    fn every_effect() -> Vec<(NodeKind, serde_json::Value)> {
+        use serde_json::json;
+        vec![
+            (NodeKind::Gain, json!({ "gainDb": 0 })),
+            (NodeKind::Mute, json!({ "muted": false })),
+            (
+                NodeKind::ChannelBalance,
+                json!({ "leftGainDb": 0, "rightGainDb": 0 }),
+            ),
+            (
+                NodeKind::Saturator,
+                json!({ "thresholdDb": -0.3, "driveDb": 0 }),
+            ),
+            (
+                NodeKind::Eq,
+                json!({ "gainsDb": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }),
+            ),
+            (NodeKind::LevelMeter, json!({})),
+            (NodeKind::LufsMeter, json!({ "target": -14 })),
+            (NodeKind::Waveform, json!({ "segs": 4 })),
+            (NodeKind::Spectrum, json!({ "smoothing": 0.5 })),
+            (
+                NodeKind::Limiter,
+                json!({ "ceilingDb": -0.3, "lookaheadMs": 5, "releaseMs": 50 }),
+            ),
+            (
+                NodeKind::Compressor,
+                json!({ "thresholdDb": -18, "ratio": 3, "attackMs": 10, "releaseMs": 100,
+                        "kneeDb": 6, "makeupDb": 0 }),
+            ),
+            (
+                NodeKind::NoiseGate,
+                json!({ "thresholdDb": -40, "rangeDb": -40, "attackMs": 1, "holdMs": 50,
+                        "releaseMs": 200 }),
+            ),
+            (
+                NodeKind::Delay,
+                json!({ "timeMs": 250, "feedback": 0.4, "mix": 0.35 }),
+            ),
+            (
+                NodeKind::Reverb,
+                json!({ "roomSize": 0.5, "damping": 0.5, "width": 1, "mix": 0.33 }),
+            ),
+            (
+                NodeKind::NoiseSuppressor,
+                json!({ "attenuationLimitDb": 100, "postFilterBeta": 0, "minThreshDb": -10,
+                        "maxErbThreshDb": 30, "maxDfThreshDb": 20 }),
+            ),
+            (
+                NodeKind::Declick,
+                json!({ "sensitivity": 0.5, "maxWidthMs": 2 }),
+            ),
+            (
+                NodeKind::DeEsser,
+                json!({ "frequency": 6500, "thresholdDb": -30, "ratio": 4 }),
+            ),
+        ]
+    }
+
+    const FX_BLOCK: usize = 256;
+
+    /// mic (`channels` wide) -> `kind` -> speaker, fed `input` (interleaved at
+    /// `channels`). Returns the effect node's width, the graph's latency and
+    /// everything the effect put out, interleaved at its width.
+    fn run_effect_wide(
+        kind: NodeKind,
+        data: &serde_json::Value,
+        channels: usize,
+        input: &[f32],
+    ) -> (usize, usize, Vec<f32>) {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), node("fx", kind, data.clone()), speaker("s")],
+            edges: vec![
+                edge("e1", "m", None, "fx", None),
+                edge("e2", "fx", None, "s", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        let (mut built, mut producers) =
+            build_wide(Some("s"), SR, FX_BLOCK, &valid, SR, false, channels as u32);
+        push_all(producers.get_mut("m").expect("mic ring"), input);
+        let latency = built.graph.latency_frames();
+        let mut out = vec![0.0; FX_BLOCK * built.graph.out_channels().max(2)];
+        let mut got = Vec::new();
+        let mut width = 0;
+        for _ in 0..input.len() / channels / FX_BLOCK {
+            built.graph.process_block(&mut out);
+            let fx = built
+                .graph
+                .nodes
+                .iter()
+                .find_map(|n| match n {
+                    DagNode::Effect(e) => Some(&e.out_buf),
+                    _ => None,
+                })
+                .expect("effect node");
+            width = fx.len() / FX_BLOCK;
+            got.extend_from_slice(fx);
+        }
+        (width, latency, got)
+    }
+
+    /// Half a second of a distinct tone per channel: 0.2 amplitude, the
+    /// channel's own pitch, so a channel landing on another shows.
+    fn tones(channels: usize, frames: usize, only: Option<&[usize]>) -> Vec<f32> {
+        let mut out = vec![0.0; frames * channels];
+        for f in 0..frames {
+            for c in 0..channels {
+                if only.is_some_and(|o| !o.contains(&c)) {
+                    continue;
+                }
+                let hz = 220.0 * (c + 1) as f32;
+                let t = f as f32 / SR as f32;
+                out[f * channels + c] = 0.2 * (std::f32::consts::TAU * hz * t).sin();
+            }
+        }
+        out
+    }
+
+    fn channel(buf: &[f32], width: usize, c: usize) -> Vec<f32> {
+        buf.iter().skip(c).step_by(width).copied().collect()
+    }
+
+    fn energy(samples: &[f32]) -> f64 {
+        samples.iter().map(|s| (*s as f64).powi(2)).sum()
+    }
+
+    const FX_FRAMES: usize = FX_BLOCK * 94;
+
+    /// Interleaves per-channel signals.
+    fn interleave(chans: &[&[f32]]) -> Vec<f32> {
+        let frames = chans[0].len();
+        (0..frames * chans.len())
+            .map(|i| chans[i % chans.len()][i / chans.len()])
+            .collect()
+    }
+
+    fn assert_close(got: &[f32], want: &[f32], case: &str) {
+        assert_eq!(got.len(), want.len(), "{case}: length");
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!((g - w).abs() < 1e-5, "{case}: frame {i}: {g} vs {w}");
+        }
+    }
+
+    #[test]
+    fn every_effect_runs_mono_stereo_and_wide() {
+        for (kind, data) in every_effect() {
+            for channels in [1usize, 2, 6] {
+                let input = tones(channels, FX_FRAMES, None);
+                let (width, _, got) = run_effect_wide(kind, &data, channels, &input);
+                let case = format!("{kind:?} {channels}ch");
+                assert_eq!(width, channels, "{case}: width");
+                assert_eq!(got.len(), input.len(), "{case}: length");
+                assert!(got.iter().all(|s| s.is_finite()), "{case}: non-finite");
+                // A steady tone is exactly what a noise suppressor removes.
+                if kind == NodeKind::NoiseSuppressor {
+                    continue;
+                }
+                let tail = FX_FRAMES / 2;
+                for c in 0..channels {
+                    let out = energy(&channel(&got, width, c)[tail..]);
+                    let inp = energy(&channel(&input, channels, c)[tail..]);
+                    assert!(out > 0.25 * inp, "{case}: channel {c} lost its tone");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_pair_of_a_wide_node_plays_like_a_stereo_node() {
+        let left = channel(&tones(1, FX_FRAMES, None), 1, 0);
+        let right: Vec<f32> = channel(&tones(2, FX_FRAMES, None), 2, 1);
+        let stereo = interleave(&[&left, &right]);
+        let wide = interleave(&[&left, &right, &left, &right, &left, &right]);
+        for (kind, data) in every_effect() {
+            let (_, _, want) = run_effect_wide(kind, &data, 2, &stereo);
+            let (width, _, got) = run_effect_wide(kind, &data, 6, &wide);
+            for c in 0..width {
+                let case = format!("{kind:?} channel {c}");
+                assert_close(&channel(&got, width, c), &channel(&want, 2, c % 2), &case);
+            }
+        }
+    }
+
+    #[test]
+    fn no_effect_leaks_one_pair_into_another() {
+        for (kind, data) in every_effect() {
+            let input = tones(6, FX_FRAMES, Some(&[0, 1]));
+            let (width, _, got) = run_effect_wide(kind, &data, 6, &input);
+            for c in 2..width {
+                let leaked = energy(&channel(&got, width, c));
+                assert!(leaked < 1e-12, "{kind:?}: {leaked} reached channel {c}");
+            }
+        }
+    }
+
+    #[test]
+    fn mono_plays_like_a_centred_stereo_signal() {
+        let mono = channel(&tones(1, FX_FRAMES, None), 1, 0);
+        let centred = interleave(&[&mono, &mono]);
+        for (kind, data) in every_effect() {
+            let (_, _, want) = run_effect_wide(kind, &data, 2, &centred);
+            let (_, _, got) = run_effect_wide(kind, &data, 1, &mono);
+            assert_close(&got, &channel(&want, 2, 0), &format!("{kind:?}"));
+        }
+    }
+
+    #[test]
+    fn neutral_settings_pass_every_channel_through() {
+        let neutral = [
+            NodeKind::Gain,
+            NodeKind::Mute,
+            NodeKind::ChannelBalance,
+            NodeKind::Eq,
+            NodeKind::LevelMeter,
+            NodeKind::LufsMeter,
+            NodeKind::Waveform,
+            NodeKind::Spectrum,
+            NodeKind::Limiter,
+            NodeKind::NoiseGate,
+        ];
+        for (kind, data) in every_effect() {
+            if !neutral.contains(&kind) {
+                continue;
+            }
+            for channels in [1usize, 2, 6] {
+                let input = tones(channels, FX_FRAMES, None);
+                let (width, latency, got) = run_effect_wide(kind, &data, channels, &input);
+                // Past the gate opening and the lookahead filling.
+                let from = 4_096;
+                for c in 0..width {
+                    let out = channel(&got, width, c);
+                    let inp = channel(&input, channels, c);
+                    let case = format!("{kind:?} {channels}ch channel {c}");
+                    assert_close(
+                        &out[from..],
+                        &inp[from - latency..inp.len() - latency],
+                        &case,
+                    );
+                }
+            }
+        }
     }
 }

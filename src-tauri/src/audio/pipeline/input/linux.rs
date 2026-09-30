@@ -65,7 +65,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
     meter: Option<crate::audio::effects::MeterHandle>,
-    _io_frames: u32,
+    io_frames: u32,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     match resolved {
@@ -85,21 +85,37 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             };
             let capture = if let Some(sink) = node_id.strip_prefix("monitor:") {
                 info!(sink, "starting microphone capture (PipeWire sink monitor)");
-                crate::audio::capture::Capture::start_sink_monitor(sink, sample_rate, channels, cb)?
+                crate::audio::capture::Capture::start_sink_monitor(
+                    sink,
+                    sample_rate,
+                    channels,
+                    io_frames,
+                    cb,
+                )?
             } else {
                 info!(%node_id, "starting microphone capture (PipeWire source)");
-                crate::audio::capture::Capture::start_source(&node_id, sample_rate, channels, cb)?
+                crate::audio::capture::Capture::start_source(
+                    &node_id,
+                    sample_rate,
+                    channels,
+                    io_frames,
+                    cb,
+                )?
             };
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::SystemAudio { sample_rate, .. } => {
             info!("starting system-audio capture (PipeWire sink monitor)");
             let mut bridge = bridge;
-            let capture =
-                crate::audio::capture::Capture::start_system(sample_rate, 2, move |samples| {
+            let capture = crate::audio::capture::Capture::start_system(
+                sample_rate,
+                2,
+                io_frames,
+                move |samples| {
                     bridge.apply_commands();
                     bridge.broadcast(samples);
-                })?;
+                },
+            )?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AppAudio {
@@ -112,6 +128,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 &bundle_id,
                 sample_rate,
                 2,
+                io_frames,
                 move |samples| {
                     bridge.apply_commands();
                     bridge.broadcast(samples);

@@ -183,16 +183,22 @@ pub async fn wire_data_channel(
     }));
 }
 
+/// Returns every state the connection goes through, for whoever waits on it
+/// to connect: a connection takes one state handler, and this is it.
 pub fn wire_peer_events(
     pc: Arc<RTCPeerConnection>,
     connection_id: String,
     node_id: String,
     session: Arc<WebRtcSession>,
     display_id: Arc<Mutex<String>>,
-) {
+) -> tokio::sync::watch::Receiver<
+    webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState,
+> {
     use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+    let (state_tx, state_rx) = tokio::sync::watch::channel(RTCPeerConnectionState::New);
     let self_pc = pc.clone();
     pc.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
+        let _ = state_tx.send(state);
         let connection_id = connection_id.clone();
         let node_id = node_id.clone();
         let session = session.clone();
@@ -227,6 +233,7 @@ pub fn wire_peer_events(
             }
         })
     }));
+    state_rx
 }
 
 #[cfg(test)]

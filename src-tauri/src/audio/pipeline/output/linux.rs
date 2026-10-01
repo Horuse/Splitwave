@@ -1,12 +1,12 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tauri::AppHandle;
 use tracing::info;
 
 use crate::error::AppResult;
 
 use super::super::dag::OutputGraph;
+use super::super::host::Host;
 use super::super::worker::WorkerCtrl;
 use super::{speaker_callback, speaker_renderer, SpeakerIo, SpeakerLink, StreamGuard};
 
@@ -45,7 +45,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     spec: SpeakerResolved,
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
-    _app: &AppHandle,
+    _host: &Host,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     info!(node = %spec.node_id, sample_rate = spec.sample_rate, "opening speaker stream (PipeWire)");
     // Built before playback starts: a renderer that cannot be built must not

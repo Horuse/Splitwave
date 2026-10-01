@@ -1,7 +1,6 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tauri::AppHandle;
 use tracing::info;
 
 use crate::audio::graph::{InputSpec, ValidInput};
@@ -9,6 +8,7 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
 
 use super::super::file_reader::SeekFlush;
+use super::super::host::Host;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
 pub(in crate::audio::pipeline) fn resolve_input(
@@ -69,7 +69,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     flush: Option<Arc<SeekFlush>>,
     meter: Option<crate::audio::effects::MeterHandle>,
     io_frames: u32,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     match resolved {
         ResolvedInput::PwSource {
@@ -140,7 +140,8 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
-            start_audio_file(node_id, path, bridge, paused, flush, app)
+            start_audio_file(node_id, path, bridge, paused, flush, host)
         }
+        ResolvedInput::Virtual { .. } => unreachable!("virtual inputs start in input::mod"),
     }
 }

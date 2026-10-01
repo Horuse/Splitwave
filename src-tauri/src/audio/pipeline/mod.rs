@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rtrb::Producer;
-use tauri::AppHandle;
 use tracing::{info, warn};
 
 use crate::audio::effects::{
@@ -33,6 +32,8 @@ mod cushion;
 pub use cue::play as play_cue;
 pub(crate) mod dag;
 mod file_reader;
+mod host;
+pub use host::Host;
 mod input;
 mod latency;
 pub use latency::LatencyReport;
@@ -42,6 +43,8 @@ mod native;
 mod output;
 pub(crate) use worker::RtThread;
 mod sig;
+mod virtual_io;
+pub use virtual_io::{VirtualDevices, VirtualInput, VirtualSpeaker};
 mod worker;
 
 use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};
@@ -50,11 +53,32 @@ use input::{configure_io, resolve_input, start_input_stream, InputHandle, Resolv
 use latency::{breakdown, DeviceIo, NodeTiming, PathInput, PathOutput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
 use output::{
-    resolve_output, start_monitor_worker, start_recorder_worker, start_speaker_stream,
-    start_wire_sender_worker, RecorderWorker, ResolvedOutput, SpeakerHandle, SpeakerIo,
+    resolve_output, start_monitor_worker, start_recorder_worker, start_wire_sender_worker,
+    RecorderWorker, ResolvedOutput, SpeakerIo, SpeakerStream,
 };
 use sig::{compute_output_sig, OutputSig, MONITOR_KEY};
 use worker::WorkerCtrl;
+
+/// A source's counters (see `dag::SourceStats`), in samples.
+#[derive(Debug, Clone)]
+pub struct SourceHealth {
+    pub label: String,
+    /// The output whose graph reads this source (`monitor` for the monitor).
+    pub output_id: String,
+    pub xrun: u64,
+    pub stalled: u64,
+    pub trimmed: u64,
+    pub consumed: u64,
+}
+
+/// An output's worker: blocks rendered so far, and what a block is.
+#[derive(Debug, Clone)]
+pub struct OutputHealth {
+    pub label: String,
+    pub blocks: u64,
+    pub block_frames: usize,
+    pub sample_rate: u32,
+}
 
 /// Longest a hot swap waits for its fresh bridges to collect a block. Only an
 /// input that delivers nothing (paused, or a quiet tap) waits this long.
@@ -127,7 +151,7 @@ struct InputState {
 
 struct SpeakerState {
     /// Held only for its `Drop` -- cpal stream stop + worker join.
-    _handle: SpeakerHandle,
+    _handle: SpeakerStream,
     #[allow(dead_code)]
     sample_rate: u32,
     sig: OutputSig,
@@ -194,7 +218,7 @@ impl ActivePipeline {
     }
 
     /// Diff `graph` against the running pipeline; only touch what changed.
-    pub fn reconcile(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
+    pub fn reconcile(&mut self, graph: &ValidGraph, host: Host) -> AppResult<()> {
         // Param-only resend: nothing structural changed, so leave every worker
         // (and the meter thread) running untouched.
         if self.is_structurally_current(graph) {
@@ -217,7 +241,7 @@ impl ActivePipeline {
             state.bridge_tx.drain_discarded();
         }
 
-        match self.apply_full(graph, app) {
+        match self.apply_full(graph, host) {
             Ok(()) => {
                 self.current = Some(graph.clone());
                 Ok(())
@@ -294,6 +318,34 @@ impl ActivePipeline {
         if let Some(state) = self.inputs.get(node_id) {
             state.volume.store(scalar.to_bits(), Ordering::Relaxed);
         }
+    }
+
+    /// Every source's and output's counters as they stand: what tests read
+    /// to tell a pipeline that keeps up from one that drops or stalls.
+    pub fn health(&self) -> (Vec<SourceHealth>, Vec<OutputHealth>) {
+        let sources = self
+            .source_stats
+            .iter()
+            .map(|s| SourceHealth {
+                label: s.label.clone(),
+                output_id: s.output_id.clone(),
+                xrun: s.stats.xrun.load(Ordering::Relaxed),
+                stalled: s.stats.stalled.load(Ordering::Relaxed),
+                trimmed: s.stats.trimmed.load(Ordering::Relaxed),
+                consumed: s.stats.consumed.load(Ordering::Relaxed),
+            })
+            .collect();
+        let outputs = self
+            .output_stats
+            .iter()
+            .map(|o| OutputHealth {
+                label: o.label.clone(),
+                blocks: o.blocks.load(Ordering::Relaxed),
+                block_frames: o.block_frames,
+                sample_rate: o.sample_rate,
+            })
+            .collect();
+        (sources, outputs)
     }
 
     /// Round-trip latency of the slowest input-to-speaker path, the load of
@@ -426,7 +478,7 @@ impl ActivePipeline {
             Some(ResolvedOutput::Speaker(spec)) => self
                 .speakers
                 .get(out_id)
-                .is_some_and(|s| s.sample_rate == spec.sample_rate),
+                .is_some_and(|s| s.sample_rate == spec.sample_rate()),
             Some(ResolvedOutput::File { sample_rate, .. }) => self
                 .recorders
                 .get(out_id)
@@ -766,9 +818,9 @@ fn monitor_mode(graph: &ValidGraph) -> bool {
     })
 }
 
-pub fn build(graph: &ValidGraph, app: AppHandle) -> AppResult<ActivePipeline> {
+pub fn build(graph: &ValidGraph, host: Host) -> AppResult<ActivePipeline> {
     let mut p = ActivePipeline::new();
-    p.reconcile(graph, app)?;
+    p.reconcile(graph, host)?;
     Ok(p)
 }
 
@@ -776,7 +828,7 @@ impl ActivePipeline {
     /// Surviving entries (left in place by `prepare_for_reconcile`) are
     /// reused; the rest are built fresh. On error `self` is in a half-built
     /// state -- the caller is responsible for calling `teardown`.
-    fn apply_full(&mut self, graph: &ValidGraph, app: AppHandle) -> AppResult<()> {
+    fn apply_full(&mut self, graph: &ValidGraph, host: Host) -> AppResult<()> {
         let monitor_mode = monitor_mode(graph);
         let pipeline_sr = graph.sample_rate;
 
@@ -796,10 +848,17 @@ impl ActivePipeline {
                 input_native_sr.insert(inp.id.clone(), state.sample_rate);
                 input_native_channels.insert(inp.id.clone(), state.channels);
             } else {
-                #[cfg(any(target_os = "linux", target_os = "windows"))]
-                let resolved = resolve_input(inp, pipeline_sr)?;
-                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-                let resolved = resolve_input(inp)?;
+                let devices = host.virtual_devices();
+                let resolved = match devices.and_then(|d| d.input_for(&inp.spec)) {
+                    Some(device) => {
+                        let (id, input) = device?;
+                        ResolvedInput::Virtual { id, input }
+                    }
+                    #[cfg(any(target_os = "linux", target_os = "windows"))]
+                    None => resolve_input(inp, pipeline_sr)?,
+                    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                    None => resolve_input(inp)?,
+                };
                 let sr = match &resolved {
                     ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
                     _ => pipeline_sr,
@@ -936,7 +995,7 @@ impl ActivePipeline {
                 }
                 _ => None,
             };
-            let resolved = resolve_output(out, file_sr_hint)?;
+            let resolved = resolve_output(out, file_sr_hint, &host)?;
             output_runtime.insert(out.id.clone(), resolved);
         }
 
@@ -1235,7 +1294,7 @@ impl ActivePipeline {
                     drain.clone(),
                     None,
                     graph.buffer_frames as usize,
-                    &app,
+                    &host,
                 )?;
                 self.inputs.insert(
                     input_id,
@@ -1309,7 +1368,7 @@ impl ActivePipeline {
                 drain.clone(),
                 Some(meter),
                 graph.buffer_frames as usize,
-                &app,
+                &host,
             )?;
             self.inputs.insert(
                 input_id,
@@ -1359,13 +1418,16 @@ impl ActivePipeline {
             let new_sig = compute_output_sig(graph, &out.id);
             match resolved {
                 ResolvedOutput::Speaker(spec) => {
-                    let out_channels = spec.out_channels;
+                    let out_channels = spec.out_channels();
                     og.set_out_channels(out_channels);
                     if let OutputSpec::Speaker { device_id } = &out.spec {
                         let locked: HashSet<String> = graph
                             .inputs
                             .iter()
-                            .filter(|i| input::same_clock(&i.spec, device_id))
+                            .filter(|i| {
+                                host.virtual_devices().is_none()
+                                    && input::same_clock(&i.spec, device_id)
+                            })
                             .map(|i| i.id.clone())
                             .collect();
                         if !locked.is_empty() {
@@ -1374,7 +1436,7 @@ impl ActivePipeline {
                         og.lock_inputs(&locked);
                     }
                     if let Some(state) = self.speakers.get_mut(&out.id) {
-                        if state.sample_rate == spec.sample_rate {
+                        if state.sample_rate == spec.sample_rate() {
                             state.ctrl.send_graph(og)?;
                             state.sig = new_sig;
                             // Same cpal stream keeps running -- carry its
@@ -1390,10 +1452,9 @@ impl ActivePipeline {
                         // restart the cpal stream. Drop the worker first.
                         self.speakers.remove(&out.id);
                     }
-                    let sample_rate = spec.sample_rate;
+                    let sample_rate = spec.sample_rate();
                     let meter = MeterHandle::new(out.id.clone());
-                    let (handle, ctrl, dead, io) =
-                        start_speaker_stream(&out.id, spec, og, meter.clone(), &app)?;
+                    let (handle, ctrl, dead, io) = spec.open(&out.id, og, meter.clone(), &host)?;
                     if let Some(&idx) = output_stat_idx.get(&out.id) {
                         self.output_stats[idx].channels = out_channels;
                         self.output_stats[idx].io = Some(io.clone());
@@ -1441,7 +1502,7 @@ impl ActivePipeline {
                         append,
                         base_frames,
                         og,
-                        app.clone(),
+                        host.clone(),
                     )?;
                     // Scope the recorder's waveform so the meter tick thread
                     // publishes it alongside the effect nodes' scopes.
@@ -1542,7 +1603,7 @@ impl ActivePipeline {
             let gr_snapshot: Vec<GrHandle> = self.gr_handles.values().cloned().collect();
             let scopes_snapshot: Vec<WaveformHandle> = self.scopes.values().cloned().collect();
             Some(spawn_meter_thread(
-                app,
+                host,
                 meters_snapshot,
                 lufs_snapshot,
                 gr_snapshot,

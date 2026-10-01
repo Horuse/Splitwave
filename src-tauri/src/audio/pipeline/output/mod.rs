@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
 use crate::audio::clock::{ClockSource, SystemClockTicker};
@@ -15,6 +14,7 @@ use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, 
 use crate::error::{AppError, AppResult};
 
 use super::dag::OutputGraph;
+use super::host::Host;
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -32,15 +32,112 @@ use windows as platform;
 
 mod render;
 
-pub(super) use platform::{resolve_speaker, start_speaker_stream, SpeakerHandle, SpeakerResolved};
+pub(super) use platform::resolve_speaker;
+use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
 pub(super) use render::SpeakerIo;
 use render::{speaker_link, SpeakerLink, SpeakerRenderer};
+
+use super::virtual_io::{DeviceClock, VirtualSpeaker};
+
+/// A speaker to open: a device, or one that exists only in memory.
+pub(super) enum SpeakerTarget {
+    Device(SpeakerResolved),
+    Virtual {
+        id: String,
+        speaker: VirtualSpeaker,
+        played: Arc<Mutex<Vec<f32>>>,
+    },
+}
+
+/// An open speaker. Held for its `Drop`: the renderer is taken back with a
+/// fade, then the stream stops.
+pub(super) enum SpeakerStream {
+    Device(#[allow(dead_code)] SpeakerHandle),
+    Virtual(#[allow(dead_code)] VirtualSpeakerStream),
+}
+
+pub(super) struct VirtualSpeakerStream {
+    link: SpeakerLink,
+    _clock: DeviceClock,
+    _alive: StreamGuard,
+}
+
+impl Drop for VirtualSpeakerStream {
+    fn drop(&mut self) {
+        // Taken back while the clock still calls, so the stop fade plays out;
+        // the clock then stops as the fields drop.
+        drop(self.link.retire());
+    }
+}
+
+impl SpeakerTarget {
+    pub(super) fn sample_rate(&self) -> u32 {
+        match self {
+            SpeakerTarget::Device(s) => s.sample_rate,
+            SpeakerTarget::Virtual { speaker, .. } => speaker.sample_rate,
+        }
+    }
+
+    pub(super) fn out_channels(&self) -> usize {
+        match self {
+            SpeakerTarget::Device(s) => s.out_channels,
+            SpeakerTarget::Virtual { speaker, .. } => speaker.channels.max(1) as usize,
+        }
+    }
+
+    /// Opens the stream and hands it `graph`. Returns the stream, the worker's
+    /// control, the flag the stream raises when it dies, and its counters.
+    pub(super) fn open(
+        self,
+        node_id: &str,
+        graph: OutputGraph,
+        meter: MeterHandle,
+        host: &Host,
+    ) -> AppResult<(SpeakerStream, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
+        match self {
+            SpeakerTarget::Device(spec) => {
+                let (handle, ctrl, dead, io) =
+                    start_speaker_stream(node_id, spec, graph, meter, host)?;
+                Ok((SpeakerStream::Device(handle), ctrl, dead, io))
+            }
+            SpeakerTarget::Virtual {
+                id,
+                speaker,
+                played,
+            } => {
+                let channels = speaker.channels.max(1) as usize;
+                let rate = speaker.sample_rate;
+                let period = device_block(graph.block_frames(), graph.sample_rate(), rate) as usize;
+                let (renderer, ctrl, io) = speaker_renderer(graph, rate, channels, None, meter)?;
+                let (mut link, mut fill) = speaker_callback();
+                link.attach(renderer);
+                let mut buf = vec![0.0f32; period * channels];
+                let clock = DeviceClock::start(&id, rate, period, move |frames| {
+                    let out = &mut buf[..frames * channels];
+                    fill(out, frames);
+                    played.lock().unwrap().extend_from_slice(out);
+                })?;
+                let stream = VirtualSpeakerStream {
+                    link,
+                    _clock: clock,
+                    _alive: StreamGuard::new(),
+                };
+                Ok((
+                    SpeakerStream::Virtual(stream),
+                    ctrl,
+                    Arc::new(AtomicBool::new(false)),
+                    io,
+                ))
+            }
+        }
+    }
+}
 
 // No live inputs -> fall back to 48 kHz for the recorder.
 const RECORDER_DEFAULT_SR: u32 = 48_000;
 
 pub(super) enum ResolvedOutput {
-    Speaker(SpeakerResolved),
+    Speaker(SpeakerTarget),
     File {
         path: PathBuf,
         sample_rate: u32,
@@ -60,7 +157,7 @@ pub(super) enum ResolvedOutput {
 impl ResolvedOutput {
     pub(super) fn sample_rate(&self) -> u32 {
         match self {
-            ResolvedOutput::Speaker(s) => s.sample_rate,
+            ResolvedOutput::Speaker(s) => s.sample_rate(),
             ResolvedOutput::File { sample_rate, .. } => *sample_rate,
             ResolvedOutput::WireSender(sr) => *sr,
         }
@@ -70,11 +167,19 @@ impl ResolvedOutput {
 pub(super) fn resolve_output(
     out: &ValidOutput,
     file_sr_hint: Option<u32>,
+    host: &Host,
 ) -> AppResult<ResolvedOutput> {
     match &out.spec {
-        OutputSpec::Speaker { device_id } => Ok(ResolvedOutput::Speaker(
-            platform::resolve_speaker(device_id)?,
-        )),
+        OutputSpec::Speaker { device_id } => {
+            Ok(ResolvedOutput::Speaker(match host.virtual_devices() {
+                Some(devices) => SpeakerTarget::Virtual {
+                    id: device_id.clone(),
+                    speaker: devices.speaker(device_id)?,
+                    played: devices.sink(device_id),
+                },
+                None => SpeakerTarget::Device(platform::resolve_speaker(device_id)?),
+            }))
+        }
         OutputSpec::FileRecording {
             file_path,
             format,
@@ -305,7 +410,7 @@ pub(super) fn start_recorder_worker(
     append: bool,
     base_frames: u64,
     graph: OutputGraph,
-    app: AppHandle,
+    host: Host,
 ) -> AppResult<(RecorderWorker, WorkerCtrl, WaveformHandle)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
@@ -335,7 +440,7 @@ pub(super) fn start_recorder_worker(
                     Ok(e) => e,
                     Err(e) => {
                         warn!(node = %node_id, error = %e, "recorder init failed");
-                        let _ = app.emit(
+                        host.emit(
                             "audio://recorder_progress",
                             json!({
                                 "nodeId": node_id,
@@ -373,7 +478,7 @@ pub(super) fn start_recorder_worker(
                     last_flush = std::time::Instant::now();
                 }
                 if last_progress.elapsed() >= PROGRESS_INTERVAL {
-                    let _ = app.emit(
+                    host.emit(
                         "audio://recorder_progress",
                         json!({
                             "nodeId": node_id,
@@ -388,7 +493,7 @@ pub(super) fn start_recorder_worker(
                 Ok(())
             });
 
-            let _ = app.emit(
+            host.emit(
                 "audio://recorder_progress",
                 json!({
                     "nodeId": node_id,
@@ -420,6 +525,11 @@ pub(super) fn start_recorder_worker(
 mod tests {
     use super::*;
 
+    /// A host offering no devices: enough for outputs that need none.
+    fn no_devices() -> Host {
+        Host::with_virtual_devices(Arc::default(), |_, _| {})
+    }
+
     fn recording_output(
         path: &std::path::Path,
         format: RecordingFormat,
@@ -450,7 +560,7 @@ mod tests {
             RecordingMode::Overwrite,
         );
 
-        let error = match resolve_output(&output, Some(48_000)) {
+        let error = match resolve_output(&output, Some(48_000), &no_devices()) {
             Ok(_) => panic!("invalid bitrate was accepted"),
             Err(error) => error,
         };
@@ -477,7 +587,7 @@ mod tests {
             RecordingMode::Overwrite,
         );
 
-        resolve_output(&output, Some(48_000)).expect("valid recording output");
+        resolve_output(&output, Some(48_000), &no_devices()).expect("valid recording output");
         assert!(
             !path.exists(),
             "confirmed overwrite must clear the old path"
@@ -499,7 +609,11 @@ mod tests {
                 sample_rate,
             },
         };
-        let rate = |out: &ValidOutput| resolve_output(out, Some(96_000)).unwrap().sample_rate();
+        let rate = |out: &ValidOutput| {
+            resolve_output(out, Some(96_000), &no_devices())
+                .unwrap()
+                .sample_rate()
+        };
         assert_eq!(
             rate(&net(NetCodec::Opus, None)),
             48_000,

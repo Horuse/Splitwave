@@ -4,13 +4,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
 use crate::audio::effects::{GrHandle, LufsHandle, MeterHandle, WaveformHandle};
 use crate::audio::health;
 
 use super::dag::{OutputMeta, SourceMeta};
+use super::host::Host;
 use super::output::LIVE_SPEAKER_STREAMS;
 
 const METER_EVENT: &str = "audio://meter";
@@ -356,7 +356,7 @@ impl Drop for MeterTickThread {
 }
 
 pub(super) fn spawn_meter_thread(
-    app: AppHandle,
+    host: Host,
     meters: Vec<MeterHandle>,
     lufs: Vec<LufsHandle>,
     gr_handles: Vec<GrHandle>,
@@ -371,7 +371,7 @@ pub(super) fn spawn_meter_thread(
                 thread::sleep(METER_TICK);
                 for m in &meters {
                     let snap = m.snapshot_and_decay();
-                    let _ = app.emit(
+                    host.emit(
                         METER_EVENT,
                         json!({
                             "nodeId": m.node_id,
@@ -382,7 +382,7 @@ pub(super) fn spawn_meter_thread(
                 }
                 for l in &lufs {
                     let snap = l.snapshot();
-                    let _ = app.emit(
+                    host.emit(
                         LUFS_EVENT,
                         json!({
                             "nodeId": l.node_id,
@@ -404,7 +404,7 @@ pub(super) fn spawn_meter_thread(
                 for g in &gr_handles {
                     let gr_lin =
                         f32::from_bits(g.gr_lin.load(std::sync::atomic::Ordering::Relaxed));
-                    let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
+                    host.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {
                     // Scopes emit a delta since the last tick; spectrum emits the
@@ -444,7 +444,7 @@ pub(super) fn spawn_meter_thread(
                             "sampleRate": s.sample_rate,
                         }),
                     };
-                    let _ = app.emit(SCOPE_EVENT, payload);
+                    host.emit(SCOPE_EVENT, payload);
                 }
             }
         })

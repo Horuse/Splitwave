@@ -4,6 +4,8 @@ mod error;
 mod logs;
 mod native_crash;
 mod state;
+#[doc(hidden)]
+pub mod testkit;
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

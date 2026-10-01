@@ -86,7 +86,7 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::AlreadyRunning));
                     continue;
                 }
-                match pipeline::build(&graph, app) {
+                match pipeline::build(&graph, pipeline::Host::app(app)) {
                     Ok(p) => {
                         info!("pipeline built and running");
                         active = Some(p);
@@ -111,7 +111,7 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::NotRunning));
                 }
                 Some(p) => {
-                    let r = p.reconcile(&graph, app.clone());
+                    let r = p.reconcile(&graph, pipeline::Host::app(app.clone()));
                     if let Err(e) = &r {
                         error!(error = %e, "reconcile failed, clearing active pipeline");
                         active = None;

@@ -4,10 +4,11 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use super::host::Host;
+use super::virtual_io::{self, DeviceClock, VirtualInput};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
 use rtrb::RingBuffer;
-use tauri::AppHandle;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tracing::warn;
 
@@ -46,6 +47,7 @@ pub(super) enum InputHandle {
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
     Normalized(NormalizedInput),
+    Virtual(DeviceClock),
 }
 
 pub(super) struct NormalizedInput {
@@ -140,6 +142,11 @@ pub(super) enum ResolvedInput {
         channels: u32,
         path: PathBuf,
     },
+    /// A device that exists only in memory (see `virtual_io`).
+    Virtual {
+        id: String,
+        input: VirtualInput,
+    },
 }
 
 impl ResolvedInput {
@@ -152,6 +159,7 @@ impl ResolvedInput {
             ResolvedInput::SystemAudio { sample_rate, .. } => *sample_rate,
             ResolvedInput::AppAudio { sample_rate, .. } => *sample_rate,
             ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
+            ResolvedInput::Virtual { input, .. } => input.sample_rate,
         }
     }
 
@@ -164,6 +172,7 @@ impl ResolvedInput {
             #[cfg(target_os = "linux")]
             ResolvedInput::PwSource { channels, .. } => (*channels).max(1),
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
+            ResolvedInput::Virtual { input, .. } => input.channels.max(1),
             _ => 2,
         }
     }
@@ -187,7 +196,7 @@ pub(super) fn start_audio_file(
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
     flush: Option<Arc<SeekFlush>>,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     // Loop is a runtime atomic, not in InputSpec; frontend syncs it
     // via `set_audio_file_loop` after pipeline start.
@@ -199,9 +208,31 @@ pub(super) fn start_audio_file(
         false,
         paused_arc,
         flush,
-        app.clone(),
+        host.clone(),
     )?;
     Ok(InputHandle::AudioFile(reader))
+}
+
+/// Starts the device, capture or file itself, feeding `bridge` at its own
+/// rate. A virtual device starts here; everything else on its platform.
+#[allow(clippy::too_many_arguments)]
+fn start_raw_input(
+    node_id: &str,
+    resolved: ResolvedInput,
+    bridge: BroadcastRx,
+    paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
+    meter: Option<MeterHandle>,
+    io_frames: u32,
+    host: &Host,
+) -> AppResult<InputHandle> {
+    if let ResolvedInput::Virtual { id, input } = &resolved {
+        let clock = virtual_io::start_capture(id, input, io_frames as usize, bridge, meter)?;
+        return Ok(InputHandle::Virtual(clock));
+    }
+    start_native_input_stream(
+        node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+    )
 }
 
 /// Longest the normalizer sleeps without its capture ringing: only a capture
@@ -253,7 +284,7 @@ pub(super) fn start_input_stream(
     flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
     block_frames: usize,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     // One capture buffer per engine block: deliveries no burstier than reads.
     let io_frames = device_block(block_frames, target_sample_rate, resolved.sample_rate());
@@ -261,8 +292,15 @@ pub(super) fn start_input_stream(
     // They must not be run through the capture normalizer thread (which drops frames
     // on overflow and breaks backpressure). DAG nodes resample file audio directly.
     if matches!(resolved, ResolvedInput::AudioFile { .. }) {
-        return start_native_input_stream(
-            node_id, resolved, bridge, paused, flush, meter, io_frames, app,
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+        );
+    }
+    if matches!(resolved, ResolvedInput::Virtual { .. })
+        && resolved.sample_rate() == target_sample_rate
+    {
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
         );
     }
     // A device already at the pipeline rate needs no normalizing: its callback
@@ -272,8 +310,8 @@ pub(super) fn start_input_stream(
     if matches!(resolved, ResolvedInput::Cpal { .. })
         && resolved.sample_rate() == target_sample_rate
     {
-        return start_native_input_stream(
-            node_id, resolved, bridge, paused, flush, meter, io_frames, app,
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
         );
     }
     let sample_rate = resolved.sample_rate();
@@ -285,8 +323,8 @@ pub(super) fn start_input_stream(
     let bell = Arc::new(Doorbell::default());
     raw_rx.ring_after_broadcast(bell.clone());
     let chunk = io_frames as usize;
-    let input = start_native_input_stream(
-        node_id, resolved, raw_rx, paused, flush, None, io_frames, app,
+    let input = start_raw_input(
+        node_id, resolved, raw_rx, paused, flush, None, io_frames, host,
     )?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let rate_probe = input.rate_probe();

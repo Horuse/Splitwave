@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use cpal::traits::StreamTrait;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
@@ -15,6 +14,7 @@ use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::super::dag::OutputGraph;
+use super::super::host::Host;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
 use super::{
@@ -80,7 +80,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     spec: SpeakerResolved,
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
     let device_name =
         crate::audio::device::cpal_name(&spec.device).unwrap_or_else(|| "<unknown>".into());
@@ -132,7 +132,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     let mut opened: Option<(cpal::Stream, SpeakerLink)> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
         let (link, fill) = speaker_callback();
-        let app_err = app.clone();
+        let host_err = host.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
         let err_cb = move |e: cpal::Error| {
@@ -141,7 +141,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             }
             health::bump(&health::STREAM_ERRORS, 1);
             error!(node_id = %node_id_cb, error = %e, "speaker stream error");
-            let _ = app_err.emit(
+            host_err.emit(
                 "audio://speaker_error",
                 json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
             );

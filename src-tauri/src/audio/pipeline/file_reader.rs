@@ -32,7 +32,7 @@ const EOF_FADE_MS: usize = 3;
 /// Cap on how long end-of-file waits for the queued tail to play out.
 const EOF_DRAIN_MAX: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-const PROGRESS_EVENT: &str = "audio://audio_file_progress";
+pub(super) const PROGRESS_EVENT: &str = "audio://audio_file_progress";
 const SEEK_NONE: i64 = -1;
 /// Longest a seek waits for the graphs to let go of the old position. Only a
 /// graph that stopped reading waits this long.

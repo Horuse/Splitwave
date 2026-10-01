@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::error;
 
 use crate::audio::device::{self, DeviceKind};
@@ -14,6 +13,7 @@ use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::super::file_reader::SeekFlush;
+use super::super::host::Host;
 use super::super::latency::DeviceIo;
 use super::super::native::native_config;
 use super::super::output::device_block;
@@ -125,7 +125,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
     flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
     io_frames: u32,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     match resolved {
         ResolvedInput::Cpal {
@@ -137,7 +137,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         } => {
             let dead = Arc::new(AtomicBool::new(false));
             let dead_cb = dead.clone();
-            let app_err = app.clone();
+            let host_err = host.clone();
             let node_id_cb = node_id.to_string();
             let err_cb = move |e: cpal::Error| {
                 if dead_cb.swap(true, Ordering::Relaxed) {
@@ -145,7 +145,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 }
                 health::bump(&health::STREAM_ERRORS, 1);
                 error!(node_id = %node_id_cb, error = %e, "input stream error");
-                let _ = app_err.emit(
+                host_err.emit(
                     "audio://input_error",
                     json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
                 );
@@ -191,7 +191,8 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
-            start_audio_file(node_id, path, bridge, paused, flush, app)
+            start_audio_file(node_id, path, bridge, paused, flush, host)
         }
+        ResolvedInput::Virtual { .. } => unreachable!("virtual inputs start in input::mod"),
     }
 }

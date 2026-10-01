@@ -242,6 +242,16 @@ impl Cushion {
         self.depth.discard_window();
     }
 
+    /// The output stopped reading for a while (a device overload skips its
+    /// callbacks) while the source delivered on. What arrived meanwhile is
+    /// for time the listener already lost to that dropout: realign under it,
+    /// as after any silence, instead of keeping it queued as latency for
+    /// good. Not the source's fault, so its depth is left as it was.
+    pub(super) fn output_stalled(&mut self) {
+        self.primed = false;
+        self.depth.discard_window();
+    }
+
     /// Call once per block with the frames queued before the read. Returns the
     /// startup correction's next splice, if one is due.
     pub(super) fn observe(&mut self, queued: usize) -> Adjust {

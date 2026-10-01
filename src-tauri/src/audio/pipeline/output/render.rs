@@ -91,8 +91,24 @@ pub(in crate::audio::pipeline) struct SpeakerRenderer {
     pending_len: usize,
     channels: usize,
     max_silent_blocks: usize,
+    /// When the previous callback came, to tell a device that stopped
+    /// calling for a while from its ordinary jitter.
+    last_callback: Option<Instant>,
     meter: MeterHandle,
     io: SpeakerIo,
+}
+
+/// Shortest gap between callbacks counted as the device having stalled.
+const STALL_MIN: Duration = Duration::from_millis(5);
+/// ...and at least this many of its callback periods, which no ordinary
+/// scheduling jitter spans.
+const STALL_PERIODS: u32 = 3;
+
+/// Whether a `gap` between callbacks of `callback_frames` at `rate` means
+/// the device skipped some.
+fn device_stalled(gap: Duration, callback_frames: usize, rate: u32) -> bool {
+    let period = Duration::from_secs_f64(callback_frames as f64 / rate.max(1) as f64);
+    gap > STALL_MIN.max(period * STALL_PERIODS)
 }
 
 impl SpeakerRenderer {
@@ -145,6 +161,7 @@ impl SpeakerRenderer {
                 pending_len: 0,
                 channels,
                 max_silent_blocks: max_silent_blocks(pipeline_rate, device_rate, block_frames),
+                last_callback: None,
                 meter,
                 io: io.clone(),
             },
@@ -158,6 +175,12 @@ impl SpeakerRenderer {
     /// deliver in several slices. RT-safe: no allocation, lock or syscall.
     pub(in crate::audio::pipeline) fn render(&mut self, out: &mut [f32], callback_frames: usize) {
         let started = Instant::now();
+        if let Some(last) = self.last_callback.replace(started) {
+            if device_stalled(started - last, callback_frames, self.io.sample_rate) {
+                health::bump(&health::OUTPUT_STALLS, 1);
+                self.worker.output_stalled();
+            }
+        }
         self.io
             .requested
             .fetch_add(out.len() as u64, Ordering::Relaxed);
@@ -450,6 +473,17 @@ mod tests {
         }
         got.truncate(total * 2);
         got
+    }
+
+    #[test]
+    fn only_a_gap_of_several_periods_is_a_stall() {
+        let ms = Duration::from_millis;
+        // 32 frames at 48 kHz: a period is 0.67 ms, and the 5 ms floor rules.
+        assert!(!device_stalled(ms(2), 32, SR));
+        assert!(device_stalled(ms(6), 32, SR));
+        // 2048 frames: a period is 43 ms; one late callback is jitter.
+        assert!(!device_stalled(ms(80), 2048, SR));
+        assert!(device_stalled(ms(140), 2048, SR));
     }
 
     #[test]

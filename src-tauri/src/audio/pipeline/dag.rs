@@ -408,6 +408,12 @@ impl SourceState {
         self.carry_over = false;
     }
 
+    fn output_stalled(&mut self) {
+        if let Some(c) = &mut self.cushion {
+            c.output_stalled();
+        }
+    }
+
     fn is_stalled(&self) -> bool {
         self.last_pop_at.elapsed() > STALL_THRESHOLD
     }
@@ -1311,6 +1317,17 @@ impl OutputGraph {
             .max()
             .unwrap_or(1)
             .clamp(1, self.out_channels)
+    }
+
+    /// The device playing this graph stopped calling for a while: every live
+    /// source realigns its queue under that dropout (see
+    /// `Cushion::output_stalled`).
+    pub(super) fn output_stalled(&mut self) {
+        for node in &mut self.nodes {
+            if let DagNode::Source(s) = node {
+                s.output_stalled();
+            }
+        }
     }
 
     /// Marks the sources reading `inputs` as running on this output's clock:
@@ -4362,6 +4379,48 @@ pub(super) mod graph_tests {
                 r.skipped
             );
         }
+    }
+
+    #[test]
+    fn a_speaker_that_stalls_does_not_keep_what_piled_up() {
+        // Mic and speaker on one clock, 32-frame blocks. The speaker misses
+        // 85 ms of callbacks (a device overload) while the mic delivers on.
+        let block = 32;
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, true);
+        built.graph.lock_inputs(&HashSet::from(["m".to_string()]));
+        let level = built.sources[0].stats.level.clone();
+        let prod = producers.get_mut("m").expect("mic ring");
+        let mut out = vec![0.0; block * 2];
+        let period = block as f64 / SR as f64;
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        let mut was_stalled = false;
+        let mut t = 0.0;
+        while t < 6.0 {
+            push_all(prod, &vec![0.5; block * 2]);
+            let stalled = (3.0..3.085).contains(&t);
+            if !stalled {
+                if was_stalled {
+                    built.graph.output_stalled();
+                }
+                built.graph.process_block_at(&mut out, t);
+            }
+            was_stalled = stalled;
+            let queued = level.load(Ordering::Relaxed) as f64 / 2.0;
+            if (2.5..3.0).contains(&t) {
+                before.push(queued);
+            }
+            if (5.5..6.0).contains(&t) {
+                after.push(queued);
+            }
+            t += period;
+        }
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (before, after) = (mean(&before), mean(&after));
+        assert!(
+            after - before < 2.0 * block as f64,
+            "85 ms of backlog stayed: {before:.0} -> {after:.0} frames"
+        );
     }
 
     #[test]

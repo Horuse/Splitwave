@@ -36,6 +36,9 @@ counters! {
     CLOCK_LATE_BLOCKS,
     /// Worst single deadline miss, microseconds (monotonic high-water mark).
     CLOCK_LATE_MAX_US,
+    /// Times a speaker stopped calling back for several of its periods (a
+    /// device overload) and its sources realigned under the dropout.
+    OUTPUT_STALLS,
     /// Fatal cpal stream errors reported via the error callback.
     STREAM_ERRORS,
     /// Device IO overloads cpal reported (a CoreAudio HAL overload, a WASAPI
@@ -96,6 +99,7 @@ mod tests {
                 "STAGING_OVERRUN_SAMPLES",
                 "CLOCK_LATE_BLOCKS",
                 "CLOCK_LATE_MAX_US",
+                "OUTPUT_STALLS",
                 "STREAM_ERRORS",
                 "DEVICE_XRUNS",
                 "OFFLOAD_STARVED_SAMPLES",

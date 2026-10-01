@@ -180,6 +180,11 @@ impl DspWorker {
         &self.graph
     }
 
+    /// See `OutputGraph::output_stalled`.
+    pub(super) fn output_stalled(&mut self) {
+        self.graph.output_stalled();
+    }
+
     /// Timer-paced workers (recording, monitoring, wire senders): produce a
     /// block each wall-clock period, so a file source (which decodes faster
     /// than real time) can't over-run a sink. A missed deadline becomes

@@ -290,6 +290,7 @@ impl ActivePipeline {
         if let Some(state) = self.inputs.get(node_id) {
             if let Some(reader) = state._handle.audio_file_reader() {
                 reader.seek_to().store(frame.max(0), Ordering::SeqCst);
+                reader.wake();
             }
         }
     }
@@ -309,6 +310,9 @@ impl ActivePipeline {
         if let Some(state) = self.inputs.get(node_id) {
             if let Some(p) = &state.paused {
                 p.store(paused, Ordering::SeqCst);
+            }
+            if let Some(reader) = state._handle.audio_file_reader() {
+                reader.wake();
             }
         }
     }

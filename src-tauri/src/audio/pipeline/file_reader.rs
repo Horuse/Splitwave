@@ -100,12 +100,21 @@ impl AudioFileReader {
     pub(super) fn loop_enabled(&self) -> Arc<AtomicBool> {
         self.loop_enabled.clone()
     }
+
+    /// Wakes a paused reader to look at its controls again: a resume or a
+    /// seek is taken at once rather than at its next progress tick.
+    pub(super) fn wake(&self) {
+        if let Some(j) = &self.join {
+            j.thread().unpark();
+        }
+    }
 }
 
 impl Drop for AudioFileReader {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
+            j.thread().unpark();
             let _ = j.join();
         }
     }
@@ -564,7 +573,7 @@ fn run<E: ProgressEmitter>(
                 );
                 last_paused_progress = Instant::now();
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::park_timeout(PROGRESS_INTERVAL);
             continue;
         }
         last_paused_progress = Instant::now();

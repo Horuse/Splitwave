@@ -14,6 +14,18 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 /// ~21 ms DSP block rate; a longer tick stall overwrites the oldest frames,
 /// which the UI renders as a skipped span.
 pub const SCOPE_RING_FRAMES: usize = 16384;
+/// Least time the scope ring holds, at any rate: a 33 ms tick plus a late
+/// one's worth.
+const SCOPE_RING_MIN_MS: usize = 85;
+
+/// Scope ring at `sample_rate`: `SCOPE_RING_FRAMES`, or more where that
+/// would hold less than `SCOPE_RING_MIN_MS`.
+fn scope_ring_frames(sample_rate: u32) -> usize {
+    (sample_rate as usize * SCOPE_RING_MIN_MS)
+        .div_ceil(1000)
+        .next_power_of_two()
+        .max(SCOPE_RING_FRAMES)
+}
 
 /// Spectrum nodes need a longer contiguous window than the scope: a single
 /// 1024-frame block is ~47 Hz/bin at 48 kHz and cannot separate low tones.
@@ -92,14 +104,14 @@ impl WaveformHandle {
     /// Scope-size handle; used by the Waveform effect and by non-effect
     /// consumers such as the File Recording node.
     pub fn new(node_id: String, sample_rate: u32) -> Self {
-        Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+        Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
     }
 
     /// Scope-size handle for one recorder worker invocation.
     pub fn for_recorder(node_id: String, sample_rate: u32, base_frames: u64) -> Self {
         Self {
             base_frames,
-            ..Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+            ..Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
         }
     }
 
@@ -400,6 +412,15 @@ mod tests {
         let (out, ch) = h.snapshot();
         assert_eq!(ch, 2);
         assert_eq!(out.len(), SPECTRUM_FRAMES * 2);
+    }
+
+    #[test]
+    fn the_scope_holds_a_late_tick_at_any_rate() {
+        for rate in [44_100, 48_000, 96_000, 192_000, 384_000] {
+            let ms = scope_ring_frames(rate) as f64 * 1000.0 / rate as f64;
+            assert!(ms >= SCOPE_RING_MIN_MS as f64, "{rate}: {ms:.0} ms");
+        }
+        assert_eq!(scope_ring_frames(48_000), SCOPE_RING_FRAMES);
     }
 
     #[test]

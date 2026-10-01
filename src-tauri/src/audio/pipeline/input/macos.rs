@@ -13,6 +13,7 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
+use super::super::file_reader::SeekFlush;
 use super::super::latency::DeviceIo;
 use super::super::native::native_config;
 use super::super::output::device_block;
@@ -115,11 +116,13 @@ pub(in crate::audio::pipeline) fn same_clock(input: &InputSpec, speaker_device: 
 }
 
 /// `io_frames` is the capture buffer to ask for, in the source's own frames.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
     io_frames: u32,
     app: &AppHandle,
@@ -188,7 +191,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
-            start_audio_file(node_id, path, bridge, paused, app)
+            start_audio_file(node_id, path, bridge, paused, flush, app)
         }
     }
 }

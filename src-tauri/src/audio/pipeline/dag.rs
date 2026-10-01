@@ -7,6 +7,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::asrc::Asrc;
 use super::cushion::{max_splice_frames, Adjust, Cushion};
+use super::file_reader::SeekFlush;
 use super::latency::NodeTiming;
 use super::sig::MONITOR_KEY;
 use crate::audio::effects::{
@@ -82,6 +83,29 @@ fn splice_samples(channels: usize, rate: u32) -> usize {
 /// of the chunk the splice landed in.
 fn staging_samples(channels: usize, rate: u32) -> usize {
     RESAMPLE_CHUNK * channels + splice_samples(channels, rate) + 8
+}
+
+/// A seek fades the old position out and the new one in over this.
+const SEEK_FADE_MS: f64 = 5.0;
+
+fn seek_fade_frames(rate: u32) -> usize {
+    ((rate as f64 * SEEK_FADE_MS / 1000.0).round() as usize).max(1)
+}
+
+/// Where a source stands in a seek.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SeekFade {
+    Off,
+    /// Fading the old position out; frames to go.
+    Out {
+        left: usize,
+    },
+    /// Old position dropped; silence until the new one arrives.
+    Wait,
+    /// Fading the new position in; frames to go.
+    In {
+        left: usize,
+    },
 }
 
 /// Time constant of a source's queue gauge.
@@ -333,10 +357,16 @@ struct SourceState {
     last_pop_at: Instant,
     volume: Arc<AtomicU32>,
     paused: Option<Arc<AtomicBool>>,
-    // u64 generation (not AtomicBool) so every output's SourceState detects the
-    // seek independently; swap(false) would clear the flag for the first reader.
-    drain: Option<Arc<AtomicU64>>,
+    /// A file's seeks: each one fades out and drops what is queued from the
+    /// old position, then fades the new one in. A generation, so every
+    /// output's source sees each seek on its own.
+    drain: Option<Arc<SeekFlush>>,
     last_drain_gen: u64,
+    seek_fade: SeekFade,
+    /// `SEEK_FADE_MS` at the output rate.
+    seek_fade_frames: usize,
+    /// Flushes asked for that this source has yet to answer.
+    flushes_owed: u64,
     meter: Option<MeterHandle>,
     // Per-channel taps ("chK") drawn off this source.
     handle_bufs: Vec<(String, Vec<f32>)>,
@@ -372,6 +402,8 @@ impl SourceState {
         self.queued_after = old.queued_after;
         self.last_pop_at = old.last_pop_at;
         self.last_drain_gen = old.last_drain_gen;
+        self.seek_fade = old.seek_fade;
+        self.flushes_owed = old.flushes_owed;
         self.carry_over = false;
     }
 
@@ -388,36 +420,96 @@ impl SourceState {
         }
     }
 
+    /// Everything queued ahead of the graph goes.
+    fn flush_queue(&mut self) {
+        let avail = self.consumer.slots();
+        if avail > 0 {
+            if let Ok(chunk) = self.consumer.read_chunk(avail) {
+                chunk.commit_all();
+            }
+        }
+        self.input_staging.clear();
+        self.out_pending.clear();
+    }
+
+    /// Fades the old position out of this block and, once it is silent, drops
+    /// the rest of it and answers the seek; fades the new position in.
+    fn apply_seek_fade(&mut self) {
+        let total = self.seek_fade_frames;
+        let w = self.channels;
+        match self.seek_fade {
+            SeekFade::Out { mut left } => {
+                for frame in self.out_buf.chunks_exact_mut(w) {
+                    let g = left as f32 / total as f32;
+                    left = left.saturating_sub(1);
+                    frame.iter_mut().for_each(|s| *s *= g);
+                }
+                if left > 0 {
+                    self.seek_fade = SeekFade::Out { left };
+                    return;
+                }
+                self.flush_queue();
+                if let Some(d) = &self.drain {
+                    d.answer(std::mem::take(&mut self.flushes_owed));
+                }
+                self.seek_fade = SeekFade::Wait;
+            }
+            SeekFade::In { mut left } => {
+                for frame in self.out_buf.chunks_exact_mut(w) {
+                    let g = 1.0 - left as f32 / total as f32;
+                    left = left.saturating_sub(1);
+                    frame.iter_mut().for_each(|s| *s *= g);
+                }
+                self.seek_fade = if left > 0 {
+                    SeekFade::In { left }
+                } else {
+                    SeekFade::Off
+                };
+            }
+            SeekFade::Off | SeekFade::Wait => {}
+        }
+    }
+
     fn fill_block(&mut self, now: f64) {
         if let Some(p) = &self.paused {
             if p.load(Ordering::SeqCst) {
-                let avail = self.consumer.slots();
-                if avail > 0 {
-                    if let Ok(chunk) = self.consumer.read_chunk(avail) {
-                        chunk.commit_all();
-                    }
+                self.flush_queue();
+                // A pause drops everything anyway: a seek's fade has nothing
+                // left to do, and its flush is as good as answered.
+                if let Some(d) = &self.drain {
+                    let gen = d.requested();
+                    self.flushes_owed += gen.wrapping_sub(self.last_drain_gen);
+                    self.last_drain_gen = gen;
+                    d.answer(std::mem::take(&mut self.flushes_owed));
                 }
-                self.input_staging.clear();
-                self.out_pending.clear();
+                self.seek_fade = SeekFade::Off;
                 self.silence();
                 return;
             }
         }
         if let Some(d) = &self.drain {
-            let gen = d.load(Ordering::SeqCst);
+            let gen = d.requested();
             if gen != self.last_drain_gen {
+                self.flushes_owed += gen.wrapping_sub(self.last_drain_gen);
                 self.last_drain_gen = gen;
-                let avail = self.consumer.slots();
-                if avail > 0 {
-                    if let Ok(chunk) = self.consumer.read_chunk(avail) {
-                        chunk.commit_all();
-                    }
+                // A seek during a fade-out keeps fading from where it got to.
+                if !matches!(self.seek_fade, SeekFade::Out { .. }) {
+                    self.seek_fade = SeekFade::Out {
+                        left: self.seek_fade_frames,
+                    };
                 }
-                self.input_staging.clear();
-                self.out_pending.clear();
+            }
+        }
+        if self.seek_fade == SeekFade::Wait {
+            // The new position has not arrived yet: silence, not an underrun.
+            if self.queued_frames() == 0 {
                 self.silence();
+                self.publish_queue();
                 return;
             }
+            self.seek_fade = SeekFade::In {
+                left: self.seek_fade_frames,
+            };
         }
         let was_primed = self.cushion.as_ref().is_some_and(Cushion::is_primed);
         if self.cushion.is_some() && !self.regulate() {
@@ -439,6 +531,7 @@ impl SourceState {
         } else {
             self.fill_direct(fade_in);
         }
+        self.apply_seek_fade();
         const ONE_BITS: u32 = 0x3F80_0000;
         let vol_bits = self.volume.load(Ordering::Relaxed);
         if vol_bits != ONE_BITS {
@@ -1567,7 +1660,7 @@ pub(super) fn build_output_graph(
     registry: &mut EffectRegistry,
     input_volumes: &HashMap<String, Arc<AtomicU32>>,
     input_paused: &HashMap<String, Arc<AtomicBool>>,
-    input_drain: &HashMap<String, Arc<AtomicU64>>,
+    input_drain: &HashMap<String, Arc<SeekFlush>>,
     input_meters: &HashMap<String, MeterHandle>,
     // Effect nodes provided by a ring instead of built here: each is computed
     // once in its owning output's graph and read back as a ring-source. Maps
@@ -1867,7 +1960,10 @@ pub(super) fn build_output_graph(
                     .unwrap_or_else(|| Arc::new(AtomicU32::new(1.0f32.to_bits()))),
                 paused: input_paused.get(id).cloned(),
                 drain: input_drain.get(id).cloned(),
-                last_drain_gen: 0,
+                last_drain_gen: input_drain.get(id).map_or(0, |d| d.requested()),
+                seek_fade: SeekFade::Off,
+                seek_fade_frames: seek_fade_frames(output_sr),
+                flushes_owed: 0,
                 meter: input_meters.get(id).cloned(),
                 handle_bufs: source_handle_bufs,
                 stats,
@@ -2486,6 +2582,9 @@ fn ring_source(
         paused: None,
         drain: None,
         last_drain_gen: 0,
+        seek_fade: SeekFade::Off,
+        seek_fade_frames: seek_fade_frames(output_sr),
+        flushes_owed: 0,
         meter: None,
         handle_bufs,
         stats: SourceStats::new(),
@@ -3092,10 +3191,10 @@ pub(super) mod graph_tests {
     }
 
     #[test]
-    fn drain_generation_change_flushes_the_source() {
+    fn a_seek_fades_the_old_position_out_and_the_new_one_in() {
         let (valid, _) = passthrough_graph();
-        let mut drain: HashMap<String, Arc<AtomicU64>> = HashMap::new();
-        drain.insert("m".to_string(), Arc::new(AtomicU64::new(0)));
+        let mut drain: HashMap<String, Arc<SeekFlush>> = HashMap::new();
+        drain.insert("m".to_string(), Arc::default());
         let mut producer_pairs = Vec::new();
         let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
         let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
@@ -3119,19 +3218,35 @@ pub(super) mod graph_tests {
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
-        push_all(prod, &stereo_ramp(4096, 0.0));
+        push_all(prod, &vec![0.5; 4096 * 2]);
+        let fade = seek_fade_frames(SR);
+        let at = |buf: &[f32], frame: usize| buf[frame * 2];
 
         let mut out = vec![0.0; TIMER_BLOCK_FRAMES * 2];
         built.graph.process_block(&mut out);
         built.graph.process_block(&mut out);
-        // A seek rewinds the capture: generation bumps, everything is dropped.
-        drain["m"].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let before = drain["m"].request();
+        // The old position fades out, then everything queued behind it goes,
+        // and the reader hears that it may go on.
         built.graph.process_block(&mut out);
-        assert_eq!(out, vec![0.0; TIMER_BLOCK_FRAMES * 2]);
-        // The flushed ring stays empty: the next block is silence too.
-        let mut out2 = vec![0.0; TIMER_BLOCK_FRAMES * 2];
-        built.graph.process_block(&mut out2);
-        assert_eq!(out2, vec![0.0; TIMER_BLOCK_FRAMES * 2]);
+        assert_eq!(at(&out, 0), 0.5, "the fade starts at full level");
+        assert!((at(&out, fade / 2) - 0.25).abs() < 0.01);
+        assert!(
+            out[fade * 2..].iter().all(|s| *s == 0.0),
+            "silent once faded"
+        );
+        assert_eq!(drain["m"].answered_since(before), 1);
+        // Waiting for the new position is silence, not an underrun.
+        let xruns = built.sources[0].stats.xrun.load(Ordering::Relaxed);
+        built.graph.process_block(&mut out);
+        assert!(out.iter().all(|s| *s == 0.0));
+        assert_eq!(built.sources[0].stats.xrun.load(Ordering::Relaxed), xruns);
+        // The new position fades in from its first frame.
+        push_all(&mut producer_pairs[0].1, &vec![0.25; 2048 * 2]);
+        built.graph.process_block(&mut out);
+        assert_eq!(at(&out, 0), 0.0, "no step into the new position");
+        assert!((at(&out, fade / 2) - 0.125).abs() < 0.01);
+        assert!(out[fade * 2..].iter().all(|s| *s == 0.25));
     }
 
     /// Mic into a plain gain and a limiter (2 ms lookahead) in parallel: a

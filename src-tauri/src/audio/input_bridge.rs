@@ -273,6 +273,16 @@ impl BroadcastRx {
         self.bell = Some(bell);
     }
 
+    /// Subscribers still reading.
+    pub fn active_consumers(&mut self) -> usize {
+        self.apply_commands();
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .filter(|(p, _)| !p.is_abandoned())
+            .count()
+    }
+
     /// Samples queued in the fullest active slot, or `None` when nothing is
     /// subscribed. A file-driven source paces itself off this so its rate is
     /// dictated by the consumers rather than by a wall clock of its own.

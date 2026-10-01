@@ -141,21 +141,23 @@ pub(super) fn resolve_output(
                 base_frames,
             })
         }
+        // Opus encodes at 48 kHz, and WebRTC always carries 48 kHz, so their
+        // graphs run there and the engine converts the rate block by block;
+        // raw PCM goes out at the rate it is set to, else the pipeline's.
         OutputSpec::NetSender {
             codec, sample_rate, ..
         } => {
             let sr = if *codec == NetCodec::Opus {
-                crate::audio::netaudio::SR
+                Some(crate::audio::netaudio::SR)
             } else {
-                sample_rate
-                    .or(file_sr_hint)
-                    .unwrap_or(crate::audio::netaudio::SR)
+                sample_rate.or(file_sr_hint)
             };
-            Ok(ResolvedOutput::WireSender(sr))
+            sr.map(ResolvedOutput::WireSender)
+                .ok_or_else(|| AppError::Validation("network sender has no sample rate".into()))
         }
-        OutputSpec::WebRtcSend { .. } => Ok(ResolvedOutput::WireSender(
-            file_sr_hint.unwrap_or(crate::audio::netaudio::SR),
-        )),
+        OutputSpec::WebRtcSend { .. } => {
+            Ok(ResolvedOutput::WireSender(crate::audio::webrtc::OPUS_SR))
+        }
     }
 }
 
@@ -476,6 +478,49 @@ mod tests {
         assert!(
             !path.exists(),
             "confirmed overwrite must clear the old path"
+        );
+    }
+
+    #[test]
+    fn wire_senders_run_at_their_wire_rate() {
+        use crate::audio::graph::{NetCodec, OpusApplication};
+        let net = |codec: NetCodec, sample_rate: Option<u32>| ValidOutput {
+            id: "n".into(),
+            spec: OutputSpec::NetSender {
+                node_id: "n".into(),
+                target: "127.0.0.1:5004".parse().unwrap(),
+                channels: 2,
+                codec,
+                opus_bitrate: 96_000,
+                opus_application: OpusApplication::Audio,
+                sample_rate,
+            },
+        };
+        let rate = |out: &ValidOutput| resolve_output(out, Some(96_000)).unwrap().sample_rate();
+        assert_eq!(
+            rate(&net(NetCodec::Opus, None)),
+            48_000,
+            "Opus encodes at 48 kHz"
+        );
+        assert_eq!(
+            rate(&net(NetCodec::PcmF32, None)),
+            96_000,
+            "PCM follows the pipeline"
+        );
+        assert_eq!(rate(&net(NetCodec::PcmI16, Some(44_100))), 44_100);
+        let webrtc = ValidOutput {
+            id: "w".into(),
+            spec: OutputSpec::WebRtcSend {
+                node_id: "w".into(),
+                channels: 2,
+                opus_bitrate: 96_000,
+                opus_application: OpusApplication::Voip,
+            },
+        };
+        assert_eq!(
+            rate(&webrtc),
+            48_000,
+            "WebRTC carries 48 kHz, so its graph runs there"
         );
     }
 

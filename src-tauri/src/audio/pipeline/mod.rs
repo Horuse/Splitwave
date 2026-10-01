@@ -13,7 +13,7 @@
 //!   in the validator.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use rtrb::Producer;
@@ -23,9 +23,7 @@ use tracing::{info, warn};
 use crate::audio::effects::{
     EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
 };
-use crate::audio::graph::{
-    EffectSpec, InputSpec, NetCodec, OutputSpec, RecordingFormat, ValidGraph,
-};
+use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats, WriteClock};
 use crate::error::{AppError, AppResult};
 
@@ -47,6 +45,7 @@ mod sig;
 mod worker;
 
 use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};
+use file_reader::SeekFlush;
 use input::{configure_io, resolve_input, start_input_stream, InputHandle, ResolvedInput};
 use latency::{breakdown, DeviceIo, NodeTiming, PathInput, PathOutput};
 use meter::{spawn_meter_thread, spawn_xrun_thread, MeterTickThread, XrunTickThread};
@@ -123,7 +122,7 @@ struct InputState {
     capture_by_slot: HashMap<usize, CaptureStats>,
     volume: Arc<AtomicU32>,
     paused: Option<Arc<AtomicBool>>,
-    drain: Option<Arc<AtomicU64>>,
+    drain: Option<Arc<SeekFlush>>,
 }
 
 struct SpeakerState {
@@ -259,15 +258,14 @@ impl ActivePipeline {
         }
     }
 
-    /// Queue a seek on the audio-file input identified by `node_id`. Silent
-    /// no-op when the node isn't an AudioFile or the pipeline is stopped.
+    /// Queue a seek on the audio-file input identified by `node_id`. The
+    /// reader flushes what is queued from the old position itself, at the
+    /// moment it seeks (see `SeekFlush`). Silent no-op when the node isn't an
+    /// AudioFile or the pipeline is stopped.
     pub fn seek_audio_file(&self, node_id: &str, frame: i64) {
         if let Some(state) = self.inputs.get(node_id) {
             if let Some(reader) = state._handle.audio_file_reader() {
                 reader.seek_to().store(frame.max(0), Ordering::SeqCst);
-            }
-            if let Some(d) = &state.drain {
-                d.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
@@ -833,7 +831,7 @@ impl ActivePipeline {
         // the output DAG source nodes before InputState is constructed.
         let mut new_input_volumes: HashMap<String, Arc<AtomicU32>> = HashMap::new();
         let mut new_input_paused: HashMap<String, Arc<AtomicBool>> = HashMap::new();
-        let mut new_input_drain: HashMap<String, Arc<AtomicU64>> = HashMap::new();
+        let mut new_input_drain: HashMap<String, Arc<SeekFlush>> = HashMap::new();
         let mut new_input_meters: HashMap<String, MeterHandle> = HashMap::new();
         for inp in &graph.inputs {
             if !self.inputs.contains_key(&inp.id) {
@@ -845,13 +843,13 @@ impl ActivePipeline {
                 if matches!(&inp.spec, InputSpec::AudioFile { .. }) {
                     new_input_paused
                         .insert(inp.id.clone(), Arc::new(AtomicBool::new(!inp.auto_start)));
-                    new_input_drain.insert(inp.id.clone(), Arc::new(AtomicU64::new(0)));
+                    new_input_drain.insert(inp.id.clone(), Arc::default());
                 }
             }
         }
         let mut input_volumes: HashMap<String, Arc<AtomicU32>> = HashMap::new();
         let mut input_paused: HashMap<String, Arc<AtomicBool>> = HashMap::new();
-        let mut input_drain: HashMap<String, Arc<AtomicU64>> = HashMap::new();
+        let mut input_drain: HashMap<String, Arc<SeekFlush>> = HashMap::new();
         let mut input_meters: HashMap<String, MeterHandle> = HashMap::new();
         for (id, state) in &self.inputs {
             input_volumes.insert(id.clone(), state.volume.clone());
@@ -926,7 +924,9 @@ impl ActivePipeline {
                     sr @ (32_000 | 44_100 | 48_000) => Some(sr),
                     _ => Some(48_000),
                 },
-                OutputSpec::FileRecording { .. } => Some(pipeline_sr),
+                OutputSpec::FileRecording { .. } | OutputSpec::NetSender { .. } => {
+                    Some(pipeline_sr)
+                }
                 _ => None,
             };
             let resolved = resolve_output(out, file_sr_hint)?;
@@ -957,20 +957,12 @@ impl ActivePipeline {
             }
             let output_sr = match &out.spec {
                 OutputSpec::Speaker { .. } => pipeline_sr,
-                OutputSpec::FileRecording { .. } => output_runtime
+                OutputSpec::FileRecording { .. }
+                | OutputSpec::NetSender { .. }
+                | OutputSpec::WebRtcSend { .. } => output_runtime
                     .get(&out.id)
                     .map(|o| o.sample_rate())
                     .unwrap_or(pipeline_sr),
-                OutputSpec::NetSender {
-                    codec, sample_rate, ..
-                } => {
-                    if *codec == NetCodec::Opus {
-                        crate::audio::netaudio::SR
-                    } else {
-                        sample_rate.unwrap_or(pipeline_sr)
-                    }
-                }
-                OutputSpec::WebRtcSend { .. } => pipeline_sr,
             };
             // A speaker is paced by its device. A wire sender rides a timer,
             // but its latency is heard at the other end, so it runs the engine
@@ -1235,6 +1227,7 @@ impl ActivePipeline {
                     bridge_rx,
                     pipeline_sr,
                     paused.clone(),
+                    drain.clone(),
                     None,
                     graph.buffer_frames as usize,
                     &app,
@@ -1308,6 +1301,7 @@ impl ActivePipeline {
                 bridge_rx,
                 pipeline_sr,
                 paused.clone(),
+                drain.clone(),
                 Some(meter),
                 graph.buffer_frames as usize,
                 &app,
@@ -1778,6 +1772,7 @@ mod tests {
             broadcast_channel().1,
             false,
             Arc::new(AtomicBool::new(true)),
+            None,
             TestEmitter::default(),
         )
         .expect("reader");
@@ -1842,6 +1837,7 @@ mod tests {
             broadcast_channel().1,
             false,
             Arc::new(AtomicBool::new(true)),
+            None,
             TestEmitter::default(),
         )
         .expect("reader");
@@ -1906,7 +1902,7 @@ mod tests {
         enc.finalize().unwrap();
 
         let paused = Arc::new(AtomicBool::new(true));
-        let drain = Arc::new(AtomicU64::new(0));
+        let drain = Arc::new(SeekFlush::default());
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let bridge = broadcast_channel().1;
         let emitter = TestEmitter::default();
@@ -1917,6 +1913,7 @@ mod tests {
             bridge,
             false,
             paused.clone(),
+            Some(drain.clone()),
             emitter,
         )
         .expect("reader");
@@ -1937,9 +1934,9 @@ mod tests {
         let mut p = ActivePipeline::new();
         p.inputs.insert("f".to_string(), state);
 
-        // Seek queues on the reader and bumps the drain generation.
+        // Seek queues on the reader. A paused file has nothing queued, so the
+        // reader moves without asking the graphs to let go of anything.
         p.seek_audio_file("f", 500);
-        assert_eq!(drain.load(Ordering::SeqCst), 1);
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline
             && !events

@@ -18,7 +18,7 @@ use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
 use super::dag::ring_capacity_frames;
-use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
+use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader, SeekFlush};
 use super::output::device_block;
 
 #[cfg(target_os = "macos")]
@@ -186,6 +186,7 @@ pub(super) fn start_audio_file(
     path: PathBuf,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     app: &AppHandle,
 ) -> AppResult<InputHandle> {
     // Loop is a runtime atomic, not in InputSpec; frontend syncs it
@@ -197,6 +198,7 @@ pub(super) fn start_audio_file(
         bridge,
         false,
         paused_arc,
+        flush,
         app.clone(),
     )?;
     Ok(InputHandle::AudioFile(reader))
@@ -248,6 +250,7 @@ pub(super) fn start_input_stream(
     bridge: BroadcastRx,
     target_sample_rate: u32,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
     block_frames: usize,
     app: &AppHandle,
@@ -258,7 +261,9 @@ pub(super) fn start_input_stream(
     // They must not be run through the capture normalizer thread (which drops frames
     // on overflow and breaks backpressure). DAG nodes resample file audio directly.
     if matches!(resolved, ResolvedInput::AudioFile { .. }) {
-        return start_native_input_stream(node_id, resolved, bridge, paused, meter, io_frames, app);
+        return start_native_input_stream(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, app,
+        );
     }
     // A device already at the pipeline rate needs no normalizing: its callback
     // feeds the graphs' rings directly, with no thread hop in between. Only a
@@ -267,7 +272,9 @@ pub(super) fn start_input_stream(
     if matches!(resolved, ResolvedInput::Cpal { .. })
         && resolved.sample_rate() == target_sample_rate
     {
-        return start_native_input_stream(node_id, resolved, bridge, paused, meter, io_frames, app);
+        return start_native_input_stream(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, app,
+        );
     }
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
@@ -278,7 +285,9 @@ pub(super) fn start_input_stream(
     let bell = Arc::new(Doorbell::default());
     raw_rx.ring_after_broadcast(bell.clone());
     let chunk = io_frames as usize;
-    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, io_frames, app)?;
+    let input = start_native_input_stream(
+        node_id, resolved, raw_rx, paused, flush, None, io_frames, app,
+    )?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));

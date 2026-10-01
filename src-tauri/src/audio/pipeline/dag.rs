@@ -31,8 +31,9 @@ pub(super) fn ring_capacity_frames(sample_rate: u32) -> usize {
 /// Block size used by the resampler. 256 frames @ 48 kHz ~ 5.3 ms.
 pub(super) const RESAMPLE_CHUNK: usize = 256;
 
-/// Block of a recording's worker: nobody hears its latency, and large blocks
-/// cost the least. Every other graph runs at the engine buffer size.
+/// Block of the timer-paced analysis and recording workers (monitor,
+/// recorders). Nobody hears their latency, and a timer cannot pace small
+/// blocks reliably. Speakers and wire senders run the engine buffer size.
 pub const TIMER_BLOCK_FRAMES: usize = 1024;
 
 const MAX_NET_CH: u32 = crate::audio::netaudio::MAX_CHANNELS as u32;

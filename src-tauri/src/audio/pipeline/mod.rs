@@ -362,9 +362,16 @@ impl ActivePipeline {
     /// ring's own rate.
     fn path_input(&self, m: &SourceMeta) -> PathInput {
         let input = m.input_id.as_ref().and_then(|i| self.inputs.get(i));
+        // A file's queue is audio decoded ahead, not audio held back: nothing
+        // live comes out later for it, and pause and seek drop it at once.
+        let read_ahead = input.is_some_and(|i| i._handle.audio_file_reader().is_some());
         let own = PathInput {
             device: input.and_then(|i| i.io),
-            queue_frames: m.stats.queue_frames.load(Ordering::Relaxed),
+            queue_frames: if read_ahead {
+                0
+            } else {
+                m.stats.queue_frames.load(Ordering::Relaxed)
+            },
             normalizer_frames: input.map_or(0, |i| i.normalizer_frames),
             rate: m.native_sr,
         };
@@ -1085,12 +1092,10 @@ impl ActivePipeline {
                 } else {
                     HashMap::new()
                 };
-                // Meters and scopes read the same instant the speakers play,
-                // so the monitor runs the engine block too.
                 let mut built = build_output_graph(
                     None,
                     monitor_sr,
-                    graph.buffer_frames as usize,
+                    dag::TIMER_BLOCK_FRAMES,
                     true,
                     graph,
                     &input_native_sr,

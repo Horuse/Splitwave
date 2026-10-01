@@ -14,7 +14,7 @@ use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder
 use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
 use crate::error::{AppError, AppResult};
 
-use super::dag::{OutputGraph, TIMER_BLOCK_FRAMES};
+use super::dag::OutputGraph;
 use super::worker::{dsp_worker, WorkerCtrl};
 
 #[cfg(target_os = "macos")]
@@ -239,7 +239,8 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     // keeps meters/scopes at real time and, crucially, consumes network-sourced
     // audio (WebRTC) at the rate it arrives instead of draining its jitter buffer.
     let sample_rate = graph.sample_rate();
-    let ticker = SystemClockTicker::new(sample_rate, TIMER_BLOCK_FRAMES);
+    // Ticks one graph block at a time, whatever block the graph was built at.
+    let ticker = SystemClockTicker::new(sample_rate, graph.block_frames());
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("monitor".into())
@@ -308,12 +309,14 @@ pub(super) fn start_recorder_worker(
 ) -> AppResult<(RecorderWorker, WorkerCtrl, WaveformHandle)> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
-    let (worker, ctrl) = dsp_worker(graph);
     // Transport-paced: recording must follow the wall clock, not the source.
     // A file source decodes faster than real time; availability pacing would
     // drain it as fast as it arrives and over-run (a 1 s clip becomes 1:22).
-    let clock: Box<dyn ClockSource> =
-        Box::new(SystemClockTicker::new(sample_rate, TIMER_BLOCK_FRAMES));
+    let clock: Box<dyn ClockSource> = Box::new(SystemClockTicker::new(
+        graph.sample_rate(),
+        graph.block_frames(),
+    ));
+    let (worker, ctrl) = dsp_worker(graph);
 
     // Scope-style waveform feed, emitted to the UI by the meter tick thread.
     let wave = WaveformHandle::for_recorder(node_id.clone(), sample_rate, base_frames);
@@ -602,7 +605,7 @@ mod tests {
         let built = build_output_graph(
             None,
             48_000,
-            TIMER_BLOCK_FRAMES,
+            super::super::dag::TIMER_BLOCK_FRAMES,
             true,
             &valid,
             &native,
@@ -637,5 +640,81 @@ mod tests {
             after_stop,
             "worker stopped on drop"
         );
+    }
+
+    #[test]
+    fn the_monitor_runs_in_real_time_at_any_block() {
+        use super::super::dag::build_output_graph;
+        use crate::audio::effects::EffectRegistry;
+        use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+        use std::collections::HashMap;
+
+        for block in [32, 1024] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![
+                    NodeSpec {
+                        id: "m".into(),
+                        kind: NodeKind::Microphone,
+                        data: serde_json::json!({ "deviceId": "dev" }),
+                    },
+                    NodeSpec {
+                        id: "lm".into(),
+                        kind: NodeKind::LevelMeter,
+                        data: serde_json::json!({}),
+                    },
+                ],
+                edges: vec![EdgeSpec {
+                    id: "e".into(),
+                    source: "m".into(),
+                    source_handle: None,
+                    target: "lm".into(),
+                    target_handle: None,
+                }],
+            };
+            let valid: ValidGraph = g.validate().expect("valid");
+            let mut producer_pairs = Vec::new();
+            let native = valid
+                .inputs
+                .iter()
+                .map(|i| (i.id.clone(), 48_000))
+                .collect();
+            let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+            let mut reg = EffectRegistry::new();
+            let built = build_output_graph(
+                None,
+                48_000,
+                block,
+                true,
+                &valid,
+                &native,
+                &native_ch,
+                &mut producer_pairs,
+                &mut reg,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                HashMap::new(),
+                &HashMap::new(),
+            )
+            .expect("build");
+            let (recorder, _ctrl) = start_monitor_worker(built.graph).expect("spawn monitor");
+            std::thread::sleep(Duration::from_millis(100));
+            let from = built.output.blocks.load(Ordering::Relaxed);
+            let started = std::time::Instant::now();
+            std::thread::sleep(Duration::from_millis(500));
+            let blocks = built.output.blocks.load(Ordering::Relaxed) - from;
+            let secs = started.elapsed().as_secs_f64();
+            drop(recorder);
+            // A monitor that falls behind real time stops draining its rings,
+            // and a shared source then starves every other output.
+            let rate = blocks as f64 * block as f64 / secs;
+            assert!(
+                (40_000.0..56_000.0).contains(&rate),
+                "{block}-frame monitor ran at {rate:.0} frames/s"
+            );
+        }
     }
 }

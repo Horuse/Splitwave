@@ -273,6 +273,18 @@ impl BroadcastRx {
         self.bell = Some(bell);
     }
 
+    /// Samples queued in the emptiest active slot: the reader furthest along,
+    /// or `None` when nothing is subscribed.
+    pub fn min_queued(&mut self) -> Option<usize> {
+        self.apply_commands();
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .filter(|(p, _)| !p.is_abandoned())
+            .map(|(p, _)| p.buffer().capacity() - p.slots())
+            .min()
+    }
+
     /// Subscribers still reading.
     pub fn active_consumers(&mut self) -> usize {
         self.apply_commands();

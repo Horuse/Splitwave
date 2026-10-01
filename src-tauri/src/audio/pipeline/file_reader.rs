@@ -694,10 +694,13 @@ fn run<E: ProgressEmitter>(
         }
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
+            // Decoded ahead is not played yet: the position shown is the one
+            // being heard, behind what was handed over by what still waits.
+            let ahead = bridge.min_queued().unwrap_or(0) / ch.max(1);
             emit_progress(
                 app,
                 &node_id,
-                frames_played,
+                frames_played.saturating_sub(ahead as u64),
                 od.total_frames,
                 od.sample_rate,
                 od.channels as u32,

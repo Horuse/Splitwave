@@ -24,11 +24,7 @@
 
 {#if report && path}
 	<Tooltip placement="bottom">
-		<span
-			class={[
-				'flex items-center gap-1.5 rounded-md border bg-background px-2 py-0.5',
-				strained ? 'border-amber-500' : 'border-theme/10'
-			]}>
+		<span class={['flex items-center gap-1.5 rounded-md border bg-background px-2 py-0.5', strained ? 'border-amber-500' : 'border-theme/10']}>
 			<Gauge class={['h-3.5 w-3.5', strained ? 'text-amber-600' : 'text-neutral-500']} />
 			<span class="font-mono text-xs text-neutral-800 tabular-nums">
 				{ms(path.totalMs)}{path.hardwareIncluded ? '' : '+'} ms

@@ -324,7 +324,8 @@
 						max={MAX_SAMPLE_RATE}
 						step={1}
 						label="Custom sample rate"
-						onchange={(v) => setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
+						onchange={(v) =>
+							setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
 					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
 				</div>
 			{/if}
@@ -334,9 +335,9 @@
 			<div>
 				<h2 class="text-sm font-semibold text-theme">Buffer size</h2>
 				<p class="text-xs text-neutral-900">
-					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the
-					latency readout reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running
-					pipeline reopens its devices at the new size right away.
+					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the latency readout
+					reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running pipeline reopens its devices at
+					the new size right away.
 				</p>
 			</div>
 

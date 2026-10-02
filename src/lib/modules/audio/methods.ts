@@ -62,13 +62,11 @@ export const methods = {
 	}> => invoke('read_file_peaks', { path, startFrame, framesPerBin, binCount }),
 	isPipelineRunning: (): Promise<boolean> => invoke<boolean>('is_pipeline_running'),
 	getLatencyReport: (): Promise<LatencyReport> => invoke<LatencyReport>('latency_report'),
-	startPipeline: (graph: StartPipelinePayload): Promise<void> =>
-		invoke('start_pipeline', { graph: { ...engineFormat(), ...graph } }),
+	startPipeline: (graph: StartPipelinePayload): Promise<void> => invoke('start_pipeline', { graph: { ...engineFormat(), ...graph } }),
 	stopPipeline: (): Promise<void> => invoke('stop_pipeline'),
 	/** Hot-reconfigure a running pipeline. Errors with `NotRunning` if no
 	 *  pipeline is active — callers should fall back to `startPipeline`. */
-	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> =>
-		invoke('reconcile_pipeline', { graph: { ...engineFormat(), ...graph } }),
+	reconcilePipeline: (graph: StartPipelinePayload): Promise<void> => invoke('reconcile_pipeline', { graph: { ...engineFormat(), ...graph } }),
 	/** No-op when the pipeline isn't running; callers can fire-and-forget. */
 	updateEffect: (nodeId: string, data: Record<string, unknown>): Promise<void> => invoke('update_effect', { nodeId, data }),
 	/** Seek an AudioFile input. No-op when not running. */

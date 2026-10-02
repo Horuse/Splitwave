@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SPECTRUM_FRAMES } from '$lib/modules/pipeline/generated/engine';
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
@@ -23,11 +24,12 @@
 		flow.updateNodeData(id, { smoothing: v });
 	}
 
-	// The engine ships one contiguous 4096-frame window per spectrum node
-	// (SPECTRUM_FRAMES) so the low end resolves (~11.7 Hz/bin at 48 kHz) without
-	// the discontinuities that concatenating separate 1024 snapshots would cause.
-	const FFT_SIZE = 4096;
-	const BINS = FFT_SIZE / 2;
+	// The engine ships one contiguous window per spectrum node, long enough for
+	// ~11 Hz bins at its rate (SPECTRUM_FRAMES at 48 kHz, longer above), without
+	// the discontinuities that concatenating separate snapshots would cause. The
+	// FFT takes whatever length arrives.
+	let fftSize = $state(SPECTRUM_FRAMES);
+	let bins = $derived(fftSize / 2);
 	const MAX_CH = 8; // per-channel FFTs beyond this cost more than they reveal
 	const F_MIN = 20;
 	const BARS = 80; // log-spaced across the audible range
@@ -74,9 +76,9 @@
 		for (let b = 0; b < BARS; b++) {
 			const f0 = F_MIN * Math.pow(fMax / F_MIN, b / BARS);
 			const f1 = F_MIN * Math.pow(fMax / F_MIN, (b + 1) / BARS);
-			const lo = Math.max(1, Math.floor((f0 / fMax) * BINS));
-			const hi = Math.max(lo + 1, Math.ceil((f1 / fMax) * BINS));
-			out.push([lo, Math.min(hi, BINS)]);
+			const lo = Math.max(1, Math.floor((f0 / fMax) * bins));
+			const hi = Math.max(lo + 1, Math.ceil((f1 / fMax) * bins));
+			out.push([lo, Math.min(hi, bins)]);
 		}
 		return out;
 	});
@@ -94,13 +96,17 @@
 		return out;
 	});
 
-	const hann = new Float32Array(FFT_SIZE);
-	for (let i = 0; i < FFT_SIZE; i++) {
-		hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1)));
+	function makeHann(size: number): Float32Array {
+		const w = new Float32Array(size);
+		for (let i = 0; i < size; i++) {
+			w[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (size - 1)));
+		}
+		return w;
 	}
 
-	const re = new Float32Array(FFT_SIZE);
-	const im = new Float32Array(FFT_SIZE);
+	let hann = makeHann(SPECTRUM_FRAMES);
+	let re = new Float32Array(SPECTRUM_FRAMES);
+	let im = new Float32Array(SPECTRUM_FRAMES);
 	const bandPeak = new Float32Array(BARS);
 	const barDb = new Float32Array(BARS).fill(DB_FLOOR);
 	let hasSignal = false;
@@ -146,8 +152,15 @@
 		const ch = chans.length;
 		if (ch === 0) return;
 		if (sr > 0) sampleRate = sr;
+		const size = 2 ** Math.ceil(Math.log2(Math.max(2, chans[0].length)));
+		if (size !== fftSize) {
+			fftSize = size;
+			hann = makeHann(size);
+			re = new Float32Array(size);
+			im = new Float32Array(size);
+		}
 		const cap = Math.min(ch, MAX_CH);
-		const n = Math.min(FFT_SIZE, chans[0].length);
+		const n = Math.min(fftSize, chans[0].length);
 		const bands = bandBins;
 		bandPeak.fill(0);
 		// Per-channel FFT combined by max: a summed mono downmix would cancel
@@ -158,7 +171,7 @@
 				re[i] = (src[i] ?? 0) * hann[i];
 				im[i] = 0;
 			}
-			for (let i = n; i < FFT_SIZE; i++) {
+			for (let i = n; i < fftSize; i++) {
 				re[i] = 0;
 				im[i] = 0;
 			}
@@ -178,7 +191,7 @@
 		const rise = 1 - 0.85 * smoothing;
 		const fall = 0.4 - 0.37 * smoothing;
 		for (let b = 0; b < BARS; b++) {
-			const norm = bandPeak[b] / BINS;
+			const norm = bandPeak[b] / bins;
 			const target = norm > 1e-7 ? Math.max(DB_FLOOR, 20 * Math.log10(norm)) : DB_FLOOR;
 			const cur = barDb[b];
 			barDb[b] = cur + (target - cur) * (target > cur ? rise : fall);

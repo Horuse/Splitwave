@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { LUFS_SILENT } from '$lib/modules/pipeline/generated/engine';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
@@ -14,9 +15,6 @@
 	let { id, data }: NodeProps<LufsMeterNodeType> = $props();
 
 	const flow = useSvelteFlow();
-
-	// Sentinel emitted from the engine when LUFS is `-inf` (silent).
-	const LUFS_SILENT = -120;
 
 	const LUFS_FLOOR = -40; // bar scale floor
 

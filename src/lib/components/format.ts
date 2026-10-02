@@ -108,3 +108,8 @@ export function formatGain(db: number): string {
 export function formatDb(db: number, floor: number = -96): string {
 	return Number.isFinite(db) && db > floor ? db.toFixed(1) : '−∞';
 }
+
+/** Latency in milliseconds: one decimal below 10 ms, whole above. */
+export function formatLatencyMs(ms: number): string {
+	return ms < 10 ? ms.toFixed(1) : Math.round(ms).toString();
+}

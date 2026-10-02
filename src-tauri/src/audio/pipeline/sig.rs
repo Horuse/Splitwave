@@ -95,7 +95,7 @@ pub(super) fn compute_output_sig(graph: &ValidGraph, output_id: &str) -> OutputS
 ///
 /// A field is structural unless zeroed below, so an unhandled field forces a
 /// rebuild rather than being silently dropped from the signature.
-fn structural_effect(spec: &EffectSpec) -> EffectSpec {
+pub(super) fn structural_effect(spec: &EffectSpec) -> EffectSpec {
     use EffectSpec as E;
     let mut s = spec.clone();
     match &mut s {
@@ -166,8 +166,8 @@ fn structural_effect(spec: &EffectSpec) -> EffectSpec {
             d.bypassed = false;
         }
         E::Declick(d) => {
+            // max_width_ms sizes the delay line at build time -- keep it structural.
             d.sensitivity = 0.0;
-            d.max_width_ms = 0.0;
             d.bypassed = false;
         }
         E::DeEsser(d) => {
@@ -244,6 +244,7 @@ mod tests {
     fn mic_to_speaker(gain_db: f32) -> ValidGraph {
         GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", gain_db), speaker("s")],
             edges: vec![edge("e1", "m", "g"), edge("e2", "g", "s")],
         }
@@ -257,6 +258,7 @@ mod tests {
         // its own output can reach.
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m"),
                 gain_node("a", 0.0),
@@ -295,6 +297,7 @@ mod tests {
     fn mute_and_bypass_flags_are_not_structural() {
         let with_bypass = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m"),
                 node(
@@ -318,6 +321,7 @@ mod tests {
         let mk = |lookahead: f32, ceiling: f32| {
             GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![
                     mic("m"),
                     node(
@@ -343,10 +347,43 @@ mod tests {
     }
 
     #[test]
+    fn declick_width_is_structural_but_sensitivity_is_not() {
+        let mk = |width: f32, sensitivity: f32| {
+            GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![
+                    mic("m"),
+                    node(
+                        "d",
+                        NodeKind::Declick,
+                        serde_json::json!({ "sensitivity": sensitivity, "maxWidthMs": width }),
+                    ),
+                    speaker("s"),
+                ],
+                edges: vec![edge("e1", "m", "d"), edge("e2", "d", "s")],
+            }
+            .validate()
+            .expect("valid")
+        };
+        let base = compute_output_sig(&mk(2.0, 0.5), "s");
+        assert_eq!(
+            base,
+            compute_output_sig(&mk(2.0, 0.9), "s"),
+            "sensitivity is live"
+        );
+        assert!(
+            base != compute_output_sig(&mk(4.0, 0.5), "s"),
+            "width sizes the delay line"
+        );
+    }
+
+    #[test]
     fn plugin_state_is_not_structural_path_is() {
         let mk = |state: Option<&str>| {
             GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![
                     node(
                         "p",
@@ -370,6 +407,7 @@ mod tests {
         assert_eq!(a, b, "state applies only at instantiation");
         let other_path = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 node(
                     "p",
@@ -418,6 +456,7 @@ mod tests {
     fn sidechain_edges_sort_after_main() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![
                 mic("m1"),
                 mic("m2"),
@@ -496,8 +535,8 @@ mod tests {
             ),
             (
                 NodeKind::Declick,
-                serde_json::json!({ "sensitivity": 0.9, "maxWidthMs": 5.0 }),
-                serde_json::json!({ "sensitivity": 0.0, "maxWidthMs": 0.3 }),
+                serde_json::json!({ "sensitivity": 0.9, "maxWidthMs": 2.0 }),
+                serde_json::json!({ "sensitivity": 0.0, "maxWidthMs": 2.0 }),
             ),
             (
                 NodeKind::DeEsser,
@@ -520,6 +559,7 @@ mod tests {
             let mk = |data: serde_json::Value| {
                 GraphSpec {
                     sample_rate: None,
+                    buffer_frames: None,
                     nodes: vec![mic("m"), node("fx", kind.clone(), data), speaker("s")],
                     edges: vec![edge("e1", "m", "fx"), edge("e2", "fx", "s")],
                 }

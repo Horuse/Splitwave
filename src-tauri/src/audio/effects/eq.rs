@@ -8,7 +8,7 @@ use super::util::{db_to_linear, load_f32};
 use super::{Effect, EffectControl};
 
 /// Fourth-order crossover points at geometric means between adjacent bands.
-const EQ_CROSSOVER_FREQS: [f32; 9] = [
+pub(crate) const EQ_CROSSOVER_FREQS: [f32; 9] = [
     45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085,
 ];
 

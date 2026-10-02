@@ -13,9 +13,9 @@ use serde_json::Value;
 use crate::audio::graph::EffectSpec;
 use crate::audio::plugins::host_api::HostedEffect;
 
-/// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
-/// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
-const PLUGIN_MAX_BLOCK: usize = 1024;
+/// Most frames a hosted plugin is ever handed at once: the largest engine
+/// block, since an offload worker forwards at most that much per call.
+const PLUGIN_MAX_BLOCK: usize = crate::audio::graph::MAX_BUFFER_FRAMES;
 
 pub mod biquad;
 pub mod channel_balance;
@@ -98,6 +98,16 @@ pub enum RuntimeEffect {
 }
 
 impl RuntimeEffect {
+    /// Frames this effect gathers before it can answer, when that is more
+    /// than the engine block it was built for; `None` when it keeps up with
+    /// any block. Drives the node's "runs at a larger block" badge.
+    pub fn working_block(&self) -> Option<usize> {
+        match self {
+            RuntimeEffect::NoiseSuppressor(e) => e.working_block(),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn latency_frames(&self) -> usize {
         match self {
@@ -128,7 +138,11 @@ impl RuntimeEffect {
         sidechain: Option<&[f32]>,
         frames: usize,
     ) {
-        let active = &mut main[..frames * 2];
+        // Whatever width the node runs at: a stereo pair for most effects, the
+        // node's whole width (mono included) for analyzers and plugins that
+        // take every channel.
+        let width = main.len() / frames.max(1);
+        let active = &mut main[..frames * width];
         for sample in active.iter_mut() {
             if !sample.is_finite() {
                 *sample = 0.0;
@@ -489,6 +503,8 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
+    // Engine block the node runs in. Offloaded effects size their pad from it.
+    block_frames: usize,
     // False for file-recording outputs: an offline render outruns real time,
     // so an expensive effect must process in place instead of on a worker.
     realtime: bool,
@@ -527,7 +543,7 @@ pub fn instantiate_effect(
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Gain { linear }) => mk(
-                RuntimeEffect::Gain(GainEffect::from_state(linear.clone())),
+                RuntimeEffect::Gain(GainEffect::from_state(linear.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -535,14 +551,14 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = GainEffect::new(d);
+                let (e, c) = GainEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Gain(e), Some(c), None, None, None, None)
             }
         },
         EffectSpec::Mute(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Mute { muted }) => mk(
-                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone())),
+                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -550,7 +566,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = MuteEffect::new(d);
+                let (e, c) = MuteEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Mute(e), Some(c), None, None, None, None)
             }
@@ -937,6 +953,7 @@ pub fn instantiate_effect(
                 RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
                     controls.clone(),
                     sample_rate,
+                    block_frames,
                     realtime,
                 )),
                 None,
@@ -946,7 +963,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate, realtime);
+                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate, block_frames, realtime);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(
                     RuntimeEffect::NoiseSuppressor(e),
@@ -967,6 +984,7 @@ pub fn instantiate_effect(
                     sensitivity.clone(),
                     max_width_ms.clone(),
                     sample_rate,
+                    d.max_width_ms,
                 )),
                 None,
                 None,
@@ -1017,7 +1035,7 @@ pub fn instantiate_effect(
                 crate::audio::plugins::registry::forget(node_id);
                 let muted = Arc::new(AtomicBool::new(false));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1031,7 +1049,7 @@ pub fn instantiate_effect(
                 tracing::error!(node_id, path, "plugin node has no format");
                 let muted = Arc::new(AtomicBool::new(true));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1074,7 +1092,12 @@ pub fn instantiate_effect(
                     // splitting it into pairs and hand it every channel.
                     let full_width = node.channels() == channels;
                     let mut build = mk(
-                        RuntimeEffect::HostedPlugin(HostedEffect::new(node, realtime)),
+                        RuntimeEffect::HostedPlugin(HostedEffect::new(
+                            node,
+                            realtime,
+                            sample_rate,
+                            block_frames,
+                        )),
                         control,
                         None,
                         None,
@@ -1090,7 +1113,7 @@ pub fn instantiate_effect(
                     crate::audio::plugins::registry::forget(node_id);
                     let muted = Arc::new(AtomicBool::new(true));
                     mk(
-                        RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                        RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                         None,
                         None,
                         None,
@@ -1408,17 +1431,17 @@ mod tests {
             gain_db: -6.0,
             bypassed: true,
         });
-        let first = instantiate_effect(&spec, "n1", 48_000, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "n1", 48_000, 1024, true, true, 2, &mut reg);
         assert!(first.bypass_is_new);
         assert!(first.control.is_some());
         assert!(
             first.bypass.load(Ordering::Relaxed),
             "bypassed spec latches"
         );
-        let second = instantiate_effect(&spec, "n1", 48_000, true, true, 2, &mut reg);
+        let second = instantiate_effect(&spec, "n1", 48_000, 1024, true, true, 2, &mut reg);
         assert!(!second.bypass_is_new);
         assert!(second.control.is_none());
-        let other = instantiate_effect(&spec, "n2", 48_000, true, true, 2, &mut reg);
+        let other = instantiate_effect(&spec, "n2", 48_000, 1024, true, true, 2, &mut reg);
         assert!(other.bypass_is_new);
         assert!(other.control.is_some());
     }
@@ -1432,9 +1455,9 @@ mod tests {
             release_ms: 50.0,
             bypassed: false,
         });
-        let first = instantiate_effect(&spec, "lim", 48_000, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "lim", 48_000, 1024, true, true, 2, &mut reg);
         let gr1 = first.gr.clone().expect("first build publishes GR");
-        let second = instantiate_effect(&spec, "lim", 48_000, true, true, 2, &mut reg);
+        let second = instantiate_effect(&spec, "lim", 48_000, 1024, true, true, 2, &mut reg);
         let gr2 = second.gr.clone().expect("rebuild republishes GR");
         assert_eq!(gr1.node_id, gr2.node_id);
         assert!(Arc::ptr_eq(&gr1.gr_lin, &gr2.gr_lin), "same atom reused");
@@ -1456,6 +1479,7 @@ mod tests {
             }),
             "c",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1473,6 +1497,7 @@ mod tests {
             }),
             "g",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1488,6 +1513,7 @@ mod tests {
             &EffectSpec::LevelMeter(LevelMeterData {}),
             "m",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1498,6 +1524,7 @@ mod tests {
             &EffectSpec::LevelMeter(LevelMeterData {}),
             "m",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1509,6 +1536,7 @@ mod tests {
             &EffectSpec::LufsMeter(LufsMeterData {}),
             "l",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1519,6 +1547,7 @@ mod tests {
             &EffectSpec::Waveform(WaveformData {}),
             "w",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1529,6 +1558,7 @@ mod tests {
             &EffectSpec::Spectrum(SpectrumData {}),
             "s",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1539,6 +1569,7 @@ mod tests {
             &EffectSpec::Spectrum(SpectrumData {}),
             "s",
             48_000,
+            1024,
             true,
             true,
             2,
@@ -1558,7 +1589,7 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p", 48_000, true, true, 2, &mut reg);
+        let mut build = instantiate_effect(&spec, "p", 48_000, 1024, true, true, 2, &mut reg);
         assert!(build.control.is_none());
         assert!(!build.full_width);
         let mut buf = vec![0.3f32, -0.4];
@@ -1577,7 +1608,7 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p2", 48_000, true, true, 2, &mut reg);
+        let mut build = instantiate_effect(&spec, "p2", 48_000, 1024, true, true, 2, &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
@@ -1594,7 +1625,7 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p3", 48_000, true, true, 2, &mut reg);
+        let mut build = instantiate_effect(&spec, "p3", 48_000, 1024, true, true, 2, &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
@@ -1609,11 +1640,9 @@ mod tests {
         assert!(!reg.plugin_primary_claimed.contains("x"));
     }
 
-    #[test]
-    fn runtime_effect_dispatch_latency_and_processing() {
-        let mut reg = EffectRegistry::new();
-        let sr = 48_000;
-        let specs: Vec<EffectSpec> = vec![
+    /// One of every built-in effect with neutral-ish settings.
+    fn builtin_specs() -> Vec<EffectSpec> {
+        vec![
             EffectSpec::Gain(GainData {
                 gain_db: -6.0,
                 bypassed: false,
@@ -1687,9 +1716,122 @@ mod tests {
                 ratio: 4.0,
                 bypassed: false,
             }),
-        ];
+        ]
+    }
+
+    /// A stereo signal with transients, level changes and silence, so
+    /// dynamics, detectors and filters all have something to react to.
+    fn program(frames: usize) -> Vec<f32> {
+        (0..frames)
+            .flat_map(|f| {
+                let t = f as f32 / 48_000.0;
+                let env = if (f / 3000) % 2 == 0 { 0.9 } else { 0.05 };
+                let click = if f % 1711 == 0 { 0.8 } else { 0.0 };
+                let l = env * (t * 440.0 * std::f32::consts::TAU).sin() + click;
+                let r = env * (t * 6_500.0 * std::f32::consts::TAU).sin() * 0.7;
+                [l, r]
+            })
+            .collect()
+    }
+
+    fn run_in_blocks(spec: &EffectSpec, input: &[f32], block: usize) -> Vec<f32> {
+        let mut reg = EffectRegistry::new();
+        let mut build = instantiate_effect(spec, "inv", 48_000, block, false, true, 2, &mut reg);
+        let mut out = input.to_vec();
+        for chunk in out.chunks_mut(block * 2) {
+            let frames = chunk.len() / 2;
+            build.effect.process_with_sidechain(chunk, None, frames);
+        }
+        out
+    }
+
+    // The engine block is a user setting now, so an effect's output must not
+    // depend on how its input was cut into blocks.
+    #[test]
+    fn every_builtin_effect_is_block_size_invariant() {
+        let input = program(12_288);
+        let mut shaping = 0;
+        for spec in builtin_specs() {
+            let reference = run_in_blocks(&spec, &input, 1024);
+            if reference
+                .iter()
+                .zip(&input)
+                .any(|(a, b)| (a - b).abs() > 1e-3)
+            {
+                shaping += 1;
+            }
+            for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+                let got = run_in_blocks(&spec, &input, block);
+                let worst = got
+                    .iter()
+                    .zip(&reference)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0_f32, f32::max);
+                assert!(
+                    worst < 1e-4,
+                    "{spec:?} at {block}-frame blocks differs by {worst}"
+                );
+            }
+        }
+        assert!(shaping >= 8, "only {shaping} effects changed the signal");
+    }
+
+    #[test]
+    fn every_builtin_effect_processes_without_allocating() {
+        for spec in builtin_specs() {
+            for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+                let mut reg = EffectRegistry::new();
+                let mut build =
+                    instantiate_effect(&spec, "rt", 48_000, block, true, true, 2, &mut reg);
+                let mut buf = program(block);
+                // First blocks may size lazily; the steady state must not.
+                for _ in 0..4 {
+                    build.effect.process_with_sidechain(&mut buf, None, block);
+                }
+                crate::audio::rt_guard::assert_no_alloc(&format!("{spec:?} @ {block}"), || {
+                    for _ in 0..16 {
+                        build.effect.process_with_sidechain(&mut buf, None, block);
+                    }
+                });
+            }
+        }
+    }
+
+    // Analyzers take a node's whole width, which is not always stereo: a mono
+    // mic feeds them one channel, a multichannel interface four or more.
+    #[test]
+    fn full_width_analyzers_see_every_channel_at_any_width() {
+        for width in [1usize, 2, 4, 6] {
+            let mut reg = EffectRegistry::new();
+            let spec = EffectSpec::LevelMeter(LevelMeterData {});
+            let mut build =
+                instantiate_effect(&spec, "lm", 48_000, 1024, true, true, width, &mut reg);
+            let meter = build.meter.clone().expect("level meter publishes a handle");
+            let frames = 1024;
+            // Channel c carries a constant 0.1 * (c + 1).
+            let mut buf: Vec<f32> = (0..frames * width)
+                .map(|i| 0.1 * ((i % width) + 1) as f32)
+                .collect();
+            build.effect.process_with_sidechain(&mut buf, None, frames);
+            let snap = meter.snapshot_and_decay();
+            assert_eq!(snap.peaks.len(), width, "{width} channels metered");
+            for (c, peak) in snap.peaks.iter().enumerate() {
+                let want = 0.1 * (c + 1) as f32;
+                assert!(
+                    (peak - want).abs() < 1e-4,
+                    "{width}ch: channel {c} peak {peak}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_effect_dispatch_latency_and_processing() {
+        let mut reg = EffectRegistry::new();
+        let sr = 48_000;
+        let specs = builtin_specs();
         for spec in &specs {
-            let mut build = instantiate_effect(spec, "dispatch", sr, true, true, 2, &mut reg);
+            let mut build = instantiate_effect(spec, "dispatch", sr, 1024, true, true, 2, &mut reg);
             assert!(build.effect.latency_frames() < 100_000);
             let mut buf = vec![0.25f32; 96];
             let side = vec![0.5f32; 96];
@@ -1744,7 +1886,8 @@ mod tests {
             }),
         ];
         for spec in &specs {
-            let mut build = instantiate_effect(spec, "finite", 48_000, true, true, 2, &mut reg);
+            let mut build =
+                instantiate_effect(spec, "finite", 48_000, 1024, true, true, 2, &mut reg);
             let mut poisoned = vec![0.25; 96];
             poisoned[10] = f32::NAN;
             poisoned[11] = f32::INFINITY;
@@ -1851,7 +1994,7 @@ mod tests {
         ];
         for (i, spec) in specs.iter().enumerate() {
             let node = format!("reuse-{i}");
-            let first = instantiate_effect(spec, &node, sr, false, true, 2, &mut reg);
+            let first = instantiate_effect(spec, &node, sr, 1024, false, true, 2, &mut reg);
             assert!(
                 first.control.is_some()
                     || first.meter.is_some()
@@ -1860,7 +2003,7 @@ mod tests {
             );
             // Same node id → the registry already holds the state; the rebuild
             // must go through from_state and stay functional.
-            let mut second = instantiate_effect(spec, &node, sr, false, true, 2, &mut reg);
+            let mut second = instantiate_effect(spec, &node, sr, 1024, false, true, 2, &mut reg);
             assert!(second.control.is_none());
             assert!(second.meter.is_none() && second.lufs.is_none() && second.scope.is_none());
             let mut buf = vec![0.3f32; 96];

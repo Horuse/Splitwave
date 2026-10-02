@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { EQ_CROSSOVER_FREQS } from '$lib/modules/pipeline/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { EqNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -13,9 +14,9 @@
 
 	const flow = useSvelteFlow();
 
-	// Mirrors EQ_FREQUENCIES_HZ / EQ_CROSSOVER_FREQS in audio/effects.rs.
+	// ISO octave band centres; the engine splits them at EQ_CROSSOVER_FREQS.
 	const FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000] as const;
-	const CROSSOVERS = [45.2548, 89.4427, 176.7767, 353.5534, 707.1068, 1414.2136, 2828.4271, 5656.8542, 11313.7085] as const;
+	const CROSSOVERS = EQ_CROSSOVER_FREQS;
 	const GAIN_MIN = -18;
 	const GAIN_MAX = 18;
 

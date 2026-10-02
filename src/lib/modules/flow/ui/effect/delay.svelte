@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { MAX_DELAY_MS } from '$lib/modules/pipeline/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DelayNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -38,7 +39,7 @@
 	const PAD = 10;
 	const TOP = 8;
 	const BASE = H - 16; // baseline sits above a band reserved for time labels
-	const MAX_WINDOW_MS = 2000;
+	const MAX_WINDOW_MS = MAX_DELAY_MS;
 
 	type Tap = { x: number; h: number; opacity: number; dry: boolean };
 
@@ -95,7 +96,7 @@
 				label="Time"
 				value={data.timeMs}
 				min={1}
-				max={2000}
+				max={MAX_DELAY_MS}
 				step={1}
 				unit=" ms"
 				defaultValue={250}

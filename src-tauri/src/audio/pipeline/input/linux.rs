@@ -1,13 +1,14 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tauri::AppHandle;
 use tracing::info;
 
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
 
+use super::super::file_reader::SeekFlush;
+use super::super::host::Host;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
 
 pub(in crate::audio::pipeline) fn resolve_input(
@@ -43,13 +44,32 @@ pub(in crate::audio::pipeline) fn resolve_input(
     }
 }
 
+/// The OS owns this capture's buffer size and does not report what the
+/// hardware adds, so there is nothing to configure or read back.
+pub(in crate::audio::pipeline) fn configure_io(
+    _resolved: &ResolvedInput,
+    _block_frames: usize,
+    _pipeline_rate: u32,
+) -> Option<super::super::latency::DeviceIo> {
+    None
+}
+
+/// Clock sharing is not detected here yet, so every input is treated as
+/// drifting against the speaker.
+pub(in crate::audio::pipeline) fn same_clock(_input: &InputSpec, _speaker_device: &str) -> bool {
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     meter: Option<crate::audio::effects::MeterHandle>,
-    app: &AppHandle,
+    io_frames: u32,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     match resolved {
         ResolvedInput::PwSource {
@@ -68,21 +88,37 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             };
             let capture = if let Some(sink) = node_id.strip_prefix("monitor:") {
                 info!(sink, "starting microphone capture (PipeWire sink monitor)");
-                crate::audio::capture::Capture::start_sink_monitor(sink, sample_rate, channels, cb)?
+                crate::audio::capture::Capture::start_sink_monitor(
+                    sink,
+                    sample_rate,
+                    channels,
+                    io_frames,
+                    cb,
+                )?
             } else {
                 info!(%node_id, "starting microphone capture (PipeWire source)");
-                crate::audio::capture::Capture::start_source(&node_id, sample_rate, channels, cb)?
+                crate::audio::capture::Capture::start_source(
+                    &node_id,
+                    sample_rate,
+                    channels,
+                    io_frames,
+                    cb,
+                )?
             };
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::SystemAudio { sample_rate, .. } => {
             info!("starting system-audio capture (PipeWire sink monitor)");
             let mut bridge = bridge;
-            let capture =
-                crate::audio::capture::Capture::start_system(sample_rate, 2, move |samples| {
+            let capture = crate::audio::capture::Capture::start_system(
+                sample_rate,
+                2,
+                io_frames,
+                move |samples| {
                     bridge.apply_commands();
                     bridge.broadcast(samples);
-                })?;
+                },
+            )?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AppAudio {
@@ -95,6 +131,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 &bundle_id,
                 sample_rate,
                 2,
+                io_frames,
                 move |samples| {
                     bridge.apply_commands();
                     bridge.broadcast(samples);
@@ -103,7 +140,8 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
-            start_audio_file(node_id, path, bridge, paused, app)
+            start_audio_file(node_id, path, bridge, paused, flush, host)
         }
+        ResolvedInput::Virtual { .. } => unreachable!("virtual inputs start in input::mod"),
     }
 }

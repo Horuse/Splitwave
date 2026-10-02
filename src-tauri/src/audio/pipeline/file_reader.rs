@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ use symphonia::core::formats::{
 };
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::{Time, Timestamp};
+use symphonia::core::units::{Time, TimeBase, Timestamp};
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
@@ -27,11 +27,51 @@ const BACKOFF_WHEN_FULL: Duration = Duration::from_micros(200);
 /// source's backlog cushion, deep enough that a scheduler hiccup on either side
 /// never runs it dry.
 const PACE_QUEUE_MS: usize = 120;
+/// The last frame fades to silence over this at end of file.
+const EOF_FADE_MS: usize = 3;
 /// Cap on how long end-of-file waits for the queued tail to play out.
 const EOF_DRAIN_MAX: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-const PROGRESS_EVENT: &str = "audio://audio_file_progress";
+pub(super) const PROGRESS_EVENT: &str = "audio://audio_file_progress";
 const SEEK_NONE: i64 = -1;
+/// Longest a seek waits for the graphs to let go of the old position. Only a
+/// graph that stopped reading waits this long.
+const SEEK_FLUSH_MAX: Duration = Duration::from_millis(250);
+
+/// The handshake a seek runs with every graph reading the file. The reader
+/// asks for the old position's queued audio to go; each source fades it out,
+/// drops it and answers; only then does the reader hand over the new
+/// position. Dropping on the command alone races the reader, which may still
+/// be pushing old audio, and a source that happened to run dry would take
+/// the new audio for the old.
+#[derive(Default)]
+pub(crate) struct SeekFlush {
+    requested: AtomicU64,
+    answered: AtomicU64,
+}
+
+impl SeekFlush {
+    /// Flushes asked for so far; a change means a new one.
+    pub(crate) fn requested(&self) -> u64 {
+        self.requested.load(Ordering::Acquire)
+    }
+
+    /// A source finished `n` flushes.
+    pub(crate) fn answer(&self, n: u64) {
+        self.answered.fetch_add(n, Ordering::Release);
+    }
+
+    /// Asks for a flush; returns the answers counted before it.
+    pub(crate) fn request(&self) -> u64 {
+        let before = self.answered.load(Ordering::Acquire);
+        self.requested.fetch_add(1, Ordering::AcqRel);
+        before
+    }
+
+    pub(crate) fn answered_since(&self, before: u64) -> u64 {
+        self.answered.load(Ordering::Acquire).saturating_sub(before)
+    }
+}
 
 /// Progress payloads go to the frontend via Tauri; tests drive the reader
 /// with a recording emitter instead of an `AppHandle<Wry>`.
@@ -60,12 +100,21 @@ impl AudioFileReader {
     pub(super) fn loop_enabled(&self) -> Arc<AtomicBool> {
         self.loop_enabled.clone()
     }
+
+    /// Wakes a paused reader to look at its controls again: a resume or a
+    /// seek is taken at once rather than at its next progress tick.
+    pub(super) fn wake(&self) {
+        if let Some(j) = &self.join {
+            j.thread().unpark();
+        }
+    }
 }
 
 impl Drop for AudioFileReader {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.join.take() {
+            j.thread().unpark();
             let _ = j.join();
         }
     }
@@ -137,6 +186,7 @@ pub(super) fn start_audio_file_reader<E: ProgressEmitter>(
     bridge: BroadcastRx,
     initial_loop: bool,
     paused: Arc<AtomicBool>,
+    flush: Option<Arc<SeekFlush>>,
     app: E,
 ) -> AppResult<AudioFileReader> {
     let stop = Arc::new(AtomicBool::new(false));
@@ -158,6 +208,7 @@ pub(super) fn start_audio_file_reader<E: ProgressEmitter>(
                 &seek_to_thread,
                 &loop_enabled_thread,
                 &paused_thread,
+                flush.as_deref(),
                 &app,
             ) {
                 warn!(path = %path.display(), error = %e, "audio file reader failed");
@@ -180,6 +231,11 @@ struct OpenedDecoder {
     sample_rate: u32,
     channels: usize,
     total_frames: u64,
+    time_base: Option<TimeBase>,
+    /// Frames still to drop from the next decodes: a seek lands on the packet
+    /// holding its target, and what that packet carries before the target is
+    /// not part of the position asked for.
+    skip: u64,
     /// A broken Xing/Info tag can report a zero frame count; symphonia's mpa
     /// demuxer then treats the track as ending at timestamp 0 and trims every
     /// packet to zero length, so decode yields silent empty buffers and the
@@ -302,6 +358,11 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         decoder.reset();
     }
 
+    let time_base = format
+        .tracks()
+        .iter()
+        .find(|t| t.id == track_id)
+        .and_then(|t| t.time_base);
     Ok(OpenedDecoder {
         format,
         decoder,
@@ -309,6 +370,8 @@ fn open_decoder(path: &Path) -> AppResult<OpenedDecoder> {
         sample_rate,
         channels,
         total_frames,
+        time_base,
+        skip: 0,
         fix_gapless_trim,
     })
 }
@@ -365,17 +428,49 @@ fn scan_frames(
     total
 }
 
+/// Waits until `consumers` sources have answered the flush asked for after
+/// `before` answers.
+fn await_flush(
+    flush: &SeekFlush,
+    before: u64,
+    consumers: usize,
+    stop: &AtomicBool,
+    paused: &AtomicBool,
+) {
+    let deadline = Instant::now() + SEEK_FLUSH_MAX;
+    while flush.answered_since(before) < consumers as u64 {
+        if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            warn!(
+                answered = flush.answered_since(before),
+                consumers, "seek went ahead before every graph let go of the old position"
+            );
+            return;
+        }
+        thread::sleep(BACKOFF_WHEN_FULL);
+    }
+}
+
 fn do_seek(od: &mut OpenedDecoder, target_frame: u64) {
     let secs_f64 = target_frame as f64 / od.sample_rate as f64;
     let time = Time::try_from_secs_f64(secs_f64).unwrap_or(Time::ZERO);
+    od.skip = 0;
     match od.format.seek(
-        SeekMode::Coarse,
+        SeekMode::Accurate,
         SeekTo::Time {
             time,
             track_id: Some(od.track_id),
         },
     ) {
-        Ok(_) => {}
+        Ok(SeekedTo { actual_ts, .. }) => {
+            let landed = od
+                .time_base
+                .and_then(|tb| tb.calc_time(actual_ts))
+                .map(|t| (t.as_secs_f64() * od.sample_rate as f64).round() as u64);
+            od.skip = landed.map_or(0, |at| target_frame.saturating_sub(at));
+        }
         Err(e) => warn!("seek failed: {e}"),
     }
     od.decoder.reset();
@@ -400,6 +495,7 @@ fn run<E: ProgressEmitter>(
     seek_to: &AtomicI64,
     loop_enabled: &AtomicBool,
     paused: &AtomicBool,
+    flush: Option<&SeekFlush>,
     app: &E,
 ) -> AppResult<()> {
     let mut od = open_decoder(path)?;
@@ -477,18 +573,24 @@ fn run<E: ProgressEmitter>(
                 );
                 last_paused_progress = Instant::now();
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::park_timeout(PROGRESS_INTERVAL);
             continue;
         }
         last_paused_progress = Instant::now();
 
         let pending = seek_to.swap(SEEK_NONE, Ordering::SeqCst);
         if pending >= 0 {
+            // Asked before the decoder moves, so the graphs fade the old
+            // position out while it does.
+            let asked = flush.map(|f| (f, f.request(), bridge.active_consumers()));
             let target = clamp_frame(pending as u64, od.total_frames);
             if target == 0 {
                 reopen_decoder(&mut od, path);
             } else {
                 do_seek(&mut od, target);
+            }
+            if let Some((f, before, consumers)) = asked {
+                await_flush(f, before, consumers, stop, paused);
             }
             frames_played = target;
             emit_progress(
@@ -508,7 +610,10 @@ fn run<E: ProgressEmitter>(
         // a per-chunk wall-clock delay after the push below.
         let mut unrouted = false;
         loop {
-            if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
+            if stop.load(Ordering::SeqCst)
+                || paused.load(Ordering::SeqCst)
+                || seek_to.load(Ordering::SeqCst) != SEEK_NONE
+            {
                 break;
             }
             match bridge.max_queued() {
@@ -520,7 +625,11 @@ fn run<E: ProgressEmitter>(
                 }
             }
         }
-        if stop.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst) {
+        // A seek that arrived while waiting is taken before decoding on.
+        if stop.load(Ordering::SeqCst)
+            || paused.load(Ordering::SeqCst)
+            || seek_to.load(Ordering::SeqCst) != SEEK_NONE
+        {
             continue;
         }
 
@@ -546,10 +655,10 @@ fn run<E: ProgressEmitter>(
                 continue;
             }
             // Fade out to avoid a hard click at end of file.
-            const FADE_FRAMES: usize = 128;
-            let mut fade_buf = vec![0.0f32; FADE_FRAMES * ch];
-            for f in 0..FADE_FRAMES {
-                let t = 1.0 - (f as f32 + 1.0) / FADE_FRAMES as f32;
+            let fade_frames = (od.sample_rate as usize * EOF_FADE_MS / 1000).max(1);
+            let mut fade_buf = vec![0.0f32; fade_frames * ch];
+            for f in 0..fade_frames {
+                let t = 1.0 - (f as f32 + 1.0) / fade_frames as f32;
                 for c in 0..ch {
                     fade_buf[f * ch + c] = last_frame[c] * t;
                 }
@@ -594,10 +703,13 @@ fn run<E: ProgressEmitter>(
         }
 
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
+            // Decoded ahead is not played yet: the position shown is the one
+            // being heard, behind what was handed over by what still waits.
+            let ahead = bridge.min_queued().unwrap_or(0) / ch.max(1);
             emit_progress(
                 app,
                 &node_id,
-                frames_played,
+                frames_played.saturating_sub(ahead as u64),
                 od.total_frames,
                 od.sample_rate,
                 od.channels as u32,
@@ -675,7 +787,15 @@ fn decode_next(
             }
         }
 
-        return Ok(frames);
+        let skip = od.skip.min(frames as u64) as usize;
+        if skip > 0 {
+            od.skip -= skip as u64;
+            if skip == frames {
+                continue;
+            }
+            out.copy_within(skip * dst_ch..frames * dst_ch, 0);
+        }
+        return Ok(frames - skip);
     }
 }
 
@@ -733,6 +853,93 @@ mod tests {
                 self.saw_paused.store(true, Ordering::SeqCst);
                 self.stop.store(true, Ordering::SeqCst);
             }
+        }
+    }
+
+    struct Quiet;
+
+    impl ProgressEmitter for Quiet {
+        fn emit_progress(&self, _: serde_json::Value) {}
+    }
+
+    #[test]
+    fn nothing_from_before_a_seek_reaches_the_graph_after_it() {
+        let path = temp_path("seek.wav");
+        let _ = std::fs::remove_file(&path);
+        // Each frame carries its own index, so any sample says where it is from.
+        let frames = 96_000;
+        let pos = |f: usize| f as f32 / 1_000_000.0;
+        let block: Vec<f32> = (0..frames).flat_map(|f| [pos(f), pos(f)]).collect();
+        let mut enc = build_encoder(
+            &path,
+            48_000,
+            2,
+            RecordingFormat::Wav {
+                bit_depth: WavBitDepth::F32,
+            },
+            false,
+        )
+        .unwrap();
+        enc.write_interleaved(&block).unwrap();
+        enc.finalize().unwrap();
+
+        let (mut tx, rx) = crate::audio::input_bridge::broadcast_channel();
+        let (prod, mut cons) = rtrb::RingBuffer::<f32>::new(48_000 * 2);
+        tx.add(prod).unwrap();
+        let flush = Arc::new(SeekFlush::default());
+        let reader = start_audio_file_reader(
+            "f".into(),
+            path.clone(),
+            rx,
+            false,
+            Arc::new(AtomicBool::new(false)),
+            Some(flush.clone()),
+            Quiet,
+        )
+        .unwrap();
+
+        // A source reading in real time, answering flushes the way the graph does.
+        let target = 60_000;
+        let mut seen = flush.requested();
+        let mut asked = false;
+        let mut after: Vec<f32> = Vec::new();
+        let started = Instant::now();
+        while after.len() < 4_096 && started.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(2));
+            if !asked && started.elapsed() > Duration::from_millis(150) {
+                asked = true;
+                reader.seek_to().store(target as i64, Ordering::SeqCst);
+            }
+            if flush.requested() != seen {
+                seen = flush.requested();
+                let n = cons.slots();
+                cons.read_chunk(n).unwrap().commit_all();
+                flush.answer(1);
+                after.push(f32::NAN);
+                continue;
+            }
+            let n = cons.slots().min(192);
+            let Ok(chunk) = cons.read_chunk(n) else {
+                continue;
+            };
+            let (a, b) = chunk.as_slices();
+            if !after.is_empty() {
+                after.extend_from_slice(a);
+                after.extend_from_slice(b);
+            }
+            chunk.commit_all();
+        }
+        drop(reader);
+        let _ = std::fs::remove_file(&path);
+        let after = &after[1..];
+        assert!(after.len() >= 4_096, "the new position never arrived");
+        assert_eq!(
+            after[0],
+            pos(target),
+            "the first sample after a seek is its target"
+        );
+        for pair in after.chunks_exact(2).collect::<Vec<_>>().windows(2) {
+            assert!(pair[1][0] > pair[0][0], "old audio after the seek");
         }
     }
 
@@ -1124,6 +1331,7 @@ mod tests {
             &seek_to,
             &loop_enabled,
             &paused,
+            None,
             &emitter,
         )
         .expect("reader reaches EOF");

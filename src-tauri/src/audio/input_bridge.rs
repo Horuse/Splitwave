@@ -26,6 +26,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::health;
 use crate::audio::streams::bulk_push_counted;
+use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
 /// Maximum subscribers per input. 32 covers any plausible pipeline (each
@@ -73,6 +74,43 @@ enum BroadcastCmd {
     },
 }
 
+/// Seconds since a process-wide epoch. Producers and consumers of audio
+/// stamp their timing on this one clock.
+pub fn now_secs() -> f64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+}
+
+/// When a producer last wrote and how much it has written in total. A
+/// consumer reads the queue as a smooth function of time from it (see
+/// `drift_loop::ArrivalClock`): the level alone saws with every delivery.
+#[derive(Default)]
+pub struct WriteClock {
+    samples: AtomicU64,
+    /// `now_secs()` of the last write, as f64 bits.
+    at: AtomicU64,
+}
+
+impl WriteClock {
+    /// RT-safe: two relaxed stores.
+    #[inline]
+    pub fn record(&self, samples: usize, at: f64) {
+        self.at.store(at.to_bits(), Ordering::Relaxed);
+        self.samples.fetch_add(samples as u64, Ordering::Release);
+    }
+
+    /// Total samples written and when the last of them was. The two are read
+    /// separately; a torn pair is one block's glitch the consumer lowpasses.
+    #[inline]
+    pub fn read(&self) -> (u64, f64) {
+        let samples = self.samples.load(Ordering::Acquire);
+        (samples, f64::from_bits(self.at.load(Ordering::Relaxed)))
+    }
+}
+
 /// Main-thread side. Tracks slot allocations and pushes Add/Remove
 /// commands to the RT callback.
 pub struct BroadcastTx {
@@ -83,6 +121,7 @@ pub struct BroadcastTx {
     /// RT returns removed producers here so they drop on main, not on the
     /// audio callback thread.
     discarded_rx: Consumer<Slot>,
+    clock: Arc<WriteClock>,
 }
 
 /// RT-thread side. Owns the Producer slot vec; lives inside the input
@@ -91,9 +130,13 @@ pub struct BroadcastRx {
     cmds: Consumer<BroadcastCmd>,
     slots: Vec<Option<Slot>>,
     discarded_tx: Producer<Slot>,
+    clock: Arc<WriteClock>,
+    /// Rung after every broadcast, for a thread that waits on this bridge.
+    bell: Option<Arc<Doorbell>>,
 }
 
 pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
+    let clock = Arc::new(WriteClock::default());
     let (cmd_tx, cmd_rx) = RingBuffer::<BroadcastCmd>::new(CMD_QUEUE_CAPACITY);
     let (disc_tx, disc_rx) = RingBuffer::<Slot>::new(CMD_QUEUE_CAPACITY);
     let mut slots = Vec::with_capacity(BRIDGE_CAPACITY);
@@ -107,16 +150,24 @@ pub fn broadcast_channel() -> (BroadcastTx, BroadcastRx) {
             cmds: cmd_tx,
             used,
             discarded_rx: disc_rx,
+            clock: clock.clone(),
         },
         BroadcastRx {
             cmds: cmd_rx,
             slots,
             discarded_tx: disc_tx,
+            clock,
+            bell: None,
         },
     )
 }
 
 impl BroadcastTx {
+    /// The input's write timing, shared with every graph that reads it.
+    pub fn write_clock(&self) -> Arc<WriteClock> {
+        self.clock.clone()
+    }
+
     /// Register `producer` for broadcast. Returns the slot index used to
     /// remove it later, plus that slot's capture-side counters -- the
     /// caller hands these to the matching SourceMeta so the tick thread can
@@ -201,6 +252,7 @@ impl BroadcastRx {
     /// reserves via one CAS per slot and never blocks.
     #[inline]
     pub fn broadcast(&mut self, samples: &[f32]) {
+        self.clock.record(samples.len(), now_secs());
         for slot in self.slots.iter_mut() {
             if let Some((p, stats)) = slot {
                 let written = bulk_push_counted(p, samples, &health::CAPTURE_RING_OVERRUN_SAMPLES);
@@ -211,6 +263,36 @@ impl BroadcastRx {
                 }
             }
         }
+        if let Some(bell) = &self.bell {
+            bell.ring();
+        }
+    }
+
+    /// Wakes whoever answers `bell` after every broadcast.
+    pub fn ring_after_broadcast(&mut self, bell: Arc<Doorbell>) {
+        self.bell = Some(bell);
+    }
+
+    /// Samples queued in the emptiest active slot: the reader furthest along,
+    /// or `None` when nothing is subscribed.
+    pub fn min_queued(&mut self) -> Option<usize> {
+        self.apply_commands();
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .filter(|(p, _)| !p.is_abandoned())
+            .map(|(p, _)| p.buffer().capacity() - p.slots())
+            .min()
+    }
+
+    /// Subscribers still reading.
+    pub fn active_consumers(&mut self) -> usize {
+        self.apply_commands();
+        self.slots
+            .iter()
+            .filter_map(|s| s.as_ref())
+            .filter(|(p, _)| !p.is_abandoned())
+            .count()
     }
 
     /// Samples queued in the fullest active slot, or `None` when nothing is
@@ -284,6 +366,19 @@ impl BroadcastRx {
 mod tests {
     use super::*;
 
+    /// Drains up to `dst.len()` samples, zero-filling the rest.
+    fn pop_into(cons: &mut Consumer<f32>, dst: &mut [f32]) -> usize {
+        let n = dst.len().min(cons.slots());
+        if let Ok(chunk) = cons.read_chunk(n) {
+            let (a, b) = chunk.as_slices();
+            dst[..a.len()].copy_from_slice(a);
+            dst[a.len()..n].copy_from_slice(b);
+            chunk.commit_all();
+        }
+        dst[n..].fill(0.0);
+        n
+    }
+
     #[test]
     fn add_remove_roundtrip_bridges_audio() {
         let (mut tx, mut rx) = broadcast_channel();
@@ -299,7 +394,7 @@ mod tests {
         assert_eq!(stats.fed.load(Ordering::Relaxed), 512);
         assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
         let mut out = vec![0.0f32; 512];
-        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        let n = pop_into(&mut cons, &mut out);
         assert_eq!(n, 512);
         assert_eq!(out, block);
 
@@ -319,12 +414,39 @@ mod tests {
         let (prod, mut cons) = RingBuffer::<f32>::new(8);
         let (_, stats) = tx.add(prod).expect("add");
         rx.apply_commands();
-        rx.broadcast(&vec![1.0f32; 64]);
-        assert_eq!(stats.fed.load(Ordering::Relaxed), 8);
-        assert_eq!(stats.dropped.load(Ordering::Relaxed), 56);
+        rx.broadcast(&vec![1.0f32; 6]);
+        // Does not fit whole: dropped whole, so no frame is ever split.
+        rx.broadcast(&vec![2.0f32; 4]);
+        assert_eq!(stats.fed.load(Ordering::Relaxed), 6);
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 4);
         let mut out = vec![0.0f32; 8];
-        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut out), 8);
-        assert_eq!(out, vec![1.0; 8]);
+        assert_eq!(pop_into(&mut cons, &mut out), 6);
+        assert_eq!(out[..6], [1.0; 6]);
+    }
+
+    // A mono 48 kHz mic normalized to 44.1 kHz: the resampler emits 235 and
+    // 236 frames in turn, and a mono frame is one sample, so half its chunks
+    // are odd. Every sample it emits must reach the graph.
+    #[test]
+    fn a_resampled_mono_mic_loses_nothing() {
+        let (mut tx, mut rx) = broadcast_channel();
+        let (prod, cons) = RingBuffer::<f32>::new(96_000);
+        let (_, stats) = tx.add(prod).expect("add");
+        rx.apply_commands();
+        let mut rs = crate::audio::resample::MultiResampler::new(48_000, 44_100, 256, 1).unwrap();
+        let input = vec![0.25f32; 256];
+        let mut out = Vec::with_capacity(rs.out_max());
+        let (mut emitted, mut odd) = (0usize, 0usize);
+        for _ in 0..48_000 / 256 {
+            out.clear();
+            rs.process_chunk(&input, &mut out).unwrap();
+            odd += out.len() % 2;
+            emitted += out.len();
+            rx.broadcast(&out);
+        }
+        assert!(odd > 0, "the case under test: odd chunks happen");
+        assert_eq!(stats.dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(cons.slots(), emitted, "every resampled sample arrived");
     }
 
     #[test]
@@ -382,7 +504,7 @@ mod tests {
         let block = vec![0.5f32; 512];
         rx.broadcast_blocking(&block, &stop, &paused, Duration::from_micros(100));
         let mut out = vec![0.0f32; 512];
-        let n = crate::audio::streams::bulk_pop(&mut cons, &mut out);
+        let n = pop_into(&mut cons, &mut out);
         assert_eq!(n, 512);
         assert_eq!(out, block);
 
@@ -395,7 +517,7 @@ mod tests {
             Duration::from_millis(1),
         );
         let mut stopped = vec![0.0f32; 512];
-        assert_eq!(crate::audio::streams::bulk_pop(&mut cons, &mut stopped), 0);
+        assert_eq!(pop_into(&mut cons, &mut stopped), 0);
     }
 
     #[test]

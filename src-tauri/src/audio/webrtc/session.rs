@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rtrb::Consumer;
@@ -25,6 +25,8 @@ pub struct WebRtcSession {
     /// Bumped whenever the send rings are replaced, so the encode task rebuilds
     /// every channel's encode state together.
     pub send_gen: AtomicU64,
+    /// Rung by the DAG after each block it pushes into the send rings.
+    pub send_bell: Arc<crate::audio::wake::Doorbell>,
     // Each output subgraph builds its own bridge, so received audio fans out to
     // per-bridge rings (keyed "peer:ch") rather than being drained once.
     pub fanout: FanoutRegistry,
@@ -39,6 +41,8 @@ pub struct WebRtcSession {
     // DSP graph rate the bridge feeds/reads at; the async paths resample it to
     // 48 kHz for Opus. Defaults to 48 kHz until the bridge is instantiated.
     pub output_sr: Arc<AtomicU32>,
+    // The DAG's block at `output_sr`; one packet carries one block.
+    pub block_frames: AtomicUsize,
     // Guard so only one encode loop runs regardless of how many peers connect.
     pub encoder_started: AtomicBool,
     // "idle" | "hosting" | "joining".
@@ -88,12 +92,14 @@ impl WebRtcSession {
             opus_application,
             send_consumers: Mutex::new(Vec::new()),
             send_gen: AtomicU64::new(0),
+            send_bell: Arc::default(),
             fanout: FanoutRegistry::default(),
             peers: tokio::sync::Mutex::new(HashMap::new()),
             local_name: Arc::new(Mutex::new(String::new())),
             local_channels: Arc::new(AtomicU32::new(1)),
             codec: AtomicU8::new(Format::Opus.to_byte()),
             output_sr: Arc::new(AtomicU32::new(OPUS_SR)),
+            block_frames: AtomicUsize::new(crate::audio::graph::MAX_BUFFER_FRAMES),
             encoder_started: AtomicBool::new(false),
             phase: Mutex::new("idle"),
             room_code: Mutex::new(None),
@@ -110,20 +116,35 @@ impl WebRtcSession {
         self.codec.store(f.to_byte(), Ordering::Relaxed);
     }
 
-    pub fn set_send_consumers(&self, consumers: Vec<Consumer<f32>>, output_sr: u32) {
+    pub fn set_send_consumers(
+        &self,
+        consumers: Vec<Consumer<f32>>,
+        output_sr: u32,
+        block_frames: usize,
+    ) {
         *self.send_consumers.lock().unwrap() = consumers;
-        self.send_gen.fetch_add(1, Ordering::SeqCst);
         self.output_sr.store(output_sr, Ordering::Relaxed);
+        self.block_frames.store(block_frames, Ordering::Relaxed);
+        self.send_gen.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub fn register_bridge(&self, output_sr: u32, realtime: bool) -> ConsumerHandle {
-        self.fanout.register_consumer(output_sr, realtime)
+    pub fn register_bridge(
+        &self,
+        output_sr: u32,
+        block_frames: usize,
+        realtime: bool,
+    ) -> ConsumerHandle {
+        self.fanout
+            .register_consumer(output_sr, block_frames, realtime)
     }
 
     /// New received channel (keyed `peer:channel`), wired into every live bridge.
     pub fn attach_channel(&self, peer: String, channel: u8, first_seq: u16) -> ChannelBroadcast {
-        self.fanout
-            .attach_channel(format!("{peer}:{channel}"), first_seq)
+        self.fanout.attach_channel(
+            format!("{peer}:{channel}"),
+            first_seq,
+            crate::audio::stream_recv::SR,
+        )
     }
 
     /// Drops a disconnected peer's channels so new bridges don't wire to them.

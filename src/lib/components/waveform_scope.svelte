@@ -61,8 +61,9 @@
 	// browsable history is the binned scope stream, kept per node id so it
 	// survives remounts. Cleared when a new session rewrites the timeline.
 	const liveHistories = new Map<string, { session: number; bins: Map<number, Float32Array>; low: number }>();
-	// ~3.5 h per node at 48 kHz; trimmed from the front once exceeded.
-	const LIVE_HISTORY_CAP = 200_000;
+	// Seconds of history kept per node, at any rate; trimmed from the front
+	// once exceeded. One bin covers SEG_FRAMES frames.
+	const LIVE_HISTORY_SECONDS = 270;
 	const SCALE_LEVELS: [number, string][] = [
 		[1.0, '1.0'],
 		[0.5, '0.5'],
@@ -156,7 +157,8 @@
 		}
 		liveStore.bins.set(seg, arr);
 		if (liveStore.low < 0) liveStore.low = seg;
-		while (liveStore.bins.size > LIVE_HISTORY_CAP && liveStore.low <= seg) {
+		const cap = (LIVE_HISTORY_SECONDS * sampleRate) / SEG_FRAMES;
+		while (liveStore.bins.size > cap && liveStore.low <= seg) {
 			liveStore.bins.delete(liveStore.low);
 			liveStore.low++;
 		}

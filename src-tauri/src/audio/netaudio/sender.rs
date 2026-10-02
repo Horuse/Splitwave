@@ -1,23 +1,33 @@
 //! UDP audio sender. One instance per NetSender node (keyed by node id) owns a
-//! send socket and a background task that drains per-channel send rings, encodes
-//! each channel (Opus or raw PCM) and transmits it to the configured target as
-//! self-describing packets. The DAG runs a NetSender output at 48 kHz, so the
-//! task encodes the drained samples directly with no resample.
+//! send socket and a thread that drains per-channel send rings, encodes each
+//! channel (Opus or raw PCM) and transmits it to the configured target as
+//! self-describing packets. The DAG rings the thread every block it leaves in
+//! the rings, so audio goes out as soon as it exists rather than on a timer.
+//! The DAG runs a NetSender output at 48 kHz, so the thread encodes the drained
+//! samples directly with no resample.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::UdpSocket;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use rtrb::Consumer;
-use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 use crate::audio::graph::OpusApplication;
+use crate::audio::wake::Doorbell;
 
-use super::codec::ChannelEncoder;
+use super::codec::{opus_application, opus_application_byte, ChannelEncoder};
 use super::packet::{self, Format};
+
+/// Longest the send thread sleeps without being rung. Out of reach under
+/// test, so whatever a test receives was rung.
+#[cfg(not(test))]
+const IDLE_WAKE: Duration = Duration::from_millis(20);
+#[cfg(test)]
+const IDLE_WAKE: Duration = Duration::from_secs(30);
 
 /// Immutable config; a change (target, codec, bitrate, application) rebuilds the
 /// sender so the encoder and socket are recreated cleanly.
@@ -28,6 +38,8 @@ struct Config {
     opus_bitrate: u32,
     opus_application: OpusApplication,
     sample_rate: u32,
+    /// The DAG's block at `sample_rate`; one packet carries one block.
+    block_frames: usize,
 }
 
 pub struct NetSender {
@@ -36,7 +48,9 @@ pub struct NetSender {
     /// Bumped whenever the send rings are replaced, so the task rebuilds every
     /// channel's encode state together.
     consumers_gen: Arc<AtomicU64>,
-    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Rung by the DAG after each block it pushes.
+    bell: Arc<Doorbell>,
+    stopped: Arc<AtomicBool>,
     bytes: Arc<AtomicU64>,
     packets: Arc<AtomicU64>,
 }
@@ -67,7 +81,7 @@ pub fn release(node_id: &str) {
 }
 
 /// Returns the sender for `node_id`, binding the send socket on first use. A
-/// config change (target / codec / bitrate / sample rate) tears the old task down and rebuilds.
+/// config change (target / codec / bitrate / sample rate / block) tears the old task down and rebuilds.
 pub fn get_or_create(
     node_id: &str,
     target: SocketAddr,
@@ -75,6 +89,7 @@ pub fn get_or_create(
     opus_bitrate: u32,
     opus_application: OpusApplication,
     sample_rate: u32,
+    block_frames: usize,
 ) -> Arc<NetSender> {
     let config = Config {
         target,
@@ -82,6 +97,7 @@ pub fn get_or_create(
         opus_bitrate,
         opus_application,
         sample_rate,
+        block_frames,
     };
     let mut reg = registry().lock().unwrap();
     if let Some(s) = reg.get(node_id) {
@@ -95,7 +111,8 @@ pub fn get_or_create(
         config,
         send_consumers: Arc::new(Mutex::new(Vec::new())),
         consumers_gen: Arc::new(AtomicU64::new(0)),
-        task: Mutex::new(None),
+        bell: Arc::default(),
+        stopped: Arc::new(AtomicBool::new(false)),
         bytes: Arc::new(AtomicU64::new(0)),
         packets: Arc::new(AtomicU64::new(0)),
     });
@@ -112,19 +129,35 @@ impl NetSender {
         self.consumers_gen.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// What the DAG rings once it has pushed a block into the send rings.
+    pub fn bell(&self) -> Arc<Doorbell> {
+        self.bell.clone()
+    }
+
     fn stop(&self) {
-        if let Some(t) = self.task.lock().unwrap().take() {
-            t.abort();
-        }
+        self.stopped.store(true, Ordering::SeqCst);
+        self.bell.ring();
     }
 
     fn spawn_send(self: Arc<Self>) {
-        let handle = tauri::async_runtime::spawn(self.clone().send_loop());
-        *self.task.lock().unwrap() = Some(handle);
+        if let Err(e) = std::thread::Builder::new()
+            .name("net-send".into())
+            .spawn(move || self.send_loop())
+        {
+            warn!(error = %e, "net sender thread failed to start");
+        }
     }
 
-    async fn send_loop(self: Arc<Self>) {
-        let socket = match UdpSocket::bind(("0.0.0.0", 0)).await {
+    fn send_loop(&self) {
+        self.bell.answer_here();
+        // Each block the graph makes leaves from here: a send that waits
+        // behind ordinary threads is a gap at the receiver.
+        let _rt = crate::audio::pipeline::RtThread::promote(
+            "net-send",
+            self.config.block_frames as u32,
+            self.config.sample_rate,
+        );
+        let socket = match UdpSocket::bind(("0.0.0.0", 0)) {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "net sender bind failed");
@@ -132,11 +165,8 @@ impl NetSender {
             }
         };
         let target = self.config.target;
-        let application = match self.config.opus_application {
-            OpusApplication::Voip => opus::Application::Voip,
-            OpusApplication::Audio => opus::Application::Audio,
-            OpusApplication::LowDelay => opus::Application::LowDelay,
-        };
+        let application = opus_application(self.config.opus_application);
+        let block_frames = self.config.block_frames;
         info!(%target, "net sender started");
 
         let consumers = self.send_consumers.clone();
@@ -148,11 +178,11 @@ impl NetSender {
         let mut encoders: Vec<ChannelEncoder> = Vec::new();
         let mut ins: Vec<Vec<f32>> = Vec::new();
         let mut seqs: Vec<u16> = Vec::new();
-        let mut interval = tokio::time::interval(Duration::from_millis(20));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        loop {
-            interval.tick().await;
+        while !self.stopped.load(Ordering::SeqCst) {
+            // Woken by each block the DAG pushes; the timeout only matters if
+            // the DAG stops.
+            self.bell.wait(IDLE_WAKE);
 
             // Drain each channel's send ring under the lock, then release it
             // before the encode / send work.
@@ -170,7 +200,12 @@ impl NetSender {
                 }
                 let n = cons.len();
                 while encoders.len() < n {
-                    encoders.push(ChannelEncoder::new(format, bitrate, application));
+                    encoders.push(ChannelEncoder::new(
+                        format,
+                        bitrate,
+                        application,
+                        block_frames,
+                    ));
                     ins.push(Vec::new());
                     seqs.push(0);
                 }
@@ -194,12 +229,10 @@ impl NetSender {
             let mut packets: Vec<Vec<u8>> = Vec::new();
             let sample_rate = self.config.sample_rate;
             let (opus_bitrate_kbps, opus_app_byte) = if format == Format::Opus {
-                let app = match self.config.opus_application {
-                    OpusApplication::Voip => 1,
-                    OpusApplication::Audio => 2,
-                    OpusApplication::LowDelay => 3,
-                };
-                ((self.config.opus_bitrate / 1000) as u16, app)
+                (
+                    (self.config.opus_bitrate / 1000) as u16,
+                    opus_application_byte(self.config.opus_application),
+                )
             } else {
                 (0, 0)
             };
@@ -223,7 +256,7 @@ impl NetSender {
                 });
             }
             for p in &packets {
-                match socket.send_to(p, target).await {
+                match socket.send_to(p, target) {
                     Ok(_) => {
                         self.bytes.fetch_add(p.len() as u64, Ordering::Relaxed);
                         self.packets.fetch_add(1, Ordering::Relaxed);
@@ -253,6 +286,7 @@ mod tests {
             0,
             OpusApplication::Audio,
             48_000,
+            256,
         );
 
         let mut consumers = Vec::new();
@@ -264,6 +298,7 @@ mod tests {
             consumers.push(cons);
         }
         sender.set_send_consumers(consumers);
+        sender.bell().ring();
 
         let mut seqs: BTreeMap<u8, Vec<u16>> = BTreeMap::new();
         let mut buf = [0u8; 2048];
@@ -290,5 +325,35 @@ mod tests {
             }
         }
         assert!(stats("test-sender").is_none(), "release frees the node");
+    }
+
+    #[test]
+    fn a_ring_sends_at_once_instead_of_on_the_idle_tick() {
+        let sink = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind sink");
+        let sender = get_or_create(
+            "test-rung-sender",
+            sink.local_addr().expect("sink address"),
+            Format::PcmF32,
+            0,
+            OpusApplication::Audio,
+            48_000,
+            256,
+        );
+        sink.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let (mut prod, cons) = rtrb::RingBuffer::new(9_600);
+        sender.set_send_consumers(vec![cons]);
+        let bell = sender.bell();
+        let mut buf = [0u8; 2048];
+        // The idle tick is out of reach here: each packet came from a ring.
+        for block in 0..5 {
+            prod.write_chunk_uninit(256)
+                .expect("ring space")
+                .fill_from_iter(std::iter::repeat(0.5));
+            bell.ring();
+            sink.recv(&mut buf)
+                .unwrap_or_else(|e| panic!("block {block}: the ring did not send it ({e})"));
+        }
+        release("test-rung-sender");
     }
 }

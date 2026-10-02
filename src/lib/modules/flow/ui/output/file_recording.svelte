@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { open, save } from '@tauri-apps/plugin-dialog';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, untrack } from 'svelte';
@@ -190,7 +191,7 @@
 		dropEdgesAbove(channels);
 		// Fewer channels narrow the per-channel bitrate cap (AAC).
 		const patch: Partial<FileRecordingNodeData> = { channels };
-		const fmt = clampFormatBitrate(data.format, data.sampleRate ?? 48_000, channels);
+		const fmt = clampFormatBitrate(data.format, data.sampleRate ?? DEFAULT_SAMPLE_RATE, channels);
 		if (fmt !== data.format) patch.format = fmt;
 		flow.updateNodeData(id, patch);
 	}
@@ -276,11 +277,11 @@
 		// The carried-over shape must fit the new encoder: grid formats snap
 		// the rate to the nearest supported value, custom ranges clamp, and
 		// the default bitrate is re-clamped to the bounds at that shape.
-		let rate = data.sampleRate ?? 48_000;
+		let rate = data.sampleRate ?? DEFAULT_SAMPLE_RATE;
 		if (cfgNext.rate.mode === 'grid' && cfgNext.rate.rates) {
 			rate = cfgNext.rate.rates.reduce((best, r) => (Math.abs(r - rate) < Math.abs(best - rate) ? r : best));
 		} else if (cfgNext.rate.mode === 'grid+custom') {
-			rate = Math.min(cfgNext.rate.max ?? 384_000, Math.max(cfgNext.rate.min ?? 8_000, rate));
+			rate = Math.min(cfgNext.rate.max ?? MAX_SAMPLE_RATE, Math.max(cfgNext.rate.min ?? MIN_SAMPLE_RATE, rate));
 		}
 		next = clampFormatBitrate(next, rate, Math.min(data.channels, cfgNext.maxChannels));
 		const patch: Partial<FileRecordingNodeData> = { format: next };
@@ -577,7 +578,7 @@
 	async function setCustomRate(n: number) {
 		if (locked) return;
 		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
-		flow.updateNodeData(id, { sampleRate: Math.min(cfg.rate.max ?? 384_000, Math.max(cfg.rate.min ?? 8_000, n)) });
+		flow.updateNodeData(id, { sampleRate: Math.min(cfg.rate.max ?? MAX_SAMPLE_RATE, Math.max(cfg.rate.min ?? MIN_SAMPLE_RATE, n)) });
 	}
 
 	const AIFF_BYTES_PER_FRAME: Record<AiffBitDepth, number> = { i16: 4, i24: 6 };
@@ -586,7 +587,7 @@
 	const WAV_HEADER_BYTES: Record<WavBitDepth, number> = { i16: 44, i24: 44, f32: 58 };
 
 	function estimatedSize(): number {
-		const sr = sampleRate > 0 ? sampleRate : 48_000;
+		const sr = sampleRate > 0 ? sampleRate : DEFAULT_SAMPLE_RATE;
 		const seconds = frames / sr;
 		if (data.format.kind === 'wav') {
 			return frames * WAV_BYTES_PER_FRAME[data.format.bitDepth] + WAV_HEADER_BYTES[data.format.bitDepth];
@@ -643,7 +644,7 @@
 		flow.updateNodeData(id, { waveformHidden: !(data.waveformHidden ?? false) });
 	}
 
-	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? 48_000));
+	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? DEFAULT_SAMPLE_RATE));
 	let srcTooltip = $derived.by(() => {
 		if (targetSampleRate === appSettings.pipelineSampleRate) return undefined;
 		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(targetSampleRate)}`;
@@ -694,7 +695,7 @@
 				<div class="flex items-center justify-end gap-1">
 					<span class="font-mono text-[9px] text-neutral-500">Hz</span>
 					<NumberStepper
-						value={data.sampleRate ?? 48_000}
+						value={data.sampleRate ?? DEFAULT_SAMPLE_RATE}
 						min={cfg.rate.min ?? 8000}
 						max={cfg.rate.max ?? 384000}
 						step={100}

@@ -1,22 +1,25 @@
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::traits::StreamTrait;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
 use crate::audio::health;
+use crate::audio::macos_hal;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
 use super::super::dag::OutputGraph;
+use super::super::host::Host;
 use super::super::native::native_config;
 use super::super::worker::WorkerCtrl;
-use super::{spawn_speaker_worker, speaker_ring, SpeakerIo, SpeakerWorker, StreamGuard};
+use super::{
+    device_block, speaker_callback, speaker_renderer, SpeakerIo, SpeakerLink, StreamGuard,
+};
 
 // Bluetooth AUHAL often returns DeviceNotAvailable on first bind; retry covers settling.
 const SPEAKER_MAX_ATTEMPTS: u32 = 3;
@@ -30,11 +33,9 @@ pub(in crate::audio::pipeline) struct SpeakerResolved {
     pub sample_rate: u32,
 }
 
-// Field order: the stream drops before the worker so the audio callback stops
-// before the ring is freed.
 pub(in crate::audio::pipeline) struct SpeakerHandle {
     _stream: cpal::Stream,
-    _worker: SpeakerWorker,
+    link: SpeakerLink,
     _alive: StreamGuard,
 }
 
@@ -45,11 +46,16 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 // never reaches refcount zero, so the AudioUnit is never disposed and keeps
 // calling `fill` on a ring nobody drains anymore. `pause` reaches the
 // AudioUnit through `&self` and stops it for real, independent of the cycle.
+//
+// The renderer (and the graph it owns) is taken back first, so it drops here
+// rather than leaking with that closure.
 impl Drop for SpeakerHandle {
     fn drop(&mut self) {
+        let renderer = self.link.retire();
         if let Err(e) = self._stream.pause() {
             warn!(error = %e, "failed to pause speaker stream on teardown");
         }
+        drop(renderer);
     }
 }
 
@@ -65,9 +71,8 @@ pub(in crate::audio::pipeline) fn resolve_speaker(device_id: &str) -> AppResult<
     })
 }
 
-// Substring match on cpal's stable Display -- AppError flattens the variant.
 fn is_device_not_available(e: &AppError) -> bool {
-    matches!(e, AppError::Stream(s) if s.contains("no longer available"))
+    matches!(e, AppError::DeviceUnavailable(_))
 }
 
 pub(in crate::audio::pipeline) fn start_speaker_stream(
@@ -75,9 +80,10 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
     spec: SpeakerResolved,
     graph: OutputGraph,
     meter: crate::audio::effects::MeterHandle,
-    app: &AppHandle,
+    host: &Host,
 ) -> AppResult<(SpeakerHandle, WorkerCtrl, Arc<AtomicBool>, SpeakerIo)> {
-    let device_name = spec.device.name().unwrap_or_else(|_| "<unknown>".into());
+    let device_name =
+        crate::audio::device::cpal_name(&spec.device).unwrap_or_else(|| "<unknown>".into());
     info!(
         device = %device_name,
         sample_rate = spec.sample_rate,
@@ -88,7 +94,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
 
     // AirPods A2DP/HFP switch can race resolve_output; verify state fresh.
     {
-        let fresh = crate::audio::macos_hal::find_output_device(&device_name);
+        let fresh = macos_hal::find_output_device(&device_name);
         match fresh {
             None => warn!(device = %device_name, "HAL no longer sees the device"),
             Some(hal) if hal.sample_rate != spec.sample_rate => warn!(
@@ -107,30 +113,35 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
         }
     }
 
+    // One callback per engine block. The device may clamp the request to its
+    // range; the renderer adapts to whatever it grants.
+    let requested = device_block(graph.block_frames(), graph.sample_rate(), spec.sample_rate);
+    let granted = macos_hal::set_buffer_frames(DeviceKind::Output, &device_name, requested);
+    info!(device = %device_name, requested, granted, "speaker buffer size");
+
+    // Built before the stream opens: a renderer that cannot be built must not
+    // leave behind a stream whose AudioUnit nothing stops.
+    let hardware =
+        macos_hal::io_latency(DeviceKind::Output, &device_name).map(|l| l.hardware_frames);
+    let (renderer, ctrl, io) =
+        speaker_renderer(graph, spec.sample_rate, spec.out_channels, hardware, meter)?;
+
+    let formats = macos_hal::physical_formats(DeviceKind::Output, &device_name);
     let dead = Arc::new(AtomicBool::new(false));
 
-    let mut producer_holder: Option<rtrb::Producer<f32>> = None;
-    let mut level_holder: Option<Arc<AtomicI64>> = None;
-    let mut target_holder: Option<Arc<AtomicI64>> = None;
-    let mut io_holder: Option<SpeakerIo> = None;
-    let mut stream_holder: Option<cpal::Stream> = None;
+    let mut opened: Option<(cpal::Stream, SpeakerLink)> = None;
     for attempt in 1..=SPEAKER_MAX_ATTEMPTS {
-        let (producer, fill, level, target, io) = speaker_ring(
-            spec.out_channels,
-            graph.sample_rate(),
-            spec.sample_rate,
-            graph.latency_frames(),
-        );
-        let app_err = app.clone();
+        let (link, fill) = speaker_callback();
+        let host_err = host.clone();
         let dead_cb = dead.clone();
         let node_id_cb = node_id.to_string();
-        let err_cb = move |e: cpal::StreamError| {
+        let err_cb = move |e: cpal::Error| {
             if dead_cb.swap(true, Ordering::Relaxed) {
                 return;
             }
             health::bump(&health::STREAM_ERRORS, 1);
             error!(node_id = %node_id_cb, error = %e, "speaker stream error");
-            let _ = app_err.emit(
+            host_err.emit(
                 "audio://speaker_error",
                 json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
             );
@@ -144,11 +155,7 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             err_cb,
         ) {
             Ok(s) => {
-                producer_holder = Some(producer);
-                level_holder = Some(level);
-                target_holder = Some(target);
-                io_holder = Some(io);
-                stream_holder = Some(s);
+                opened = Some((s, link));
                 break;
             }
             Err(e) if attempt < SPEAKER_MAX_ATTEMPTS && is_device_not_available(&e) => {
@@ -162,25 +169,13 @@ pub(in crate::audio::pipeline) fn start_speaker_stream(
             Err(e) => return Err(e),
         }
     }
-    let producer = producer_holder.expect("loop sets producer on success or returns Err");
-    let level = level_holder.expect("loop sets level on success or returns Err");
-    let target = target_holder.expect("loop sets target on success or returns Err");
-    let io = io_holder.expect("loop sets io on success or returns Err");
-    let stream = stream_holder.expect("loop sets stream on success or returns Err");
-
-    let (worker_handle, ctrl) = spawn_speaker_worker(
-        producer,
-        level,
-        target,
-        io.sample_rate.clone(),
-        spec.out_channels,
-        graph,
-        meter,
-    )?;
+    let (stream, mut link) = opened.expect("loop opens the stream or returns Err");
+    macos_hal::warn_if_physical_format_changed(DeviceKind::Output, &device_name, &formats);
+    link.attach(renderer);
     Ok((
         SpeakerHandle {
             _stream: stream,
-            _worker: worker_handle,
+            link,
             _alive: StreamGuard::new(),
         },
         ctrl,

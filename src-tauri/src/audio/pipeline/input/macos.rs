@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 use tracing::error;
 
 use crate::audio::device::{self, DeviceKind};
@@ -13,8 +12,13 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::audio::streams;
 use crate::error::{AppError, AppResult};
 
+use super::super::file_reader::SeekFlush;
+use super::super::host::Host;
+use super::super::latency::DeviceIo;
 use super::super::native::native_config;
+use super::super::output::device_block;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
+use crate::audio::macos_hal;
 
 /// The graph downstream is laid out from the format resolved before the capture
 /// started. A tap follows the default output device, so switching it between
@@ -63,13 +67,65 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
     }
 }
 
+/// Asks a capture device for one engine block per callback and reports what
+/// it runs at. Only a cpal device has a buffer of ours to size; captures run
+/// at whatever the system tap delivers.
+pub(in crate::audio::pipeline) fn configure_io(
+    resolved: &ResolvedInput,
+    block_frames: usize,
+    pipeline_rate: u32,
+) -> Option<DeviceIo> {
+    let ResolvedInput::Cpal {
+        device,
+        sample_rate,
+        ..
+    } = resolved
+    else {
+        return None;
+    };
+    let name = crate::audio::device::cpal_name(device)?;
+    let requested = device_block(block_frames, pipeline_rate, *sample_rate);
+    let granted = macos_hal::set_buffer_frames(DeviceKind::Input, &name, requested);
+    tracing::info!(device = %name, requested, granted, "microphone buffer size");
+    let io = macos_hal::io_latency(DeviceKind::Input, &name)?;
+    Some(DeviceIo {
+        rate: *sample_rate,
+        buffer_frames: io.buffer_frames,
+        hardware_frames: Some(io.hardware_frames),
+    })
+}
+
+/// Whether `input` runs off the same clock as the speaker `speaker_device`.
+/// A process tap is driven by the default output device; a microphone shares
+/// a clock with the speaker when it is the same device or reports the same
+/// non-zero clock domain.
+pub(in crate::audio::pipeline) fn same_clock(input: &InputSpec, speaker_device: &str) -> bool {
+    match input {
+        InputSpec::AppAudio { .. } | InputSpec::SystemAudio { .. } => {
+            crate::audio::capture::uses_taps()
+                && macos_hal::default_output_name().as_deref() == Some(speaker_device)
+        }
+        InputSpec::Microphone { device_id } => {
+            device_id == speaker_device || {
+                let mic = macos_hal::clock_domain(DeviceKind::Input, device_id);
+                mic.is_some() && mic == macos_hal::clock_domain(DeviceKind::Output, speaker_device)
+            }
+        }
+        _ => false,
+    }
+}
+
+/// `io_frames` is the capture buffer to ask for, in the source's own frames.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::audio::pipeline) fn start_input_stream(
     node_id: &str,
     resolved: ResolvedInput,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
-    app: &AppHandle,
+    io_frames: u32,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     match resolved {
         ResolvedInput::Cpal {
@@ -81,19 +137,21 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         } => {
             let dead = Arc::new(AtomicBool::new(false));
             let dead_cb = dead.clone();
-            let app_err = app.clone();
+            let host_err = host.clone();
             let node_id_cb = node_id.to_string();
-            let err_cb = move |e: cpal::StreamError| {
+            let err_cb = move |e: cpal::Error| {
                 if dead_cb.swap(true, Ordering::Relaxed) {
                     return;
                 }
                 health::bump(&health::STREAM_ERRORS, 1);
                 error!(node_id = %node_id_cb, error = %e, "input stream error");
-                let _ = app_err.emit(
+                host_err.emit(
                     "audio://input_error",
                     json!({ "nodeId": node_id_cb, "error": format!("{e}") }),
                 );
             };
+            let name = crate::audio::device::cpal_name(&device).unwrap_or_default();
+            let formats = macos_hal::physical_formats(DeviceKind::Input, &name);
             let stream = streams::build_input_stream(
                 &device,
                 &config,
@@ -103,6 +161,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
                 meter,
                 err_cb,
             )?;
+            macos_hal::warn_if_physical_format_changed(DeviceKind::Input, &name, &formats);
             Ok(InputHandle::Cpal(stream))
         }
         ResolvedInput::SystemAudio {
@@ -112,6 +171,7 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
                 sample_rate,
+                io_frames,
                 bridge,
             )?;
             check_capture_format(&capture)?;
@@ -121,13 +181,18 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             sample_rate,
             bundle_id,
         } => {
-            let capture =
-                crate::audio::capture::Capture::start_app(&bundle_id, sample_rate, bridge)?;
+            let capture = crate::audio::capture::Capture::start_app(
+                &bundle_id,
+                sample_rate,
+                io_frames,
+                bridge,
+            )?;
             check_capture_format(&capture)?;
             Ok(InputHandle::Capture(capture))
         }
         ResolvedInput::AudioFile { path, .. } => {
-            start_audio_file(node_id, path, bridge, paused, app)
+            start_audio_file(node_id, path, bridge, paused, flush, host)
         }
+        ResolvedInput::Virtual { .. } => unreachable!("virtual inputs start in input::mod"),
     }
 }

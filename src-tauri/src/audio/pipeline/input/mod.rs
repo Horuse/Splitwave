@@ -4,20 +4,23 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use super::host::Host;
+use super::virtual_io::{self, DeviceClock, VirtualInput};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use cpal::traits::StreamTrait;
 use rtrb::RingBuffer;
-use tauri::AppHandle;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tracing::warn;
 
 use crate::audio::effects::{update_meter, MeterHandle};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastRx};
 use crate::audio::resample::MultiResampler;
+use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
-use super::dag::{ring_capacity_frames, RESAMPLE_CHUNK};
-use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader};
+use super::dag::ring_capacity_frames;
+use super::file_reader::{probe_audio_file, start_audio_file_reader, AudioFileReader, SeekFlush};
+use super::output::device_block;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -32,8 +35,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
 
-pub(super) use platform::resolve_input;
 use platform::start_input_stream as start_native_input_stream;
+pub(super) use platform::{configure_io, resolve_input, same_clock};
 
 /// RAII handle held only for its `Drop` -- stops the cpal stream, tears
 /// down the capture, or signals + joins the file reader thread.
@@ -44,17 +47,20 @@ pub(super) enum InputHandle {
     Capture(crate::audio::capture::Capture),
     AudioFile(AudioFileReader),
     Normalized(NormalizedInput),
+    Virtual(DeviceClock),
 }
 
 pub(super) struct NormalizedInput {
     _input: Box<InputHandle>,
     stop: Arc<AtomicBool>,
+    bell: Arc<Doorbell>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Drop for NormalizedInput {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.bell.ring();
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -136,6 +142,11 @@ pub(super) enum ResolvedInput {
         channels: u32,
         path: PathBuf,
     },
+    /// A device that exists only in memory (see `virtual_io`).
+    Virtual {
+        id: String,
+        input: VirtualInput,
+    },
 }
 
 impl ResolvedInput {
@@ -148,6 +159,7 @@ impl ResolvedInput {
             ResolvedInput::SystemAudio { sample_rate, .. } => *sample_rate,
             ResolvedInput::AppAudio { sample_rate, .. } => *sample_rate,
             ResolvedInput::AudioFile { sample_rate, .. } => *sample_rate,
+            ResolvedInput::Virtual { input, .. } => input.sample_rate,
         }
     }
 
@@ -160,6 +172,7 @@ impl ResolvedInput {
             #[cfg(target_os = "linux")]
             ResolvedInput::PwSource { channels, .. } => (*channels).max(1),
             ResolvedInput::AudioFile { channels, .. } => (*channels).max(1),
+            ResolvedInput::Virtual { input, .. } => input.channels.max(1),
             _ => 2,
         }
     }
@@ -182,7 +195,8 @@ pub(super) fn start_audio_file(
     path: PathBuf,
     bridge: BroadcastRx,
     paused: Option<Arc<AtomicBool>>,
-    app: &AppHandle,
+    flush: Option<Arc<SeekFlush>>,
+    host: &Host,
 ) -> AppResult<InputHandle> {
     // Loop is a runtime atomic, not in InputSpec; frontend syncs it
     // via `set_audio_file_loop` after pipeline start.
@@ -193,20 +207,70 @@ pub(super) fn start_audio_file(
         bridge,
         false,
         paused_arc,
-        app.clone(),
+        flush,
+        host.clone(),
     )?;
     Ok(InputHandle::AudioFile(reader))
 }
 
+/// Starts the device, capture or file itself, feeding `bridge` at its own
+/// rate. A virtual device starts here; everything else on its platform.
+#[allow(clippy::too_many_arguments)]
+fn start_raw_input(
+    node_id: &str,
+    resolved: ResolvedInput,
+    bridge: BroadcastRx,
+    paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
+    meter: Option<MeterHandle>,
+    io_frames: u32,
+    host: &Host,
+) -> AppResult<InputHandle> {
+    if let ResolvedInput::Virtual { id, input } = &resolved {
+        let clock = virtual_io::start_capture(id, input, io_frames as usize, bridge, meter)?;
+        return Ok(InputHandle::Virtual(clock));
+    }
+    start_native_input_stream(
+        node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+    )
+}
+
+/// Longest the normalizer sleeps without its capture ringing: only a capture
+/// that stopped delivering waits this long.
+const NORMALIZER_IDLE_WAKE: Duration = Duration::from_millis(20);
+
+/// Frames the capture normalizer holds back, at the target rate: a chunk
+/// being gathered plus the resampler's filter delay. Zero when it only
+/// forwards (or is skipped entirely).
+pub(super) fn normalizer_frames(
+    resolved: &ResolvedInput,
+    target_sample_rate: u32,
+    block_frames: usize,
+) -> u64 {
+    let native = resolved.sample_rate();
+    if matches!(resolved, ResolvedInput::AudioFile { .. }) || native == target_sample_rate {
+        return 0;
+    }
+    let chunk = device_block(block_frames, target_sample_rate, native) as usize;
+    // The chunk is gathered in device frames; the filter delay is reported
+    // in output frames.
+    let chunk_out = (chunk as u64 * target_sample_rate as u64).div_ceil(native.max(1) as u64);
+    MultiResampler::new(native, target_sample_rate, chunk, 1)
+        .map_or(0, |r| chunk_out + r.delay_frames() as u64)
+}
+
+/// Resamples `chunk` frames at a time: one capture buffer, so a chunk is
+/// ready as soon as a delivery lands.
 fn input_resampler(
     native_rate: u32,
     target_sample_rate: u32,
+    chunk: usize,
     channels: usize,
 ) -> AppResult<Option<MultiResampler>> {
     if native_rate == target_sample_rate {
         Ok(None)
     } else {
-        MultiResampler::new(native_rate, target_sample_rate, RESAMPLE_CHUNK, channels).map(Some)
+        MultiResampler::new(native_rate, target_sample_rate, chunk, channels).map(Some)
     }
 }
 
@@ -220,40 +284,75 @@ pub(super) fn start_input_stream(
     bridge: BroadcastRx,
     target_sample_rate: u32,
     paused: Option<Arc<AtomicBool>>,
+    flush: Option<Arc<SeekFlush>>,
     meter: Option<MeterHandle>,
-    app: &AppHandle,
+    block_frames: usize,
+    host: &Host,
 ) -> AppResult<InputHandle> {
+    // One capture buffer per engine block: deliveries no burstier than reads.
+    let io_frames = device_block(block_frames, target_sample_rate, resolved.sample_rate());
     // Audio files are decoded offline and paced by downstream consumer backpressure.
     // They must not be run through the capture normalizer thread (which drops frames
     // on overflow and breaks backpressure). DAG nodes resample file audio directly.
     if matches!(resolved, ResolvedInput::AudioFile { .. }) {
-        return start_native_input_stream(node_id, resolved, bridge, paused, meter, app);
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+        );
+    }
+    if matches!(resolved, ResolvedInput::Virtual { .. })
+        && resolved.sample_rate() == target_sample_rate
+    {
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+        );
+    }
+    // A device already at the pipeline rate needs no normalizing: its callback
+    // feeds the graphs' rings directly, with no thread hop in between. Only a
+    // cpal device qualifies; captures may change rate while running.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    if matches!(resolved, ResolvedInput::Cpal { .. })
+        && resolved.sample_rate() == target_sample_rate
+    {
+        return start_raw_input(
+            node_id, resolved, bridge, paused, flush, meter, io_frames, host,
+        );
     }
     let sample_rate = resolved.sample_rate();
     let channels = resolved.native_channels() as usize;
     let (raw_producer, mut raw_consumer) =
         RingBuffer::<f32>::new(ring_capacity_frames(sample_rate) * channels.max(1));
-    let (mut raw_tx, raw_rx) = broadcast_channel();
+    let (mut raw_tx, mut raw_rx) = broadcast_channel();
     raw_tx.add(raw_producer)?;
-    let input = start_native_input_stream(node_id, resolved, raw_rx, paused, None, app)?;
+    let bell = Arc::new(Doorbell::default());
+    raw_rx.ring_after_broadcast(bell.clone());
+    let chunk = io_frames as usize;
+    let input = start_raw_input(
+        node_id, resolved, raw_rx, paused, flush, None, io_frames, host,
+    )?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let rate_probe = input.rate_probe();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let bell_thread = bell.clone();
     let label = node_id.to_string();
     let join = thread::Builder::new()
         .name(format!("normalize:{label}"))
         .spawn(move || {
+            // Sits between a capture callback and the speaker callback, so its
+            // wake-ups are audio latency: an ordinary thread adds scheduling jitter.
+            let _rt = super::worker::RtThread::promote("normalize", io_frames, sample_rate);
+            bell_thread.answer_here();
             let mut bridge = bridge;
-            let mut input_buf = vec![0.0; RESAMPLE_CHUNK * channels];
+            let mut input_buf = vec![0.0; chunk * channels];
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             let mut native_rate = sample_rate;
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let native_rate = sample_rate;
-            let mut resampler = match input_resampler(native_rate, target_sample_rate, channels) {
-                Ok(resampler) => resampler,
-                Err(_) => return,
-            };
+            let mut resampler =
+                match input_resampler(native_rate, target_sample_rate, chunk, channels) {
+                    Ok(resampler) => resampler,
+                    Err(_) => return,
+                };
             let mut output_buf = Vec::with_capacity(
                 resampler
                     .as_ref()
@@ -278,7 +377,7 @@ pub(super) fn start_input_stream(
                             }
                         }
                         native_rate = rate;
-                        resampler = input_resampler(rate, target_sample_rate, channels)
+                        resampler = input_resampler(rate, target_sample_rate, chunk, channels)
                             .ok()
                             .flatten();
                         output_buf = Vec::with_capacity(
@@ -289,17 +388,32 @@ pub(super) fn start_input_stream(
                         );
                     }
                 }
-                if raw_consumer.slots() < input_buf.len() {
-                    thread::sleep(Duration::from_millis(1));
-                    continue;
-                }
-                let Ok(chunk) = raw_consumer.read_chunk(input_buf.len()) else {
+                // The resampler takes fixed chunks; a passthrough forwards
+                // whatever whole frames have arrived, so it adds no latency
+                // beyond its wake-up.
+                let available = raw_consumer.slots();
+                let take = if resampler.is_some() {
+                    if available < input_buf.len() {
+                        bell_thread.wait(NORMALIZER_IDLE_WAKE);
+                        continue;
+                    }
+                    input_buf.len()
+                } else {
+                    let whole = available.min(input_buf.len());
+                    let whole = whole - whole % channels.max(1);
+                    if whole == 0 {
+                        bell_thread.wait(NORMALIZER_IDLE_WAKE);
+                        continue;
+                    }
+                    whole
+                };
+                let Ok(chunk) = raw_consumer.read_chunk(take) else {
                     continue;
                 };
                 let (first, second) = chunk.as_slices();
                 let n = first.len();
                 input_buf[..n].copy_from_slice(first);
-                input_buf[n..].copy_from_slice(second);
+                input_buf[n..take].copy_from_slice(second);
                 chunk.commit_all();
                 let normalized = if let Some(resampler) = &mut resampler {
                     output_buf.clear();
@@ -311,7 +425,7 @@ pub(super) fn start_input_stream(
                     }
                     output_buf.as_slice()
                 } else {
-                    input_buf.as_slice()
+                    &input_buf[..take]
                 };
                 if let Some(meter) = &meter {
                     update_meter(meter, normalized, channels);
@@ -323,6 +437,7 @@ pub(super) fn start_input_stream(
     Ok(InputHandle::Normalized(NormalizedInput {
         _input: Box::new(input),
         stop,
+        bell,
         join: Some(join),
     }))
 }
@@ -332,11 +447,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalizer_frames_are_counted_at_the_target_rate() {
+        let mic = |sample_rate| ResolvedInput::Virtual {
+            id: "mic".to_string(),
+            input: VirtualInput {
+                sample_rate,
+                channels: 1,
+                tone_hz: 440.0,
+                amplitude: 0.1,
+                ..Default::default()
+            },
+        };
+        // A 96 kHz chunk of 256 frames is 128 frames at 48 kHz.
+        let delay = MultiResampler::new(96_000, 48_000, 256, 1)
+            .unwrap()
+            .delay_frames() as u64;
+        assert_eq!(normalizer_frames(&mic(96_000), 48_000, 128), 128 + delay);
+        let delay = MultiResampler::new(44_100, 48_000, 118, 1)
+            .unwrap()
+            .delay_frames() as u64;
+        assert_eq!(normalizer_frames(&mic(44_100), 48_000, 128), 129 + delay);
+        assert_eq!(normalizer_frames(&mic(48_000), 48_000, 128), 0);
+    }
+
+    #[test]
     fn test_input_resampler_bypassed_when_rates_match() {
         // When native_rate == target_sample_rate (e.g. 96 kHz App Audio and 96 kHz pipeline),
         // no resampler must be allocated, ensuring bit-transparent passthrough with zero quality loss.
         for rate in [44_100, 48_000, 96_000, 192_000] {
-            let resampler = input_resampler(rate, rate, 2).unwrap();
+            let resampler = input_resampler(rate, rate, 256, 2).unwrap();
             assert!(
                 resampler.is_none(),
                 "resampler should be None for matching rate {rate}"
@@ -346,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_input_resampler_only_allocated_when_rates_differ() {
-        let resampler = input_resampler(48_000, 96_000, 2).unwrap();
+        let resampler = input_resampler(48_000, 96_000, 256, 2).unwrap();
         assert!(
             resampler.is_some(),
             "resampler must be Some when rates differ"
@@ -356,12 +495,12 @@ mod tests {
     #[test]
     fn test_input_bit_transparent_sample_passthrough() {
         // Verify that when resampler is None, samples pass through bit-for-bit without any modification.
-        let mut input_buf = vec![0.0f32; RESAMPLE_CHUNK * 2];
+        let mut input_buf = vec![0.0f32; 256 * 2];
         for (i, sample) in input_buf.iter_mut().enumerate() {
             *sample = ((i as f32) * 0.001).sin();
         }
 
-        let mut resampler = input_resampler(96_000, 96_000, 2).unwrap();
+        let mut resampler = input_resampler(96_000, 96_000, 256, 2).unwrap();
         let mut output_buf = Vec::new();
 
         let normalized = if let Some(resampler) = &mut resampler {

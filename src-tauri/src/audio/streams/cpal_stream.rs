@@ -15,6 +15,7 @@ use cpal::{Sample, SampleFormat, StreamConfig};
 use tracing::error;
 
 use crate::audio::effects::{update_meter, MeterHandle};
+use crate::audio::health;
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
@@ -28,7 +29,7 @@ pub fn build_input_stream(
     src_channels: usize,
     bridge: BroadcastRx,
     meter: Option<MeterHandle>,
-    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+    err_cb: impl FnMut(cpal::Error) + Send + 'static,
 ) -> AppResult<cpal::Stream> {
     match sample_format {
         SampleFormat::F32 => {
@@ -67,40 +68,37 @@ fn build_input_typed<T>(
     src_channels: usize,
     mut bridge: BroadcastRx,
     meter: Option<MeterHandle>,
-    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+    err_cb: impl FnMut(cpal::Error) + Send + 'static,
 ) -> AppResult<cpal::Stream>
 where
     T: Sample + cpal::SizedSample + Send + 'static,
     f32: cpal::FromSample<T>,
 {
-    let mut staging: Vec<f32> = vec![0.0; 16384];
+    let mut staging: Vec<f32> = vec![0.0; scratch_frames(config) * src_channels.max(1)];
     let stream = device
         .build_input_stream::<T, _, _>(
-            config,
+            *config,
             move |data, _| {
                 bridge.apply_commands();
                 if src_channels == 0 || data.is_empty() {
                     return;
                 }
-                let needed = data.len();
-                if staging.len() < needed {
-                    staging.resize(needed, 0.0);
+                for chunk in data.chunks(staging.len()) {
+                    let staged = &mut staging[..chunk.len()];
+                    for (o, &s) in staged.iter_mut().zip(chunk) {
+                        *o = s.to_sample::<f32>();
+                    }
+                    if let Some(m) = &meter {
+                        update_meter(m, staged, src_channels);
+                    }
+                    bridge.broadcast(staged);
                 }
-                for (o, &s) in staging[..needed].iter_mut().zip(data) {
-                    *o = s.to_sample::<f32>();
-                }
-                if let Some(m) = &meter {
-                    update_meter(m, &staging[..needed], src_channels);
-                }
-                bridge.broadcast(&staging[..needed]);
             },
-            err_cb,
+            fatal_only(err_cb),
             None,
         )
-        .map_err(|e| AppError::Stream(format!("input build: {e}")))?;
-    stream
-        .play()
-        .map_err(|e| AppError::Stream(format!("input play: {e}")))?;
+        .map_err(|e| stream_error("input build", e))?;
+    stream.play().map_err(|e| stream_error("input play", e))?;
     Ok(stream)
 }
 
@@ -111,7 +109,7 @@ pub fn build_output_stream<F>(
     sample_format: SampleFormat,
     out_channels: usize,
     fill: F,
-    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+    err_cb: impl FnMut(cpal::Error) + Send + 'static,
 ) -> AppResult<cpal::Stream>
 where
     F: FnMut(&mut [f32], usize) + Send + 'static,
@@ -148,22 +146,16 @@ fn build_output_typed<T, F>(
     config: &StreamConfig,
     out_channels: usize,
     mut fill: F,
-    err_cb: impl FnMut(cpal::StreamError) + Send + 'static,
+    err_cb: impl FnMut(cpal::Error) + Send + 'static,
 ) -> AppResult<cpal::Stream>
 where
     T: Sample + cpal::SizedSample + cpal::FromSample<f32> + Send + 'static,
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
-    const DEFAULT_SCRATCH_FRAMES: usize = 1024;
-    let configured_frames = match config.buffer_size {
-        cpal::BufferSize::Fixed(frames) => frames as usize,
-        cpal::BufferSize::Default => DEFAULT_SCRATCH_FRAMES,
-    };
-    let scratch_samples = configured_frames.max(1) * out_channels.max(1);
-    let mut buf: Vec<f32> = vec![0.0; scratch_samples];
+    let mut buf: Vec<f32> = vec![0.0; scratch_frames(config) * out_channels.max(1)];
     let stream = device
         .build_output_stream::<T, _, _>(
-            config,
+            *config,
             move |data, _| {
                 if out_channels == 0 || data.is_empty() {
                     return;
@@ -177,24 +169,55 @@ where
                     }
                 }
             },
-            err_cb,
+            fatal_only(err_cb),
             None,
         )
         .map_err(|e| {
-            let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
+            let device_name =
+                crate::audio::device::cpal_name(device).unwrap_or_else(|| "<unknown>".into());
             error!(
                 device = %device_name,
-                requested_sample_rate = config.sample_rate.0,
+                requested_sample_rate = config.sample_rate,
                 requested_channels = config.channels,
                 buffer_size = ?config.buffer_size,
                 cpal_error_variant = ?e,
                 cpal_error_display = %e,
                 "build_output_stream failed"
             );
-            AppError::Stream(format!("output build: {e}"))
+            stream_error("output build", e)
         })?;
-    stream
-        .play()
-        .map_err(|e| AppError::Stream(format!("output play: {e}")))?;
+    stream.play().map_err(|e| stream_error("output play", e))?;
     Ok(stream)
+}
+
+/// Frames converted at a time. A callback larger than asked for is handled
+/// in pieces of this size, never by growing the buffer on the audio thread.
+fn scratch_frames(config: &StreamConfig) -> usize {
+    match config.buffer_size {
+        cpal::BufferSize::Fixed(frames) => (frames as usize).max(1),
+        cpal::BufferSize::Default => crate::audio::graph::MAX_BUFFER_FRAMES,
+    }
+}
+
+/// Passes on only the errors that end the stream. A device overload leaves it
+/// playing and is counted instead; on WASAPI capture it is reported from the
+/// audio thread, so counting is all that path may do.
+fn fatal_only(
+    mut err_cb: impl FnMut(cpal::Error) + Send + 'static,
+) -> impl FnMut(cpal::Error) + Send + 'static {
+    move |e| {
+        if matches!(e.kind(), cpal::ErrorKind::Xrun) {
+            health::bump(&health::DEVICE_XRUNS, 1);
+            return;
+        }
+        err_cb(e)
+    }
+}
+
+fn stream_error(what: &str, e: cpal::Error) -> AppError {
+    if matches!(e.kind(), cpal::ErrorKind::DeviceNotAvailable) {
+        AppError::DeviceUnavailable(format!("{what}: {e}"))
+    } else {
+        AppError::Stream(format!("{what}: {e}"))
+    }
 }

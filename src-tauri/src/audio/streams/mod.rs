@@ -1,7 +1,6 @@
 //! Cross-platform SPSC ring helpers plus the cpal stream builders.
 //!
-//! `bulk_pop` / `bulk_push_counted` move whole blocks between the pipeline and the
-//! audio callback on every platform. The cpal `build_*_stream` builders back
+//! `bulk_push_counted` moves whole blocks into SPSC rings on every platform. The cpal `build_*_stream` builders back
 //! macOS (CoreAudio) and Windows (WASAPI); Linux opens its mic via
 //! `capture/linux.rs` and its speaker via `playback.rs`, so it skips them.
 
@@ -16,41 +15,12 @@ mod cpal_stream;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use cpal_stream::{build_input_stream, build_output_stream};
 
-/// Bulk drain `dst.len()` samples from an SPSC ring. Anything we couldn't
-/// read (consumer faster than producer) is zero-filled -- that's the device
-/// playing silence, not glitching. Returns the number of samples actually
-/// read, so callers tracking ring fill level can subtract it.
-pub fn bulk_pop(cons: &mut rtrb::Consumer<f32>, dst: &mut [f32]) -> usize {
-    let want = dst.len();
-    if want == 0 {
-        return 0;
-    }
-    let avail = cons.slots();
-    let to_read = want.min(avail);
-    if to_read > 0 {
-        if let Ok(chunk) = cons.read_chunk(to_read) {
-            let (first, second) = chunk.as_slices();
-            let n1 = first.len();
-            dst[..n1].copy_from_slice(first);
-            let n2 = second.len();
-            if n2 > 0 {
-                dst[n1..n1 + n2].copy_from_slice(second);
-            }
-            chunk.commit_all();
-        }
-    }
-    for s in &mut dst[to_read..] {
-        *s = 0.0;
-    }
-    health::bump(&health::OUTPUT_UNDERRUN_SAMPLES, (want - to_read) as u64);
-    to_read
-}
-
 /// Bulk push via one `write_chunk` reservation -- one atomic-CAS per block
-/// instead of one per sample. On overflow only the head fits and the rest is
-/// dropped (consumer is behind anyway; staying RT-safe beats blocking).
-/// Returns the number of samples actually written, so callers tracking ring
-/// fill level stay in step with the ring after a dropped tail.
+/// instead of one per sample. A block that does not fit is dropped whole
+/// (the consumer is behind anyway; staying RT-safe beats blocking): a partial
+/// write would split a frame, and every later frame would land a channel off.
+/// Returns the number of samples written, so callers tracking fill level stay
+/// in step with the ring.
 ///
 /// `counter` names which ring this call site is feeding, so overruns can be
 /// told apart by call site instead of summing into one global total.
@@ -59,23 +29,70 @@ pub fn bulk_push_counted(prod: &mut Producer<f32>, samples: &[f32], counter: &At
     if want == 0 {
         return 0;
     }
-    let avail = prod.slots();
-    // Even count only: a partial (odd) write on overflow would shift every
-    // later frame's L/R by one sample, permanently desyncing the stereo pair.
-    let to_write = want.min(avail) & !1;
-    health::bump(counter, (want - to_write) as u64);
-    if to_write == 0 {
+    if prod.slots() < want {
+        health::bump(counter, want as u64);
         return 0;
     }
-    if let Ok(mut chunk) = prod.write_chunk(to_write) {
+    if let Ok(mut chunk) = prod.write_chunk(want) {
         let (first, second) = chunk.as_mut_slices();
         let n1 = first.len();
         first.copy_from_slice(&samples[..n1]);
-        let n2 = second.len();
-        if n2 > 0 {
-            second.copy_from_slice(&samples[n1..n1 + n2]);
-        }
+        second.copy_from_slice(&samples[n1..]);
         chunk.commit_all();
     }
-    to_write
+    want
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rtrb::RingBuffer;
+    use std::sync::atomic::Ordering;
+
+    fn drain(cons: &mut rtrb::Consumer<f32>) -> Vec<f32> {
+        let n = cons.slots();
+        let chunk = cons.read_chunk(n).unwrap();
+        let (a, b) = chunk.as_slices();
+        let out: Vec<f32> = a.iter().chain(b).copied().collect();
+        chunk.commit_all();
+        out
+    }
+
+    // A mono source hands over odd sample counts all the time (a resampler
+    // emitting 235 then 236 frames, 441-sample packets at 44.1 kHz). With room
+    // in the ring every sample must land.
+    #[test]
+    fn odd_blocks_with_room_are_written_whole() {
+        let (mut prod, mut cons) = RingBuffer::<f32>::new(10_000);
+        let counter = AtomicU64::new(0);
+        let mut fed = Vec::new();
+        for (k, n) in [235usize, 236, 441, 1, 3, 70].iter().enumerate() {
+            let block: Vec<f32> = (0..*n).map(|i| (k * 1000 + i) as f32).collect();
+            assert_eq!(bulk_push_counted(&mut prod, &block, &counter), *n);
+            fed.extend(block);
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 0, "nothing dropped");
+        assert_eq!(drain(&mut cons), fed);
+    }
+
+    // On overflow a partial write would split a frame of any width and shift
+    // every later frame's channels; the block is dropped whole instead.
+    #[test]
+    fn overflow_drops_the_whole_block_keeping_frames_aligned() {
+        for width in [1usize, 2, 3, 6] {
+            let (mut prod, mut cons) = RingBuffer::<f32>::new(10 * width);
+            let counter = AtomicU64::new(0);
+            let first: Vec<f32> = (0..8 * width).map(|i| i as f32).collect();
+            assert_eq!(bulk_push_counted(&mut prod, &first, &counter), first.len());
+            let second = vec![-1.0; 4 * width];
+            assert_eq!(
+                bulk_push_counted(&mut prod, &second, &counter),
+                0,
+                "{width}ch"
+            );
+            assert_eq!(counter.load(Ordering::Relaxed), (4 * width) as u64);
+            let got = drain(&mut cons);
+            assert_eq!(got, first, "{width}ch: ring holds whole frames only");
+        }
+    }
 }

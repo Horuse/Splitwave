@@ -20,10 +20,21 @@ pub struct MeterHandle {
     channels: Arc<AtomicUsize>,
     peaks: Arc<Vec<AtomicU32>>,
     rms: Arc<Vec<AtomicU32>>,
-    /// Squared sums (f64 bits) and frames metered since the last tick: RMS
-    /// covers the time between ticks, whatever the block size.
-    sum_sq: Arc<Vec<AtomicU64>>,
-    frames: Arc<AtomicU64>,
+    /// Per channel, the squared sum and the frames metered since the last
+    /// tick, packed so the tick takes both at once: RMS covers the time
+    /// between ticks, whatever the block size.
+    window: Arc<Vec<AtomicU64>>,
+}
+
+/// Frames a window may hold before it starts over, should no tick come.
+const MAX_WINDOW_FRAMES: u32 = 1 << 30;
+
+fn pack(sum_sq: f32, frames: u32) -> u64 {
+    (sum_sq.to_bits() as u64) << 32 | frames as u64
+}
+
+fn unpack(window: u64) -> (f32, u32) {
+    (f32::from_bits((window >> 32) as u32), window as u32)
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +53,7 @@ impl MeterHandle {
             channels: Arc::new(AtomicUsize::new(0)),
             peaks: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
             rms: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU32::new(0)).collect()),
-            sum_sq: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU64::new(0)).collect()),
-            frames: Arc::new(AtomicU64::new(0)),
+            window: Arc::new((0..MAX_METER_CHANNELS).map(|_| AtomicU64::new(0)).collect()),
         }
     }
 
@@ -56,15 +66,16 @@ impl MeterHandle {
             .min(MAX_METER_CHANNELS);
         let mut peaks = Vec::with_capacity(n);
         let mut rms = Vec::with_capacity(n);
-        // Nothing metered since the last tick keeps the last reading.
-        let frames = self.frames.swap(0, Ordering::Relaxed);
         for c in 0..n {
-            let p = load_f32(&self.peaks[c]);
-            store_f32(&self.peaks[c], p * METER_PEAK_DECAY);
+            let decayed = self.peaks[c].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
+                Some((f32::from_bits(b) * METER_PEAK_DECAY).to_bits())
+            });
+            let p = f32::from_bits(decayed.unwrap_or_else(|b| b));
             peaks.push(p);
-            let sum = f64::from_bits(self.sum_sq[c].swap(0, Ordering::Relaxed));
+            let (sum, frames) = unpack(self.window[c].swap(0, Ordering::Relaxed));
+            // Nothing metered since the last tick keeps the last reading.
             if frames > 0 {
-                store_f32(&self.rms[c], (sum / frames as f64).sqrt() as f32);
+                store_f32(&self.rms[c], (sum / frames as f32).sqrt());
             }
             rms.push(load_f32(&self.rms[c]));
         }
@@ -125,18 +136,51 @@ pub fn update_meter(handle: &MeterHandle, interleaved: &[f32], channels: usize) 
         }
     }
     handle.channels.store(channels, Ordering::Relaxed);
+    // The tick decays and resets these at the same time, so each update is
+    // one atomic read-modify-write: a load and a later store would undo it.
     for c in 0..channels {
-        let existing = load_f32(&handle.peaks[c]);
-        store_f32(&handle.peaks[c], existing.max(peak[c]));
-        let sum = f64::from_bits(handle.sum_sq[c].load(Ordering::Relaxed)) + sum_sq[c];
-        handle.sum_sq[c].store(sum.to_bits(), Ordering::Relaxed);
+        // Non-negative floats order the same as their bits.
+        handle.peaks[c].fetch_max(peak[c].to_bits(), Ordering::Relaxed);
+        let _ = handle.window[c].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
+            let (sum, n) = unpack(w);
+            let block = frames as u32;
+            let add = sum_sq[c] as f32;
+            Some(if n > MAX_WINDOW_FRAMES {
+                pack(add, block)
+            } else {
+                pack(sum + add, n + block)
+            })
+        });
     }
-    handle.frames.fetch_add(frames as u64, Ordering::Relaxed);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tick_racing_the_audio_thread_never_reads_high() {
+        let h = MeterHandle::new("n".to_string());
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let audio = {
+            let (h, stop) = (h.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let block = vec![0.5f32; 64];
+                while !stop.load(Ordering::Relaxed) {
+                    update_meter(&h, &block, 2);
+                }
+            })
+        };
+        for _ in 0..200_000 {
+            let s = h.snapshot_and_decay();
+            for (rms, peak) in s.rms.iter().zip(&s.peaks) {
+                assert!(*rms <= 0.5 + 1e-4, "RMS {rms} of a 0.5 signal");
+                assert!(*peak <= 0.5, "peak {peak} of a 0.5 signal");
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        audio.join().unwrap();
+    }
 
     fn interleaved(ch: usize, frames: usize, f: impl Fn(usize, usize) -> f32) -> Vec<f32> {
         (0..frames * ch).map(|i| f(i / ch, i % ch)).collect()

@@ -1448,6 +1448,8 @@ impl ActivePipeline {
                     let sample_rate = spec.sample_rate();
                     let meter = MeterHandle::new(out.id.clone());
                     let (handle, ctrl, dead, io) = spec.open(&out.id, og, meter.clone(), &host)?;
+                    // A new stream counts its overloads from zero.
+                    self.reported_overloads.remove(&out.id);
                     if let Some(&idx) = output_stat_idx.get(&out.id) {
                         self.output_stats[idx].channels = out_channels;
                         self.output_stats[idx].io = Some(io.clone());

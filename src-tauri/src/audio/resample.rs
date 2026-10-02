@@ -140,14 +140,37 @@ pub struct MultiResampler {
 
 /// Fixed-rate conversion for device outputs. Unlike capture and network
 /// clock conversion, a speaker stream keeps the same rate for its lifetime.
+///
+/// The FFT resampler is exact and cheap, but it emits nothing until it holds
+/// a whole period of the two rates (160 frames for 48 -> 44.1 kHz). Rates
+/// whose period is longer than `MAX_FFT_PERIOD_MS` (a custom rate one hertz
+/// off a standard one has a period of a second) go through a sinc filter,
+/// which emits on every chunk.
 pub struct FixedRateResampler {
-    inner: FftFixedIn<f32>,
+    inner: FixedInner,
+    /// Input frames the resampler may take before it emits anything.
+    input_period: usize,
     channels: usize,
     in_planar: Vec<Vec<f32>>,
     out_planar: Vec<Vec<f32>>,
     active: Vec<bool>,
     chunk_in: usize,
     out_max: usize,
+}
+
+enum FixedInner {
+    Fft(FftFixedIn<f32>),
+    Sinc(SincFixedIn<f32>),
+}
+
+const MAX_FFT_PERIOD_MS: usize = 10;
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 impl FixedRateResampler {
@@ -158,17 +181,31 @@ impl FixedRateResampler {
         channels: usize,
     ) -> AppResult<Self> {
         const FFT_SUB_CHUNKS: usize = 4;
-        let inner = FftFixedIn::<f32>::new(
-            from_rate as usize,
-            to_rate as usize,
-            chunk_size,
-            FFT_SUB_CHUNKS,
-            channels,
-        )
-        .map_err(|e| AppError::Stream(format!("fixed resampler init: {e}")))?;
-        let out_max = inner.output_frames_max();
+        let init = |e: rubato::ResamplerConstructionError| {
+            AppError::Stream(format!("fixed resampler init: {e}"))
+        };
+        let (from, to) = (from_rate.max(1) as usize, to_rate.max(1) as usize);
+        let period = from / gcd(from, to);
+        let (inner, input_period) = if period * 1000 <= from * MAX_FFT_PERIOD_MS {
+            let fft = FftFixedIn::<f32>::new(from, to, chunk_size, FFT_SUB_CHUNKS, channels)
+                .map_err(init)?;
+            (FixedInner::Fft(fft), period)
+        } else {
+            let ratio = to as f64 / from as f64;
+            let sinc = SincFixedIn::<f32>::new(ratio, 1.0, sinc_params(), chunk_size, channels)
+                .map_err(init)?;
+            // The filter fills before the first frame comes out; downsampling
+            // hard, a small chunk may yield no whole frame after that either.
+            let fill = (sinc.output_delay() * from).div_ceil(to);
+            (FixedInner::Sinc(sinc), fill + from.div_ceil(to))
+        };
+        let out_max = match &inner {
+            FixedInner::Fft(r) => r.output_frames_max(),
+            FixedInner::Sinc(r) => r.output_frames_max(),
+        };
         Ok(Self {
             inner,
+            input_period,
             channels,
             in_planar: vec![vec![0.0; chunk_size]; channels],
             out_planar: vec![vec![0.0; out_max]; channels],
@@ -184,7 +221,15 @@ impl FixedRateResampler {
 
     /// Output-rate frames between a sample entering and leaving the filter.
     pub fn delay_frames(&self) -> usize {
-        self.inner.output_delay()
+        match &self.inner {
+            FixedInner::Fft(r) => r.output_delay(),
+            FixedInner::Sinc(r) => r.output_delay(),
+        }
+    }
+
+    /// Input frames the resampler may take before it emits anything.
+    pub fn input_period(&self) -> usize {
+        self.input_period
     }
 
     pub fn process_chunk_into(
@@ -204,10 +249,16 @@ impl FixedRateResampler {
                 self.in_planar[c][i] = frame[c];
             }
         }
-        let (_, produced) = self
-            .inner
-            .process_into_buffer(&self.in_planar, &mut self.out_planar, Some(&self.active))
-            .map_err(|e| AppError::Stream(format!("fixed resampler process: {e}")))?;
+        let active = Some(&self.active[..]);
+        let (_, produced) = match &mut self.inner {
+            FixedInner::Fft(r) => {
+                r.process_into_buffer(&self.in_planar, &mut self.out_planar, active)
+            }
+            FixedInner::Sinc(r) => {
+                r.process_into_buffer(&self.in_planar, &mut self.out_planar, active)
+            }
+        }
+        .map_err(|e| AppError::Stream(format!("fixed resampler process: {e}")))?;
         for i in 0..produced {
             for c in 0..self.channels {
                 output[i * self.channels + c] = if c < active_channels {
@@ -377,6 +428,35 @@ mod tests {
                     "{from}->{to} @ {block}: produced {produced}, want ~{want}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn fixed_rate_resampler_never_waits_long_at_an_odd_rate() {
+        // One hertz off a standard rate the two share no period shorter
+        // than a second; once its filter has filled, the resampler must
+        // still emit on every block.
+        for (from, to) in [(48_000, 48_001), (48_001, 48_000), (44_100, 47_999)] {
+            let mut r = FixedRateResampler::new(from, to, 64, 2).unwrap();
+            assert!(
+                r.input_period() <= 256,
+                "{from}->{to}: waits {}",
+                r.input_period()
+            );
+            let input = vec![0.25_f32; 64 * 2];
+            let mut out = vec![0.0_f32; r.out_max() * 2];
+            let mut tail = Vec::new();
+            for i in 0..200 {
+                let n = r.process_chunk_into(&input, 2, &mut out).unwrap();
+                if i * 64 >= r.input_period() {
+                    assert!(n > 0, "{from}->{to}: block {i} produced nothing");
+                }
+                tail = out[..n].to_vec();
+            }
+            assert!(
+                tail.iter().all(|s| (s - 0.25).abs() < 1e-3),
+                "{from}->{to}: level off"
+            );
         }
     }
 

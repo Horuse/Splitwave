@@ -32,22 +32,10 @@ const RETIRE_TIMEOUT: Duration = Duration::from_millis(500);
 const STOP_FADE_MS: u32 = 10;
 
 /// Blocks rendered in a row without output before a callback gives up. The
-/// FFT resampler holds input until it has a whole FFT frame, a multiple of the
-/// rates' input period (160 frames for 48 -> 44.1 kHz) no longer than a block
-/// past it, so small blocks may go in before any comes out. Twice that, for
-/// room.
-fn max_silent_blocks(pipeline_rate: u32, device_rate: u32, block_frames: usize) -> usize {
-    let (a, b) = (pipeline_rate.max(1) as usize, device_rate.max(1) as usize);
-    let period = a / gcd(a, b);
-    2 * (period.div_ceil(block_frames.max(1)) + 2)
-}
-
-fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 {
-        a
-    } else {
-        gcd(b, a % b)
-    }
+/// resampler may take up to `input_period` frames before it emits anything,
+/// so small blocks may go in before any comes out. Twice that, for room.
+fn max_silent_blocks(input_period: usize, block_frames: usize) -> usize {
+    2 * (input_period.div_ceil(block_frames.max(1)) + 2)
 }
 
 /// Per-speaker counters, written relaxed by the callback and read by the
@@ -135,6 +123,12 @@ impl SpeakerRenderer {
         let pending_frames = resampler
             .as_ref()
             .map_or(block_frames, FixedRateResampler::out_max);
+        let max_silent_blocks = max_silent_blocks(
+            resampler
+                .as_ref()
+                .map_or(0, FixedRateResampler::input_period),
+            block_frames,
+        );
         let io = SpeakerIo {
             sample_rate: device_rate,
             requested: Arc::new(AtomicU64::new(0)),
@@ -160,7 +154,7 @@ impl SpeakerRenderer {
                 pending_pos: 0,
                 pending_len: 0,
                 channels,
-                max_silent_blocks: max_silent_blocks(pipeline_rate, device_rate, block_frames),
+                max_silent_blocks,
                 last_callback: None,
                 meter,
                 io: io.clone(),
@@ -543,6 +537,29 @@ mod tests {
             );
             assert!(t.io.resampler_delay_frames > 0);
         }
+    }
+
+    #[test]
+    fn an_odd_device_rate_renders_about_one_block_per_callback() {
+        // 48 kHz into 48.001 kHz share no period shorter than a second; the
+        // first callback must not render that second up front.
+        let mut t = rig(64, 48_001);
+        feed(&mut t.input, &vec![0.25_f32; 48_000 * 2]);
+        let mut out = vec![f32::NAN; 64 * 2];
+        t.r.render(&mut out, 64);
+        // The sinc filter fills over its first few blocks.
+        let first = t.blocks.load(Ordering::Relaxed);
+        assert!(first <= 6, "{first} blocks for the first 64-frame callback");
+        let got = play(&mut t.r, &[64], 16_000);
+        let blocks = t.blocks.load(Ordering::Relaxed);
+        assert!(
+            blocks <= first + 16_000 / 64 + 2,
+            "{blocks} blocks for 250 callbacks after the first"
+        );
+        assert!(
+            got[8_000 * 2..].iter().all(|s| (s - 0.25).abs() < 1e-3),
+            "gap or glitch in the resampled stream"
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::asrc::Asrc;
-use super::cushion::{max_splice_frames, Adjust, Cushion};
+use super::cushion::{startup_fade_frames, Adjust, Cushion, DepthMemos};
 use super::file_reader::SeekFlush;
 use super::latency::NodeTiming;
 use super::sig::MONITOR_KEY;
@@ -75,9 +75,10 @@ fn ramp(buf: &mut [f32], channels: usize, from: usize, len: usize, max_len: usiz
     }
 }
 
-/// A splice reads its span plus a fade on each side, at the ring's `rate`.
+/// A splice holds a fade's worth on each side of its cut, at the ring's
+/// `rate`.
 fn splice_samples(channels: usize, rate: u32) -> usize {
-    (max_splice_frames(rate) + 2 * splice_fade_frames(rate)) * channels
+    2 * startup_fade_frames(rate) * channels
 }
 
 /// Holds a resampler chunk being gathered, or a splice's join, plus the rest
@@ -722,12 +723,10 @@ impl SourceState {
             }
         }
         let queued = self.queued_frames();
-        let fade = self.fade_frames * self.channels;
-        if let Some(Adjust::Drop(n)) = self.cushion.as_mut().map(|c| c.observe(queued)) {
-            // The crossfade overlaps a fade's worth on each side of the cut
-            // into one, so that much of the `n` goes with it.
-            let fade = fade.min(n * self.channels);
-            self.splice_trim(n * self.channels - fade, fade);
+        if let Some(Adjust::Drop { frames, fade }) =
+            self.cushion.as_mut().map(|c| c.observe(queued))
+        {
+            self.splice_trim(frames * self.channels, fade * self.channels);
         }
         true
     }
@@ -754,35 +753,50 @@ impl SourceState {
 
     /// Removes `drop` samples from the input ring, crossfading the `fade`
     /// samples before the cut into the `fade` after it. The joined slice leads
-    /// the stream through `input_staging`, so the listener hears one short
-    /// blend instead of a step.
+    /// the stream through `input_staging`, so the listener hears one blend
+    /// instead of a step.
     fn splice_trim(&mut self, drop: usize, fade: usize) {
         self.splice_tmp.clear();
-        let Ok(outgoing) = self.consumer.read_chunk(fade) else {
-            return;
-        };
-        let (first, second) = outgoing.as_slices();
-        self.splice_tmp.extend_from_slice(first);
-        self.splice_tmp.extend_from_slice(second);
-        outgoing.commit_all();
-
-        if let Ok(cut) = self.consumer.read_chunk(drop) {
-            cut.commit_all();
-        }
-
-        if let Ok(incoming) = self.consumer.read_chunk(fade) {
-            let (first, second) = incoming.as_slices();
-            crossfade_into(&mut self.splice_tmp, first, second, self.channels);
-            incoming.commit_all();
+        if drop >= fade {
+            let Ok(outgoing) = self.consumer.read_chunk(fade) else {
+                return;
+            };
+            let (first, second) = outgoing.as_slices();
+            self.splice_tmp.extend_from_slice(first);
+            self.splice_tmp.extend_from_slice(second);
+            outgoing.commit_all();
+            if let Ok(cut) = self.consumer.read_chunk(drop - fade) {
+                cut.commit_all();
+            }
+            if let Ok(incoming) = self.consumer.read_chunk(fade) {
+                let (first, second) = incoming.as_slices();
+                crossfade_into(&mut self.splice_tmp, first, second, self.channels);
+                incoming.commit_all();
+            }
+        } else {
+            // The fade outlasts the cut: both sides come out of one read.
+            let Ok(span) = self.consumer.read_chunk(drop + fade) else {
+                return;
+            };
+            let (first, second) = span.as_slices();
+            self.splice_tmp.extend_from_slice(first);
+            self.splice_tmp.extend_from_slice(second);
+            span.commit_all();
+            let frames = (fade / self.channels.max(1)).saturating_sub(1).max(1) as f32;
+            for i in 0..fade {
+                let w = ((i / self.channels) as f32 / frames).min(1.0);
+                self.splice_tmp[i] = self.splice_tmp[i] * (1.0 - w) + self.splice_tmp[i + drop] * w;
+            }
+            self.splice_tmp.truncate(fade);
         }
 
         self.input_staging.extend_from_slice(&self.splice_tmp);
         // What left the ring, versus what the stream actually loses: the
-        // fade-out is re-injected, so only the cut and the fade-in are gone.
-        let popped = (drop + 2 * fade) as u64;
-        let removed = (drop + fade) as u64;
-        self.stats.consumed.fetch_add(popped, Ordering::Relaxed);
-        self.stats.trimmed.fetch_add(removed, Ordering::Relaxed);
+        // blend is re-injected, so only the cut is gone.
+        self.stats
+            .consumed
+            .fetch_add((drop + fade) as u64, Ordering::Relaxed);
+        self.stats.trimmed.fetch_add(drop as u64, Ordering::Relaxed);
         self.last_pop_at = Instant::now();
     }
 
@@ -1687,6 +1701,8 @@ pub(super) fn build_output_graph(
     // What the graph this build replaces is running, for carrying unchanged
     // nodes over. Empty when nothing is being replaced in place.
     previous: &HashMap<String, CarriedNode>,
+    // What each source measured of its delivery, for the sources built here.
+    memos: &DepthMemos,
 ) -> AppResult<BuiltOutputGraph> {
     let cut_leaf_ids: HashSet<String> = cut_leaves.keys().cloned().collect();
     let reachable: HashSet<String> = match output_id {
@@ -1777,6 +1793,7 @@ pub(super) fn build_output_graph(
                 width,
                 realtime,
                 valid,
+                memos.get(&format!("{}|cut:{id}", output_id.unwrap_or(MONITOR_KEY))),
             )?;
             sources.push(SourceMeta {
                 label: format!("{} out={}", source.label, output_id.unwrap_or("monitor")),
@@ -1803,11 +1820,14 @@ pub(super) fn build_output_graph(
             let network = match &input.spec {
                 InputSpec::NetReceiver { port } => {
                     let receiver = crate::audio::netaudio::receiver::get_or_create(id, *port);
-                    Some(ChannelReceiver::new(receiver.register_consumer(
-                        output_sr,
-                        block_frames,
-                        realtime,
-                    )))
+                    Some(ChannelReceiver::new(
+                        receiver.register_consumer(output_sr, block_frames, realtime),
+                        memos.get(&format!(
+                            "{}|{id}|{:?}",
+                            output_id.unwrap_or(MONITOR_KEY),
+                            input.spec
+                        )),
+                    ))
                 }
                 InputSpec::WebRtcRecv {
                     node_id,
@@ -1819,11 +1839,14 @@ pub(super) fn build_output_graph(
                         *opus_bitrate,
                         *opus_application,
                     );
-                    Some(ChannelReceiver::new(session.register_bridge(
-                        output_sr,
-                        block_frames,
-                        realtime,
-                    )))
+                    Some(ChannelReceiver::new(
+                        session.register_bridge(output_sr, block_frames, realtime),
+                        memos.get(&format!(
+                            "{}|{id}|{:?}",
+                            output_id.unwrap_or(MONITOR_KEY),
+                            input.spec
+                        )),
+                    ))
                 }
                 _ => None,
             };
@@ -1957,8 +1980,10 @@ pub(super) fn build_output_graph(
                 chunk_tmp: Vec::with_capacity(out_max * source_channels),
                 out_buf: vec![0.0; block_frames * source_channels],
                 input_samples_per_block,
-                cushion: source_realtime
-                    .then(|| Cushion::new(input_frames_per_block as usize, input_sr)),
+                cushion: source_realtime.then(|| {
+                    let key = format!("{}|{id}|{:?}", output_id.unwrap_or(MONITOR_KEY), input.spec);
+                    Cushion::new(input_frames_per_block as usize, input_sr, memos.get(&key))
+                }),
                 queue_avg: 0.0,
                 queue_alpha: queue_alpha(block_frames, output_sr),
                 queued_after: 0,
@@ -2524,6 +2549,7 @@ fn ring_source(
     channels: usize,
     realtime: bool,
     valid: &ValidGraph,
+    memo: Arc<crate::audio::adaptive_depth::DepthMemo>,
 ) -> AppResult<SourceState> {
     let resampler = if owner_sr == output_sr {
         None
@@ -2583,7 +2609,7 @@ fn ring_source(
         chunk_tmp: Vec::with_capacity(out_max * channels),
         out_buf: vec![0.0; block_frames * channels],
         input_samples_per_block,
-        cushion: realtime.then(|| Cushion::new(input_frames_per_block as usize, owner_sr)),
+        cushion: realtime.then(|| Cushion::new(input_frames_per_block as usize, owner_sr, memo)),
         input_id: None,
         queue_avg: 0.0,
         queue_alpha: queue_alpha(block_frames, output_sr),
@@ -3085,6 +3111,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build succeeds");
         let mut map = HashMap::new();
@@ -3154,6 +3181,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -3199,6 +3227,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -3239,6 +3268,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build");
         let prod = &mut producer_pairs[0].1;
@@ -3352,6 +3382,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             previous,
+            &DepthMemos::default(),
         )
         .expect("build succeeds");
         (built, pairs.into_iter().collect())
@@ -4582,6 +4613,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build");
         push_all(&mut pairs[0].1, &vec![0.5; 4 * TIMER_BLOCK_FRAMES]);
@@ -4623,6 +4655,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         );
         assert!(err.is_err(), "input without SR must fail");
     }
@@ -4722,6 +4755,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             cut_leaves,
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build B");
         assert_eq!(built_b.sources.len(), 1, "the shared node is a ring source");
@@ -4882,6 +4916,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build");
         let mut a = stereo_ramp(4096, 0.0);
@@ -5472,6 +5507,7 @@ pub(super) mod graph_tests {
             &HashMap::new(),
             cut_leaves,
             &HashMap::new(),
+            &DepthMemos::default(),
         )
         .expect("build B");
         assert_eq!(built_b.sources[0].native_sr, 44_100);

@@ -112,7 +112,7 @@ impl SpeakerTarget {
                 let (mut link, mut fill) = speaker_callback();
                 link.attach(renderer);
                 let mut buf = vec![0.0f32; period * channels];
-                let clock = DeviceClock::start(&id, rate, period, move |frames| {
+                let clock = DeviceClock::start(&id, rate, 0.0, period, move |frames| {
                     let out = &mut buf[..frames * channels];
                     fill(out, frames);
                     played.lock().unwrap().extend_from_slice(out);
@@ -732,6 +732,7 @@ mod tests {
             &HashMap::new(),
             HashMap::new(),
             &HashMap::new(),
+            &crate::audio::pipeline::cushion::DepthMemos::default(),
         )
         .expect("build");
 
@@ -812,6 +813,7 @@ mod tests {
                 &HashMap::new(),
                 HashMap::new(),
                 &HashMap::new(),
+                &crate::audio::pipeline::cushion::DepthMemos::default(),
             )
             .expect("build");
             let (recorder, _ctrl) = start_monitor_worker(built.graph).expect("spawn monitor");

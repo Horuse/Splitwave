@@ -33,6 +33,7 @@ pub fn devices() -> VirtualDevices {
         channels,
         tone_hz: TONE_HZ,
         amplitude: TONE_AMP,
+        ..Default::default()
     };
     d.add_input("mic", tone(RATE, 1));
     d.add_input("mic-44k", tone(44_100, 1));
@@ -40,6 +41,16 @@ pub fn devices() -> VirtualDevices {
     d.add_input("interface", tone(RATE, 4));
     d.add_input("system", tone(RATE, 2));
     d.add_input("app:com.example.player", tone(RATE, 2));
+    // A built-in microphone as CoreAudio delivers it: its own clock, and
+    // whole IO buffers of its own size.
+    d.add_input(
+        "real-mic",
+        VirtualInput {
+            burst_frames: Some(512),
+            clock_ppm: 80.0,
+            ..tone(RATE, 1)
+        },
+    );
     let speaker = |sample_rate, channels| VirtualSpeaker {
         sample_rate,
         channels,

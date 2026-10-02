@@ -212,7 +212,7 @@ impl NetReceiver {
             if let Some(app) = pkt.opus_app {
                 self.opus_app.store(app as u32, Ordering::Relaxed);
             }
-            let channel = self.channel(pkt.channel, pkt.seq);
+            let channel = self.channel(pkt.channel, pkt.seq, pkt.sample_rate);
             let max_gap = max_gap_packets(
                 pkt.sample_rate,
                 channel.decoder.lock().unwrap().packet_samples(),
@@ -263,12 +263,14 @@ impl NetReceiver {
 
     /// Receive state for a channel index, created (and wired to consumers) on
     /// its first packet.
-    fn channel(&self, index: u8, first_seq: u16) -> Arc<ChannelState> {
+    fn channel(&self, index: u8, first_seq: u16, sample_rate: u32) -> Arc<ChannelState> {
         let mut channels = self.channels.lock().unwrap();
         if let Some(c) = channels.get(&index) {
             return c.clone();
         }
-        let broadcast = self.fanout.attach_channel(index.to_string(), first_seq);
+        let broadcast = self
+            .fanout
+            .attach_channel(index.to_string(), first_seq, sample_rate);
         let state = Arc::new(ChannelState {
             decoder: Mutex::new(ChannelDecoder::new()),
             broadcast,
@@ -337,7 +339,7 @@ mod tests {
         let rx = get_or_create(node, port);
         let consumer = rx.register_consumer(48_000, 1024, true);
         let taps = consumer.taps.clone();
-        let recv = crate::audio::stream_recv::ChannelReceiver::new(consumer);
+        let recv = crate::audio::stream_recv::ChannelReceiver::new(consumer, Arc::default());
 
         let sender = UdpSocket::bind("127.0.0.1:0").map_err(|e| format!("client bind: {e}"))?;
         let target = format!("127.0.0.1:{port}");

@@ -16,12 +16,17 @@ use crate::audio::input_bridge::BroadcastRx;
 use crate::error::{AppError, AppResult};
 
 /// A capture device: a sine on every channel.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct VirtualInput {
     pub sample_rate: u32,
     pub channels: u32,
     pub tone_hz: f32,
     pub amplitude: f32,
+    /// Frames per delivery, whatever buffer is asked for, as a device that
+    /// keeps its own IO size does; `None` delivers the buffer asked for.
+    pub burst_frames: Option<usize>,
+    /// How far the device's clock runs from its nominal rate.
+    pub clock_ppm: f64,
 }
 
 /// A playback device. Its callback asks for one engine block in its own
@@ -123,12 +128,14 @@ impl DeviceClock {
     pub(super) fn start(
         name: &str,
         rate: u32,
+        clock_ppm: f64,
         period_frames: usize,
         mut tick: impl FnMut(usize) + Send + 'static,
     ) -> AppResult<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
-        let period = Duration::from_secs_f64(period_frames as f64 / rate.max(1) as f64);
+        let true_rate = rate.max(1) as f64 * (1.0 + clock_ppm * 1e-6);
+        let period = Duration::from_secs_f64(period_frames as f64 / true_rate);
         let join = thread::Builder::new()
             .name(format!("virtual:{name}"))
             .spawn(move || {
@@ -172,20 +179,27 @@ pub(super) fn start_capture(
     mut bridge: BroadcastRx,
     meter: Option<MeterHandle>,
 ) -> AppResult<DeviceClock> {
+    let io_frames = input.burst_frames.unwrap_or(io_frames);
     let channels = input.channels.max(1) as usize;
     let step = std::f32::consts::TAU * input.tone_hz / input.sample_rate.max(1) as f32;
     let amplitude = input.amplitude;
     let mut phase = 0.0f32;
     let mut buf = vec![0.0f32; io_frames * channels];
-    DeviceClock::start(id, input.sample_rate, io_frames, move |frames| {
-        for frame in buf[..frames * channels].chunks_exact_mut(channels) {
-            frame.fill(amplitude * phase.sin());
-            phase = (phase + step) % std::f32::consts::TAU;
-        }
-        if let Some(m) = &meter {
-            update_meter(m, &buf[..frames * channels], channels);
-        }
-        bridge.apply_commands();
-        bridge.broadcast(&buf[..frames * channels]);
-    })
+    DeviceClock::start(
+        id,
+        input.sample_rate,
+        input.clock_ppm,
+        io_frames,
+        move |frames| {
+            for frame in buf[..frames * channels].chunks_exact_mut(channels) {
+                frame.fill(amplitude * phase.sin());
+                phase = (phase + step) % std::f32::consts::TAU;
+            }
+            if let Some(m) = &meter {
+                update_meter(m, &buf[..frames * channels], channels);
+            }
+            bridge.apply_commands();
+            bridge.broadcast(&buf[..frames * channels]);
+        },
+    )
 }

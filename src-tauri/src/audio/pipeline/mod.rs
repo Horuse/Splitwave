@@ -129,6 +129,9 @@ pub struct ActivePipeline {
     receive_buffers: HashMap<String, Vec<crate::audio::stream_recv::FillGauge>>,
     /// Each speaker's overload count at the last report.
     reported_overloads: HashMap<String, u64>,
+    /// What each source measured of its delivery, for the source that
+    /// replaces it.
+    depth_memos: cushion::DepthMemos,
 }
 
 struct InputState {
@@ -214,6 +217,7 @@ impl ActivePipeline {
             swapping_slots: HashMap::new(),
             receive_buffers: HashMap::new(),
             reported_overloads: HashMap::new(),
+            depth_memos: cushion::DepthMemos::default(),
         }
     }
 
@@ -1055,6 +1059,7 @@ impl ActivePipeline {
                 &input_meters,
                 cut_leaves,
                 &previous,
+                &self.depth_memos,
             )?;
             self.keep_carried_bridges(&out.id, &built.carried_inputs, &mut carried_captures);
             self.carried_nodes
@@ -1160,6 +1165,7 @@ impl ActivePipeline {
                     &input_meters,
                     pending_cuts.remove(MONITOR_KEY).unwrap_or_default(),
                     &previous,
+                    &self.depth_memos,
                 )?;
                 self.keep_carried_bridges(
                     MONITOR_KEY,

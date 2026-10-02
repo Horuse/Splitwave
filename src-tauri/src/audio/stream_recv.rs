@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
+use crate::audio::adaptive_depth::{DepthEstimator, DepthMemo, OutageJudge};
 use crate::audio::drift_loop::{ArrivalClock, DriftLoop};
 use crate::audio::health;
 use crate::audio::input_bridge::{now_secs, WriteClock};
@@ -51,10 +51,9 @@ const JITTER_WINDOW_MS: f64 = 500.0;
 /// A backlog jump beyond this is a re-prime refill, not drift.
 const TARGET_EVENT_MAX_MS: f64 = 100.0;
 /// The depth primed from `TARGET_INIT_MS` is corrected once, when measured,
-/// by splices of at most `SPLICE_MAX_MS` under a crossfade of
-/// `SPLICE_FADE_MS`, one per `SPLICE_EVERY_MS` at most.
-const SPLICE_MAX_MS: f64 = 1.33;
-const SPLICE_FADE_MS: f64 = 0.67;
+/// by one cut under a crossfade of up to `SPLICE_FADE_MS`. When the buffer
+/// cannot hold the whole cut at once, the rest waits `SPLICE_EVERY_MS`.
+const SPLICE_FADE_MS: f64 = 10.0;
 const SPLICE_EVERY_MS: f64 = 21.0;
 /// Time constant of the fill gauge.
 const FILL_SMOOTHING_MS: f64 = 250.0;
@@ -216,6 +215,13 @@ pub struct PlaybackTap {
     // and fade the real audio back in on recovery.
     last_block: Vec<f32>,
     gap: bool,
+    /// This tap replaced one that was still playing: its first silent block
+    /// fades that one's last block out instead of cutting it off.
+    fade_out_pending: bool,
+    /// The audio before a startup cut, blended into the audio after it as
+    /// the next blocks are read; `xfade_pos` is how far that has got.
+    xfade: Vec<f32>,
+    xfade_pos: usize,
 }
 
 impl PlaybackTap {
@@ -235,8 +241,7 @@ impl PlaybackTap {
         let base_ratio = rate as f64 / in_sr as f64;
         let resampler = MultiResamplerOut::for_drift(in_sr, rate, block_frames, 1)
             .expect("mono resampler init");
-        let in_buf =
-            Vec::with_capacity(resampler.input_frames_max() + frames_at(SPLICE_MAX_MS, in_sr));
+        let in_buf = Vec::with_capacity(resampler.input_frames_max());
         Self {
             group,
             consumer,
@@ -261,7 +266,11 @@ impl PlaybackTap {
             idle_dead_blocks: (IDLE_DEAD_MS * rate as usize / 1000 / block_frames.max(1)).max(2)
                 as u32,
             last_block: vec![0.0; block_frames],
-            gap: false,
+            // A stream's first audio fades in like audio after a gap.
+            gap: true,
+            fade_out_pending: false,
+            xfade: Vec::with_capacity(frames_at(SPLICE_FADE_MS, in_sr.max(SR))),
+            xfade_pos: 0,
         }
     }
 
@@ -313,8 +322,11 @@ impl PlaybackTap {
     }
 
     /// Emit silence for this block without touching the ring (the group is
-    /// priming).
+    /// priming), after fading out the stream this tap replaced.
     fn hold(&mut self) -> usize {
+        if std::mem::take(&mut self.fade_out_pending) {
+            return self.fade_out();
+        }
         self.valid = 0;
         0
     }
@@ -332,8 +344,7 @@ impl PlaybackTap {
             if let Ok(r) = MultiResamplerOut::for_drift(in_sr, self.rate, self.last_block.len(), 1)
             {
                 self.in_buf.clear();
-                self.in_buf
-                    .reserve(r.input_frames_max() + frames_at(SPLICE_MAX_MS, in_sr));
+                self.in_buf.reserve(r.input_frames_max());
                 self.resampler = r;
             }
         }
@@ -357,26 +368,39 @@ impl PlaybackTap {
             0
         };
 
+        if splice > 0 && self.xfade_pos >= self.xfade.len() {
+            // What comes before the cut plays on, blended into what comes
+            // after it over the next blocks.
+            let fade = splice.min(self.xfade.capacity());
+            self.xfade.clear();
+            if let Ok(chunk) = self.consumer.read_chunk(fade) {
+                let (a, b) = chunk.as_slices();
+                self.xfade.extend_from_slice(a);
+                self.xfade.extend_from_slice(b);
+                chunk.commit_all();
+            }
+            if let Ok(chunk) = self.consumer.read_chunk(splice - fade) {
+                chunk.commit_all();
+            }
+            self.xfade_pos = 0;
+            self.popped += splice as u64;
+        }
         self.in_buf.clear();
-        if let Ok(chunk) = self.consumer.read_chunk(need + splice) {
+        if let Ok(chunk) = self.consumer.read_chunk(need) {
             let (a, b) = chunk.as_slices();
             self.in_buf.extend_from_slice(a);
             self.in_buf.extend_from_slice(b);
             chunk.commit_all();
-            self.popped += (need + splice) as u64;
+            self.popped += need as u64;
         }
-        if splice > 0 {
-            // The block's tail blends into the stream `splice` further on, so
-            // it ends exactly where the next block picks up.
-            let fade = frames_at(SPLICE_FADE_MS, self.current_source_sr)
-                .max(1)
-                .min(need);
-            for i in 0..fade {
-                let j = need - fade + i;
-                let w = (i + 1) as f32 / fade as f32;
-                self.in_buf[j] = self.in_buf[j] * (1.0 - w) + self.in_buf[j + splice] * w;
+        let len = self.xfade.len();
+        for s in self.in_buf.iter_mut() {
+            if self.xfade_pos >= len {
+                break;
             }
-            self.in_buf.truncate(need);
+            let w = (self.xfade_pos + 1) as f32 / len as f32;
+            *s = self.xfade[self.xfade_pos] * (1.0 - w) + *s * w;
+            self.xfade_pos += 1;
         }
         self.scratch.clear();
         if self
@@ -414,9 +438,15 @@ impl PlaybackTap {
             self.valid = 0;
             return 0;
         }
+        self.fade_out()
+    }
+
+    /// The last real block played backwards while fading out: it starts on
+    /// the very sample the stream stopped at, so the fade has no step.
+    fn fade_out(&mut self) -> usize {
         self.gap = true;
         self.scratch.clear();
-        self.scratch.extend_from_slice(&self.last_block);
+        self.scratch.extend(self.last_block.iter().rev());
         let frames = self.scratch.len();
         for (i, s) in self.scratch.iter_mut().enumerate() {
             *s *= 1.0 - (i as f32 + 1.0) / frames as f32;
@@ -554,14 +584,25 @@ impl FanoutRegistry {
     /// New received channel, wired into every live consumer. `first_seq` is the
     /// packet about to be pushed: its distance from the siblings' position is
     /// what the fresh rings open with, so the channel joins in phase.
-    pub fn attach_channel(&self, key: String, first_seq: u16) -> ChannelBroadcast {
+    pub fn attach_channel(
+        &self,
+        key: String,
+        first_seq: u16,
+        sample_rate: u32,
+    ) -> ChannelBroadcast {
         let gid = group_id(&key);
         let sync = self.group_sync(gid);
         let bc: ChannelBroadcast = Arc::new(ChannelFeed {
             sync: sync.clone(),
             prods: Mutex::new(Vec::new()),
             state: Mutex::new(FeedState::default()),
-            sample_rate: Arc::new(AtomicU32::new(SR)),
+            // The taps below build their resamplers for this rate, so the
+            // audio thread never has to.
+            sample_rate: Arc::new(AtomicU32::new(if sample_rate > 0 {
+                sample_rate
+            } else {
+                SR
+            })),
             clock: Arc::new(WriteClock::default()),
         });
         let mut consumers = self.consumers.lock().unwrap();
@@ -607,20 +648,26 @@ impl FanoutRegistry {
                     bulk_push_counted(&mut prod, &pad, &health::NET_RING_OVERRUN_SAMPLES);
                 }
                 bc.prods.lock().unwrap().push(prod);
-                taps.insert(
-                    key.clone(),
-                    PlaybackTap::new(
-                        gid,
-                        cons,
-                        c.rate,
-                        c.block_frames,
-                        c.realtime,
-                        primed,
-                        c.drift.clone(),
-                        bc.sample_rate.clone(),
-                        bc.clock.clone(),
-                    ),
+                let mut tap = PlaybackTap::new(
+                    gid,
+                    cons,
+                    c.rate,
+                    c.block_frames,
+                    c.realtime,
+                    primed,
+                    c.drift.clone(),
+                    bc.sample_rate.clone(),
+                    bc.clock.clone(),
                 );
+                // Replacing a stream still playing (its sender restarted):
+                // the new tap fades the old one out before it starts.
+                if let Some(old) = taps.get(&key) {
+                    if !old.gap && old.last_block.len() == tap.last_block.len() {
+                        tap.last_block.copy_from_slice(&old.last_block);
+                        tap.fade_out_pending = true;
+                    }
+                }
+                taps.insert(key.clone(), tap);
             }
         }
         self.broadcasts.lock().unwrap().insert(key, bc.clone());
@@ -641,15 +688,10 @@ impl FanoutRegistry {
 
     /// Forgets one channel. Its next packet re-attaches it, which is how a
     /// stream that broke for longer than concealment covers gets back in phase.
+    /// Its taps stay until then: they play out what they hold and fade, where
+    /// removing them would cut the stream off mid-waveform.
     pub fn drop_channel(&self, key: &str) {
         self.broadcasts.lock().unwrap().remove(key);
-        let mut consumers = self.consumers.lock().unwrap();
-        consumers.retain(|c| c.taps.strong_count() > 0);
-        for c in consumers.iter() {
-            if let Some(map) = c.taps.upgrade() {
-                map.lock().unwrap().remove(key);
-            }
-        }
     }
 
     /// Drops channels whose key starts with `prefix`.
@@ -718,6 +760,11 @@ pub struct ChannelReceiver {
     // Per-block scratch for the group decisions; reused so `mix_block` never
     // allocates on the DSP thread.
     plans: std::cell::RefCell<Vec<GroupPlan>>,
+    /// The depth measured so far, kept for a rate change and for the
+    /// receiver that replaces this one, so neither guesses and corrects.
+    memo: Arc<DepthMemo>,
+    /// Depth recalled from `memo`: the prior never drops below it.
+    recalled: Cell<usize>,
 }
 
 /// One source's buffer decision for this block, taken over all its channels.
@@ -741,7 +788,7 @@ struct GroupPlan {
 }
 
 impl ChannelReceiver {
-    pub fn new(handle: ConsumerHandle) -> Self {
+    pub fn new(handle: ConsumerHandle, memo: Arc<DepthMemo>) -> Self {
         let block_secs = handle.block_frames as f64 / handle.output_rate.max(1) as f64;
         let receiver = Self {
             taps: handle.taps,
@@ -772,14 +819,16 @@ impl ChannelReceiver {
             fill_alpha: 1.0 - (-block_secs * 1000.0 / FILL_SMOOTHING_MS).exp(),
             last_mix: std::cell::RefCell::new(vec![0.0; handle.block_frames * 2]),
             plans: std::cell::RefCell::new(Vec::with_capacity(8)),
+            memo,
+            recalled: Cell::new(0),
         };
         receiver.retime(SR);
         receiver
     }
 
     /// Counts everything in `rate` samples from here on, starting the
-    /// adaptive state afresh: what was learnt at another rate says nothing
-    /// in these units. RT-safe; none of the state allocates.
+    /// adaptive state afresh in these units from the depth measured so far,
+    /// if any. RT-safe; none of the state allocates.
     fn retime(&self, rate: u32) {
         let need = (self.block_frames * rate as usize / self.output_rate.max(1) as usize).max(1);
         let init = frames_at(TARGET_INIT_MS, rate);
@@ -800,6 +849,18 @@ impl ChannelReceiver {
         self.cooldown.set(0);
         self.steered.set(None);
         self.fill_avg.set(0.0);
+        self.recalled.set(0);
+        if let Some((dip, packet)) = self.memo.recall(rate) {
+            // Measured already: start at that depth, with nothing to correct.
+            self.recalled.set(dip);
+            self.depth.borrow_mut().set_prior(dip);
+            self.packet.set(packet);
+            self.settled.set(true);
+            let max = frames_at(TARGET_MAX_MS, rate);
+            let target = (need + dip + frames_at(TARGET_SAFETY_MS, rate)).min(max);
+            self.target.store(target as u32, Ordering::Relaxed);
+            self.start.set((target + dip).min(max));
+        }
     }
 
     /// Resample one block from every tap into its `scratch` and sum into `mix`.
@@ -959,7 +1020,12 @@ impl ChannelReceiver {
                 continue;
             };
             if plan.hold {
-                tap.hold();
+                let n = tap.hold().min(frames);
+                for (frame, &v) in mix.chunks_mut(width).zip(tap.scratch[..n].iter()) {
+                    for s in frame.iter_mut() {
+                        *s += v;
+                    }
+                }
                 continue;
             }
             if plan.conceal {
@@ -1014,14 +1080,17 @@ impl ChannelReceiver {
             let packet = self.packet.get();
             let cap = if packet > 0 { 2 * packet } else { usize::MAX };
             self.packet.set(packet.max(arrived.min(cap)));
-            depth.set_prior(self.packet.get());
+            depth.set_prior(self.packet.get().max(self.recalled.get()));
         }
         if starving {
             return;
         }
         let need = match live {
             Some((backlog, need)) => {
-                depth.observe(backlog);
+                if depth.observe(backlog) && depth.is_measured() {
+                    self.memo
+                        .keep(depth.depth(), self.packet.get(), self.rate.get());
+                }
                 need
             }
             None => self.need.get(),
@@ -1073,11 +1142,9 @@ impl ChannelReceiver {
                 self.cooldown.set(wait - 1);
                 return 0;
             }
-            let n = self
-                .owed
-                .get()
-                .min(frames_at(SPLICE_MAX_MS, self.rate.get()));
-            if p.min_backlog < p.need + n {
+            // As much as the buffer holds past this block, in one cut.
+            let n = self.owed.get().min(p.min_backlog.saturating_sub(p.need));
+            if n == 0 {
                 return 0;
             }
             self.owed.set(self.owed.get() - n);
@@ -1154,10 +1221,10 @@ mod tests {
         // Consumers register FIRST: a push with no live consumer goes nowhere.
         let handle = reg.register_consumer(48_000, BLOCK, realtime);
         for key in ["0", "1"] {
-            let bc = reg.attach_channel(key.to_string(), seq);
+            let bc = reg.attach_channel(key.to_string(), seq, SR);
             broadcast_push(&bc, seq + 7, 8, &vec![0.5f32; frames]);
         }
-        let recv = ChannelReceiver::new(handle);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         (reg, recv)
     }
 
@@ -1212,8 +1279,8 @@ mod tests {
         let reg = FanoutRegistry::default();
         let handle = reg.register_consumer(48_000, block, true);
         let target = handle.target.clone();
-        let bc = reg.attach_channel("0".into(), 0);
-        let recv = ChannelReceiver::new(handle);
+        let bc = reg.attach_channel("0".into(), 0, SR);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         let period = packet_len as f64 / SR as f64;
         let out_period = block as f64 / SR as f64;
         let mut run = NetRun {
@@ -1310,8 +1377,8 @@ mod tests {
         let block = 64;
         let reg = FanoutRegistry::default();
         let handle = reg.register_consumer(48_000, block, true);
-        let bc = reg.attach_channel("0".into(), 0);
-        let recv = ChannelReceiver::new(handle);
+        let bc = reg.attach_channel("0".into(), 0, SR);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         let (mut k, mut t) = (0u32, 0.0);
         let mut mix = vec![0.0f32; block];
         let mut packet = vec![0.0f32; PACKET];
@@ -1376,8 +1443,8 @@ mod tests {
     #[test]
     fn small_packets_start_shallow_before_anything_is_measured() {
         let reg = FanoutRegistry::default();
-        let recv = ChannelReceiver::new(reg.register_consumer(48_000, 32, true));
-        let bc = reg.attach_channel("0".into(), 0);
+        let recv = ChannelReceiver::new(reg.register_consumer(48_000, 32, true), Arc::default());
+        let bc = reg.attach_channel("0".into(), 0, SR);
         let mut mix = vec![0.0f32; 32];
         let packet = vec![0.5f32; 32];
         for k in 0..100u16 {
@@ -1397,8 +1464,9 @@ mod tests {
     fn the_buffer_holds_the_same_time_at_any_source_rate() {
         let depth_ms = |rate: u32| {
             let reg = FanoutRegistry::default();
-            let recv = ChannelReceiver::new(reg.register_consumer(48_000, 64, true));
-            let bc = reg.attach_channel("0".into(), 0);
+            let recv =
+                ChannelReceiver::new(reg.register_consumer(48_000, 64, true), Arc::default());
+            let bc = reg.attach_channel("0".into(), 0, SR);
             let mut mix = vec![0.0f32; 64];
             // 5 ms packets for ten seconds, read every 64 output frames.
             let packet = vec![0.5f32; rate as usize / 200];
@@ -1481,8 +1549,8 @@ mod tests {
         for block in [32, 64, 512] {
             let reg = FanoutRegistry::default();
             let handle = reg.register_consumer(44_100, block, true);
-            let bc = reg.attach_channel("0".into(), 0);
-            let recv = ChannelReceiver::new(handle);
+            let bc = reg.attach_channel("0".into(), 0, SR);
+            let recv = ChannelReceiver::new(handle, Arc::default());
             broadcast_push(&bc, 30, 30, &vec![0.5f32; 960 * 30]);
             let mut mix = vec![0.0f32; block * 2];
             for _ in 0..8 {
@@ -1543,10 +1611,10 @@ mod tests {
     #[test]
     fn unprimed_consumer_streams_silence() {
         let reg = FanoutRegistry::default();
-        let bc = reg.attach_channel("ch".into(), 0);
+        let bc = reg.attach_channel("ch".into(), 0, SR);
         // Nothing pushed: a realtime consumer must stream silence, not panic.
         let handle = reg.register_consumer(48_000, BLOCK, true);
-        let recv = ChannelReceiver::new(handle);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         let mut mix = vec![0.0f32; BLOCK * 2];
         recv.mix_block(&mut mix);
         assert!(mix.iter().all(|s| *s == 0.0));
@@ -1556,11 +1624,11 @@ mod tests {
     #[test]
     fn channel_taps_draw_per_channel_audio() {
         let reg = FanoutRegistry::default();
-        let bc = reg.attach_channel("0".into(), 10);
+        let bc = reg.attach_channel("0".into(), 10, SR);
         let handle = reg.register_consumer(48_000, BLOCK, true);
         // Prime well past the 60 ms target so the tap actually plays out.
         broadcast_push(&bc, 11, 1, &vec![0.7f32; 960 * 40]);
-        let recv = ChannelReceiver::new(handle);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         let mut mix = vec![0.0f32; BLOCK * 2];
         recv.mix_block(&mut mix);
         let mut tap = vec![0.0f32; BLOCK];
@@ -1573,7 +1641,7 @@ mod tests {
     fn unknown_channel_tap_is_silence_not_panic() {
         let reg = FanoutRegistry::default();
         let handle = reg.register_consumer(48_000, BLOCK, true);
-        let recv = ChannelReceiver::new(handle);
+        let recv = ChannelReceiver::new(handle, Arc::default());
         let mut tap = vec![0.0f32; BLOCK];
         recv.channel("ghost", &mut tap);
         assert!(tap.iter().all(|s| *s == 0.0));
@@ -1584,7 +1652,7 @@ mod tests {
     #[test]
     fn drop_channel_and_clear_reset_state() {
         let reg = FanoutRegistry::default();
-        let bc = reg.attach_channel("0".into(), 1);
+        let bc = reg.attach_channel("0".into(), 1, SR);
         let handle = reg.register_consumer(48_000, BLOCK, true);
         let taps = handle.taps.clone();
         broadcast_push(&bc, 2, 1, &vec![0.5f32; 960]);
@@ -1592,11 +1660,11 @@ mod tests {
         reg.drop_channel("0");
         assert_eq!(
             taps.lock().unwrap().len(),
-            0,
-            "dropped channel leaves the tap map"
+            1,
+            "a dropped channel's tap plays out what it holds"
         );
-        // Re-attach works after a drop.
-        let bc2 = reg.attach_channel("0".into(), 9);
+        // Re-attach replaces it.
+        let bc2 = reg.attach_channel("0".into(), 9, SR);
         broadcast_push(&bc2, 10, 1, &vec![0.5f32; 960]);
         assert_eq!(taps.lock().unwrap().len(), 1);
         // clear() forgets consumers and broadcasts; the tap map itself is
@@ -1609,7 +1677,7 @@ mod tests {
     fn buffer_depth_reports_the_consumer_target() {
         let reg = FanoutRegistry::default();
         assert_eq!(reg.buffer_depth(), None, "no consumers yet");
-        let bc = reg.attach_channel("c".into(), 1);
+        let bc = reg.attach_channel("c".into(), 1, SR);
         broadcast_push_sr(&bc, 2, 1, &vec![0.0f32; 1920], 44_100);
         let _handle = reg.register_consumer(48_000, BLOCK, true);
         let depth = reg.buffer_depth().expect("consumer registered");

@@ -8,8 +8,10 @@
 //! under the silence it is already playing, never while audio is heard.
 //!
 //! It never corrects the queue while the source plays, with one exception:
-//! the depth guessed before anything was measured is corrected once, by a
-//! splice, as soon as it is measured. Drift between clocks is the resampler's
+//! the depth guessed before anything was measured is corrected once, by one
+//! crossfaded cut, as soon as it is measured. A source rebuilt by an edit
+//! starts from the depth its predecessor measured (`DepthMemo`) and has
+//! nothing to correct. Drift between clocks is the resampler's
 //! to absorb (`asrc`), and it holds still until that correction is done, so
 //! the two never act on the queue at once. A source on the output's own clock
 //! reads without one.
@@ -19,26 +21,51 @@
 //! source that goes quiet leaves the depth where it was, and a lone stall
 //! costs one dropout rather than latency for everything after it.
 
-use crate::audio::adaptive_depth::{DepthEstimator, OutageJudge};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use crate::audio::adaptive_depth::{DepthEstimator, DepthMemo, OutageJudge};
 
 /// Correction the source should apply before reading its next block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Adjust {
     None,
-    /// Splice this many frames out of the queue.
-    Drop(usize),
+    /// Cut `frames` out of the queue, crossfading the `fade` frames before
+    /// the cut into the `fade` after it.
+    Drop {
+        frames: usize,
+        fade: usize,
+    },
 }
 
-/// Largest single splice. Bigger corrections are spread over several.
-const MAX_SPLICE_MS: f64 = 1.33;
+/// Longest crossfade the startup correction cuts under, when the queue holds
+/// that much past the cut. One long blend is heard as a single soft
+/// transition, where many short splices crackle.
+const STARTUP_FADE_MS: f64 = 10.0;
 
-/// `MAX_SPLICE_MS` in frames at `rate`.
-pub(super) const fn max_splice_frames(rate: u32) -> usize {
-    let frames = (rate as f64 * MAX_SPLICE_MS / 1000.0 + 0.5) as usize;
+/// `STARTUP_FADE_MS` in frames at `rate`.
+pub(super) const fn startup_fade_frames(rate: u32) -> usize {
+    let frames = (rate as f64 * STARTUP_FADE_MS / 1000.0 + 0.5) as usize;
     if frames == 0 {
         1
     } else {
         frames
+    }
+}
+
+/// Every source's memo, by what makes it the same source: the output it
+/// plays in and the input it reads. Lives as long as the pipeline does.
+#[derive(Default)]
+pub(super) struct DepthMemos(Mutex<HashMap<String, Arc<DepthMemo>>>);
+
+impl DepthMemos {
+    pub(super) fn get(&self, key: &str) -> Arc<DepthMemo> {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(key.to_string())
+            .or_default()
+            .clone()
     }
 }
 
@@ -53,7 +80,8 @@ const QUANTUM_RELEASE_S: f64 = 30.0;
 /// Kept above the measured dip at all times. A process tap's p99.9 delivery
 /// jitter is already ~1.8 ms, so a thinner margin clicks every few seconds.
 const SAFETY_MS: f64 = 2.0;
-/// One splice per this much audio at most while the startup correction runs.
+/// When the queue cannot hold the whole startup cut at once, the next part
+/// waits this long.
 const SPLICE_EVERY_MS: f64 = 21.0;
 /// Ceiling on the measured headroom. Jitter beyond this is a broken capture,
 /// and a deeper target would outgrow the one-second input ring and never
@@ -73,9 +101,9 @@ pub(super) struct Cushion {
     owed: usize,
     cooldown: usize,
     cooldown_blocks: usize,
-    /// Largest splice, and the fade each side of it, in frames.
-    max_splice: usize,
-    splice_fade: usize,
+    /// Longest and shortest crossfade of the startup cut, in frames.
+    max_fade: usize,
+    min_fade: usize,
     primed: bool,
     /// The queue starts from the prior; the first measurement corrects it
     /// once, the way a startup offset is removed, and never again.
@@ -93,13 +121,18 @@ pub(super) struct Cushion {
     seen_delivery: bool,
     /// Primed at least once.
     started: bool,
+    rate: u32,
+    memo: Arc<DepthMemo>,
+    /// Depth recalled from `memo`: the prior never drops below it.
+    recalled: usize,
 }
 
 impl Cushion {
     /// `need` is the frames the graph takes per block, in the queue's rate.
-    pub(super) fn new(need: usize, sample_rate: u32) -> Self {
+    pub(super) fn new(need: usize, sample_rate: u32, memo: Arc<DepthMemo>) -> Self {
         let frames = |ms: f64| ((sample_rate as f64 * ms / 1000.0).round() as usize).max(1);
-        Self {
+        let recalled = memo.recall(sample_rate);
+        let mut c = Self {
             need,
             safety: frames(SAFETY_MS).max(16),
             depth: DepthEstimator::new(sample_rate, need, WINDOW_MS, frames(PRIOR_MS)),
@@ -109,8 +142,8 @@ impl Cushion {
             owed: 0,
             cooldown: 0,
             cooldown_blocks: (frames(SPLICE_EVERY_MS) / need.max(1)).max(1),
-            max_splice: max_splice_frames(sample_rate),
-            splice_fade: super::dag::splice_fade_frames(sample_rate),
+            max_fade: startup_fade_frames(sample_rate),
+            min_fade: super::dag::splice_fade_frames(sample_rate),
             primed: false,
             settled: false,
             judge: OutageJudge::new(sample_rate),
@@ -122,7 +155,17 @@ impl Cushion {
                 .exp(),
             seen_delivery: false,
             started: false,
+            rate: sample_rate,
+            memo,
+            recalled: 0,
+        };
+        if let Some((dip, quantum)) = recalled {
+            c.recalled = dip;
+            c.depth.set_prior(dip);
+            c.quantum = quantum as f64;
+            c.settled = true;
         }
+        c
     }
 
     /// Lowest the queue may sit just before a read. One block is the read;
@@ -171,7 +214,7 @@ impl Cushion {
             };
             self.quantum = self.quantum.max((frames as f64).min(cap));
             if !self.started {
-                self.depth.set_prior(self.quantum());
+                self.depth.set_prior(self.quantum().max(self.recalled));
             }
         }
         if let Some(late) = self.judge.delivered(frames, self.need) {
@@ -272,9 +315,13 @@ impl Cushion {
                 self.sum = 0.0;
                 self.blocks = 0;
                 self.low = usize::MAX;
-                if !self.settled && self.depth.is_measured() {
-                    self.settled = true;
-                    self.owed = self.startup_excess(mean, low);
+                if self.depth.is_measured() {
+                    self.memo
+                        .keep(self.depth.depth(), self.quantum(), self.rate);
+                    if !self.settled {
+                        self.settled = true;
+                        self.owed = self.startup_excess(mean, low);
+                    }
                 }
             }
         }
@@ -283,13 +330,19 @@ impl Cushion {
             return Adjust::None;
         }
         if self.owed > 0 {
-            let n = self.owed.min(self.max_splice);
-            // A drop reads a fade on each side of the cut and must leave the
-            // block itself behind.
-            if queued >= n + 2 * self.splice_fade + self.need {
+            // The cut has to leave this block's read and the shortest fade
+            // behind; the fade then takes whatever the queue holds past the
+            // cut, up to the longest.
+            let n = self
+                .owed
+                .min(queued.saturating_sub(self.need + self.min_fade));
+            if n > 0 {
                 self.owed -= n;
-                self.cooldown = self.cooldown_blocks;
-                return Adjust::Drop(n);
+                if self.owed > 0 {
+                    self.cooldown = self.cooldown_blocks;
+                }
+                let fade = (queued - n).min(self.max_fade);
+                return Adjust::Drop { frames: n, fade };
             }
         }
         Adjust::None
@@ -379,7 +432,7 @@ mod tests {
                     }
                 }
             }
-            if let Adjust::Drop(n) = c.observe(queued) {
+            if let Adjust::Drop { frames: n, .. } = c.observe(queued) {
                 queued -= n;
                 heard.splices += counting as usize;
             }
@@ -484,7 +537,7 @@ mod tests {
     ) -> Heard {
         let deliveries = capture(burst, capture_ppm, jitter, initial_backlog, seconds, quiet);
         play(
-            Cushion::new(block, SR),
+            Cushion::new(block, SR, Arc::default()),
             SR,
             block,
             Read::Steered,
@@ -497,7 +550,7 @@ mod tests {
 
     #[test]
     fn startup_backlog_is_dropped_before_anything_plays() {
-        let mut c = Cushion::new(64, SR);
+        let mut c = Cushion::new(64, SR, Arc::default());
         assert_eq!(c.prime(10), None, "still filling");
         assert!(!c.is_primed());
         let excess = c.prime(20_000).expect("primed");
@@ -551,7 +604,7 @@ mod tests {
         // two seconds; after that nothing is ever cut.
         for ppm in [-100.0, 0.0, 100.0] {
             let deliveries = capture(512, ppm, 0.3, 4_800, 60.0, &[]);
-            let c = Cushion::new(64, SR);
+            let c = Cushion::new(64, SR, Arc::default());
             let r = play(c, SR, 64, Read::Steered, &deliveries, 60.0, 2.0, &[]);
             assert_eq!(r.splices, 0, "{ppm} ppm");
         }
@@ -585,7 +638,7 @@ mod tests {
 
     #[test]
     fn late_audio_deepens_the_queue_once_by_what_was_late() {
-        let mut c = Cushion::new(32, SR);
+        let mut c = Cushion::new(32, SR, Arc::default());
         c.prime(c.start_level()).expect("primed");
         let before = c.target();
         // 20 ms held back, then delivered all at once with the next burst. A
@@ -602,7 +655,7 @@ mod tests {
 
     #[test]
     fn a_source_going_quiet_is_not_charged_as_jitter() {
-        let mut c = Cushion::new(64, SR);
+        let mut c = Cushion::new(64, SR, Arc::default());
         c.prime(c.start_level()).expect("primed");
         let before = c.target();
         // Five seconds of a paused app, then it plays on at the ordinary rate.
@@ -615,7 +668,7 @@ mod tests {
 
     #[test]
     fn the_target_always_fits_the_input_ring() {
-        let mut c = Cushion::new(64, SR);
+        let mut c = Cushion::new(64, SR, Arc::default());
         for _ in 0..50 {
             // Huge lateness, all caught up: the worst a capture can report.
             gap_then(&mut c, 64, 480, 320_000, 320_000);
@@ -663,7 +716,7 @@ mod tests {
         seconds: f64,
         settle: f64,
     ) -> Heard {
-        let c = Cushion::new(block, 44_100);
+        let c = Cushion::new(block, 44_100, Arc::default());
         play(c, 44_100, block, read, deliveries, seconds, settle, &[])
     }
 
@@ -782,7 +835,7 @@ mod tests {
 
     #[test]
     fn the_queue_realigns_only_from_silence() {
-        let mut c = Cushion::new(64, SR);
+        let mut c = Cushion::new(64, SR, Arc::default());
         let start = c.prime(20_000).expect("started");
         assert!(start > 0, "startup backlog goes");
         // Playing along: nothing is ever corrected.
@@ -798,7 +851,7 @@ mod tests {
 
     #[test]
     fn small_deliveries_start_below_the_prior() {
-        let mut c = Cushion::new(32, SR);
+        let mut c = Cushion::new(32, SR, Arc::default());
         let guessed = c.start_level();
         for _ in 0..4 {
             c.arrived(32);
@@ -813,7 +866,7 @@ mod tests {
     #[test]
     fn the_saw_height_sinks_back_at_the_same_pace_at_any_block() {
         let sunk = |need: usize| {
-            let mut c = Cushion::new(need, SR);
+            let mut c = Cushion::new(need, SR, Arc::default());
             c.arrived(512);
             c.arrived(512);
             for _ in 0..(10 * SR as usize) / need {
@@ -827,10 +880,46 @@ mod tests {
 
     #[test]
     fn a_splice_waits_until_the_queue_can_afford_it() {
-        let mut c = Cushion::new(64, SR);
+        let mut c = Cushion::new(64, SR, Arc::default());
         c.owed = 64;
         assert_eq!(c.observe(64), Adjust::None, "not enough queued to cut");
-        assert_eq!(c.observe(64 + 64 + 2 * 32), Adjust::Drop(64));
+        assert_eq!(
+            c.observe(64 + 64 + 2 * 32),
+            Adjust::Drop {
+                frames: 64,
+                fade: 128
+            }
+        );
+    }
+
+    #[test]
+    fn the_startup_correction_is_one_cut_under_a_long_fade() {
+        let mut c = Cushion::new(64, SR, Arc::default());
+        c.owed = 960;
+        assert_eq!(
+            c.observe(4_000),
+            Adjust::Drop {
+                frames: 960,
+                fade: startup_fade_frames(SR)
+            }
+        );
+        assert_eq!(c.observe(4_000), Adjust::None, "nothing left owed");
+    }
+
+    #[test]
+    fn a_source_rebuilt_by_an_edit_starts_at_the_measured_depth() {
+        // The first source measures its delivery and corrects its guessed
+        // start once; the one replacing it starts where that left off and
+        // never cuts.
+        let memo: Arc<DepthMemo> = Arc::default();
+        let deliveries = capture(512, 80.0, 0.3, 4_800, 6.0, &[]);
+        let first = Cushion::new(64, SR, memo.clone());
+        let r = play(first, SR, 64, Read::Steered, &deliveries, 6.0, 0.0, &[]);
+        assert!(r.splices > 0, "the first start corrects its guess");
+        let second = Cushion::new(64, SR, memo);
+        let r = play(second, SR, 64, Read::Steered, &deliveries, 6.0, 0.0, &[]);
+        assert_eq!(r.splices, 0, "the rebuilt source cuts");
+        assert_eq!(r.underruns, 0, "the rebuilt source runs dry");
     }
 }
 

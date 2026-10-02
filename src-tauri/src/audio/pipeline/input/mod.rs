@@ -455,6 +455,7 @@ mod tests {
                 channels: 1,
                 tone_hz: 440.0,
                 amplitude: 0.1,
+                ..Default::default()
             },
         };
         // A 96 kHz chunk of 256 frames is 128 frames at 48 kHz.

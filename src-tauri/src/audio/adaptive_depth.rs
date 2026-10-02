@@ -26,6 +26,38 @@
 //!
 //! Everything is fixed-size: every method here is RT-safe.
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// What a source measured about its own delivery, kept for the source that
+/// replaces it: one rebuilt by an edit, or reopened at another buffer, starts
+/// at the depth already measured instead of guessing and correcting the
+/// guess a second later. In microseconds, so a new rate or block reads it.
+#[derive(Default)]
+pub struct DepthMemo {
+    dip_us: AtomicU32,
+    quantum_us: AtomicU32,
+}
+
+impl DepthMemo {
+    /// The measured dip and delivery size, in frames at `rate`.
+    pub fn recall(&self, rate: u32) -> Option<(usize, usize)> {
+        let dip = self.dip_us.load(Ordering::Relaxed);
+        if dip == 0 {
+            return None;
+        }
+        let quantum = self.quantum_us.load(Ordering::Relaxed);
+        let frames = |us: u32| (us as u64 * rate as u64 / 1_000_000) as usize;
+        Some((frames(dip), frames(quantum)))
+    }
+
+    /// RT-safe: two relaxed stores.
+    pub fn keep(&self, dip: usize, quantum: usize, rate: u32) {
+        let us = |frames: usize| (frames as u64 * 1_000_000 / rate.max(1) as u64) as u32;
+        self.dip_us.store(us(dip).max(1), Ordering::Relaxed);
+        self.quantum_us.store(us(quantum), Ordering::Relaxed);
+    }
+}
+
 const BUCKETS: usize = 64;
 /// First non-zero bucket edge in frames; each next edge is 20% wider.
 const FIRST_EDGE: f64 = 16.0;

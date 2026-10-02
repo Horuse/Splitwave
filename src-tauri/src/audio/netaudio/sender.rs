@@ -150,6 +150,13 @@ impl NetSender {
 
     fn send_loop(&self) {
         self.bell.answer_here();
+        // Each block the graph makes leaves from here: a send that waits
+        // behind ordinary threads is a gap at the receiver.
+        let _rt = crate::audio::pipeline::RtThread::promote(
+            "net-send",
+            self.config.block_frames as u32,
+            self.config.sample_rate,
+        );
         let socket = match UdpSocket::bind(("0.0.0.0", 0)) {
             Ok(s) => s,
             Err(e) => {

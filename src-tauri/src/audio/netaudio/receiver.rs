@@ -3,10 +3,12 @@
 //! decoded to 48 kHz and fanned out to every output subgraph via `FanoutRegistry`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::net::UdpSocket;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
-use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 use crate::audio::stream_recv::{ChannelBroadcast, ConsumerHandle, FanoutRegistry};
@@ -17,7 +19,11 @@ use super::timeline::{max_gap_packets, ChannelTimeline, SeqStep};
 
 /// Pause after a failed receive, so an error that repeats cannot spin the
 /// loop; short enough that a one-off costs the next packet next to nothing.
-const RECV_ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(1);
+const RECV_ERROR_PAUSE: Duration = Duration::from_millis(1);
+
+/// Longest the receive thread blocks before checking whether it was stopped;
+/// a stop waits this long at most before the port is free again.
+const RECV_POLL: Duration = Duration::from_millis(20);
 
 struct ChannelState {
     decoder: Mutex<ChannelDecoder>,
@@ -30,7 +36,8 @@ pub struct NetReceiver {
     port: u16,
     fanout: FanoutRegistry,
     channels: Mutex<HashMap<u8, Arc<ChannelState>>>,
-    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    stopped: AtomicBool,
+    thread: Mutex<Option<JoinHandle<()>>>,
     bytes: AtomicU64,
     packets: AtomicU64,
     lost: AtomicU64,
@@ -137,7 +144,8 @@ pub fn get_or_create(node_id: &str, port: u16) -> Arc<NetReceiver> {
         port,
         fanout: FanoutRegistry::default(),
         channels: Mutex::new(HashMap::new()),
-        task: Mutex::new(None),
+        stopped: AtomicBool::new(false),
+        thread: Mutex::new(None),
         bytes: AtomicU64::new(0),
         packets: AtomicU64::new(0),
         lost: AtomicU64::new(0),
@@ -163,37 +171,62 @@ impl NetReceiver {
             .register_consumer(output_sr, block_frames, realtime)
     }
 
+    /// Stops the receive thread and waits for it, so the port is free for
+    /// whatever binds it next.
     fn stop(&self) {
-        if let Some(t) = self.task.lock().unwrap().take() {
-            t.abort();
+        self.stopped.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.lock().unwrap().take() {
+            let _ = t.join();
         }
         self.fanout.clear();
     }
 
     fn spawn_recv(self: Arc<Self>) {
-        let handle = tauri::async_runtime::spawn(self.clone().recv_loop());
-        *self.task.lock().unwrap() = Some(handle);
+        let receiver = self.clone();
+        match std::thread::Builder::new()
+            .name("net-recv".into())
+            .spawn(move || receiver.recv_loop())
+        {
+            Ok(handle) => *self.thread.lock().unwrap() = Some(handle),
+            Err(e) => warn!(error = %e, "net receiver thread failed to start"),
+        }
     }
 
-    async fn recv_loop(self: Arc<Self>) {
-        let socket = match UdpSocket::bind(("0.0.0.0", self.port)).await {
+    fn recv_loop(&self) {
+        let socket = match UdpSocket::bind(("0.0.0.0", self.port)) {
             Ok(s) => s,
             Err(e) => {
                 warn!(port = self.port, error = %e, "net receiver bind failed");
                 return;
             }
         };
+        if let Err(e) = socket.set_read_timeout(Some(RECV_POLL)) {
+            warn!(port = self.port, error = %e, "net receiver read timeout failed");
+            return;
+        }
         info!(port = self.port, "net receiver listening");
+        // Every packet goes from here into the rings the speakers read: one
+        // that waits behind ordinary threads is a gap they play. Scheduled
+        // as for a 20 ms packet, the usual Opus frame.
+        let _rt = crate::audio::pipeline::RtThread::promote("net-recv", super::SR / 50, super::SR);
         let mut buf = vec![0u8; 2048];
         let mut pcm: Vec<f32> = Vec::new();
-        loop {
-            let n = match socket.recv_from(&mut buf).await {
+        while !self.stopped.load(Ordering::Relaxed) {
+            let n = match socket.recv_from(&mut buf) {
                 Ok((n, _)) => n,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
                 // A datagram-level error (an ICMP reset from a stale peer)
                 // passes; one that repeats would spin the loop, so it is paced.
                 Err(e) => {
                     tracing::debug!(port = self.port, error = %e, "net receiver recv failed");
-                    tokio::time::sleep(RECV_ERROR_PAUSE).await;
+                    std::thread::sleep(RECV_ERROR_PAUSE);
                     continue;
                 }
             };

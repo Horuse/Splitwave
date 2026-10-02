@@ -120,6 +120,13 @@ pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
         .name("webrtc-send".into())
         .spawn(move || {
             bell.answer_here();
+            // Each block the graph makes leaves from here: an encode that
+            // waits behind ordinary threads is a gap at every peer.
+            let _rt = session.upgrade().map(|s| {
+                let sr = s.output_sr.load(Ordering::Relaxed).max(1);
+                let block = s.block_frames.load(Ordering::Relaxed).max(1);
+                crate::audio::pipeline::RtThread::promote("webrtc-send", block as u32, sr)
+            });
             let mut encs: Vec<ChannelEnc> = Vec::new();
             let mut seqs: Vec<u16> = Vec::new();
             let mut seen_gen = u64::MAX;

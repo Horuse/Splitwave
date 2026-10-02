@@ -274,6 +274,9 @@ pub(in crate::audio::pipeline) struct SpeakerCallback {
     retire: Arc<AtomicBool>,
     /// Set once the stop fade has played out.
     faded: Arc<AtomicBool>,
+    /// Frames of silence the device has asked for since the fade, which
+    /// says how far the fade has travelled out of its buffers.
+    drained: Arc<AtomicU64>,
     /// Callbacks so far, for telling a slow retire from a dead device.
     calls: Arc<AtomicU64>,
     /// Frames of the stop fade still to play, once a retire is asked for.
@@ -293,7 +296,7 @@ impl SpeakerCallback {
         let Some(r) = slot.as_mut() else {
             out.fill(0.0);
             if retiring {
-                self.faded.store(true, Ordering::Release);
+                self.drain(callback_frames);
             }
             return;
         };
@@ -303,7 +306,7 @@ impl SpeakerCallback {
             let left = self.fade_left.get_or_insert(self.faded_in.min(total));
             if *left == 0 {
                 out.fill(0.0);
-                self.faded.store(true, Ordering::Release);
+                self.drain(callback_frames);
                 return;
             }
             r.render(out, callback_frames);
@@ -332,33 +335,48 @@ impl SpeakerCallback {
     }
 }
 
+impl SpeakerCallback {
+    /// A whole callback of silence after the fade.
+    fn drain(&self, frames: usize) {
+        self.faded.store(true, Ordering::Release);
+        self.drained.fetch_add(frames as u64, Ordering::Relaxed);
+    }
+}
+
 /// The control-thread end of a speaker's handoff.
 pub(in crate::audio::pipeline) struct SpeakerLink {
     slot: Slot,
     retire: Arc<AtomicBool>,
     faded: Arc<AtomicBool>,
+    drained: Arc<AtomicU64>,
     calls: Arc<AtomicU64>,
     /// The attached renderer's device callback size and rate.
     period: Option<(Arc<AtomicU32>, u32)>,
+    /// Frames the device holds past its buffer before they sound.
+    hardware_frames: u64,
 }
 
 pub(in crate::audio::pipeline) fn speaker_link() -> (SpeakerLink, SpeakerCallback) {
     let slot: Slot = Arc::new(Mutex::new(None));
     let retire = Arc::new(AtomicBool::new(false));
     let faded = Arc::new(AtomicBool::new(false));
+    let drained = Arc::new(AtomicU64::new(0));
     let calls = Arc::new(AtomicU64::new(0));
     (
         SpeakerLink {
             slot: slot.clone(),
             retire: retire.clone(),
             faded: faded.clone(),
+            drained: drained.clone(),
             calls: calls.clone(),
             period: None,
+            hardware_frames: 0,
         },
         SpeakerCallback {
             slot,
             retire,
             faded,
+            drained,
             calls,
             fade_left: None,
             faded_in: 0,
@@ -371,6 +389,7 @@ impl SpeakerLink {
     /// failed open never takes the graph down with its closure.
     pub(in crate::audio::pipeline) fn attach(&mut self, renderer: SpeakerRenderer) {
         self.period = Some((renderer.io.callback_frames.clone(), renderer.io.sample_rate));
+        self.hardware_frames = renderer.io.hardware_frames.unwrap_or(0) as u64;
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
         if slot.replace(renderer).is_some() {
             tracing::error!("speaker renderer attached twice");
@@ -379,8 +398,10 @@ impl SpeakerLink {
 
     /// Fade the speaker out and take the renderer back, so it drops here and
     /// not on the audio thread or with a callback closure cpal never frees.
-    /// Waits for the fade while the device keeps calling back; a device that
-    /// has stopped calling gets no fade, but still gives the renderer back.
+    /// Waits while the device keeps calling back until the fade has left its
+    /// buffer and hardware, since stopping a device drops whatever it has not
+    /// played yet; a device that has stopped calling gets no fade, but still
+    /// gives the renderer back.
     pub(in crate::audio::pipeline) fn retire(&mut self) -> Option<SpeakerRenderer> {
         self.retire.store(true, Ordering::Release);
         let period = self
@@ -396,7 +417,16 @@ impl SpeakerLink {
         let started = Instant::now();
         let mut calls = self.calls.load(Ordering::Relaxed);
         let mut last_call = started;
-        while !self.faded.load(Ordering::Acquire) {
+        let in_flight = |link: &Self| {
+            let buffer = link
+                .period
+                .as_ref()
+                .map_or(0, |(frames, _)| frames.load(Ordering::Relaxed) as u64);
+            buffer + link.hardware_frames
+        };
+        while !self.faded.load(Ordering::Acquire)
+            || self.drained.load(Ordering::Relaxed) < in_flight(self)
+        {
             let now = Instant::now();
             let seen = self.calls.load(Ordering::Relaxed);
             if seen != calls {
@@ -695,6 +725,47 @@ mod tests {
             link.retire().is_some(),
             "renderer handed back after the fade"
         );
+    }
+
+    #[test]
+    fn a_retire_lets_the_fade_leave_the_device_before_stopping_it() {
+        // Stopping a device drops what it has not played. The fade is only
+        // out once the device has asked for a buffer and its hardware
+        // latency's worth of silence after it.
+        let (mut link, mut cb) = speaker_link();
+        let mut t = rig(64, SR);
+        feed(&mut t.input, &vec![0.5; 48_000]);
+        t.r.io.hardware_frames = Some(480);
+        link.attach(t.r);
+        let mut out = vec![0.0; 64 * 2];
+        for _ in 0..20 {
+            cb.fill(&mut out, 64);
+        }
+        let retire = cb.retire.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let retiring = std::thread::spawn(move || {
+            let r = link.retire();
+            tx.send(r.is_some()).unwrap();
+        });
+        while !retire.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        // The fade (480 frames) ends in the 8th callback; 544 frames of
+        // silence (a 64-frame buffer and 480 of hardware) take 9 more.
+        let wait = Duration::from_millis(5);
+        for _ in 0..16 {
+            cb.fill(&mut out, 64);
+            assert!(
+                rx.recv_timeout(wait).is_err(),
+                "stopped with the fade in flight"
+            );
+        }
+        cb.fill(&mut out, 64);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "renderer handed back once the fade is out"
+        );
+        retiring.join().unwrap();
     }
 
     #[test]

@@ -22,8 +22,12 @@ use crate::audio::wake::Doorbell;
 use super::codec::{opus_application, opus_application_byte, ChannelEncoder};
 use super::packet::{self, Format};
 
-/// Longest the send thread sleeps without being rung.
+/// Longest the send thread sleeps without being rung. Out of reach under
+/// test, so whatever a test receives was rung.
+#[cfg(not(test))]
 const IDLE_WAKE: Duration = Duration::from_millis(20);
+#[cfg(test)]
+const IDLE_WAKE: Duration = Duration::from_secs(30);
 
 /// Immutable config; a change (target, codec, bitrate, application) rebuilds the
 /// sender so the encoder and socket are recreated cleanly.
@@ -47,9 +51,6 @@ pub struct NetSender {
     /// Rung by the DAG after each block it pushes.
     bell: Arc<Doorbell>,
     stopped: Arc<AtomicBool>,
-    /// Wakes that came from a ring rather than the idle timeout.
-    #[cfg(test)]
-    rung: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
     packets: Arc<AtomicU64>,
 }
@@ -112,8 +113,6 @@ pub fn get_or_create(
         consumers_gen: Arc::new(AtomicU64::new(0)),
         bell: Arc::default(),
         stopped: Arc::new(AtomicBool::new(false)),
-        #[cfg(test)]
-        rung: Arc::new(AtomicU64::new(0)),
         bytes: Arc::new(AtomicU64::new(0)),
         packets: Arc::new(AtomicU64::new(0)),
     });
@@ -176,13 +175,7 @@ impl NetSender {
         while !self.stopped.load(Ordering::SeqCst) {
             // Woken by each block the DAG pushes; the timeout only matters if
             // the DAG stops.
-            #[cfg(test)]
-            let started = std::time::Instant::now();
             self.bell.wait(IDLE_WAKE);
-            #[cfg(test)]
-            if started.elapsed() < IDLE_WAKE / 2 {
-                self.rung.fetch_add(1, Ordering::Relaxed);
-            }
 
             // Drain each channel's send ring under the lock, then release it
             // before the encode / send work.
@@ -298,6 +291,7 @@ mod tests {
             consumers.push(cons);
         }
         sender.set_send_consumers(consumers);
+        sender.bell().ring();
 
         let mut seqs: BTreeMap<u8, Vec<u16>> = BTreeMap::new();
         let mut buf = [0u8; 2048];
@@ -338,19 +332,21 @@ mod tests {
             48_000,
             256,
         );
+        sink.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
         let (mut prod, cons) = rtrb::RingBuffer::new(9_600);
         sender.set_send_consumers(vec![cons]);
         let bell = sender.bell();
-        std::thread::sleep(Duration::from_millis(50));
-        for _ in 0..5 {
-            prod.write_chunk_uninit(64)
+        let mut buf = [0u8; 2048];
+        // The idle tick is out of reach here: each packet came from a ring.
+        for block in 0..5 {
+            prod.write_chunk_uninit(256)
                 .expect("ring space")
                 .fill_from_iter(std::iter::repeat(0.5));
             bell.ring();
-            std::thread::sleep(Duration::from_millis(3));
+            sink.recv(&mut buf)
+                .unwrap_or_else(|e| panic!("block {block}: the ring did not send it ({e})"));
         }
-        let rung = sender.rung.load(Ordering::Relaxed);
         release("test-rung-sender");
-        assert!(rung >= 3, "only {rung} of 5 rings woke the sender");
     }
 }

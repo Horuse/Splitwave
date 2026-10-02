@@ -498,12 +498,10 @@
 		lastSnapshotAt = Date.now() - SNAPSHOT_MIN_SPACING_MS - 1;
 	});
 
-	// Every node's data (minus canvas geometry) and every edge with its handles.
-	// The backend reconcile classifies the resend, so a live-param-only change is
-	// a no-op there and needs no field-by-field gate here.
+	// Which nodes exist and how they connect, minus canvas geometry.
 	function routingSignature(): string {
 		return JSON.stringify({
-			nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+			nodes: nodes.map((n) => ({ id: n.id, type: n.type })),
 			edges: edges.map((e) => ({
 				id: e.id,
 				source: e.source,
@@ -514,9 +512,23 @@
 		});
 	}
 
+	// Every node's settings. The backend reconcile classifies the resend, so a
+	// live-param-only change is a no-op there and needs no field-by-field gate
+	// here.
+	function dataSignature(): string {
+		return JSON.stringify(nodes.map((n) => n.data));
+	}
+
+	// A slider sends its live value on its own; the graph follows once it
+	// rests, so a drag neither floods reconcile nor rebuilds a node (a
+	// declick's width, a limiter's lookahead) on every step.
+	const DATA_SETTLE_MS = 250;
+
 	let lastRoutingSig = untrack(routingSignature);
-	// An edit goes to the backend at once. Edits made while a reconcile is
-	// still running collapse into one, sent with the graph as it is by then.
+	let lastDataSig = untrack(dataSignature);
+	let settleTimer: ReturnType<typeof setTimeout> | undefined;
+	// Edits made while a reconcile is still running collapse into one, sent
+	// with the graph as it is by then.
 	let restartInFlight = false;
 	let restartQueued = false;
 	async function pushRestart() {
@@ -540,12 +552,25 @@
 		}
 	}
 	// No teardown on re-run: node measurement re-fires this effect constantly.
+	// A new node or connection goes to the backend at once.
 	$effect(() => {
-		const sig = routingSignature();
-		if (sig === lastRoutingSig) return;
-		lastRoutingSig = sig;
+		const routing = routingSignature();
+		const data = dataSignature();
+		const rerouted = routing !== lastRoutingSig;
+		if (!rerouted && data === lastDataSig) return;
+		lastRoutingSig = routing;
+		lastDataSig = data;
 		if (!audioStore.isRunning) return;
-		untrack(() => void pushRestart());
+		clearTimeout(settleTimer);
+		settleTimer = undefined;
+		if (rerouted) {
+			untrack(() => void pushRestart());
+			return;
+		}
+		settleTimer = setTimeout(() => {
+			settleTimer = undefined;
+			untrack(() => void pushRestart());
+		}, DATA_SETTLE_MS);
 	});
 
 	// The Tauri WebView (and historic browser behavior) treats Backspace outside
@@ -633,6 +658,7 @@
 
 	onDestroy(() => {
 		flushPendingCommit();
+		clearTimeout(settleTimer);
 		unlistenAudioFile?.();
 		if (pipelineStore.editorActions?.getSnapshot === getSnapshot) {
 			pipelineStore.editorActions = null;

@@ -747,10 +747,17 @@ struct RoleNode<'a> {
 /// (alphanumeric), so this can never collide with one.
 const RECV_SUFFIX: &str = "#recv";
 
-fn is_analyzer_kind(kind: NodeKind) -> bool {
+/// A node audio may end at besides an output: an analyzer renders telemetry,
+/// and a plugin can be an end point of its own (one that sends its input over
+/// the network, say).
+fn is_end_point_kind(kind: NodeKind) -> bool {
     matches!(
         kind,
-        NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform | NodeKind::Spectrum
+        NodeKind::LevelMeter
+            | NodeKind::LufsMeter
+            | NodeKind::Waveform
+            | NodeKind::Spectrum
+            | NodeKind::Plugin
     )
 }
 
@@ -887,7 +894,7 @@ impl GraphSpec {
 
         let has_destination = nodes
             .iter()
-            .any(|n| n.role == NodeCategory::Output || is_analyzer_kind(n.kind))
+            .any(|n| n.role == NodeCategory::Output || is_end_point_kind(n.kind))
             // A collaborator holds a live peer session from the moment it
             // exists, so an unwired one is a destination in waiting, not a
             // graph error.
@@ -900,7 +907,7 @@ impl GraphSpec {
 
         let reachable_from_inputs = bfs_forward(&nodes, &outgoing, NodeCategory::Input);
         let reachable_from_terminals: HashSet<&str> = bfs_backward_pred(&nodes, &incoming, |n| {
-            n.role == NodeCategory::Output || is_analyzer_kind(n.kind)
+            n.role == NodeCategory::Output || is_end_point_kind(n.kind)
         });
         let routed: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)

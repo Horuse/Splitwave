@@ -1691,17 +1691,9 @@ pub(super) fn build_output_graph(
     let cut_leaf_ids: HashSet<String> = cut_leaves.keys().cloned().collect();
     let reachable: HashSet<String> = match output_id {
         Some(id) => reachable_backward_cut(id, valid, &cut_leaf_ids),
-        // Monitor: everything feeding an analyzer, stopping at cut nodes (whose
+        // Monitor: everything feeding its roots, stopping at cut nodes (whose
         // processed output is read back from the owning output's ring).
-        None => {
-            let roots: Vec<String> = valid
-                .effects
-                .iter()
-                .filter(|e| is_analyzer(&e.spec))
-                .map(|e| e.id.clone())
-                .collect();
-            reachable_backward_from(&roots, valid, &cut_leaf_ids)
-        }
+        None => reachable_backward_from(&monitor_roots(valid), valid, &cut_leaf_ids),
     };
 
     // Topo sort restricted to the reachable sub-graph. Inputs have indegree 0
@@ -2684,16 +2676,10 @@ pub(super) fn plan_cuts(valid: &ValidGraph, monitor_key: Option<&str>) -> CutPla
             .collect();
         assign(&out.id, starts);
     }
-    // Monitor last: it reaches every analyzer, so shared nodes owned by a real
+    // Monitor last: it reaches every root, so shared nodes owned by a real
     // output are read from their ring and only monitor-only nodes stay local.
     if let Some(mk) = monitor_key {
-        let starts = valid
-            .effects
-            .iter()
-            .filter(|e| is_analyzer(&e.spec))
-            .map(|e| e.id.clone())
-            .collect();
-        assign(mk, starts);
+        assign(mk, monitor_roots(valid));
     }
 
     for v in consumers.values_mut() {
@@ -2712,8 +2698,27 @@ pub(super) fn owner_order(valid: &ValidGraph) -> Vec<&crate::audio::graph::Valid
     outputs
 }
 
-/// Analyzer effects are monitor-graph roots: they render telemetry and have no
-/// audio successor, so the monitor sub-graph is everything that feeds one.
+/// What the monitor graph is built from: every analyzer, and every plugin no
+/// output hears. An analyzer renders telemetry and has no audio successor; a
+/// plugin can be an end point of its own (one that sends its input over the
+/// network, say), so it runs whether or not anything follows it.
+pub(super) fn monitor_roots(valid: &ValidGraph) -> Vec<String> {
+    let heard: HashSet<String> = valid
+        .outputs
+        .iter()
+        .flat_map(|o| reachable_backward(&o.id, valid))
+        .collect();
+    valid
+        .effects
+        .iter()
+        .filter(|e| {
+            is_analyzer(&e.spec)
+                || (matches!(e.spec, EffectSpec::Plugin { .. }) && !heard.contains(&e.id))
+        })
+        .map(|e| e.id.clone())
+        .collect()
+}
+
 fn is_analyzer(spec: &EffectSpec) -> bool {
     matches!(
         spec,
@@ -5262,6 +5267,60 @@ pub(super) mod graph_tests {
         assert!(
             keyed_peak < 0.1,
             "sidechain audio leaked into the main mix: {keyed_peak}"
+        );
+    }
+
+    fn plugin_node(id: &str) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Plugin,
+            serde_json::json!({ "format": null, "path": "", "pluginId": "", "bypassed": false, "state": null }),
+        )
+    }
+
+    #[test]
+    fn a_plugin_no_output_hears_still_runs() {
+        // A plugin can be its own end point (one that sends its input over the
+        // network): fed by the mic, followed by nothing.
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), speaker("s"), plugin_node("p")],
+            edges: vec![
+                edge("e1", "m", None, "s", None),
+                edge("e2", "m", None, "p", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        assert_eq!(monitor_roots(&valid), vec!["p".to_string()]);
+        let plan = plan_cuts(&valid, Some(MONITOR_KEY));
+        assert_eq!(plan.owner.get("p").map(String::as_str), Some(MONITOR_KEY));
+        let (built, _) = build_with_block(None, SR, TIMER_BLOCK_FRAMES, &valid, SR, true);
+        assert!(
+            built
+                .graph
+                .nodes
+                .iter()
+                .any(|n| matches!(n, DagNode::Effect(_))),
+            "the monitor builds the plugin"
+        );
+    }
+
+    #[test]
+    fn a_plugin_an_output_hears_runs_there_alone() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), plugin_node("p"), speaker("s")],
+            edges: vec![
+                edge("e1", "m", None, "p", None),
+                edge("e2", "p", None, "s", None),
+            ],
+        };
+        let valid = g.validate().expect("valid");
+        assert!(
+            monitor_roots(&valid).is_empty(),
+            "no monitor for a heard plugin"
         );
     }
 

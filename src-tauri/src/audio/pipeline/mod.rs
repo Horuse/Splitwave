@@ -22,7 +22,7 @@ use tracing::{info, warn};
 use crate::audio::effects::{
     EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
 };
-use crate::audio::graph::{EffectSpec, InputSpec, OutputSpec, RecordingFormat, ValidGraph};
+use crate::audio::graph::{InputSpec, OutputSpec, RecordingFormat, ValidGraph};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats, WriteClock};
 use crate::error::{AppError, AppResult};
 
@@ -808,18 +808,7 @@ fn same_engine_format(a: &ValidGraph, b: &ValidGraph) -> bool {
 }
 
 fn monitor_mode(graph: &ValidGraph) -> bool {
-    if graph.outputs.is_empty() {
-        return true;
-    }
-    graph.effects.iter().any(|e| {
-        matches!(
-            e.spec,
-            EffectSpec::LevelMeter(_)
-                | EffectSpec::LufsMeter(_)
-                | EffectSpec::Waveform(_)
-                | EffectSpec::Spectrum(_)
-        )
-    })
+    graph.outputs.is_empty() || !dag::monitor_roots(graph).is_empty()
 }
 
 pub fn build(graph: &ValidGraph, host: Host) -> AppResult<ActivePipeline> {

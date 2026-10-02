@@ -196,6 +196,8 @@ private final class Tap {
     /// The output device whose start is observed, and its listener.
     private var runningDevice = AudioDeviceID(0)
     private var runningBlock: AudioObjectPropertyListenerBlock?
+    /// Moves the running listener along when the default output changes.
+    private var defaultOutputBlock: AudioObjectPropertyListenerBlock?
 
     private var tapChannels = 0
     private var tapBufferIndex = 0
@@ -417,15 +419,13 @@ private final class Tap {
         listenerBlock = block
         AudioObjectAddPropertyListenerBlock(systemObject, &addr, controlQueue, block)
 
-        if let device = defaultOutputDevice() {
-            var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
-            let running: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                self?.rebuildIfTargetChanged()
-            }
-            if AudioObjectAddPropertyListenerBlock(device, &runningAddr, controlQueue, running) == noErr {
-                runningDevice = device
-                runningBlock = running
-            }
+        observeRunning(on: defaultOutputDevice())
+        var defaultAddr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        let moved: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.defaultOutputChanged()
+        }
+        if AudioObjectAddPropertyListenerBlock(systemObject, &defaultAddr, controlQueue, moved) == noErr {
+            defaultOutputBlock = moved
         }
 
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
@@ -438,16 +438,53 @@ private final class Tap {
     private func removeProcessObservers() {
         pollTimer?.cancel()
         pollTimer = nil
-        if let running = runningBlock {
-            var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
-            AudioObjectRemovePropertyListenerBlock(runningDevice, &runningAddr, controlQueue, running)
-            runningBlock = nil
-            runningDevice = AudioDeviceID(0)
+        if let moved = defaultOutputBlock {
+            var defaultAddr = address(kAudioHardwarePropertyDefaultOutputDevice)
+            AudioObjectRemovePropertyListenerBlock(systemObject, &defaultAddr, controlQueue, moved)
+            defaultOutputBlock = nil
         }
+        unobserveRunning()
         guard let block = listenerBlock else { return }
         var addr = address(kAudioHardwarePropertyProcessObjectList)
         AudioObjectRemovePropertyListenerBlock(systemObject, &addr, controlQueue, block)
         listenerBlock = nil
+    }
+
+    /// Watches `device` start running for someone, in place of the device
+    /// watched so far.
+    private func observeRunning(on device: AudioDeviceID?) {
+        unobserveRunning()
+        guard let device else { return }
+        var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        let running: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.rebuildIfTargetChanged()
+        }
+        if AudioObjectAddPropertyListenerBlock(device, &runningAddr, controlQueue, running) == noErr {
+            runningDevice = device
+            runningBlock = running
+        }
+    }
+
+    private func unobserveRunning() {
+        guard let running = runningBlock else { return }
+        var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        AudioObjectRemovePropertyListenerBlock(runningDevice, &runningAddr, controlQueue, running)
+        runningBlock = nil
+        runningDevice = AudioDeviceID(0)
+    }
+
+    /// The app's processes play to the default output, so the running
+    /// listener follows it there.
+    private func defaultOutputChanged() {
+        lock.lock()
+        let observing = callback != nil
+        if observing {
+            observeRunning(on: defaultOutputDevice())
+        }
+        lock.unlock()
+        if observing {
+            rebuildIfTargetChanged()
+        }
     }
 
     private func rebuildIfTargetChanged() {

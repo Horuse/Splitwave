@@ -239,7 +239,7 @@ fn start_raw_input(
 /// that stopped delivering waits this long.
 const NORMALIZER_IDLE_WAKE: Duration = Duration::from_millis(20);
 
-/// Frames the capture normalizer holds back, at the device's rate: a chunk
+/// Frames the capture normalizer holds back, at the target rate: a chunk
 /// being gathered plus the resampler's filter delay. Zero when it only
 /// forwards (or is skipped entirely).
 pub(super) fn normalizer_frames(
@@ -252,8 +252,11 @@ pub(super) fn normalizer_frames(
         return 0;
     }
     let chunk = device_block(block_frames, target_sample_rate, native) as usize;
+    // The chunk is gathered in device frames; the filter delay is reported
+    // in output frames.
+    let chunk_out = (chunk as u64 * target_sample_rate as u64).div_ceil(native.max(1) as u64);
     MultiResampler::new(native, target_sample_rate, chunk, 1)
-        .map_or(0, |r| (chunk + r.delay_frames()) as u64)
+        .map_or(0, |r| chunk_out + r.delay_frames() as u64)
 }
 
 /// Resamples `chunk` frames at a time: one capture buffer, so a chunk is
@@ -442,6 +445,29 @@ pub(super) fn start_input_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizer_frames_are_counted_at_the_target_rate() {
+        let mic = |sample_rate| ResolvedInput::Virtual {
+            id: "mic".to_string(),
+            input: VirtualInput {
+                sample_rate,
+                channels: 1,
+                tone_hz: 440.0,
+                amplitude: 0.1,
+            },
+        };
+        // A 96 kHz chunk of 256 frames is 128 frames at 48 kHz.
+        let delay = MultiResampler::new(96_000, 48_000, 256, 1)
+            .unwrap()
+            .delay_frames() as u64;
+        assert_eq!(normalizer_frames(&mic(96_000), 48_000, 128), 128 + delay);
+        let delay = MultiResampler::new(44_100, 48_000, 118, 1)
+            .unwrap()
+            .delay_frames() as u64;
+        assert_eq!(normalizer_frames(&mic(44_100), 48_000, 128), 129 + delay);
+        assert_eq!(normalizer_frames(&mic(48_000), 48_000, 128), 0);
+    }
 
     #[test]
     fn test_input_resampler_bypassed_when_rates_match() {

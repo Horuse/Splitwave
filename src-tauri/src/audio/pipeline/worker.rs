@@ -59,6 +59,10 @@ pub(super) struct DspWorker {
     /// Gain the running graph plays at: ramping to 0 while `pending` waits,
     /// back to 1 after the swap.
     gain: f32,
+    /// Frames a graph that just swapped in stays silent before it fades in:
+    /// its new delay lines start empty, and audio arriving at the end of one
+    /// mid-fade would step in.
+    hold: usize,
     /// Hot-swap channel: main thread pushes a freshly-built `OutputGraph`
     /// here; worker takes ownership at the next block boundary.
     cmd_rx: Consumer<OutputGraph>,
@@ -99,6 +103,7 @@ pub(super) fn dsp_worker(graph: OutputGraph) -> (DspWorker, WorkerCtrl) {
             graph,
             pending: None,
             gain: 1.0,
+            hold: 0,
             cmd_rx,
             old_graph_tx: old_tx,
         },
@@ -158,6 +163,11 @@ impl DspWorker {
             let fade_len = (self.graph.sample_rate() as usize * SWAP_FADE_MS / 1000).max(1);
             let step = 1.0 / fade_len as f32;
             for frame in block.chunks_exact_mut(channels) {
+                if self.hold > 0 && self.pending.is_none() {
+                    self.hold -= 1;
+                    frame.fill(0.0);
+                    continue;
+                }
                 self.gain = if target > self.gain {
                     (self.gain + step).min(target)
                 } else {
@@ -170,6 +180,7 @@ impl DspWorker {
         }
         if self.gain <= 0.0 {
             if let Some(new_graph) = self.pending.take() {
+                self.hold = new_graph.latency_frames();
                 self.swap_in(new_graph);
             }
         }
@@ -320,6 +331,41 @@ mod tests {
             ctrl.old_graph_rx.slots(),
             1,
             "the old graph went back to main"
+        );
+    }
+
+    #[test]
+    fn a_graph_with_new_delay_lines_fades_in_once_they_fill() {
+        // A fresh lookahead plays its empty delay line first: the fade-in
+        // waits for the audio behind it rather than letting it step in.
+        use super::super::dag::graph_tests::{fresh_registry, parallel_with_lookahead};
+        let (old, _old_in) = constant_graph(0.5);
+        let mut registry = fresh_registry();
+        let (new, _new_in) = carrying_graph(
+            &parallel_with_lookahead(false, 5.0, false),
+            &mut registry,
+            &std::collections::HashMap::new(),
+            0.25,
+        );
+        assert!(new.graph.latency_frames() > 0, "the new graph delays");
+        let (mut worker, mut ctrl) = dsp_worker(old);
+        let mut block = block_for(&worker);
+        worker.next_block(&mut block);
+        ctrl.send_graph(new.graph).expect("queue swap");
+        let mut played: Vec<f32> = Vec::new();
+        for _ in 0..40 {
+            worker.next_block(&mut block);
+            played.extend(block.iter().step_by(2));
+        }
+        let fade = 48_000 * SWAP_FADE_MS / 1000;
+        let worst = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst <= 0.5 / fade as f32 + 1e-4, "a step of {worst}");
+        assert!(
+            (played.last().unwrap() - 0.5).abs() < 1e-4,
+            "the new graph plays"
         );
     }
 

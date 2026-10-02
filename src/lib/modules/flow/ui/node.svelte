@@ -71,10 +71,8 @@
 	let timing = $derived(nodeId ? latencyStore.node(nodeId) : undefined);
 	let blockTooltip = $derived.by(() => {
 		const block = timing?.workingBlock;
-		if (!block || !latencyStore.report) return undefined;
-		const rate = latencyStore.report.sampleRate;
-		if (!rate) return undefined;
-		return `Runs in ${block}-frame blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / rate)} ms`;
+		if (!block || !latencyStore.report || !timing!.sampleRate) return undefined;
+		return `Runs in ${block}-frame blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / timing!.sampleRate)} ms`;
 	});
 
 	function pos(p: InputHandleConfig['position']): Position {

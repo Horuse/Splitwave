@@ -287,6 +287,6 @@ function mockLatencyReport(env: MockEnv): LatencyReport {
 		deviceBufferFrames: env.bufferFrames,
 		dspLoad: 0.18,
 		overloads: 0,
-		nodes: node ? [{ nodeId: STORY_NODE_ID, latencyFrames: node, workingBlock: node }] : []
+		nodes: node ? [{ nodeId: STORY_NODE_ID, latencyFrames: node, workingBlock: node, sampleRate: env.pipelineSampleRate }] : []
 	};
 }

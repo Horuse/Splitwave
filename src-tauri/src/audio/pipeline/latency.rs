@@ -65,10 +65,13 @@ pub struct LatencyBreakdown {
 #[ts(export)]
 pub struct NodeTiming {
     pub node_id: String,
-    /// Delay this node adds, in pipeline frames.
+    /// Delay this node adds, in frames of `sample_rate`.
     pub latency_frames: u32,
     /// Block the node actually works in, when larger than the engine buffer.
     pub working_block: Option<u32>,
+    /// Rate of the graph the node runs in: a wire sender's or a recording's
+    /// may differ from the pipeline's.
+    pub sample_rate: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]

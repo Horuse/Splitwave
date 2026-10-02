@@ -2,10 +2,15 @@
 
 export type NodeTiming = { nodeId: string, 
 /**
- * Delay this node adds, in pipeline frames.
+ * Delay this node adds, in frames of `sample_rate`.
  */
 latencyFrames: number, 
 /**
  * Block the node actually works in, when larger than the engine buffer.
  */
-workingBlock: number | null, };
+workingBlock: number | null, 
+/**
+ * Rate of the graph the node runs in: a wire sender's or a recording's
+ * may differ from the pipeline's.
+ */
+sampleRate: number, };

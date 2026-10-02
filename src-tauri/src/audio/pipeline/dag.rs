@@ -2173,6 +2173,7 @@ pub(super) fn build_output_graph(
                 node_id: id.clone(),
                 latency_frames: own as u32,
                 working_block: this_effect.working_block.map(|w| w as u32),
+                sample_rate: output_sr,
             });
             let full_width = this_effect.full_width;
             carried.insert(

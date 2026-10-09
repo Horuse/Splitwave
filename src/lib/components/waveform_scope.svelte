@@ -1304,10 +1304,13 @@
 		}
 	}
 
+	let unlistenScope: (() => void) | undefined;
+	let unlistenProgress: (() => void) | undefined;
+
 	onMount(() => {
 		ctx = canvas.getContext('2d');
-		tauriListen<ScopeTick>('audio://scope', (p) => onScope(p));
-		tauriListen<RecorderProgress>('audio://recorder_progress', (p) => onProgress(p));
+		unlistenScope = tauriListen<ScopeTick>('audio://scope', (p) => onScope(p));
+		unlistenProgress = tauriListen<RecorderProgress>('audio://recorder_progress', (p) => onProgress(p));
 		ro = new ResizeObserver((entries) => {
 			const rect = entries[0].contentRect;
 			const w = rect.width;
@@ -1329,6 +1332,8 @@
 
 	onDestroy(() => {
 		disposed = true;
+		unlistenScope?.();
+		unlistenProgress?.();
 		if (stopTimer) clearTimeout(stopTimer);
 		ro?.disconnect();
 		ctx = null;

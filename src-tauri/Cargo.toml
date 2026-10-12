@@ -31,6 +31,40 @@ opt-level = 3
 [profile.dev.package.ebur128]
 opt-level = 3
 
+# A file input decodes ahead of playback on its own thread; unoptimized, the
+# FLAC and MP3 decoders barely keep real time on a slow machine and the
+# source runs dry.
+[profile.dev.package.symphonia-core]
+opt-level = 3
+[profile.dev.package.symphonia-common]
+opt-level = 3
+[profile.dev.package.symphonia-metadata]
+opt-level = 3
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 3
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+[profile.dev.package.symphonia-codec-pcm]
+opt-level = 3
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3
+[profile.dev.package.symphonia-codec-alac]
+opt-level = 3
+[profile.dev.package.symphonia-codec-adpcm]
+opt-level = 3
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 3
+[profile.dev.package.symphonia-format-riff]
+opt-level = 3
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
+[profile.dev.package.symphonia-format-ogg]
+opt-level = 3
+[profile.dev.package.symphonia-format-mkv]
+opt-level = 3
+[profile.dev.package.symphonia-format-caf]
+opt-level = 3
+
 # audiopus_sys uses CMake. At opt-level 0 CMake selects the debug MSVC runtime,
 # while Rust uses the release runtime even in dev/test profiles on Windows.
 [profile.dev.package.audiopus_sys]

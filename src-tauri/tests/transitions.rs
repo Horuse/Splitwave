@@ -79,10 +79,11 @@ fn listen(x: &[f32], edit_at: usize) -> Heard {
     heard
 }
 
-/// A device the host holds up this long drops out on any engine: a run in
+/// A device the host holds up past this drops out at the smallest buffers
+/// (32 frames is 0.7 ms) on any engine: a run in
 /// which one was is taken again rather than judged. Shared CI machines
 /// (macOS runners above all) pause threads for milliseconds at a time.
-const HOST_LATE_LIMIT: Duration = Duration::from_millis(4);
+const HOST_LATE_LIMIT: Duration = Duration::from_millis(1);
 const MAX_RUNS: usize = 4;
 
 /// `listen` over what `play` returns, from a run in which the host kept every

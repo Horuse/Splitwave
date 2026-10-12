@@ -217,10 +217,11 @@ pub struct Measured {
 pub const WARMUP: Duration = Duration::from_millis(500);
 pub const WINDOW: Duration = Duration::from_millis(700);
 
-/// A device the host holds up this long drops out on any engine: a window
+/// A device the host holds up past this drops out at the smallest buffers
+/// (32 frames is 0.7 ms) on any engine: a window
 /// in which one was is taken again rather than judged. Shared CI machines
 /// (macOS runners above all) pause threads for milliseconds at a time.
-const HOST_LATE_LIMIT: Duration = Duration::from_millis(4);
+const HOST_LATE_LIMIT: Duration = Duration::from_millis(1);
 const MAX_WINDOWS: usize = 6;
 /// What a hold-up leaves behind settles before the next window.
 const RESETTLE: Duration = Duration::from_millis(300);

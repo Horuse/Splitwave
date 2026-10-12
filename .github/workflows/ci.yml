@@ -96,9 +96,23 @@ jobs:
           fi
           if [ "$RUNNER_OS" = "Windows" ]; then
             cargo test --no-run
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            # The real-time scenarios run in their own advisory step below.
+            cargo test --lib --bins --test updater
+            cargo test --doc
           else
             cargo test
           fi
+
+      # The macOS runner is a virtual machine that pauses threads for
+      # milliseconds at a time, longer than a small engine buffer lasts, so the
+      # real-time scenarios report there without failing the build. Linux runs
+      # them as a gate.
+      - name: Real-time scenarios (advisory on macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo test --test pipelines --test transitions
 
       - name: TS-RS bindings up to date
         run: git diff --exit-code -- src/lib/modules/pipeline/generated

@@ -87,6 +87,10 @@ fn staging_samples(channels: usize, rate: u32) -> usize {
     RESAMPLE_CHUNK * channels + splice_samples(channels, rate) + 8
 }
 
+/// Largest packet the file decoders hand over at once (a FLAC block; MP3
+/// and AAC frames are smaller): what a file source holds past a block.
+const FILE_PACKET_FRAMES: usize = 4096;
+
 /// A seek fades the old position out and the new one in over this.
 const SEEK_FADE_MS: f64 = 5.0;
 
@@ -358,6 +362,11 @@ struct SourceState {
     /// >STALL_THRESHOLD since last pop => zero-fill and stop waiting on this source.
     last_pop_at: Instant,
     volume: Arc<AtomicU32>,
+    /// A file source's start level, in frames of its ring: a block and a
+    /// decoder packet. 0 for every other source.
+    file_lead: usize,
+    /// Reached `file_lead` and playing; cleared when it runs dry.
+    file_started: bool,
     /// The volume heard, gliding to a new setting so moving it never steps.
     volume_ramp: Ramp,
     paused: Option<Arc<AtomicBool>>,
@@ -402,6 +411,7 @@ impl SourceState {
             self.out_pending.clear();
         }
         std::mem::swap(&mut self.cushion, &mut old.cushion);
+        self.file_started = old.file_started;
         self.queue_avg = old.queue_avg;
         self.queued_after = old.queued_after;
         self.last_pop_at = old.last_pop_at;
@@ -521,6 +531,20 @@ impl SourceState {
                 left: self.seek_fade_frames,
             };
         }
+        // A file feeds a graph that joined it mid-play only as fast as it
+        // plays, so that graph's ring holds no lead of its own. It starts
+        // once it holds a block and a packet past it, as a live queue primes,
+        // so a packet landing late never runs it dry.
+        let mut file_fade_in = false;
+        if self.file_lead > 0 && !self.file_started {
+            if self.queued_frames() < self.file_lead {
+                self.silence();
+                self.publish_queue();
+                return;
+            }
+            self.file_started = true;
+            file_fade_in = true;
+        }
         let was_primed = self.cushion.as_ref().is_some_and(Cushion::is_primed);
         if self.cushion.is_some() && !self.regulate() {
             // Filling before the first read, or refilling after running dry:
@@ -535,7 +559,7 @@ impl SourceState {
             return;
         }
         // Coming out of silence: the first samples ramp up rather than step.
-        let fade_in = self.cushion.is_some() && !was_primed;
+        let fade_in = (self.cushion.is_some() && !was_primed) || file_fade_in;
         if self.asrc.is_some() {
             self.fill_resampled(now, fade_in);
         } else {
@@ -609,13 +633,14 @@ impl SourceState {
                     if let Some(c) = &mut self.cushion {
                         c.underrun(missing / self.channels);
                     }
+                    self.file_started = false;
                 }
                 break;
             }
             let n = self.out_pending.pop_into(&mut self.out_buf[written..]);
             written += n;
         }
-        if self.cushion.is_some() {
+        if self.cushion.is_some() || self.file_lead > 0 {
             let w = self.channels;
             if fade_in {
                 ramp(&mut self.out_buf, w, 0, written / w, self.fade_frames, true);
@@ -2087,6 +2112,12 @@ pub(super) fn build_output_graph(
                 input_id: Some(id.clone()),
                 last_pop_at: Instant::now(),
                 volume_ramp: Ramp::new(volume_at_build(input_volumes, id), output_sr),
+                file_lead: if matches!(input.spec, InputSpec::AudioFile { .. }) {
+                    input_frames_per_block as usize + FILE_PACKET_FRAMES
+                } else {
+                    0
+                },
+                file_started: false,
                 volume: input_volumes
                     .get(id)
                     .cloned()
@@ -2723,6 +2754,8 @@ fn ring_source(
         last_pop_at: Instant::now(),
         volume: Arc::new(AtomicU32::new(0x3F80_0000)),
         volume_ramp: Ramp::new(1.0, output_sr),
+        file_lead: 0,
+        file_started: false,
         paused: None,
         drain: None,
         last_drain_gen: 0,
@@ -3286,6 +3319,56 @@ pub(super) mod graph_tests {
         // through: block 1 is its first 1024 frames, block 2 the next span.
         assert_eq!(out1, fed[..TIMER_BLOCK_FRAMES * 2]);
         assert_eq!(out2, fed[TIMER_BLOCK_FRAMES * 2..TIMER_BLOCK_FRAMES * 4]);
+    }
+
+    #[test]
+    fn a_file_joined_mid_play_starts_with_a_lead_instead_of_running_dry() {
+        // A graph that joins a file already playing is fed only as fast as
+        // it plays, a decoder packet at a time, each landing a block after
+        // it was wanted. Started empty it runs dry; started a block and a
+        // packet deep it never does.
+        let (mut valid, _) = passthrough_graph();
+        valid.inputs[0].spec = InputSpec::AudioFile {
+            file_path: "/tone.wav".into(),
+        };
+        let mut producer_pairs = Vec::new();
+        let native = valid.inputs.iter().map(|i| (i.id.clone(), SR)).collect();
+        let native_ch = valid.inputs.iter().map(|i| (i.id.clone(), 2u32)).collect();
+        let mut reg = fresh_registry();
+        let mut built = build_output_graph(
+            Some("s"),
+            SR,
+            TIMER_BLOCK_FRAMES,
+            1,
+            true,
+            &valid,
+            &native,
+            &native_ch,
+            &mut producer_pairs,
+            &mut reg,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &DepthMemos::default(),
+        )
+        .expect("build");
+        let packet = vec![0.25f32; FILE_PACKET_FRAMES * 2];
+        let per_packet = FILE_PACKET_FRAMES / TIMER_BLOCK_FRAMES;
+        let mut out = vec![0.0; TIMER_BLOCK_FRAMES * 2];
+        let mut heard = 0;
+        for k in 0..64 {
+            if k % per_packet == 1 {
+                push_all(&mut producer_pairs[0].1, &packet);
+            }
+            built.graph.process_block(&mut out);
+            heard += out.iter().filter(|s| **s != 0.0).count();
+        }
+        let xrun = built.sources[0].stats.xrun.load(Ordering::Relaxed);
+        assert_eq!(xrun, 0, "the file ran dry");
+        assert!(heard > 0, "the file never started");
     }
 
     #[test]

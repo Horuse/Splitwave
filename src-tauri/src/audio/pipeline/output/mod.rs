@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use rtrb::RingBuffer;
 use serde_json::json;
 use tracing::warn;
 
@@ -11,6 +12,9 @@ use crate::audio::clock::{ClockSource, SystemClockTicker};
 use crate::audio::effects::{MeterHandle, WaveformHandle};
 use crate::audio::encoders::{build_encoder, validate_append_target, AudioEncoder};
 use crate::audio::graph::{NetCodec, OutputSpec, RecordingFormat, RecordingMode, ValidOutput};
+use crate::audio::health;
+use crate::audio::streams::bulk_push_counted;
+use crate::audio::wake::Doorbell;
 use crate::error::{AppError, AppResult};
 
 use super::dag::OutputGraph;
@@ -344,8 +348,10 @@ pub(super) fn start_monitor_worker(graph: OutputGraph) -> AppResult<(RecorderWor
     // keeps meters/scopes at real time and, crucially, consumes network-sourced
     // audio (WebRTC) at the rate it arrives instead of draining its jitter buffer.
     let sample_rate = graph.sample_rate();
-    // Ticks one graph block at a time, whatever block the graph was built at.
-    let ticker = SystemClockTicker::new(sample_rate, graph.block_frames());
+    // Ticks one graph block at a time, whatever block the graph was built at,
+    // and makes up a late tick: one skipped is audio left queued in its
+    // sources, the meters falling behind by that much for good.
+    let ticker = timer_clock(sample_rate, graph.block_frames());
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("monitor".into())
@@ -379,7 +385,10 @@ pub(super) fn start_wire_sender_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let sample_rate = graph.sample_rate();
-    let ticker = SystemClockTicker::with_catchup(sample_rate, graph.block_frames(), 8);
+    // A late tick is made up: one skipped is audio left queued in its
+    // sources, latency the far end hears for good. Bounded in time, not in
+    // blocks, so a small engine buffer rides out the same stall.
+    let ticker = timer_clock(sample_rate, graph.block_frames());
     let (worker, ctrl) = dsp_worker(graph);
     let join = thread::Builder::new()
         .name("netsender".into())
@@ -401,6 +410,24 @@ pub(super) fn start_wire_sender_worker(
     ))
 }
 
+/// Longest a timer-paced graph's clock makes up for at once after its thread
+/// was held up: within what its sources' rings hold, so nothing they
+/// delivered is lost or left queued as latency.
+const TIMER_CATCHUP_SECS: f64 = 0.5;
+
+/// Rendered audio waiting for the file: what a disk that stalls may hold up
+/// before the recording loses any.
+const RECORDER_QUEUE_SECS: usize = 4;
+
+/// Longest the writer sleeps without being rung.
+const RECORDER_WRITER_WAKE: Duration = Duration::from_millis(50);
+
+fn timer_clock(rate: u32, block: usize) -> SystemClockTicker {
+    let catchup = ((rate as f64 * TIMER_CATCHUP_SECS) as usize / block.max(1)).max(1);
+    SystemClockTicker::with_catchup(rate, block, catchup as u32)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start_recorder_worker(
     node_id: String,
     path: PathBuf,
@@ -413,14 +440,15 @@ pub(super) fn start_recorder_worker(
     host: Host,
 ) -> AppResult<(RecorderWorker, WorkerCtrl, WaveformHandle)> {
     let stop = Arc::new(AtomicBool::new(false));
-    let stop_thread = stop.clone();
+    let stop_dsp = stop.clone();
+    let stop_writer = stop.clone();
     // Transport-paced: recording must follow the wall clock, not the source.
     // A file source decodes faster than real time; availability pacing would
     // drain it as fast as it arrives and over-run (a 1 s clip becomes 1:22).
-    let clock: Box<dyn ClockSource> = Box::new(SystemClockTicker::new(
-        graph.sample_rate(),
-        graph.block_frames(),
-    ));
+    // A late tick is made up rather than skipped: skipped time is audio the
+    // sources delivered and the file never gets.
+    let graph_rate = graph.sample_rate();
+    let clock: Box<dyn ClockSource> = Box::new(timer_clock(graph_rate, graph.block_frames()));
     let (worker, ctrl) = dsp_worker(graph);
 
     // Scope-style waveform feed, emitted to the UI by the meter tick thread.
@@ -428,18 +456,47 @@ pub(super) fn start_recorder_worker(
     let wave_thread = wave.clone();
     let session = wave.session;
 
-    // No real-time promotion: this worker blocks on encoder file I/O.
+    // The graph renders on one thread and the file is written on another: a
+    // disk that stalls holds up the writer, never the clock the sources are
+    // read on, so the rendering thread can run at real-time priority.
     let channels_usize = channels as usize;
+    let (mut to_writer, mut from_dsp) =
+        RingBuffer::<f32>::new(graph_rate as usize * channels_usize * RECORDER_QUEUE_SECS);
+    let bell = Arc::new(Doorbell::default());
+    let rung = bell.clone();
+    let rendered = Arc::new(AtomicBool::new(false));
+    let done = rendered.clone();
+    let dsp = thread::Builder::new()
+        .name(format!("recorder-dsp:{}", path.display()))
+        .spawn(move || {
+            worker.run(
+                stop_dsp,
+                clock,
+                Some(("recorder", graph_rate)),
+                |block, _| {
+                    bulk_push_counted(&mut to_writer, block, &health::RECORDER_OVERRUN_SAMPLES);
+                    rung.ring();
+                    Ok(())
+                },
+            );
+            done.store(true, Ordering::Release);
+            rung.ring();
+        })
+        .map_err(|e| AppError::Stream(format!("spawn recorder thread: {e}")))?;
+
     let join = thread::Builder::new()
         .name(format!("recorder:{}", path.display()))
         .spawn(move || {
-            // Inside the worker thread so slow encoder init (libopus,
+            bell.answer_here();
+            // Inside the writer thread so slow encoder init (libopus,
             // libmp3lame, AVAudioFile) doesn't stagger recorder starts.
             let encoder: Box<dyn AudioEncoder> =
                 match build_encoder(&path, sample_rate, channels, format, append) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!(node = %node_id, error = %e, "recorder init failed");
+                        stop_writer.store(true, Ordering::SeqCst);
+                        let _ = dsp.join();
                         host.emit(
                             "audio://recorder_progress",
                             json!({
@@ -466,11 +523,34 @@ pub(super) fn start_recorder_worker(
             let mut frames_written: u64 = base_frames;
             let mut encoder = encoder;
 
-            worker.run(stop_thread, clock, None, |block, _| {
-                encoder.write_interleaved(block)?;
-                frames_written += (block.len() / channels_usize) as u64;
-                wave_thread.push_interleaved(block, block.len() / channels_usize, base_frames);
-
+            loop {
+                let finished = rendered.load(Ordering::Acquire);
+                let queued = from_dsp.slots();
+                if queued > 0 {
+                    let Ok(chunk) = from_dsp.read_chunk(queued) else {
+                        continue;
+                    };
+                    let (a, b) = chunk.as_slices();
+                    let mut failed = false;
+                    for part in [a, b] {
+                        if part.is_empty() {
+                            continue;
+                        }
+                        if let Err(e) = encoder.write_interleaved(part) {
+                            warn!(node = %node_id, error = %e, "recorder write failed; stopping");
+                            failed = true;
+                            break;
+                        }
+                        let frames = part.len() / channels_usize;
+                        frames_written += frames as u64;
+                        wave_thread.push_interleaved(part, frames, base_frames);
+                    }
+                    chunk.commit_all();
+                    if failed {
+                        stop_writer.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                }
                 if last_flush.elapsed() >= FLUSH_INTERVAL {
                     if let Err(e) = encoder.flush() {
                         warn!(error = %e, "recorder flush failed");
@@ -490,8 +570,13 @@ pub(super) fn start_recorder_worker(
                     );
                     last_progress = std::time::Instant::now();
                 }
-                Ok(())
-            });
+                // Everything rendered before the stop is in the file.
+                if finished && from_dsp.is_empty() {
+                    break;
+                }
+                bell.wait(RECORDER_WRITER_WAKE);
+            }
+            let _ = dsp.join();
 
             host.emit(
                 "audio://recorder_progress",
@@ -509,7 +594,7 @@ pub(super) fn start_recorder_worker(
                 warn!(error = %e, "recorder finalize failed");
             }
         })
-        .map_err(|e| AppError::Stream(format!("spawn recorder thread: {e}")))?;
+        .map_err(|e| AppError::Stream(format!("spawn recorder writer: {e}")))?;
 
     Ok((
         RecorderWorker {
@@ -524,6 +609,24 @@ pub(super) fn start_recorder_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_up_recorder_makes_up_the_time_it_lost() {
+        // Every tick skipped is audio its sources delivered and the file
+        // never gets: after a stall the missed ticks fire back to back.
+        let mut clock = timer_clock(48_000, 1_024);
+        let stop = AtomicBool::new(false);
+        assert!(clock.wait_for_tick(&stop));
+        std::thread::sleep(Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        let mut immediate = 0;
+        while started.elapsed() < Duration::from_millis(5) {
+            assert!(clock.wait_for_tick(&stop));
+            immediate += 1;
+        }
+        // 200 ms is nine 1024-frame periods; the first was due anyway.
+        assert!(immediate >= 8, "made up {immediate} ticks");
+    }
 
     /// A host offering no devices: enough for outputs that need none.
     fn no_devices() -> Host {

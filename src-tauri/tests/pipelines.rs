@@ -322,6 +322,47 @@ fn recording(name: &str, input: Input, also_speaker: bool) {
 }
 
 #[test]
+fn record_a_denoised_mic_and_an_app_without_losing_any() {
+    // A recorder runs heavy DSP and file IO; neither may cost it time.
+    let _g = serial();
+    let path = temp_path("denoised-and-app.wav");
+    let _ = std::fs::remove_file(&path);
+    let graph = Graph::new(32)
+        .node("m", "microphone", mic("real-mic"))
+        .node("ns", "noiseSuppressor", effect("noiseSuppressor"))
+        .node("lm", "levelMeter", effect("levelMeter"))
+        .node(
+            "a",
+            "appAudio",
+            json!({ "bundleId": "com.example.player", "volume": 1.0 }),
+        )
+        .node(
+            "rec",
+            "fileRecording",
+            json!({
+                "filePath": path.to_string_lossy(),
+                "format": wav(),
+                "mode": "overwrite",
+                "channels": 2,
+                "sampleRate": RATE,
+            }),
+        )
+        .chain(&["m", "ns", "lm", "rec"])
+        .edge("a", "rec");
+    let mut m = run(&graph, &[]);
+    m.assert_real_time();
+    m.assert_no_dropouts();
+    m.rig.stop();
+    let (frames, rate) = read_wav(&path);
+    let seconds = frames.len() as f64 / rate as f64;
+    let ran = (WARMUP + m.window).as_secs_f64();
+    assert!(
+        seconds > ran * 0.85 && seconds < ran * 1.15,
+        "recorded {seconds:.2} s of {ran:.2} s"
+    );
+}
+
+#[test]
 fn record_mic() {
     let _g = serial();
     recording("mic.wav", Input::Mic, false);

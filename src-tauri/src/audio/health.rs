@@ -54,6 +54,9 @@ counters! {
     OFFLOAD_RESYNC_DROPPED_SAMPLES,
     /// Samples dropped pushing into an offload ring (either direction).
     OFFLOAD_RING_OVERRUN_SAMPLES,
+    /// Rendered samples a recorder dropped because its file writer fell
+    /// further behind than its queue holds.
+    RECORDER_OVERRUN_SAMPLES,
 }
 
 /// Name of the high-water-mark counter, whose delta is meaningless.
@@ -105,6 +108,7 @@ mod tests {
                 "OFFLOAD_STARVED_SAMPLES",
                 "OFFLOAD_RESYNC_DROPPED_SAMPLES",
                 "OFFLOAD_RING_OVERRUN_SAMPLES",
+                "RECORDER_OVERRUN_SAMPLES",
             ]
         );
     }

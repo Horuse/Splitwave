@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::audio::graph::DelayData;
 
-use super::util::load_f32;
+use super::util::{load_f32, Ramp};
 use super::{Effect, EffectControl};
 
 pub(crate) const MAX_DELAY_MS: f32 = 2000.0;
@@ -32,6 +32,8 @@ pub struct DelayEffect {
     current_delay_frames: f64,
     /// Share of the gap to the set time closed per frame.
     glide: f64,
+    ramp_feedback: Ramp,
+    ramp_mix: Ramp,
 }
 
 impl DelayEffect {
@@ -57,6 +59,8 @@ impl DelayEffect {
         sample_rate: u32,
     ) -> Self {
         let cap = (MAX_DELAY_MS * 0.001 * sample_rate as f32) as usize * 2;
+        let ramp_feedback = Ramp::new(load_f32(&feedback).clamp(0.0, 0.95), sample_rate);
+        let ramp_mix = Ramp::new(load_f32(&mix).clamp(0.0, 1.0), sample_rate);
         let mut effect = Self {
             time_ms,
             feedback,
@@ -66,6 +70,8 @@ impl DelayEffect {
             write: 0,
             current_delay_frames: 0.0,
             glide: 1.0 - (-1000.0 / (GLIDE_MS * sample_rate as f64)).exp(),
+            ramp_feedback,
+            ramp_mix,
         };
         effect.current_delay_frames = effect.target_delay_frames();
         effect
@@ -85,13 +91,16 @@ impl Effect for DelayEffect {
             return;
         }
         let target = self.target_delay_frames();
-        let feedback = load_f32(&self.feedback).clamp(0.0, 0.95);
-        let mix = load_f32(&self.mix).clamp(0.0, 1.0);
-        let dry = 1.0 - mix;
+        self.ramp_feedback
+            .set(load_f32(&self.feedback).clamp(0.0, 0.95));
+        self.ramp_mix.set(load_f32(&self.mix).clamp(0.0, 1.0));
 
         let cap = self.buf.len() / 2;
         let stereo = &mut samples[..frames * 2];
         for frame in stereo.chunks_exact_mut(2) {
+            let feedback = self.ramp_feedback.next();
+            let mix = self.ramp_mix.next();
+            let dry = 1.0 - mix;
             let gap = target - self.current_delay_frames;
             if gap != 0.0 {
                 let step = (gap * self.glide).clamp(-MAX_GLIDE_RATE, MAX_GLIDE_RATE);

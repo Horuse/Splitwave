@@ -54,6 +54,7 @@ use noise_gate::NoiseGateEffect;
 use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
+pub(crate) use util::Ramp;
 pub use waveform::{WaveformEffect, WaveformHandle};
 
 /// Shared atom for a dynamic-gain effect (compressor / noise gate / limiter).
@@ -576,6 +577,7 @@ pub fn instantiate_effect(
                 RuntimeEffect::ChannelBalance(ChannelBalanceEffect::from_state(
                     left.clone(),
                     right.clone(),
+                    sample_rate,
                 )),
                 None,
                 None,
@@ -584,7 +586,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = ChannelBalanceEffect::new(d);
+                let (e, c) = ChannelBalanceEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(
                     RuntimeEffect::ChannelBalance(e),
@@ -601,6 +603,7 @@ pub fn instantiate_effect(
                 RuntimeEffect::Saturator(SaturatorEffect::from_state(
                     ceiling.clone(),
                     drive.clone(),
+                    sample_rate,
                 )),
                 None,
                 None,
@@ -609,7 +612,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = SaturatorEffect::new(d);
+                let (e, c) = SaturatorEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Saturator(e), Some(c), None, None, None, None)
             }
@@ -673,8 +676,11 @@ pub fn instantiate_effect(
                 )
             }
         },
+        // A handle carries the rate its samples run at; a node rebuilt in a
+        // graph at another rate starts a new one, or the UI reads its time
+        // and frequency axes at the old rate.
         EffectSpec::Waveform(d) => match registry.scopes.get(node_id) {
-            Some(handle) => mk(
+            Some(handle) if handle.sample_rate == sample_rate => mk(
                 RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
                 None,
                 None,
@@ -682,7 +688,7 @@ pub fn instantiate_effect(
                 None,
                 None,
             ),
-            None => {
+            _ => {
                 let (e, handle) = WaveformEffect::new(d, node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(
@@ -698,7 +704,7 @@ pub fn instantiate_effect(
         // Spectrum reuses the scope's time-domain capture and SCOPE_EVENT
         // transport; the UI runs the FFT. No distinct runtime effect is needed.
         EffectSpec::Spectrum(_) => match registry.scopes.get(node_id) {
-            Some(handle) => mk(
+            Some(handle) if handle.sample_rate == sample_rate => mk(
                 RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
                 None,
                 None,
@@ -706,7 +712,7 @@ pub fn instantiate_effect(
                 None,
                 None,
             ),
-            None => {
+            _ => {
                 let (e, handle) = WaveformEffect::new_for(node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(
@@ -1422,6 +1428,98 @@ mod tests {
             seen.push((id, v));
         }
         assert_eq!(seen, vec![(12, 0.5)], "non-numeric ids must be skipped");
+    }
+
+    #[test]
+    fn a_setting_that_changes_the_level_glides_instead_of_stepping() {
+        // On a steady input only the setting moves the output: a change must
+        // spread over the glide, never land in one sample.
+        use crate::audio::graph::{
+            ChannelBalanceData, CompressorData, EqData, GainData, SaturatorData,
+        };
+        let cases: Vec<(EffectSpec, serde_json::Value)> = vec![
+            (
+                EffectSpec::Gain(GainData {
+                    gain_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "gainDb": -12.0 }),
+            ),
+            (
+                EffectSpec::ChannelBalance(ChannelBalanceData {
+                    left_gain_db: 0.0,
+                    right_gain_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "leftGainDb": -12.0, "rightGainDb": -12.0 }),
+            ),
+            (
+                EffectSpec::Saturator(SaturatorData {
+                    threshold_db: 0.0,
+                    drive_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "driveDb": 12.0 }),
+            ),
+            (
+                EffectSpec::Compressor(CompressorData {
+                    threshold_db: -30.0,
+                    ratio: 4.0,
+                    attack_ms: 1.0,
+                    release_ms: 50.0,
+                    knee_db: 0.0,
+                    makeup_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "makeupDb": 12.0, "thresholdDb": -10.0 }),
+            ),
+            (
+                EffectSpec::Eq(EqData {
+                    gains_db: [0.0; 10],
+                    bypassed: false,
+                }),
+                serde_json::json!({ "gainsDb": [-12.0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }),
+            ),
+        ];
+        for (spec, update) in cases {
+            let mut reg = EffectRegistry::new();
+            let mut build = instantiate_effect(&spec, "n", 48_000, 1024, true, true, 2, &mut reg);
+            let mut warm = vec![0.25f32; 48_000 * 2];
+            build.effect.process_with_sidechain(&mut warm, None, 48_000);
+            let before = warm[warm.len() - 1];
+            build
+                .control
+                .as_ref()
+                .expect("control")
+                .apply_update(&update);
+            let mut buf = vec![0.25f32; 4_800 * 2];
+            build.effect.process_with_sidechain(&mut buf, None, 4_800);
+            let mut prev = before;
+            let mut worst = 0.0f32;
+            for frame in buf.chunks_exact(2) {
+                worst = worst.max((frame[0] - prev).abs());
+                prev = frame[0];
+            }
+            let moved = (buf[buf.len() - 1] - before).abs();
+            assert!(moved > 0.01, "{spec:?}: the setting changed nothing");
+            assert!(
+                worst < moved / 50.0,
+                "{spec:?}: stepped by {worst} of {moved}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scope_rebuilt_at_another_rate_starts_a_new_handle() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Spectrum(Default::default());
+        let first = instantiate_effect(&spec, "sp", 48_000, 1024, true, true, 2, &mut reg);
+        let same = instantiate_effect(&spec, "sp", 48_000, 1024, true, true, 2, &mut reg);
+        assert!(same.scope.is_none(), "same rate reuses the handle");
+        let other = instantiate_effect(&spec, "sp", 44_100, 1024, true, true, 2, &mut reg);
+        let handle = other.scope.expect("a new handle at the new rate");
+        assert_eq!(handle.sample_rate, 44_100);
+        assert_ne!(handle.session, first.scope.unwrap().session);
     }
 
     #[test]

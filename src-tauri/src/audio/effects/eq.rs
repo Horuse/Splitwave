@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::audio::graph::EqData;
 
 use super::biquad::{biquad_for, BandShape, Biquad};
-use super::util::{db_to_linear, load_f32};
+use super::util::{db_to_linear, load_f32, Ramp};
 use super::{Effect, EffectControl};
 
 /// Fourth-order crossover points at geometric means between adjacent bands.
@@ -64,6 +64,8 @@ impl ChannelChain {
 pub struct EqEffect {
     channels: [ChannelChain; 2],
     gains: [Arc<AtomicU32>; 10],
+    /// Each band's linear gain, gliding to a new setting.
+    ramps: [Ramp; 10],
 }
 
 impl EqEffect {
@@ -73,16 +75,7 @@ impl EqEffect {
         let control = EffectControl::Eq {
             gains: gains.clone(),
         };
-        (
-            Self {
-                channels: [
-                    ChannelChain::new(sample_rate),
-                    ChannelChain::new(sample_rate),
-                ],
-                gains,
-            },
-            control,
-        )
+        (Self::from_state(gains, sample_rate), control)
     }
 
     pub fn from_state(gains: [Arc<AtomicU32>; 10], sample_rate: u32) -> Self {
@@ -91,6 +84,9 @@ impl EqEffect {
                 ChannelChain::new(sample_rate),
                 ChannelChain::new(sample_rate),
             ],
+            ramps: std::array::from_fn(|i| {
+                Ramp::new(db_to_linear(load_f32(&gains[i])), sample_rate)
+            }),
             gains,
         }
     }
@@ -98,10 +94,18 @@ impl EqEffect {
 
 impl Effect for EqEffect {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let gains_linear: [f32; 10] =
-            std::array::from_fn(|i| db_to_linear(load_f32(&self.gains[i])));
+        for (ramp, gain) in self.ramps.iter_mut().zip(&self.gains) {
+            ramp.set(db_to_linear(load_f32(gain)));
+        }
+        let mut gains_linear: [f32; 10] = std::array::from_fn(|i| self.ramps[i].value());
+        let settled = self.ramps.iter().all(|r| r.is_settled());
         let stereo = &mut samples[..frames * 2];
         for frame in stereo.chunks_exact_mut(2) {
+            if !settled {
+                for (g, ramp) in gains_linear.iter_mut().zip(self.ramps.iter_mut()) {
+                    *g = ramp.next();
+                }
+            }
             frame[0] = self.channels[0].process(frame[0], &gains_linear);
             frame[1] = self.channels[1].process(frame[1], &gains_linear);
         }

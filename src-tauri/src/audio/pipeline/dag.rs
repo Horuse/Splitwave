@@ -12,7 +12,7 @@ use super::latency::NodeTiming;
 use super::sig::MONITOR_KEY;
 use crate::audio::effects::{
     instantiate_effect, update_meter, EffectControl, EffectRegistry, GrHandle, LufsHandle,
-    MeterHandle, RuntimeEffect, WaveformHandle,
+    MeterHandle, Ramp, RuntimeEffect, WaveformHandle,
 };
 use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec, ValidGraph};
 use crate::audio::health;
@@ -358,6 +358,8 @@ struct SourceState {
     /// >STALL_THRESHOLD since last pop => zero-fill and stop waiting on this source.
     last_pop_at: Instant,
     volume: Arc<AtomicU32>,
+    /// The volume heard, gliding to a new setting so moving it never steps.
+    volume_ramp: Ramp,
     paused: Option<Arc<AtomicBool>>,
     /// A file's seeks: each one fades out and drops what is queued from the
     /// old position, then fades the new one in. A generation, so every
@@ -540,12 +542,21 @@ impl SourceState {
             self.fill_direct(fade_in);
         }
         self.apply_seek_fade();
-        const ONE_BITS: u32 = 0x3F80_0000;
-        let vol_bits = self.volume.load(Ordering::Relaxed);
-        if vol_bits != ONE_BITS {
-            let vol = f32::from_bits(vol_bits);
-            for s in self.out_buf.iter_mut() {
-                *s *= vol;
+        self.volume_ramp
+            .set(f32::from_bits(self.volume.load(Ordering::Relaxed)));
+        if self.volume_ramp.is_settled() {
+            let vol = self.volume_ramp.value();
+            if vol != 1.0 {
+                for s in self.out_buf.iter_mut() {
+                    *s *= vol;
+                }
+            }
+        } else {
+            for frame in self.out_buf.chunks_exact_mut(self.channels.max(1)) {
+                let vol = self.volume_ramp.next();
+                for s in frame {
+                    *s *= vol;
+                }
             }
         }
         if let Some(m) = &self.meter {
@@ -868,6 +879,51 @@ impl SourceState {
     }
 }
 
+/// Switching an effect in or out fades across this, so it never steps.
+const BYPASS_FADE_MS: f64 = 10.0;
+
+/// An effect's way around itself. What goes around is delayed as the effect
+/// delays it, so a bypassed branch stays in time with every path compensated
+/// for the effect, and the switch crossfades. Fully bypassed, the effect does
+/// not run.
+struct Bypass {
+    flag: Arc<AtomicBool>,
+    /// The node's input, delayed by the effect's own latency.
+    dry: DelayLine,
+    dry_buf: Box<[f32]>,
+    /// Share of the effect in what the node plays: 1 in, 0 bypassed.
+    mix: f32,
+    step: f32,
+    /// The effect is running. Back from a bypass it runs `latency` frames
+    /// before it is heard: its delay lines still hold what it had before.
+    running: bool,
+    warmup: usize,
+    latency: usize,
+}
+
+impl Bypass {
+    fn new(
+        flag: Arc<AtomicBool>,
+        latency: usize,
+        channels: usize,
+        block_frames: usize,
+        rate: u32,
+    ) -> Self {
+        let bypassed = flag.load(Ordering::Relaxed);
+        let fade = (rate as f64 * BYPASS_FADE_MS / 1000.0).round().max(1.0);
+        Self {
+            flag,
+            dry: DelayLine::new(latency, channels, block_frames),
+            dry_buf: vec![0.0; block_frames * channels].into_boxed_slice(),
+            mix: if bypassed { 0.0 } else { 1.0 },
+            step: 1.0 / fade as f32,
+            running: !bypassed,
+            warmup: 0,
+            latency,
+        }
+    }
+}
+
 struct EffectState {
     // One instance per stereo pair; each carries its own DSP state but shares
     // the parameter atomics. `effects[0]` alone for width <= 2.
@@ -875,7 +931,7 @@ struct EffectState {
     // Analyzers (level meter) read the whole N-wide buffer at once instead of
     // being split into stereo pairs, so they report every channel.
     full_width: bool,
-    bypass: Arc<AtomicBool>,
+    bypass: Bypass,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
     out_buf: Vec<f32>,
@@ -892,6 +948,45 @@ struct EffectState {
 }
 
 impl EffectState {
+    /// The effect, or the way around it, over `out_buf`. RT-safe.
+    fn process(&mut self, frames: usize) {
+        let bypassed = self.bypass.flag.load(Ordering::Relaxed);
+        if !bypassed && self.bypass.mix == 1.0 && self.bypass.latency == 0 {
+            self.run(frames);
+            return;
+        }
+        let w = self.out_buf.len() / frames.max(1);
+        let n = frames * w;
+        let b = &mut self.bypass;
+        let dry = b.dry.delayed(&self.out_buf[..n]);
+        b.dry_buf[..n].copy_from_slice(dry);
+        if bypassed && b.mix == 0.0 {
+            b.running = false;
+            self.out_buf[..n].copy_from_slice(&b.dry_buf[..n]);
+            return;
+        }
+        if !b.running {
+            b.running = true;
+            b.warmup = b.latency;
+        }
+        self.run(frames);
+        let b = &mut self.bypass;
+        let target = if bypassed { 0.0 } else { 1.0 };
+        for f in 0..frames {
+            if b.warmup > 0 {
+                b.warmup -= 1;
+            } else if b.mix < target {
+                b.mix = (b.mix + b.step).min(target);
+            } else if b.mix > target {
+                b.mix = (b.mix - b.step).max(target);
+            }
+            let g = b.mix;
+            for i in f * w..(f + 1) * w {
+                self.out_buf[i] = self.out_buf[i] * g + b.dry_buf[i] * (1.0 - g);
+            }
+        }
+    }
+
     /// Run the effect chain over `out_buf`. Width 2 processes in place; any
     /// other width is split into stereo pairs, each through its own instance so
     /// per-channel filter state never bleeds across pairs. A channel without a
@@ -1452,6 +1547,8 @@ impl OutputGraph {
                 (DagNode::Effect(new), DagNode::Effect(prev)) => {
                     if same_key && new.effects.is_empty() {
                         std::mem::swap(&mut new.effects, &mut prev.effects);
+                        // A switch mid-fade goes on where it was.
+                        std::mem::swap(&mut new.bypass, &mut prev.bypass);
                         carried = true;
                     }
                     carry_delays(
@@ -1579,9 +1676,7 @@ impl OutputGraph {
                         add_mapped(src, sc_buf, frames);
                     }
                 }
-                if !eff.bypass.load(Ordering::Relaxed) {
-                    eff.run(frames);
-                }
+                eff.process(frames);
                 let w = eff.out_buf.len() / frames;
                 for (h, buf) in eff.handle_bufs.iter_mut() {
                     if let Some(a) = parse_stereo(h) {
@@ -1989,6 +2084,7 @@ pub(super) fn build_output_graph(
                 queued_after: 0,
                 input_id: Some(id.clone()),
                 last_pop_at: Instant::now(),
+                volume_ramp: Ramp::new(volume_at_build(input_volumes, id), output_sr),
                 volume: input_volumes
                     .get(id)
                     .cloned()
@@ -2140,7 +2236,14 @@ pub(super) fn build_output_graph(
             lufs.extend(this_effect.lufs.clone());
             gr_handles.extend(this_effect.gr.clone());
             scopes.extend(this_effect.scope.clone());
-            let bypass = this_effect.bypass.clone();
+            let own = this_effect.latency;
+            let bypass = Bypass::new(
+                this_effect.bypass.clone(),
+                own,
+                eff_channels,
+                block_frames,
+                output_sr,
+            );
             let make_edge =
                 |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
                     let pad = max_upstream - node_latencies[src_idx];
@@ -2193,7 +2296,6 @@ pub(super) fn build_output_graph(
                     (h, vec![0.0; block_frames * w])
                 })
                 .collect();
-            let own = this_effect.latency;
             node_timings.push(NodeTiming {
                 node_id: id.clone(),
                 latency_frames: own as u32,
@@ -2616,6 +2718,7 @@ fn ring_source(
         queued_after: 0,
         last_pop_at: Instant::now(),
         volume: Arc::new(AtomicU32::new(0x3F80_0000)),
+        volume_ramp: Ramp::new(1.0, output_sr),
         paused: None,
         drain: None,
         last_drain_gen: 0,
@@ -2627,6 +2730,12 @@ fn ring_source(
         stats: SourceStats::new(),
         carry_over: false,
     })
+}
+
+fn volume_at_build(volumes: &HashMap<String, Arc<AtomicU32>>, id: &str) -> f32 {
+    volumes
+        .get(id)
+        .map_or(1.0, |v| f32::from_bits(v.load(Ordering::Relaxed)))
 }
 
 /// Cross-output fan-out plan: which effect nodes are computed once and shared
@@ -3193,13 +3302,23 @@ pub(super) mod graph_tests {
         built.graph.process_block(&mut out);
         built.graph.process_block(&mut out);
 
-        // Drop the volume to 0.5 and confirm the next block scales.
+        // Drop the volume to 0.5: the next block glides there and holds it.
         volumes["m"].store(0.5f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
         built.graph.process_block(&mut out);
         let want = &fed[TIMER_BLOCK_FRAMES * 6..TIMER_BLOCK_FRAMES * 8];
-        for (o, w) in out.iter().zip(want) {
+        let glide = 5 * SR as usize / 1000;
+        for (o, w) in out.iter().zip(want).skip(glide * 2) {
             assert!((o - 0.5 * w).abs() < 1e-5, "{o} vs {w}");
         }
+        let steps = out
+            .chunks_exact(2)
+            .zip(want.chunks_exact(2))
+            .map(|(o, w)| o[0] / w[0].max(1e-6))
+            .collect::<Vec<_>>();
+        assert!(
+            steps.windows(2).take(glide).all(|g| g[1] <= g[0] + 1e-4),
+            "the volume falls without stepping"
+        );
     }
 
     #[test]
@@ -3634,6 +3753,57 @@ pub(super) mod graph_tests {
     }
 
     #[test]
+    fn bypassing_a_latent_effect_keeps_its_branch_in_time_and_fades() {
+        // Two branches of a 100 Hz tone meet at the speaker, one through a
+        // 5 ms lookahead: half a period. A bypass that dropped the lookahead
+        // would cancel them; one that switched hard would step.
+        let mut registry = fresh_registry();
+        let (mut a, mut producers) = rebuild(
+            &parallel_with_lookahead(false, 5.0, false),
+            &mut registry,
+            &HashMap::new(),
+            false,
+        );
+        let bypass = a
+            .bypasses
+            .iter()
+            .find(|(id, _)| id == "l")
+            .map(|(_, b)| b.clone())
+            .expect("limiter bypass");
+        let tone: Vec<f32> = (0..SR as usize)
+            .flat_map(|i| {
+                let v = 0.25 * (std::f32::consts::TAU * 100.0 * i as f32 / SR as f32).sin();
+                [v, v]
+            })
+            .collect();
+        push_all(producers.get_mut("m").unwrap(), &tone);
+        let before = render(&mut a.graph, 40);
+        bypass.store(true, Ordering::Relaxed);
+        let after = render(&mut a.graph, 60);
+        bypass.store(false, Ordering::Relaxed);
+        let back = render(&mut a.graph, 60);
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let tail = |x: &[f32]| peak(&x[x.len() / 2..]);
+        assert!((tail(&before) - 0.5).abs() < 0.02, "in: {}", tail(&before));
+        assert!(
+            (tail(&after) - 0.5).abs() < 0.02,
+            "bypassed: {}",
+            tail(&after)
+        );
+        assert!((tail(&back) - 0.5).abs() < 0.02, "back in: {}", tail(&back));
+        let all: Vec<f32> = [before, after, back].concat();
+        let step = all
+            .chunks_exact(2)
+            .map(|f| f[0])
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        // A 100 Hz tone at 0.5 moves at most 0.0066 per sample.
+        assert!(step < 0.01, "a step of {step}");
+    }
+
+    #[test]
     fn live_updates_reach_a_carried_effect() {
         // A carried gain keeps the instance the pipeline's control drives.
         let mut registry = fresh_registry();
@@ -3670,7 +3840,8 @@ pub(super) mod graph_tests {
         );
 
         bypass.store(true, Ordering::Relaxed);
-        let got = render(&mut b.graph, 4);
+        // Past the bypass crossfade.
+        let got = render(&mut b.graph, 12);
         assert!(
             (got[got.len() - 1] - 0.5).abs() < 1e-6,
             "bypass: got {}",

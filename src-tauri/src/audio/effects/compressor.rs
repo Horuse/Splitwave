@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::audio::graph::CompressorData;
 
-use super::util::{load_f32, store_f32};
+use super::util::{load_f32, store_f32, Ramp};
 use super::{Effect, EffectControl};
 
 pub struct CompressorEffect {
@@ -15,8 +15,26 @@ pub struct CompressorEffect {
     makeup_db: Arc<AtomicU32>,
     sample_rate: u32,
     envelope: f32,
+    /// Threshold, ratio, knee and makeup glide to a new setting, so moving
+    /// one never steps the gain.
+    ramps: [Ramp; 4],
     /// Min gain (0-1 linear, no makeup) across the last block. 1.0 = no GR.
     pub gr_lin: Arc<AtomicU32>,
+}
+
+fn curve_ramps(
+    threshold_db: &AtomicU32,
+    ratio: &AtomicU32,
+    knee_db: &AtomicU32,
+    makeup_db: &AtomicU32,
+    sample_rate: u32,
+) -> [Ramp; 4] {
+    [
+        Ramp::new(load_f32(threshold_db), sample_rate),
+        Ramp::new(load_f32(ratio).max(1.0), sample_rate),
+        Ramp::new(load_f32(knee_db).max(0.0), sample_rate),
+        Ramp::new(load_f32(makeup_db), sample_rate),
+    ]
 }
 
 impl CompressorEffect {
@@ -38,6 +56,7 @@ impl CompressorEffect {
         };
         (
             Self {
+                ramps: curve_ramps(&threshold_db, &ratio, &knee_db, &makeup_db, sample_rate),
                 threshold_db,
                 ratio,
                 attack_ms,
@@ -65,6 +84,7 @@ impl CompressorEffect {
         gr_lin: Arc<AtomicU32>,
     ) -> Self {
         Self {
+            ramps: curve_ramps(&threshold_db, &ratio, &knee_db, &makeup_db, sample_rate),
             threshold_db,
             ratio,
             attack_ms,
@@ -87,24 +107,26 @@ impl CompressorEffect {
     }
 
     fn process_inner(&mut self, main: &mut [f32], sidechain: Option<&[f32]>, frames: usize) {
-        let threshold_db = load_f32(&self.threshold_db);
-        let ratio = load_f32(&self.ratio).max(1.0);
+        self.ramps[0].set(load_f32(&self.threshold_db));
+        self.ramps[1].set(load_f32(&self.ratio).max(1.0));
+        self.ramps[2].set(load_f32(&self.knee_db).max(0.0));
+        self.ramps[3].set(load_f32(&self.makeup_db));
         let attack_ms = load_f32(&self.attack_ms).max(0.01);
         let release_ms = load_f32(&self.release_ms).max(0.1);
-        let knee_db = load_f32(&self.knee_db).max(0.0);
-        let makeup_db = load_f32(&self.makeup_db);
 
         let sr = self.sample_rate as f32;
         let attack_coeff = 1.0 - (-1.0 / (attack_ms * 0.001 * sr)).exp();
         let release_coeff = 1.0 - (-1.0 / (release_ms * 0.001 * sr)).exp();
-        let inv_ratio = 1.0 / ratio;
-        let makeup_lin = 10f32.powf(makeup_db / 20.0);
-        let half_knee = knee_db * 0.5;
 
         let main_buf = &mut main[..frames * 2];
         let side = sidechain.filter(|s| s.len() >= frames * 2);
         let mut block_min_gr = 1.0f32;
         for (f, frame) in main_buf.chunks_exact_mut(2).enumerate() {
+            let threshold_db = self.ramps[0].next();
+            let inv_ratio = 1.0 / self.ramps[1].next();
+            let knee_db = self.ramps[2].next();
+            let makeup_lin = 10f32.powf(self.ramps[3].next() / 20.0);
+            let half_knee = knee_db * 0.5;
             let detected = match side {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),
                 None => frame[0].abs().max(frame[1].abs()),

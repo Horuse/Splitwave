@@ -6,9 +6,10 @@ use crate::audio::graph::LimiterData;
 use super::util::{db_to_linear, load_f32, store_f32};
 use super::{Effect, EffectControl};
 
-/// Brick-wall limiter: input is delayed by `lookahead_frames`; gain envelope
-/// reacts to the upcoming peak so reduction lands before the peak emerges.
-/// Instant attack, exponential release.
+/// Brick-wall limiter: input is delayed by `lookahead_frames`. The gain each
+/// frame needs is held over the lookahead window and averaged over it again,
+/// so the gain falls in a smooth ramp that reaches what a peak needs exactly
+/// as the peak emerges, never a step. Exponential release.
 pub struct LimiterEffect {
     ceiling: Arc<AtomicU32>,
     release_ms: Arc<AtomicU32>,
@@ -17,12 +18,56 @@ pub struct LimiterEffect {
     /// Stereo-interleaved look-ahead delay; both channels share `current_gain`.
     delay_buf: Box<[f32]>,
     delay_pos: usize,
-    /// Per-frame max(|L|, |R|) over the same window as `delay_buf`. Peak in
-    /// the window = `peak_buf.iter().max()`.
-    peak_buf: Box<[f32]>,
+    /// Peak of the last `window` frames, the one emerging now included.
+    peaks: SlidingMax,
+    /// The held gain of the last `window` frames, and their sum.
+    held: Box<[f32]>,
+    held_pos: usize,
+    held_sum: f64,
     current_gain: f32,
     /// Min gain during the last block (1.0 = no limiting).
     pub gr_lin: Arc<AtomicU32>,
+}
+
+/// Largest of the last `capacity` values pushed, in constant time per push:
+/// a queue of values each larger than all pushed after it.
+struct SlidingMax {
+    values: Box<[f32]>,
+    times: Box<[u64]>,
+    head: usize,
+    len: usize,
+    now: u64,
+}
+
+impl SlidingMax {
+    fn new(capacity: usize) -> Self {
+        Self {
+            values: vec![0.0; capacity].into_boxed_slice(),
+            times: vec![0; capacity].into_boxed_slice(),
+            head: 0,
+            len: 0,
+            now: 0,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, v: f32) -> f32 {
+        let cap = self.values.len();
+        let at = |i: usize| (self.head + i) % cap;
+        while self.len > 0 && self.values[at(self.len - 1)] <= v {
+            self.len -= 1;
+        }
+        let tail = at(self.len);
+        self.values[tail] = v;
+        self.times[tail] = self.now;
+        self.len += 1;
+        if self.now >= cap as u64 && self.times[self.head] <= self.now - cap as u64 {
+            self.head = (self.head + 1) % cap;
+            self.len -= 1;
+        }
+        self.now += 1;
+        self.values[self.head]
+    }
 }
 
 impl LimiterEffect {
@@ -38,17 +83,13 @@ impl LimiterEffect {
             release_ms: release_ms.clone(),
         };
         (
-            Self {
+            Self::from_state(
                 ceiling,
                 release_ms,
-                sample_rate,
                 lookahead_frames,
-                delay_buf: vec![0.0; lookahead_frames * 2].into_boxed_slice(),
-                delay_pos: 0,
-                peak_buf: vec![0.0; lookahead_frames].into_boxed_slice(),
-                current_gain: 1.0,
-                gr_lin: gr_lin.clone(),
-            },
+                sample_rate,
+                gr_lin.clone(),
+            ),
             control,
             gr_lin,
         )
@@ -61,6 +102,8 @@ impl LimiterEffect {
         sample_rate: u32,
         gr_lin: Arc<AtomicU32>,
     ) -> Self {
+        // The frame emerging now and every frame still in the delay.
+        let window = lookahead_frames + 1;
         Self {
             ceiling,
             release_ms,
@@ -68,7 +111,10 @@ impl LimiterEffect {
             lookahead_frames,
             delay_buf: vec![0.0; lookahead_frames * 2].into_boxed_slice(),
             delay_pos: 0,
-            peak_buf: vec![0.0; lookahead_frames].into_boxed_slice(),
+            peaks: SlidingMax::new(window),
+            held: vec![1.0; window].into_boxed_slice(),
+            held_pos: 0,
+            held_sum: window as f64,
             current_gain: 1.0,
             gr_lin,
         }
@@ -82,6 +128,7 @@ impl Effect for LimiterEffect {
         let release_coeff = 1.0 - (-1.0 / (release_ms * 0.001 * self.sample_rate as f32)).exp();
 
         let lookahead = self.lookahead_frames;
+        let window = self.held.len();
         let stereo = &mut samples[..frames * 2];
         let mut block_min_gr = 1.0f32;
         for f in 0..frames {
@@ -93,24 +140,29 @@ impl Effect for LimiterEffect {
             let r_out = self.delay_buf[self.delay_pos * 2 + 1];
             self.delay_buf[self.delay_pos * 2] = l_in;
             self.delay_buf[self.delay_pos * 2 + 1] = r_in;
-            self.peak_buf[self.delay_pos] = l_in.abs().max(r_in.abs());
             self.delay_pos = if self.delay_pos + 1 == lookahead {
                 0
             } else {
                 self.delay_pos + 1
             };
 
-            let mut peak = 0.0_f32;
-            for &p in self.peak_buf.iter() {
-                if p > peak {
-                    peak = p;
-                }
-            }
-            let target = if peak > ceiling { ceiling / peak } else { 1.0 };
-            if target < self.current_gain {
-                self.current_gain = target;
+            // The gain the loudest frame in the window needs, held over the
+            // window, then averaged over it: every frame averaged in saw the
+            // emerging one, so the average never asks for more than it needs.
+            let peak = self.peaks.push(l_in.abs().max(r_in.abs()));
+            let need = if peak > ceiling { ceiling / peak } else { 1.0 };
+            self.held_sum += need as f64 - self.held[self.held_pos] as f64;
+            self.held[self.held_pos] = need;
+            self.held_pos = if self.held_pos + 1 == window {
+                0
             } else {
-                self.current_gain += (target - self.current_gain) * release_coeff;
+                self.held_pos + 1
+            };
+            let smooth = ((self.held_sum / window as f64) as f32).min(1.0);
+            if smooth < self.current_gain {
+                self.current_gain = smooth;
+            } else {
+                self.current_gain += (smooth - self.current_gain) * release_coeff;
             }
 
             if self.current_gain < block_min_gr {
@@ -184,6 +236,32 @@ mod tests {
         for (i, s) in buf.iter().enumerate().skip(48 * 2) {
             assert!(s.abs() <= ceiling + 1e-5, "sample {i} exceeds ceiling: {s}");
         }
+    }
+
+    #[test]
+    fn the_gain_ramps_down_ahead_of_a_peak_instead_of_stepping() {
+        // A quiet passage, then a burst 6 dB over the ceiling: the quiet
+        // audio still emerging must fade, not drop at once when the burst
+        // enters the lookahead.
+        let d = LimiterData {
+            ceiling_db: -6.0,
+            lookahead_ms: 5.0,
+            release_ms: 50.0,
+            bypassed: false,
+        };
+        let (mut e, _, _) = LimiterEffect::new(d, SR);
+        let mut buf = [dc(2_000, 0.25), dc(2_000, 1.0)].concat();
+        e.process(&mut buf, 4_000);
+        let ceiling = db_to_linear(-6.0);
+        let left: Vec<f32> = buf.iter().step_by(2).copied().collect();
+        // From the first emerging frame to the last of the quiet passage.
+        let worst = left[240..2_000 + 240]
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        // The ramp halves 0.25 over 241 frames: about 0.0005 a frame.
+        assert!(worst < 0.002, "the quiet audio stepped by {worst}");
+        assert!(left.iter().all(|s| s.abs() <= ceiling + 1e-5));
     }
 
     #[test]

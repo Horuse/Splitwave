@@ -155,7 +155,13 @@ enum HostedBackend {
 }
 
 impl HostedEffect {
-    pub fn new(node: HostedNode, realtime: bool, sample_rate: u32, block_frames: usize) -> Self {
+    pub fn new(
+        node: HostedNode,
+        realtime: bool,
+        sample_rate: u32,
+        block_frames: usize,
+        burst_blocks: usize,
+    ) -> Self {
         let latency = node.latency_frames();
         let width = node.channels();
         if !realtime {
@@ -172,7 +178,15 @@ impl HostedEffect {
         };
         // A plugin takes the engine's blocks as they come; the offload's pad is
         // latency it adds, not a block it works in.
-        match Offload::spawn("plugin", processor, width, None, block_frames, sample_rate) {
+        match Offload::spawn(
+            "plugin",
+            processor,
+            width,
+            None,
+            block_frames,
+            burst_blocks,
+            sample_rate,
+        ) {
             Ok(o) => Self {
                 latency: latency + o.latency_frames(),
                 backend: HostedBackend::Offloaded(o),

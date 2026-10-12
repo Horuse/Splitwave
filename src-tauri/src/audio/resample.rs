@@ -150,6 +150,9 @@ pub struct FixedRateResampler {
     inner: FixedInner,
     /// Input frames the resampler may take before it emits anything.
     input_period: usize,
+    /// The same once its filter has filled: what it may take between two
+    /// outputs for as long as it runs.
+    steady_period: usize,
     channels: usize,
     in_planar: Vec<Vec<f32>>,
     out_planar: Vec<Vec<f32>>,
@@ -186,10 +189,10 @@ impl FixedRateResampler {
         };
         let (from, to) = (from_rate.max(1) as usize, to_rate.max(1) as usize);
         let period = from / gcd(from, to);
-        let (inner, input_period) = if period * 1000 <= from * MAX_FFT_PERIOD_MS {
+        let (inner, input_period, steady_period) = if period * 1000 <= from * MAX_FFT_PERIOD_MS {
             let fft = FftFixedIn::<f32>::new(from, to, chunk_size, FFT_SUB_CHUNKS, channels)
                 .map_err(init)?;
-            (FixedInner::Fft(fft), period)
+            (FixedInner::Fft(fft), period, period)
         } else {
             let ratio = to as f64 / from as f64;
             let sinc = SincFixedIn::<f32>::new(ratio, 1.0, sinc_params(), chunk_size, channels)
@@ -197,7 +200,8 @@ impl FixedRateResampler {
             // The filter fills before the first frame comes out; downsampling
             // hard, a small chunk may yield no whole frame after that either.
             let fill = (sinc.output_delay() * from).div_ceil(to);
-            (FixedInner::Sinc(sinc), fill + from.div_ceil(to))
+            let steady = from.div_ceil(to);
+            (FixedInner::Sinc(sinc), fill + steady, steady)
         };
         let out_max = match &inner {
             FixedInner::Fft(r) => r.output_frames_max(),
@@ -206,6 +210,7 @@ impl FixedRateResampler {
         Ok(Self {
             inner,
             input_period,
+            steady_period,
             channels,
             in_planar: vec![vec![0.0; chunk_size]; channels],
             out_planar: vec![vec![0.0; out_max]; channels],
@@ -230,6 +235,11 @@ impl FixedRateResampler {
     /// Input frames the resampler may take before it emits anything.
     pub fn input_period(&self) -> usize {
         self.input_period
+    }
+
+    /// Input frames it may take between two outputs once running.
+    pub fn steady_period(&self) -> usize {
+        self.steady_period
     }
 
     pub fn process_chunk_into(

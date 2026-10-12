@@ -187,6 +187,7 @@ impl NoiseSuppressorEffect {
         d: NoiseSuppressorData,
         sample_rate: u32,
         block_frames: usize,
+        burst_blocks: usize,
         realtime: bool,
     ) -> (Self, EffectControl) {
         let ctl = NoiseSuppressorControls {
@@ -200,7 +201,7 @@ impl NoiseSuppressorEffect {
             controls: ctl.clone(),
         };
         (
-            Self::from_state(ctl, sample_rate, block_frames, realtime),
+            Self::from_state(ctl, sample_rate, block_frames, burst_blocks, realtime),
             control,
         )
     }
@@ -209,6 +210,7 @@ impl NoiseSuppressorEffect {
         ctl: NoiseSuppressorControls,
         sample_rate: u32,
         block_frames: usize,
+        burst_blocks: usize,
         realtime: bool,
     ) -> Self {
         let initial = Params::load(&ctl);
@@ -242,6 +244,7 @@ impl NoiseSuppressorEffect {
             2,
             Some(hop_out),
             block_frames,
+            burst_blocks,
             sample_rate,
         ) {
             Ok(offload) => Self {
@@ -492,7 +495,7 @@ mod tests {
 
     #[test]
     fn inline_backend_processes_at_48k() {
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, 1, false);
         assert!(e.latency_frames() > 0, "model latency must be reported");
         for k in 0..4 {
             let mut buf: Vec<f32> = (0..512 * 2)
@@ -513,7 +516,7 @@ mod tests {
     #[test]
     fn inline_backend_resamples_at_44k1() {
         // Output rate ≠ 48 kHz exercises both resamplers.
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 44_100, 1024, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 44_100, 1024, 1, false);
         assert!(e.latency_frames() > 0);
         for _k in 0..4 {
             let mut buf = vec![0.2f32; 512 * 2];
@@ -524,7 +527,7 @@ mod tests {
 
     #[test]
     fn live_param_changes_update_the_model() {
-        let (mut e, c) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
+        let (mut e, c) = NoiseSuppressorEffect::new(data(), 48_000, 1024, 1, false);
         let EffectControl::NoiseSuppressor { controls } = &c else {
             panic!("variant")
         };
@@ -551,6 +554,7 @@ mod tests {
             },
             48_000,
             1024,
+            1,
             false,
         );
         let EffectControl::NoiseSuppressor { controls } = c else {
@@ -625,7 +629,7 @@ mod tests {
                         attenuation_limit_db: atten,
                         ..data()
                     };
-                    let (mut e, _) = NoiseSuppressorEffect::new(d, sample_rate, block, false);
+                    let (mut e, _) = NoiseSuppressorEffect::new(d, sample_rate, block, 1, false);
                     let mut out = input.clone();
                     for chunk in out.chunks_exact_mut(block * 2) {
                         e.process(chunk, block);
@@ -696,7 +700,7 @@ mod tests {
 
     #[test]
     fn zero_frames_is_noop() {
-        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, false);
+        let (mut e, _) = NoiseSuppressorEffect::new(data(), 48_000, 1024, 1, false);
         let mut buf = vec![0.5f32; 32];
         e.process(&mut buf, 0);
         assert_eq!(buf, vec![0.5; 32]);

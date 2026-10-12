@@ -1779,6 +1779,8 @@ pub(super) fn build_output_graph(
     output_id: Option<&str>,
     output_sr: u32,
     block_frames: usize,
+    // Most blocks this graph's output renders back to back.
+    burst_blocks: usize,
     realtime: bool,
     valid: &ValidGraph,
     input_native_sr: &HashMap<String, u32>,
@@ -2154,7 +2156,7 @@ pub(super) fn build_output_graph(
                 .unwrap_or(0);
             let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
             let key = format!(
-                "fx|{:?}|{eff_channels}|{output_sr}|{block_frames}|{realtime}",
+                "fx|{:?}|{eff_channels}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
                 super::sig::structural_effect(&effect.spec)
             );
             let previous_effect = previous
@@ -2174,6 +2176,7 @@ pub(super) fn build_output_graph(
                         id,
                         output_sr,
                         block_frames,
+                        burst_blocks,
                         realtime,
                         true,
                         eff_channels,
@@ -2222,6 +2225,7 @@ pub(super) fn build_output_graph(
                             id,
                             output_sr,
                             block_frames,
+                            burst_blocks,
                             realtime,
                             false,
                             2,
@@ -3118,6 +3122,24 @@ pub(super) mod graph_tests {
     }
 
     /// mic → gain(0 dB) → speaker, validated.
+    /// Runs every effect of `graph` as a light node on its own thread, its pad
+    /// sized for `burst_blocks` rendered back to back.
+    pub(in crate::audio::pipeline) fn offload_every_effect(
+        graph: &mut OutputGraph,
+        burst_blocks: usize,
+    ) {
+        use crate::audio::effects::offload::{Echo, Offload};
+        let (block, rate) = (graph.block_frames(), graph.sample_rate());
+        for node in &mut graph.nodes {
+            if let DagNode::Effect(e) = node {
+                let Ok(o) = Offload::spawn("test", Echo, 2, None, block, burst_blocks, rate) else {
+                    panic!("spawn offload");
+                };
+                e.effects = vec![RuntimeEffect::Offloaded(o)];
+            }
+        }
+    }
+
     pub(in crate::audio::pipeline) fn passthrough_graph() -> (ValidGraph, String) {
         let g = GraphSpec {
             sample_rate: None,
@@ -3208,6 +3230,7 @@ pub(super) mod graph_tests {
             output_id,
             output_sr,
             block_frames,
+            1,
             realtime,
             valid,
             &native,
@@ -3278,6 +3301,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -3334,6 +3358,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -3375,6 +3400,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -3489,6 +3515,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             64,
+            1,
             realtime,
             valid,
             &native,
@@ -4772,6 +4799,7 @@ pub(super) mod graph_tests {
             None,
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             true,
             &valid,
             &native,
@@ -4814,6 +4842,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -4914,6 +4943,7 @@ pub(super) mod graph_tests {
             Some("b"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -5075,6 +5105,7 @@ pub(super) mod graph_tests {
             Some("s"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,
@@ -5666,6 +5697,7 @@ pub(super) mod graph_tests {
             Some("b"),
             SR,
             TIMER_BLOCK_FRAMES,
+            1,
             false,
             &valid,
             &native,

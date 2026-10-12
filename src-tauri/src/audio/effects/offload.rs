@@ -101,6 +101,18 @@ pub trait BlockProcessor: Send {
     fn process(&mut self, input: &[f32], output: &mut Vec<f32>);
 }
 
+/// Hands every block straight back: an offloaded node whose own work costs
+/// nothing, so only the hand-off is measured.
+#[cfg(test)]
+pub(crate) struct Echo;
+
+#[cfg(test)]
+impl BlockProcessor for Echo {
+    fn process(&mut self, input: &[f32], output: &mut Vec<f32>) {
+        output.extend_from_slice(input);
+    }
+}
+
 pub struct Offload {
     to_worker: Producer<f32>,
     from_worker: Consumer<f32>,
@@ -154,12 +166,15 @@ fn push_aligned(prod: &mut Producer<f32>, samples: &[f32], width: usize) -> usiz
 impl Offload {
     /// `working_frames` is the only block size `processor` can step in, if it
     /// has one; otherwise it is handed each engine block as it comes.
+    /// `burst_blocks` is the most engine blocks the graph renders back to
+    /// back: a burst is pushed and read at once, so the pad covers it whole.
     pub fn spawn<P: BlockProcessor + 'static>(
         name: &'static str,
         processor: P,
         width: usize,
         working_frames: Option<usize>,
         block_frames: usize,
+        burst_blocks: usize,
         sample_rate: u32,
     ) -> Result<Self, P> {
         if width == 0 {
@@ -213,7 +228,8 @@ impl Offload {
                     .unwrap()
                     .take()
                     .expect("processor handed off");
-                let pad_frames = pad_frames(block_frames, working, turnaround);
+                let pad_frames =
+                    pad_frames(block_frames * burst_blocks.max(1), working, turnaround);
                 // Room for the pad, a block in flight each way, and a stall's worth.
                 let ring_frames = (pad_frames + working + MAX_BUFFER_FRAMES) * 4;
                 let (to_worker, mut worker_in) = RingBuffer::<f32>::new(ring_frames * width);
@@ -426,7 +442,8 @@ mod tests {
             frames: working,
             width,
         };
-        let Ok(mut offload) = Offload::spawn("test", processor, width, working, block, sample_rate)
+        let Ok(mut offload) =
+            Offload::spawn("test", processor, width, working, block, 1, sample_rate)
         else {
             panic!("spawn offload")
         };
@@ -499,6 +516,51 @@ mod tests {
     }
 
     #[test]
+    fn the_pad_covers_a_burst_of_blocks_rendered_back_to_back() {
+        // A speaker resampled to its device renders `burst` blocks at one
+        // instant every `burst` periods. The pad sized for the burst never
+        // starves; the one sized for a steady block does.
+        let starves_in_bursts =
+            |pad: usize, block: usize, working: usize, turnaround: usize, burst: usize| {
+                let at = |k: usize| k / burst * burst * block;
+                let blocks =
+                    (pad + working) / block + working / gcd(working, block) * 2 + 4 * burst + 8;
+                (0..blocks).any(|k| {
+                    (0..block).any(|i| {
+                        let Some(frame) = (k * block + i).checked_sub(pad) else {
+                            return false;
+                        };
+                        let j = frame / working;
+                        let done = ((j + 1) * working - 1) / block;
+                        at(done) + turnaround > at(k)
+                    })
+                })
+            };
+        for block in [32, 64, 128, 256] {
+            for working in [block, 441, 480] {
+                for turnaround in [1, block / 2, block, 3 * block] {
+                    for burst in [2, 3, 4] {
+                        let pad = pad_frames(block * burst, working, turnaround);
+                        assert!(
+                            !starves_in_bursts(pad, block, working, turnaround, burst),
+                            "{block}/{working}/{turnaround} in bursts of {burst}: pad {pad} starves"
+                        );
+                    }
+                    // A plugin turning a block round within the block: its
+                    // steady pad is one or two blocks, short of a burst.
+                    if working == block && turnaround <= block {
+                        let steady = pad_frames(block, working, turnaround);
+                        assert!(
+                            starves_in_bursts(steady, block, working, turnaround, 3),
+                            "{block}/{turnaround}: a steady pad {steady} rides out bursts"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_pad_is_the_least_that_never_starves() {
         for turnaround in [1, 48, 221, 240, 480] {
             for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
@@ -533,13 +595,13 @@ mod tests {
 
     #[test]
     fn the_pad_follows_what_the_effect_costs() {
-        let Ok(cheap) = Offload::spawn("test", passthrough(), 2, None, 32, 48_000) else {
+        let Ok(cheap) = Offload::spawn("test", passthrough(), 2, None, 32, 1, 48_000) else {
             panic!("spawn offload")
         };
         let slow = Slow {
             cost: Duration::from_millis(3),
         };
-        let Ok(dear) = Offload::spawn("test", slow, 2, None, 32, 48_000) else {
+        let Ok(dear) = Offload::spawn("test", slow, 2, None, 32, 1, 48_000) else {
             panic!("spawn offload")
         };
         // Old fixed floor: 5 ms, 256 frames at a 32-frame block.
@@ -574,7 +636,7 @@ mod tests {
         let slow = Slow {
             cost: Duration::from_millis(2),
         };
-        let Ok(mut offload) = Offload::spawn("test", slow, 2, None, 64, 48_000) else {
+        let Ok(mut offload) = Offload::spawn("test", slow, 2, None, 64, 1, 48_000) else {
             panic!("spawn offload")
         };
         let mut data = vec![0.0f32; 64 * 2];
@@ -593,7 +655,7 @@ mod tests {
     fn an_idle_worker_sleeps_until_woken() {
         // A 1 ms poll wakes ~100 times in 100 ms; a parked worker only when a
         // push wakes it (or, rarely, spuriously).
-        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, None, 64, 48_000) else {
+        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, None, 64, 1, 48_000) else {
             panic!("spawn offload")
         };
         thread::sleep(Duration::from_millis(100));
@@ -607,7 +669,7 @@ mod tests {
 
     #[test]
     fn processing_never_touches_the_heap() {
-        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, Some(441), 64, 44_100)
+        let Ok(mut offload) = Offload::spawn("test", passthrough(), 2, Some(441), 64, 1, 44_100)
         else {
             panic!("spawn offload")
         };
@@ -621,7 +683,7 @@ mod tests {
 
     #[test]
     fn dropping_wakes_a_sleeping_worker() {
-        let Ok(offload) = Offload::spawn("test", passthrough(), 2, None, 64, 48_000) else {
+        let Ok(offload) = Offload::spawn("test", passthrough(), 2, None, 64, 1, 48_000) else {
             panic!("spawn offload")
         };
         thread::sleep(Duration::from_millis(20));

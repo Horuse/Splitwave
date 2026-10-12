@@ -38,6 +38,24 @@ fn max_silent_blocks(input_period: usize, block_frames: usize) -> usize {
     2 * (input_period.div_ceil(block_frames.max(1)) + 2)
 }
 
+/// Most engine blocks one device callback renders back to back once running.
+/// On the device's rate the callback is one block; through a resampler that
+/// emits only once it holds a period of input, the graph renders in bursts
+/// of that period, plus one for a callback the last burst fell just short of.
+/// A node working on its own thread has to answer a whole burst at once.
+pub(in crate::audio::pipeline) fn render_burst(
+    pipeline_rate: u32,
+    device_rate: u32,
+    block_frames: usize,
+) -> usize {
+    if pipeline_rate == device_rate {
+        return 1;
+    }
+    let block = block_frames.max(1);
+    FixedRateResampler::new(pipeline_rate, device_rate, block, 1)
+        .map_or(1, |r| r.steady_period().div_ceil(block) + 1)
+}
+
 /// Per-speaker counters, written relaxed by the callback and read by the
 /// non-RT tick thread and the latency report.
 #[derive(Clone)]
@@ -589,6 +607,83 @@ mod tests {
         assert!(
             got[8_000 * 2..].iter().all(|s| (s - 0.25).abs() < 1e-3),
             "gap or glitch in the resampled stream"
+        );
+    }
+
+    #[test]
+    fn a_callback_never_renders_more_blocks_than_its_burst() {
+        // What an offloaded node's pad is sized from must hold for the
+        // renderer as it runs, at every block and through either resampler.
+        for (device_rate, block) in [
+            (SR, 64),
+            (44_100, 32),
+            (44_100, 64),
+            (44_100, 128),
+            (44_100, 1024),
+            (96_000, 64),
+            (48_001, 64),
+        ] {
+            let mut t = rig(block, device_rate);
+            feed(&mut t.input, &vec![0.25_f32; 48_000 * 2]);
+            let callback = super::super::device_block(block, SR, device_rate) as usize;
+            let burst = render_burst(SR, device_rate, block);
+            let mut worst = 0;
+            for call in 0..400 {
+                let before = t.blocks.load(Ordering::Relaxed);
+                let mut out = vec![0.0; callback * 2];
+                t.r.render(&mut out, callback);
+                // The resampler's fill on the first callbacks is not a burst.
+                if call >= 8 {
+                    worst = worst.max(t.blocks.load(Ordering::Relaxed) - before);
+                }
+            }
+            assert!(
+                worst as usize <= burst,
+                "{device_rate} Hz @ {block}: {worst} blocks in one callback, burst {burst}"
+            );
+        }
+    }
+
+    /// Frames that left a steady 0.25 when a light node on its own thread,
+    /// its pad sized for `burst` blocks, plays through a `device_rate`
+    /// speaker called back in real time.
+    fn dropouts_through_an_offloaded_node(block: usize, device_rate: u32, burst: usize) -> usize {
+        use crate::audio::pipeline::dag::graph_tests::offload_every_effect;
+        let (valid, _) = passthrough_graph();
+        let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, false);
+        offload_every_effect(&mut built.graph, burst);
+        let (mut r, _ctrl, _io) =
+            SpeakerRenderer::new(built.graph, device_rate, None, MeterHandle::new("s".into()))
+                .expect("renderer");
+        feed(producers.get_mut("m").unwrap(), &vec![0.25_f32; 48_000 * 2]);
+        let callback = super::super::device_block(block, SR, device_rate) as usize;
+        let period = Duration::from_secs_f64(callback as f64 / device_rate as f64);
+        let mut played: Vec<f32> = Vec::new();
+        let mut out = vec![0.0; callback * 2];
+        while played.len() < device_rate as usize * 6 / 10 {
+            r.render(&mut out, callback);
+            played.extend(out.iter().step_by(2));
+            // Paced, never made up: a late test thread slows the device
+            // rather than bunching its callbacks into a bigger burst.
+            std::thread::sleep(period);
+        }
+        played[device_rate as usize / 20..]
+            .iter()
+            .filter(|s| (*s - 0.25).abs() > 0.02)
+            .count()
+    }
+
+    #[test]
+    fn a_light_offloaded_node_plays_steadily_into_a_resampled_speaker() {
+        // A speaker at 44.1 kHz renders the 48 kHz graph in bursts; a node on
+        // its own thread has to answer a whole burst at once.
+        let block = 64;
+        let burst = render_burst(SR, 44_100, block);
+        assert_eq!(dropouts_through_an_offloaded_node(block, 44_100, burst), 0);
+        assert_eq!(dropouts_through_an_offloaded_node(block, SR, 1), 0);
+        assert!(
+            dropouts_through_an_offloaded_node(block, 44_100, 1) > 0,
+            "a pad sized for one block a callback rides out the bursts"
         );
     }
 

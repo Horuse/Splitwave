@@ -38,7 +38,7 @@ mod render;
 
 pub(super) use platform::resolve_speaker;
 use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
-pub(super) use render::SpeakerIo;
+pub(super) use render::{render_burst, SpeakerIo};
 use render::{speaker_link, SpeakerLink, SpeakerRenderer};
 
 use super::virtual_io::{DeviceClock, VirtualSpeaker};
@@ -823,6 +823,7 @@ mod tests {
             None,
             48_000,
             super::super::dag::TIMER_BLOCK_FRAMES,
+            1,
             true,
             &valid,
             &native,
@@ -904,6 +905,7 @@ mod tests {
                 None,
                 48_000,
                 block,
+                1,
                 true,
                 &valid,
                 &native,

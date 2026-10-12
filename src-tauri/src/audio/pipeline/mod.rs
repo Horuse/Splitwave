@@ -1036,6 +1036,14 @@ impl ActivePipeline {
                 | OutputSpec::WebRtcSend { .. } => graph.buffer_frames as usize,
                 OutputSpec::FileRecording { .. } => dag::TIMER_BLOCK_FRAMES,
             };
+            // A speaker resampled to its device renders in bursts; a timer
+            // renders a block a tick.
+            let burst_blocks = match (&out.spec, output_runtime.get(&out.id)) {
+                (OutputSpec::Speaker { .. }, Some(runtime)) => {
+                    output::render_burst(output_sr, runtime.sample_rate(), block_frames)
+                }
+                _ => 1,
+            };
             let mut my_pairs: Vec<(String, Producer<f32>)> = Vec::new();
             let cut_leaves = pending_cuts.remove(&out.id).unwrap_or_default();
             let previous = if self.swaps_in_place(&out.id, output_runtime.get(&out.id)) {
@@ -1047,6 +1055,7 @@ impl ActivePipeline {
                 Some(out.id.as_str()),
                 output_sr,
                 block_frames,
+                burst_blocks,
                 !matches!(out.spec, OutputSpec::FileRecording { .. }),
                 graph,
                 &input_native_sr,
@@ -1153,6 +1162,7 @@ impl ActivePipeline {
                     None,
                     monitor_sr,
                     dag::TIMER_BLOCK_FRAMES,
+                    1,
                     true,
                     graph,
                     &input_native_sr,

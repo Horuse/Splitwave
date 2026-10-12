@@ -302,7 +302,7 @@ fn recording(name: &str, input: Input, also_speaker: bool) {
     m.rig.stop();
     let (frames, rate) = read_wav(&path);
     let seconds = frames.len() as f64 / rate as f64;
-    let ran = (WARMUP + m.window).as_secs_f64();
+    let ran = m.ran.as_secs_f64();
     assert!(
         seconds > ran * 0.7 && seconds < ran * 1.3,
         "recorded {seconds:.2} s of {ran:.2} s"
@@ -355,7 +355,7 @@ fn record_a_denoised_mic_and_an_app_without_losing_any() {
     m.rig.stop();
     let (frames, rate) = read_wav(&path);
     let seconds = frames.len() as f64 / rate as f64;
-    let ran = (WARMUP + m.window).as_secs_f64();
+    let ran = m.ran.as_secs_f64();
     assert!(
         seconds > ran * 0.85 && seconds < ran * 1.15,
         "recorded {seconds:.2} s of {ran:.2} s"

@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use splitwave_lib::testkit::{
-    OutputHealth, Rig, SourceHealth, VirtualDevices, VirtualInput, VirtualSpeaker,
+    take_host_lateness, OutputHealth, Rig, SourceHealth, VirtualDevices, VirtualInput,
+    VirtualSpeaker,
 };
 
 pub const RATE: u32 = 48_000;
@@ -206,11 +207,23 @@ pub struct Measured {
     pub sources: Vec<(SourceHealth, SourceHealth)>,
     pub outputs: Vec<(OutputHealth, OutputHealth)>,
     pub window: Duration,
+    /// Since measuring began, the warm-up and any window taken again.
+    pub ran: Duration,
+    /// Latest the host let a virtual device tick during the window.
+    pub host_late: Duration,
     pub rig: Rig,
 }
 
 pub const WARMUP: Duration = Duration::from_millis(500);
 pub const WINDOW: Duration = Duration::from_millis(700);
+
+/// A device the host holds up this long drops out on any engine: a window
+/// in which one was is taken again rather than judged. Shared CI machines
+/// (macOS runners above all) pause threads for milliseconds at a time.
+const HOST_LATE_LIMIT: Duration = Duration::from_millis(4);
+const MAX_WINDOWS: usize = 6;
+/// What a hold-up leaves behind settles before the next window.
+const RESETTLE: Duration = Duration::from_millis(300);
 
 /// Starts `graph`, lets it settle, then measures it for `WINDOW`.
 pub fn run(graph: &Graph, speakers: &[(&str, usize)]) -> Measured {
@@ -219,27 +232,41 @@ pub fn run(graph: &Graph, speakers: &[(&str, usize)]) -> Measured {
     measure(rig, speakers)
 }
 
-/// Measures an already running rig.
+/// Measures an already running rig over a window in which the host kept
+/// every virtual device on time; the last of `MAX_WINDOWS` if none did.
 pub fn measure(rig: Rig, speakers: &[(&str, usize)]) -> Measured {
+    let began = Instant::now();
     std::thread::sleep(WARMUP);
-    let (src_before, out_before) = rig.health();
-    rig.clear_played();
-    let started = Instant::now();
-    std::thread::sleep(WINDOW);
-    let window = started.elapsed();
-    let (src_after, out_after) = rig.health();
-    let played = speakers
-        .iter()
-        .map(|(id, ch)| (id.to_string(), (rig.played(id), *ch)))
-        .collect();
-    Measured {
-        played,
-        sources: pair(src_before, src_after, |s| {
-            format!("{}@{}", s.label, s.output_id)
-        }),
-        outputs: pair(out_before, out_after, |o| o.label.clone()),
-        window,
-        rig,
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let (src_before, out_before) = rig.health();
+        rig.clear_played();
+        take_host_lateness();
+        let started = Instant::now();
+        std::thread::sleep(WINDOW);
+        let window = started.elapsed();
+        let host_late = take_host_lateness();
+        let (src_after, out_after) = rig.health();
+        if host_late > HOST_LATE_LIMIT && attempt < MAX_WINDOWS {
+            std::thread::sleep(RESETTLE);
+            continue;
+        }
+        let played = speakers
+            .iter()
+            .map(|(id, ch)| (id.to_string(), (rig.played(id), *ch)))
+            .collect();
+        return Measured {
+            played,
+            sources: pair(src_before, src_after, |s| {
+                format!("{}@{}", s.label, s.output_id)
+            }),
+            outputs: pair(out_before, out_after, |o| o.label.clone()),
+            window,
+            ran: began.elapsed(),
+            host_late,
+            rig,
+        };
     }
 }
 
@@ -292,7 +319,8 @@ impl Measured {
         // A 440 Hz tone is never this quiet for a millisecond on end.
         assert!(
             worst < RATE as usize / 1000,
-            "{id} ch{ch}: {worst} frames of silence"
+            "{id} ch{ch}: {worst} frames of silence (host up to {:?} late)",
+            self.host_late
         );
         let rms = (x.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt();
         assert!(
@@ -309,9 +337,10 @@ impl Measured {
             let ratio = rate / after.sample_rate as f64;
             assert!(
                 (0.85..1.15).contains(&ratio),
-                "{} ran at {:.0}% of real time",
+                "{} ran at {:.0}% of real time (host up to {:?} late)",
                 after.label,
-                ratio * 100.0
+                ratio * 100.0,
+                self.host_late
             );
         }
     }
@@ -323,9 +352,10 @@ impl Measured {
             let stalled = after.stalled - before.stalled;
             assert!(
                 xrun == 0 && stalled == 0,
-                "{} in {}: {xrun} samples ran dry, {stalled} stalled",
+                "{} in {}: {xrun} samples ran dry, {stalled} stalled (host up to {:?} late)",
                 after.label,
-                after.output_id
+                after.output_id,
+                self.host_late
             );
         }
     }

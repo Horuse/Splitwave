@@ -681,10 +681,9 @@ mod tests {
         let burst = render_burst(SR, 44_100, block);
         assert_eq!(dropouts_through_an_offloaded_node(block, 44_100, burst), 0);
         assert_eq!(dropouts_through_an_offloaded_node(block, SR, 1), 0);
-        assert!(
-            dropouts_through_an_offloaded_node(block, 44_100, 1) > 0,
-            "a pad sized for one block a callback rides out the bursts"
-        );
+        // That a pad sized for one block starves here is pinned by the
+        // offload's model test: the worker sizes its pad from timing it, and
+        // a loaded machine times it slow enough to cover a burst anyway.
     }
 
     #[test]

@@ -9,7 +9,8 @@ use crate::audio::graph::{GraphSpec, RecordingFormat};
 use crate::audio::pipeline::{ActivePipeline, Host};
 
 pub use crate::audio::pipeline::{
-    LatencyReport, OutputHealth, SourceHealth, VirtualDevices, VirtualInput, VirtualSpeaker,
+    take_host_lateness, LatencyReport, OutputHealth, SourceHealth, VirtualDevices, VirtualInput,
+    VirtualSpeaker,
 };
 
 type Events = Arc<Mutex<Vec<(String, serde_json::Value)>>>;

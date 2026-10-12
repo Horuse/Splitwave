@@ -79,20 +79,41 @@ fn listen(x: &[f32], edit_at: usize) -> Heard {
     heard
 }
 
+/// A device the host holds up this long drops out on any engine: a run in
+/// which one was is taken again rather than judged. Shared CI machines
+/// (macOS runners above all) pause threads for milliseconds at a time.
+const HOST_LATE_LIMIT: Duration = Duration::from_millis(4);
+const MAX_RUNS: usize = 4;
+
+/// `listen` over what `play` returns, from a run in which the host kept every
+/// virtual device on time; the last of `MAX_RUNS` if none did.
+fn on_time(mut play: impl FnMut() -> Heard) -> Heard {
+    for run in 1.. {
+        splitwave_lib::testkit::take_host_lateness();
+        let heard = play();
+        if splitwave_lib::testkit::take_host_lateness() <= HOST_LATE_LIMIT || run == MAX_RUNS {
+            return heard;
+        }
+    }
+    unreachable!()
+}
+
 /// Plays `from` until it has settled, edits it into `to`, and listens to
 /// speaker `out` from just before the edit.
 fn edit(from: Graph, to: Graph, settle: Duration) -> Heard {
-    let mut rig = splitwave_lib::testkit::Rig::new(devices());
-    rig.apply(from.json()).expect("first graph starts");
-    std::thread::sleep(settle);
-    rig.clear_played();
-    std::thread::sleep(Duration::from_millis(200));
-    let edit_at = rig.played("out").len() / 2;
-    rig.apply(to.json()).expect("edit applies");
-    std::thread::sleep(Duration::from_millis(1200));
-    let played = rig.played("out");
-    let ch0: Vec<f32> = played.iter().step_by(2).copied().collect();
-    listen(&ch0, edit_at)
+    on_time(|| {
+        let mut rig = splitwave_lib::testkit::Rig::new(devices());
+        rig.apply(from.json()).expect("first graph starts");
+        std::thread::sleep(settle);
+        rig.clear_played();
+        std::thread::sleep(Duration::from_millis(200));
+        let edit_at = rig.played("out").len() / 2;
+        rig.apply(to.json()).expect("edit applies");
+        std::thread::sleep(Duration::from_millis(1200));
+        let played = rig.played("out");
+        let ch0: Vec<f32> = played.iter().step_by(2).copied().collect();
+        listen(&ch0, edit_at)
+    })
 }
 
 /// Past a captured source's one startup correction.
@@ -306,14 +327,16 @@ fn a_receiver_rides_out_its_sender_changing_codec() {
 #[test]
 fn the_first_start_corrects_its_depth_in_one_soft_cut() {
     let _g = serial();
-    let mut rig = splitwave_lib::testkit::Rig::new(devices());
-    rig.apply(mic_speaker().json()).expect("graph starts");
-    std::thread::sleep(Duration::from_millis(2500));
-    let played = rig.played("out");
-    let ch0: Vec<f32> = played.iter().step_by(2).copied().collect();
-    let first = ch0.iter().position(|s| s.abs() > 1e-3).expect("it plays");
-    // The fade-in of the first sound is the only bend at the start.
-    let heard = listen(&ch0[first + RATE as usize / 50..], 0);
+    let heard = on_time(|| {
+        let mut rig = splitwave_lib::testkit::Rig::new(devices());
+        rig.apply(mic_speaker().json()).expect("graph starts");
+        std::thread::sleep(Duration::from_millis(2500));
+        let played = rig.played("out");
+        let ch0: Vec<f32> = played.iter().step_by(2).copied().collect();
+        let first = ch0.iter().position(|s| s.abs() > 1e-3).expect("it plays");
+        // The fade-in of the first sound is the only bend at the start.
+        listen(&ch0[first + RATE as usize / 50..], 0)
+    });
     assert!(heard.breaks.is_empty(), "breaks at {:?} ms", heard.breaks);
     assert!(
         heard.off.len() <= 3,

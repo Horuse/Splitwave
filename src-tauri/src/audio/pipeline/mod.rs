@@ -44,7 +44,7 @@ mod output;
 pub(crate) use worker::RtThread;
 mod sig;
 mod virtual_io;
-pub use virtual_io::{VirtualDevices, VirtualInput, VirtualSpeaker};
+pub use virtual_io::{take_host_lateness, VirtualDevices, VirtualInput, VirtualSpeaker};
 mod worker;
 
 use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};

@@ -5,7 +5,7 @@
 //! what it played.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -116,6 +116,16 @@ impl VirtualDevices {
     }
 }
 
+/// Latest any virtual device has woken past a tick, in microseconds, since the
+/// last `take_host_lateness`: how far the host kept them from real time.
+static HOST_LATE_US: AtomicU64 = AtomicU64::new(0);
+
+/// How late, at worst, the host let any virtual device tick since the last
+/// call. A device the host held up drops out however sound the engine is.
+pub fn take_host_lateness() -> Duration {
+    Duration::from_micros(HOST_LATE_US.swap(0, Ordering::Relaxed))
+}
+
 /// Calls `tick(frames)` once per `period_frames` of `rate`, on the wall
 /// clock, from its own thread until dropped. A late wake makes up every
 /// period it missed at once, as the device's own clock would have run on.
@@ -150,6 +160,7 @@ impl DeviceClock {
                         thread::sleep(due - now);
                         continue;
                     }
+                    HOST_LATE_US.fetch_max((now - due).as_micros() as u64, Ordering::Relaxed);
                     tick(period_frames);
                     ticks += 1;
                 }

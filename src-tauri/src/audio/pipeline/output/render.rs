@@ -426,6 +426,17 @@ impl SpeakerLink {
     /// buffer and hardware, since stopping a device drops whatever it has not
     /// played yet; a device that has stopped calling gets no fade, but still
     /// gives the renderer back.
+    /// The stop fade has left the device and the close tail has played out
+    /// behind it: a buffer, the hardware's worth and the tail of silence have
+    /// been asked for since the fade ended.
+    fn played_out(&self) -> bool {
+        let (buffer, rate) = self.period.as_ref().map_or((0, 0), |(frames, rate)| {
+            (frames.load(Ordering::Relaxed) as u64, *rate as u64)
+        });
+        let in_flight = buffer + self.hardware_frames + rate * CLOSE_TAIL.as_millis() as u64 / 1000;
+        self.faded.load(Ordering::Acquire) && self.drained.load(Ordering::Relaxed) >= in_flight
+    }
+
     /// Starts the stop fade without waiting for it, so several speakers
     /// closing together fade and run out their tails at once.
     pub(in crate::audio::pipeline) fn begin_retire(&self) {
@@ -447,17 +458,7 @@ impl SpeakerLink {
         let started = Instant::now();
         let mut calls = self.calls.load(Ordering::Relaxed);
         let mut last_call = started;
-        // The fade has left once a buffer and the hardware's worth of silence
-        // has been asked for after it; the tail then plays out behind it.
-        let in_flight = |link: &Self| {
-            let (buffer, rate) = link.period.as_ref().map_or((0, 0), |(frames, rate)| {
-                (frames.load(Ordering::Relaxed) as u64, *rate as u64)
-            });
-            buffer + link.hardware_frames + rate * CLOSE_TAIL.as_millis() as u64 / 1000
-        };
-        while !self.faded.load(Ordering::Acquire)
-            || self.drained.load(Ordering::Relaxed) < in_flight(self)
-        {
+        while !self.played_out() {
             let now = Instant::now();
             let seen = self.calls.load(Ordering::Relaxed);
             if seen != calls {
@@ -849,34 +850,24 @@ mod tests {
         for _ in 0..20 {
             cb.fill(&mut out, 64);
         }
-        let retire = cb.retire.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let retiring = std::thread::spawn(move || {
-            let r = link.retire();
-            tx.send(r.is_some()).unwrap();
-        });
-        while !retire.load(Ordering::Acquire) {
-            std::thread::yield_now();
-        }
+        link.begin_retire();
         // The fade (480 frames) ends in the 8th callback; the silence after
         // it (a 64-frame buffer, 480 of hardware and the tail) takes the rest.
         let tail = SR as usize * CLOSE_TAIL.as_millis() as usize / 1000;
         let silent_calls = (64 + 480 + tail).div_ceil(64);
-        // Called back as fast as the test can: a slow machine pacing these
-        // out would reach the retire's own timeout instead.
         for _ in 0..8 + silent_calls - 1 {
             cb.fill(&mut out, 64);
+            assert!(
+                !link.played_out(),
+                "would stop before the fade and the tail were out"
+            );
         }
-        assert!(
-            rx.recv_timeout(Duration::from_millis(20)).is_err(),
-            "stopped before the fade and the tail were out"
-        );
         cb.fill(&mut out, 64);
+        assert!(link.played_out(), "the fade and the tail are out");
         assert!(
-            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-            "renderer handed back once the fade is out"
+            link.retire().is_some(),
+            "renderer handed back once they are"
         );
-        retiring.join().unwrap();
     }
 
     #[test]

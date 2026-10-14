@@ -9,12 +9,21 @@ import type { PluginDescriptor } from './types';
 class PluginCatalog {
 	plugins = $state<PluginDescriptor[]>([]);
 	scanning = $state(false);
+	/** At least one scan has succeeded, so `plugins` reflects what is installed. */
+	scanned = $state(false);
+	/** Why the last scan failed; the list then still holds the scan before it. */
+	error = $state<string | null>(null);
 	#pending: Promise<void> | null = null;
 	#pendingFull = false;
 
 	/** Picks up plugins added, changed or removed since the last scan. */
 	refresh(): Promise<void> {
 		return this.#scan(false);
+	}
+
+	/** Scans once per session, for a node that must know whether its plugin is installed. */
+	ensure(): Promise<void> {
+		return this.scanned ? Promise.resolve() : this.#scan(false);
 	}
 
 	/** Reopens every bundle, including ones that failed to load before. */
@@ -35,8 +44,12 @@ class PluginCatalog {
 			.scanPlugins(full)
 			.then((found) => {
 				this.plugins = found;
+				this.scanned = true;
+				this.error = null;
 			})
-			.catch(() => {})
+			.catch((e: unknown) => {
+				this.error = String(e);
+			})
 			.finally(() => {
 				this.scanning = false;
 				this.#pending = null;

@@ -53,19 +53,13 @@ impl PluginBackend for ClapBackend {
         dirs
     }
 
-    fn scan_bundle(&self, path: &Path) -> Vec<PluginDescriptor> {
+    fn scan_bundle(&self, path: &Path) -> Result<Vec<PluginDescriptor>, String> {
         // Loading a foreign dylib is inherently unsafe: a non-compliant bundle
         // can trigger any behavior just on load. Accepted per format design.
-        let entry = match unsafe { PluginEntry::load(path) } {
-            Ok(entry) => entry,
-            Err(err) => {
-                tracing::warn!("clap: failed to load {}: {err}", path.display());
-                return Vec::new();
-            }
-        };
-        let Some(factory) = entry.get_plugin_factory() else {
-            return Vec::new();
-        };
+        let entry = unsafe { PluginEntry::load(path) }.map_err(|err| format!("clap: {err}"))?;
+        let factory = entry
+            .get_plugin_factory()
+            .ok_or("clap: no plugin factory")?;
         let path_str = path.to_string_lossy().into_owned();
         let mut out = Vec::new();
         for desc in factory.plugin_descriptors() {
@@ -103,7 +97,7 @@ impl PluginBackend for ClapBackend {
                 version,
             });
         }
-        out
+        Ok(out)
     }
 }
 

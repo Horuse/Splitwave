@@ -70,9 +70,10 @@ pub trait PluginBackend {
     fn search_dirs(&self) -> Vec<PathBuf>;
     /// Bundle / library extension that marks a plugin, without the leading dot.
     fn extension(&self) -> &'static str;
-    /// Enumerate the plugins inside one bundle / library path.
-    fn scan_bundle(&self, _path: &Path) -> Vec<PluginDescriptor> {
-        Vec::new()
+    /// Enumerate the plugins inside one bundle / library path. `Err` means the
+    /// bundle could not be read this time, as opposed to holding no effects.
+    fn scan_bundle(&self, _path: &Path) -> Result<Vec<PluginDescriptor>, String> {
+        Ok(Vec::new())
     }
     /// Full discovery for this format. The default walks `search_dirs` for
     /// `extension` bundles; a format whose registry is not the filesystem
@@ -80,9 +81,14 @@ pub trait PluginBackend {
     fn scan(&self) -> Vec<PluginDescriptor> {
         let mut out = Vec::new();
         for dir in self.search_dirs() {
-            scan::walk(&dir, self.extension(), &mut |bundle| {
-                out.extend(self.scan_bundle(bundle))
-            });
+            scan::walk(
+                &dir,
+                self.extension(),
+                &mut |bundle| match self.scan_bundle(bundle) {
+                    Ok(found) => out.extend(found),
+                    Err(err) => tracing::warn!("{}: {err}", bundle.display()),
+                },
+            );
         }
         out
     }

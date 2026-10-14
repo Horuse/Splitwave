@@ -16,13 +16,18 @@
 
 	const flow = useSvelteFlow();
 
-	const plugins = $derived(pluginCatalog.plugins);
-
 	// uid is the stable scan key; node data stores path + pluginId.
-	const currentUid = $derived(plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
+	const currentUid = $derived(pluginCatalog.plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
+
+	// Known only once a scan has run: before that the stored name stands in.
+	const missing = $derived(pluginCatalog.scanned && !!data.path && !currentUid);
+
+	$effect(() => {
+		if (data.path) pluginCatalog.ensure();
+	});
 
 	const options = $derived(
-		plugins.map((p) => ({
+		pluginCatalog.plugins.map((p) => ({
 			value: p.uid,
 			label: p.name,
 			subtitle: p.vendor || null,
@@ -31,7 +36,7 @@
 	);
 
 	function select(uid: string | null) {
-		const desc = plugins.find((p) => p.uid === uid);
+		const desc = pluginCatalog.plugins.find((p) => p.uid === uid);
 		flow.updateNodeData(id, {
 			// The engine dispatches on this, so it is stored rather than guessed
 			// from the path shape.
@@ -190,6 +195,12 @@
 				<RescanButton onRescan={() => pluginCatalog.rescan()} />
 			{/snippet}
 		</Combobox>
+		{#if missing}
+			<p class="text-xs text-rose-400">Not installed, or failed to load</p>
+		{/if}
+		{#if pluginCatalog.error}
+			<p class="text-xs text-rose-400">Plugin scan failed: {pluginCatalog.error}</p>
+		{/if}
 		{#if data.path}
 			{#if loading}
 				<p class="flex items-center gap-1.5 text-sm text-neutral-900">

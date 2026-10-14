@@ -10,7 +10,7 @@ body:
         already pre-filled with diagnostic info. Just add what you were doing
         and submit.
   - type: textarea
-    id: body
+    id: details
     attributes:
       label: Crash details
       description: Diagnostic info, stack trace, repro steps. Pre-filled by the app.

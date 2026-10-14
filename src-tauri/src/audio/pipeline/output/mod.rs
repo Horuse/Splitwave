@@ -56,14 +56,24 @@ pub(super) enum SpeakerTarget {
 /// An open speaker. Held for its `Drop`: the renderer is taken back with a
 /// fade, then the stream stops.
 pub(super) enum SpeakerStream {
-    Device(#[allow(dead_code)] SpeakerHandle),
-    Virtual(#[allow(dead_code)] VirtualSpeakerStream),
+    Device(SpeakerHandle),
+    Virtual(VirtualSpeakerStream),
 }
 
 pub(super) struct VirtualSpeakerStream {
     link: SpeakerLink,
     _clock: DeviceClock,
     _alive: StreamGuard,
+}
+
+impl SpeakerStream {
+    /// Starts the stop fade and tail; the stream closes when dropped.
+    pub(super) fn begin_retire(&self) {
+        match self {
+            SpeakerStream::Device(h) => h.begin_retire(),
+            SpeakerStream::Virtual(v) => v.link.begin_retire(),
+        }
+    }
 }
 
 impl Drop for VirtualSpeakerStream {

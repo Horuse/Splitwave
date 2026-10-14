@@ -24,6 +24,12 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 
 // The renderer is taken back before the playback thread stops, so the graph
 // drops on this thread rather than inside the PipeWire process callback.
+impl SpeakerHandle {
+    pub(in crate::audio::pipeline) fn begin_retire(&self) {
+        self.link.begin_retire();
+    }
+}
+
 impl Drop for SpeakerHandle {
     fn drop(&mut self) {
         drop(self.link.retire());

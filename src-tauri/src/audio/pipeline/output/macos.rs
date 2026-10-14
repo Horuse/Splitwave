@@ -49,6 +49,12 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 //
 // The renderer (and the graph it owns) is taken back first, so it drops here
 // rather than leaking with that closure.
+impl SpeakerHandle {
+    pub(in crate::audio::pipeline) fn begin_retire(&self) {
+        self.link.begin_retire();
+    }
+}
+
 impl Drop for SpeakerHandle {
     fn drop(&mut self) {
         let renderer = self.link.retire();

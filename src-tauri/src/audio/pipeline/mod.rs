@@ -532,6 +532,10 @@ impl ActivePipeline {
         // Before anything is dismantled: its next tick would measure a window
         // that straddles teardown and report the shortfall as an anomaly.
         self.xrun_thread = None;
+        // Every speaker fades and runs out its tail at once, then each closes.
+        for s in self.speakers.values() {
+            s._handle.begin_retire();
+        }
         self.speakers.clear();
         for r in self.recorders.values() {
             r.worker.stop.store(true, Ordering::SeqCst);

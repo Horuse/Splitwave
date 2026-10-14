@@ -283,6 +283,12 @@ type Slot = Arc<Mutex<Option<SpeakerRenderer>>>;
 /// device dead and taking the renderer back anyway: this, or a few of its
 /// callback periods when those are longer.
 const DEAD_DEVICE_AFTER: Duration = Duration::from_millis(100);
+
+/// Silence a retiring speaker plays past its fade before its stream stops. A
+/// device left with no client powers down, and built-in speakers cut short
+/// whatever their own processing still holds, which is heard as a pop and a
+/// rush; this long lets that processing run out into silence first.
+const CLOSE_TAIL: Duration = Duration::from_millis(250);
 const DEAD_DEVICE_PERIODS: u32 = 3;
 
 /// The audio-thread end of a speaker: renders once the renderer has arrived,
@@ -420,8 +426,14 @@ impl SpeakerLink {
     /// buffer and hardware, since stopping a device drops whatever it has not
     /// played yet; a device that has stopped calling gets no fade, but still
     /// gives the renderer back.
-    pub(in crate::audio::pipeline) fn retire(&mut self) -> Option<SpeakerRenderer> {
+    /// Starts the stop fade without waiting for it, so several speakers
+    /// closing together fade and run out their tails at once.
+    pub(in crate::audio::pipeline) fn begin_retire(&self) {
         self.retire.store(true, Ordering::Release);
+    }
+
+    pub(in crate::audio::pipeline) fn retire(&mut self) -> Option<SpeakerRenderer> {
+        self.begin_retire();
         let period = self
             .period
             .as_ref()
@@ -431,16 +443,17 @@ impl SpeakerLink {
                 )
             });
         let dead_after = DEAD_DEVICE_AFTER.max(period * DEAD_DEVICE_PERIODS);
-        let timeout = RETIRE_TIMEOUT.max(2 * dead_after);
+        let timeout = RETIRE_TIMEOUT.max(2 * dead_after) + CLOSE_TAIL;
         let started = Instant::now();
         let mut calls = self.calls.load(Ordering::Relaxed);
         let mut last_call = started;
+        // The fade has left once a buffer and the hardware's worth of silence
+        // has been asked for after it; the tail then plays out behind it.
         let in_flight = |link: &Self| {
-            let buffer = link
-                .period
-                .as_ref()
-                .map_or(0, |(frames, _)| frames.load(Ordering::Relaxed) as u64);
-            buffer + link.hardware_frames
+            let (buffer, rate) = link.period.as_ref().map_or((0, 0), |(frames, rate)| {
+                (frames.load(Ordering::Relaxed) as u64, *rate as u64)
+            });
+            buffer + link.hardware_frames + rate * CLOSE_TAIL.as_millis() as u64 / 1000
         };
         while !self.faded.load(Ordering::Acquire)
             || self.drained.load(Ordering::Relaxed) < in_flight(self)
@@ -823,9 +836,10 @@ mod tests {
 
     #[test]
     fn a_retire_lets_the_fade_leave_the_device_before_stopping_it() {
-        // Stopping a device drops what it has not played. The fade is only
-        // out once the device has asked for a buffer and its hardware
-        // latency's worth of silence after it.
+        // Stopping a device drops what it has not played, and built-in
+        // speakers cut what their processing holds. The stream stays open
+        // until the device has asked for a buffer, its hardware latency and
+        // the close tail's worth of silence after the fade.
         let (mut link, mut cb) = speaker_link();
         let mut t = rig(64, SR);
         feed(&mut t.input, &vec![0.5; 48_000]);
@@ -844,14 +858,16 @@ mod tests {
         while !retire.load(Ordering::Acquire) {
             std::thread::yield_now();
         }
-        // The fade (480 frames) ends in the 8th callback; 544 frames of
-        // silence (a 64-frame buffer and 480 of hardware) take 9 more.
-        let wait = Duration::from_millis(5);
-        for _ in 0..16 {
+        // The fade (480 frames) ends in the 8th callback; the silence after
+        // it (a 64-frame buffer, 480 of hardware and the tail) takes the rest.
+        let tail = SR as usize * CLOSE_TAIL.as_millis() as usize / 1000;
+        let silent_calls = (64 + 480 + tail).div_ceil(64);
+        let wait = Duration::from_micros(500);
+        for _ in 0..8 + silent_calls - 1 {
             cb.fill(&mut out, 64);
             assert!(
                 rx.recv_timeout(wait).is_err(),
-                "stopped with the fade in flight"
+                "stopped before the fade and the tail were out"
             );
         }
         cb.fill(&mut out, 64);

@@ -34,6 +34,12 @@ pub(in crate::audio::pipeline) struct SpeakerHandle {
 // backend never does for a non-default device, see the macOS SpeakerHandle);
 // call `pause` explicitly so teardown doesn't depend on that guarantee here too.
 // The renderer is taken back first so the graph drops on this thread.
+impl SpeakerHandle {
+    pub(in crate::audio::pipeline) fn begin_retire(&self) {
+        self.link.begin_retire();
+    }
+}
+
 impl Drop for SpeakerHandle {
     fn drop(&mut self) {
         let renderer = self.link.retire();

@@ -42,12 +42,24 @@ impl Rig {
     /// Starts `graph`, or moves the running pipeline to it, as the editor
     /// does. `graph` is the payload the frontend sends.
     pub fn apply(&mut self, graph: serde_json::Value) -> Result<(), String> {
-        let spec: GraphSpec = serde_json::from_value(graph).map_err(|e| e.to_string())?;
+        let spec: GraphSpec = serde_json::from_value(graph.clone()).map_err(|e| e.to_string())?;
         let valid = spec.validate().map_err(|e| e.to_string())?;
-        self.pipeline
-            .get_or_insert_with(ActivePipeline::new)
+        let pipeline = self.pipeline.get_or_insert_with(ActivePipeline::new);
+        pipeline
             .reconcile(&valid, self.host.clone())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // A file's loop is not part of the graph: the editor sets it on the
+        // running reader right after every start.
+        for node in graph["nodes"].as_array().into_iter().flatten() {
+            if node["kind"] == "audioFile" {
+                if let (Some(id), Some(on)) =
+                    (node["id"].as_str(), node["data"]["loopEnabled"].as_bool())
+                {
+                    pipeline.set_audio_file_loop(id, on);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Stops everything, as the stop button does.

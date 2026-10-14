@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
-	import type { PluginDescriptor, PluginParam, PluginStatus } from '$lib/modules/audio/types';
+	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { pluginCatalog } from '$lib/modules/audio/plugin_catalog.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
@@ -15,9 +16,7 @@
 
 	const flow = useSvelteFlow();
 
-	let plugins = $state<PluginDescriptor[]>([]);
-	let scanning = $state(false);
-	let scanned = $state(false);
+	const plugins = $derived(pluginCatalog.plugins);
 
 	// uid is the stable scan key; node data stores path + pluginId.
 	const currentUid = $derived(plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
@@ -30,19 +29,6 @@
 			badge: p.format
 		}))
 	);
-
-	async function scan() {
-		if (scanning) return;
-		scanning = true;
-		try {
-			plugins = await audioMethods.scanPlugins();
-		} catch {
-			plugins = [];
-		} finally {
-			scanning = false;
-			scanned = true;
-		}
-	}
 
 	function select(uid: string | null) {
 		const desc = plugins.find((p) => p.uid === uid);
@@ -179,10 +165,6 @@
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
-
-	$effect(() => {
-		if (!scanned) scan();
-	});
 </script>
 
 <Wrapper
@@ -200,11 +182,12 @@
 		<Combobox
 			{options}
 			value={currentUid}
-			placeholder={scanning ? 'Scanning…' : 'Select a plugin'}
-			emptyHint={scanned ? 'No plugins found' : 'Scanning…'}
+			placeholder={data.name || (pluginCatalog.scanning ? 'Scanning…' : 'Select a plugin')}
+			emptyHint={pluginCatalog.scanning ? 'Scanning…' : 'No plugins found'}
+			onOpen={() => pluginCatalog.refresh()}
 			onChange={select}>
 			{#snippet footer()}
-				<RescanButton onRescan={scan} />
+				<RescanButton onRescan={() => pluginCatalog.rescan()} />
 			{/snippet}
 		</Combobox>
 		{#if data.path}

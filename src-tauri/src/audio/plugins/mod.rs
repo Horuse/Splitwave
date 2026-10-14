@@ -48,7 +48,7 @@ pub enum PluginFormat {
 
 /// One instantiable plugin found by a scan. `uid` is stable across scans so the
 /// graph can store a reference and re-resolve the plugin when the project loads.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginDescriptor {
     pub uid: String,

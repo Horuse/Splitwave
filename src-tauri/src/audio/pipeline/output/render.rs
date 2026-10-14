@@ -862,14 +862,15 @@ mod tests {
         // it (a 64-frame buffer, 480 of hardware and the tail) takes the rest.
         let tail = SR as usize * CLOSE_TAIL.as_millis() as usize / 1000;
         let silent_calls = (64 + 480 + tail).div_ceil(64);
-        let wait = Duration::from_micros(500);
+        // Called back as fast as the test can: a slow machine pacing these
+        // out would reach the retire's own timeout instead.
         for _ in 0..8 + silent_calls - 1 {
             cb.fill(&mut out, 64);
-            assert!(
-                rx.recv_timeout(wait).is_err(),
-                "stopped before the fade and the tail were out"
-            );
         }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(20)).is_err(),
+            "stopped before the fade and the tail were out"
+        );
         cb.fill(&mut out, 64);
         assert!(
             rx.recv_timeout(Duration::from_secs(2)).unwrap(),

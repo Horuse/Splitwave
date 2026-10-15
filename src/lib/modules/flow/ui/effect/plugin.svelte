@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
-	import type { PluginDescriptor, PluginParam, PluginStatus } from '$lib/modules/audio/types';
+	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { pluginCatalog } from '$lib/modules/audio/plugin_catalog.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
@@ -15,15 +16,18 @@
 
 	const flow = useSvelteFlow();
 
-	let plugins = $state<PluginDescriptor[]>([]);
-	let scanning = $state(false);
-	let scanned = $state(false);
-
 	// uid is the stable scan key; node data stores path + pluginId.
-	const currentUid = $derived(plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
+	const currentUid = $derived(pluginCatalog.plugins.find((p) => p.path === data.path && p.pluginId === data.pluginId)?.uid ?? null);
+
+	// Known only once a scan has run: before that the stored name stands in.
+	const missing = $derived(pluginCatalog.scanned && !!data.path && !currentUid);
+
+	$effect(() => {
+		if (data.path) pluginCatalog.ensure();
+	});
 
 	const options = $derived(
-		plugins.map((p) => ({
+		pluginCatalog.plugins.map((p) => ({
 			value: p.uid,
 			label: p.name,
 			subtitle: p.vendor || null,
@@ -31,21 +35,8 @@
 		}))
 	);
 
-	async function scan() {
-		if (scanning) return;
-		scanning = true;
-		try {
-			plugins = await audioMethods.scanPlugins();
-		} catch {
-			plugins = [];
-		} finally {
-			scanning = false;
-			scanned = true;
-		}
-	}
-
 	function select(uid: string | null) {
-		const desc = plugins.find((p) => p.uid === uid);
+		const desc = pluginCatalog.plugins.find((p) => p.uid === uid);
 		flow.updateNodeData(id, {
 			// The engine dispatches on this, so it is stored rather than guessed
 			// from the path shape.
@@ -179,10 +170,6 @@
 		flow.updateNodeData(id, patch);
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
-
-	$effect(() => {
-		if (!scanned) scan();
-	});
 </script>
 
 <Wrapper
@@ -200,13 +187,20 @@
 		<Combobox
 			{options}
 			value={currentUid}
-			placeholder={scanning ? 'Scanning…' : 'Select a plugin'}
-			emptyHint={scanned ? 'No plugins found' : 'Scanning…'}
+			placeholder={data.name || (pluginCatalog.scanning ? 'Scanning…' : 'Select a plugin')}
+			emptyHint={pluginCatalog.scanning ? 'Scanning…' : 'No plugins found'}
+			onOpen={() => pluginCatalog.refresh()}
 			onChange={select}>
 			{#snippet footer()}
-				<RescanButton onRescan={scan} />
+				<RescanButton onRescan={() => pluginCatalog.rescan()} />
 			{/snippet}
 		</Combobox>
+		{#if missing}
+			<p class="text-xs text-rose-400">Not installed, or failed to load</p>
+		{/if}
+		{#if pluginCatalog.error}
+			<p class="text-xs text-rose-400">Plugin scan failed: {pluginCatalog.error}</p>
+		{/if}
 		{#if data.path}
 			{#if loading}
 				<p class="flex items-center gap-1.5 text-sm text-neutral-900">

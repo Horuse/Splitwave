@@ -67,12 +67,17 @@ impl PluginBackend for Vst3Backend {
     fn scan_bundle(&self, path: &Path) -> Result<Vec<PluginDescriptor>, String> {
         let p = path.to_path_buf();
         let scan_op = move || {
-            let module = Vst3Module::open(&p).map_err(|err| format!("vst3: {err}"))?;
-            let descriptors = module.descriptors();
-            // Drop module here on the main thread so ExitDll/bundleExit and dlclose/FreeLibrary
-            // execute on Thread 0.
-            drop(module);
-            Ok(descriptors)
+            // This runs on the main thread, past the reach of the scanner's own
+            // `catch_unwind`; a panic escaping here would take the event loop down.
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let module = Vst3Module::open(&p).map_err(|err| format!("vst3: {err}"))?;
+                let descriptors = module.descriptors();
+                // Drop module here on the main thread so ExitDll/bundleExit and dlclose/FreeLibrary
+                // execute on Thread 0.
+                drop(module);
+                Ok(descriptors)
+            }))
+            .unwrap_or_else(|_| Err("vst3: panicked while scanning".into()))
         };
 
         if crate::audio::plugins::main_thread::is_main_thread() || crate::app_handle().is_none() {

@@ -86,6 +86,11 @@ fn scan_files(
     let mut out = Vec::new();
     let mut dirty = false;
     let mut saved_at = Instant::now();
+    // The opening marker is written before the first save would create the
+    // dir, and a marker that fails to land protects nothing.
+    if let Some(dir) = cache_dir {
+        let _ = std::fs::create_dir_all(dir);
+    }
     for backend in backends {
         for dir in backend.search_dirs() {
             walk(&dir, backend.extension(), &mut |bundle| {
@@ -256,7 +261,8 @@ fn save(cache_dir: &Path, cache: &mut Cache) {
 
 /// Recurse `dir`, invoking `on_bundle` for every entry whose extension matches
 /// `ext`. A matched bundle is not descended into (on macOS a `.clap` is itself
-/// a directory).
+/// a directory). A linked bundle is still found, but linked directories are not
+/// descended into: a link back up the tree would recurse forever.
 pub(super) fn walk(dir: &Path, ext: &str, on_bundle: &mut impl FnMut(&Path)) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -265,7 +271,7 @@ pub(super) fn walk(dir: &Path, ext: &str, on_bundle: &mut impl FnMut(&Path)) {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some(ext) {
             on_bundle(&path);
-        } else if path.is_dir() {
+        } else if !path.is_symlink() && path.is_dir() {
             walk(&path, ext, on_bundle);
         }
     }
@@ -301,6 +307,12 @@ mod tests {
             match std::fs::read(path).as_deref() {
                 Ok(b"broken") => return Err("unreadable".into()),
                 Ok(b"panics") => panic!("plugin panicked"),
+                // Fails unless the crash marker is on disk while it is open.
+                Ok(b"needs-marker")
+                    if !path.with_file_name("cache").join(OPENING_FILE).exists() =>
+                {
+                    return Err("opened without a crash marker".into())
+                }
                 _ => {}
             }
             let path = path.to_string_lossy().into_owned();
@@ -478,5 +490,25 @@ mod tests {
         std::fs::write(bundle.join("binary"), b"code").unwrap();
         std::os::unix::fs::symlink(&bundle, bundle.join("Versions/Current")).unwrap();
         assert_eq!(stamp(&bundle).size, 4);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_loop_in_a_search_dir_is_not_followed() {
+        let backend = fixture("walk-loop");
+        std::os::unix::fs::symlink(&backend.dir, backend.dir.join("loop")).unwrap();
+        let found = scan(&backend, &mut Cache::default(), false);
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn the_crash_marker_lands_on_a_fresh_install() {
+        let backend = fixture("fresh-install");
+        std::fs::write(backend.dir.join("a.fake"), b"needs-marker").unwrap();
+        let cache_dir = backend.dir.join("cache");
+        let mut cache = Cache::default();
+
+        let found = scan_files(&mut cache, &[&backend], false, Some(&cache_dir));
+        assert_eq!(found.len(), 2, "a bundle was opened without a crash marker");
     }
 }

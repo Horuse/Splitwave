@@ -150,6 +150,20 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         .unwrap()
         .insert(node_id.to_string(), window.clone());
 
+    // GTK creates the native window on realize, which a hidden window has not
+    // been through; without it there is no handle to parent the plugin view to.
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        match window.gtk_window() {
+            Ok(gtk_window) => gtk_window.realize(),
+            Err(e) => {
+                close_window(node_id);
+                return Err(format!("editor window for {node_id}: {e}"));
+            }
+        }
+    }
+
     let embedded = match super::registry::for_node(node_id) {
         Some(host) => host.embed_editor(node_id, &window),
         None => Err(format!("{node_id}: no plugin is running on this node")),

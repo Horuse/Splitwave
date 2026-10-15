@@ -6242,6 +6242,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "freedesktop-icons",
  "futures-util",
+ "gtk",
  "hound",
  "libc",
  "libpulse-binding",

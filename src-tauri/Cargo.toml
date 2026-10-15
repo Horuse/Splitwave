@@ -120,6 +120,9 @@ dirs = "5"
 # check falls back to webpki-roots. macOS/Windows keep the platform verifier.
 webpki-roots = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Plugin editor windows are realized by hand before a plugin view is parented
+# into them; same gtk that tauri already links.
+gtk = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 # Fatal-signal crash persistence; Linux VST3 hosting also uses dlopen and poll.

@@ -28,7 +28,7 @@ const AUDIO_STATE_EVENT = 'audio://state';
 const DEVICE_VOLUME_EVENT = 'audio://device_volume';
 
 export const methods = {
-	scanPlugins: (): Promise<PluginDescriptor[]> => invoke<PluginDescriptor[]>('scan_plugins'),
+	scanPlugins: (full: boolean): Promise<PluginDescriptor[]> => invoke<PluginDescriptor[]>('scan_plugins', { full }),
 	openPluginEditor: (nodeId: string, title: string): Promise<void> => invoke('open_plugin_editor', { nodeId, title }),
 	closePluginEditor: (nodeId: string): Promise<void> => invoke('close_plugin_editor', { nodeId }),
 	getPluginState: (nodeId: string): Promise<string | null> => invoke<string | null>('get_plugin_state', { nodeId }),

@@ -2,7 +2,7 @@ use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info};
 
 use crate::audio::device::{self, DeviceInfo, DeviceKind, NativeDeviceInfo};
@@ -45,13 +45,25 @@ where
     .map_err(|_| AppError::Stream("audio request task failed".into()))?
 }
 
-/// Scans standard install directories for hostable plugins. Loading foreign
-/// dylibs blocks and can be slow, so it runs off the main thread.
+/// Scans standard install directories for hostable plugins, opening only
+/// bundles that are new or changed since the cached scan; `full` reopens all of
+/// them. Loading foreign dylibs blocks and can be slow, so it runs off the main
+/// thread.
 #[tauri::command]
-pub async fn scan_plugins() -> AppResult<Vec<crate::audio::plugins::PluginDescriptor>> {
-    tauri::async_runtime::spawn_blocking(crate::audio::plugins::scan_all)
-        .await
-        .map_err(|_| AppError::Plugin("plugin scan task failed".into()))
+pub async fn scan_plugins(
+    app: AppHandle,
+    full: bool,
+) -> AppResult<Vec<crate::audio::plugins::PluginDescriptor>> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .inspect_err(|err| tracing::warn!("no cache dir, plugin scan is not cached: {err}"))
+        .ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::scan_all(cache_dir.as_deref(), full)
+    })
+    .await
+    .map_err(|_| AppError::Plugin("plugin scan task failed".into()))
 }
 
 #[tauri::command]
@@ -609,7 +621,6 @@ pub async fn check_for_updates(
     webview: tauri::Webview,
     endpoint: Option<String>,
 ) -> Result<Option<UpdateMetadata>, String> {
-    use tauri::Manager;
     let updater = configured_updater(webview.app_handle(), endpoint.as_deref())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);

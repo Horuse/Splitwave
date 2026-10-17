@@ -7,12 +7,29 @@ use ts_rs::TS;
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GraphSpec {
     pub nodes: Vec<NodeSpec>,
     pub edges: Vec<EdgeSpec>,
     #[serde(default)]
     pub sample_rate: Option<u32>,
+    /// Engine buffer in frames: the device IO size and the block a speaker
+    /// graph renders per callback.
+    #[serde(default)]
+    pub buffer_frames: Option<u32>,
 }
+
+/// Engine buffer sizes the settings offer. Powers of two, so device buffers,
+/// FFT-based stages and plugin hosts all accept them.
+pub const BUFFER_FRAME_OPTIONS: [u32; 7] = [32, 64, 128, 256, 512, 1024, 2048];
+pub const DEFAULT_BUFFER_FRAMES: u32 = 256;
+/// Largest engine block; buffers that must hold any block are sized from it.
+pub const MAX_BUFFER_FRAMES: usize = 2048;
+/// Pipeline sample rates the engine accepts, and the one it runs without a
+/// setting. The frontend reads these from `generated/engine.ts`.
+pub const MIN_SAMPLE_RATE: u32 = 8_000;
+pub const MAX_SAMPLE_RATE: u32 = 384_000;
+pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 
 #[derive(Debug, Deserialize)]
 pub struct NodeSpec {
@@ -295,7 +312,7 @@ pub struct FileRecordingData {
 }
 
 fn default_rec_sample_rate() -> Option<u32> {
-    Some(48_000)
+    Some(DEFAULT_SAMPLE_RATE)
 }
 
 fn default_two() -> u16 {
@@ -714,6 +731,7 @@ pub struct ValidGraph {
     pub effects: Vec<ValidEffect>,
     pub edges: Vec<ValidEdge>,
     pub sample_rate: u32,
+    pub buffer_frames: u32,
 }
 
 /// One node of the expanded graph. A dual-role UI node appears once per role it
@@ -729,10 +747,17 @@ struct RoleNode<'a> {
 /// (alphanumeric), so this can never collide with one.
 const RECV_SUFFIX: &str = "#recv";
 
-fn is_analyzer_kind(kind: NodeKind) -> bool {
+/// A node audio may end at besides an output: an analyzer renders telemetry,
+/// and a plugin can be an end point of its own (one that sends its input over
+/// the network, say).
+fn is_end_point_kind(kind: NodeKind) -> bool {
     matches!(
         kind,
-        NodeKind::LevelMeter | NodeKind::LufsMeter | NodeKind::Waveform | NodeKind::Spectrum
+        NodeKind::LevelMeter
+            | NodeKind::LufsMeter
+            | NodeKind::Waveform
+            | NodeKind::Spectrum
+            | NodeKind::Plugin
     )
 }
 
@@ -869,7 +894,7 @@ impl GraphSpec {
 
         let has_destination = nodes
             .iter()
-            .any(|n| n.role == NodeCategory::Output || is_analyzer_kind(n.kind))
+            .any(|n| n.role == NodeCategory::Output || is_end_point_kind(n.kind))
             // A collaborator holds a live peer session from the moment it
             // exists, so an unwired one is a destination in waiting, not a
             // graph error.
@@ -882,7 +907,7 @@ impl GraphSpec {
 
         let reachable_from_inputs = bfs_forward(&nodes, &outgoing, NodeCategory::Input);
         let reachable_from_terminals: HashSet<&str> = bfs_backward_pred(&nodes, &incoming, |n| {
-            n.role == NodeCategory::Output || is_analyzer_kind(n.kind)
+            n.role == NodeCategory::Output || is_end_point_kind(n.kind)
         });
         let routed: HashSet<&str> = reachable_from_inputs
             .intersection(&reachable_from_terminals)
@@ -918,13 +943,23 @@ impl GraphSpec {
             .collect();
 
         let sample_rate = match self.sample_rate {
-            Some(sr) if !(8_000..=384_000).contains(&sr) => {
+            Some(sr) if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sr) => {
                 return Err(AppError::Validation(format!(
-                    "pipeline sample rate {sr} out of bounds (8000..=384000)"
+                    "pipeline sample rate {sr} out of bounds ({MIN_SAMPLE_RATE}..={MAX_SAMPLE_RATE})"
                 )));
             }
             Some(sr) => sr,
-            None => 48_000,
+            None => DEFAULT_SAMPLE_RATE,
+        };
+
+        let buffer_frames = match self.buffer_frames {
+            Some(n) if !BUFFER_FRAME_OPTIONS.contains(&n) => {
+                return Err(AppError::Validation(format!(
+                    "buffer size {n} is not one of {BUFFER_FRAME_OPTIONS:?}"
+                )));
+            }
+            Some(n) => n,
+            None => DEFAULT_BUFFER_FRAMES,
         };
 
         Ok(ValidGraph {
@@ -933,6 +968,7 @@ impl GraphSpec {
             effects,
             edges,
             sample_rate,
+            buffer_frames,
         })
     }
 }
@@ -1089,9 +1125,9 @@ fn resolve_outputs(
                         let max = if matches!(data.format, RecordingFormat::Flac { .. }) {
                             655_350
                         } else {
-                            384_000
+                            MAX_SAMPLE_RATE
                         };
-                        if !(8000..=max).contains(&sr) {
+                        if !(MIN_SAMPLE_RATE..=max).contains(&sr) {
                             return Err(AppError::Validation(format!(
                                 "recording node {} pins sample rate {sr}; expected 8000..{max}",
                                 n.id
@@ -1314,6 +1350,36 @@ fn check_acyclic(nodes: &[RoleNode<'_>], outgoing: &HashMap<&str, Vec<&str>>) ->
 mod tests {
     use super::*;
 
+    /// Writes the engine limits the frontend offers and validates against,
+    /// next to the ts-rs types, so the two sides never keep copies.
+    #[test]
+    fn export_engine_constants() {
+        let Ok(dir) = std::env::var("TS_RS_EXPORT_DIR") else {
+            return;
+        };
+        let options = BUFFER_FRAME_OPTIONS.map(|n| n.to_string()).join(", ");
+        let crossovers = crate::audio::effects::eq::EQ_CROSSOVER_FREQS
+            .map(|f| f.to_string())
+            .join(", ");
+        let spectrum = crate::audio::effects::waveform::SPECTRUM_FRAMES;
+        let silent = crate::audio::effects::lufs_meter::LUFS_SILENT;
+        let max_delay = crate::audio::effects::delay::MAX_DELAY_MS;
+        let ts = format!(
+            "// Generated from src-tauri/src/audio/graph.rs by `bun run generate`. Do not edit this file manually.\n\n\
+             export const BUFFER_FRAME_OPTIONS = [{options}] as const;\n\
+             export const DEFAULT_BUFFER_FRAMES = {DEFAULT_BUFFER_FRAMES};\n\
+             export const MAX_BUFFER_FRAMES = {MAX_BUFFER_FRAMES};\n\
+             export const MIN_SAMPLE_RATE = {MIN_SAMPLE_RATE};\n\
+             export const MAX_SAMPLE_RATE = {MAX_SAMPLE_RATE};\n\
+             export const DEFAULT_SAMPLE_RATE = {DEFAULT_SAMPLE_RATE};\n\
+             export const EQ_CROSSOVER_FREQS = [{crossovers}] as const;\n\
+             export const SPECTRUM_FRAMES = {spectrum};\n\
+             export const LUFS_SILENT = {silent};\n\
+             export const MAX_DELAY_MS = {max_delay};\n"
+        );
+        std::fs::write(std::path::Path::new(&dir).join("engine.ts"), ts).expect("write engine.ts");
+    }
+
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {
             id: id.to_string(),
@@ -1370,6 +1436,7 @@ mod tests {
     fn send_only_collaborator_is_an_output() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), collab("w")],
             edges: vec![edge("e", "m", None, "w", Some("ch1"))],
         };
@@ -1393,6 +1460,7 @@ mod tests {
     fn recv_only_collaborator_is_an_input() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![collab("w"), speaker("s")],
             edges: vec![edge("e", "w", Some("peer:p:0"), "s", None)],
         };
@@ -1414,6 +1482,7 @@ mod tests {
     fn duplex_collaborator_is_both() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), collab("w"), speaker("s")],
             edges: vec![
                 edge("e1", "m", None, "w", Some("ch1")),
@@ -1431,6 +1500,7 @@ mod tests {
     fn unwired_collaborator_is_not_a_routing_error() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![collab("w")],
             edges: vec![],
         };
@@ -1445,6 +1515,7 @@ mod tests {
     fn unrouted_output_is_valid_and_streams_silence() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![speaker("s")],
             edges: vec![],
         };
@@ -1462,6 +1533,7 @@ mod tests {
 
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![gain("g"), speaker("s")],
             edges: vec![edge("e", "g", None, "s", None)],
         };
@@ -1480,6 +1552,7 @@ mod tests {
     fn default_sample_rate_is_48000() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![speaker("s")],
             edges: vec![],
         };
@@ -1487,11 +1560,67 @@ mod tests {
         assert_eq!(v.sample_rate, 48_000);
     }
 
+    // The frontend sends the engine format camelCased next to the graph.
+    #[test]
+    fn engine_format_arrives_from_the_frontend_payload() {
+        let g: GraphSpec = serde_json::from_value(serde_json::json!({
+            "nodes": [],
+            "edges": [],
+            "sampleRate": 96_000,
+            "bufferFrames": 64
+        }))
+        .expect("payload parses");
+        assert_eq!(g.sample_rate, Some(96_000));
+        assert_eq!(g.buffer_frames, Some(64));
+    }
+
+    #[test]
+    fn default_buffer_is_256_frames() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![speaker("s")],
+            edges: vec![],
+        };
+        assert_eq!(g.validate().expect("graph valid").buffer_frames, 256);
+    }
+
+    #[test]
+    fn every_offered_buffer_size_is_accepted() {
+        for n in BUFFER_FRAME_OPTIONS {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: Some(n),
+                nodes: vec![speaker("s")],
+                edges: vec![],
+            };
+            assert_eq!(g.validate().expect("graph valid").buffer_frames, n);
+        }
+        assert_eq!(
+            *BUFFER_FRAME_OPTIONS.last().unwrap() as usize,
+            MAX_BUFFER_FRAMES
+        );
+    }
+
+    #[test]
+    fn unsupported_buffer_size_is_a_validation_error() {
+        for n in [0, 1, 48, 100, 4096] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: Some(n),
+                nodes: vec![speaker("s")],
+                edges: vec![],
+            };
+            assert!(g.validate().is_err(), "{n} frames must be rejected");
+        }
+    }
+
     #[test]
     fn custom_sample_rate_is_preserved() {
         for sr in [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 384_000] {
             let g = GraphSpec {
                 sample_rate: Some(sr),
+                buffer_frames: None,
                 nodes: vec![speaker("s")],
                 edges: vec![],
             };
@@ -1505,6 +1634,7 @@ mod tests {
         for sr in [0, 4_000, 7_999, 384_001, 1_000_000] {
             let g = GraphSpec {
                 sample_rate: Some(sr),
+                buffer_frames: None,
                 nodes: vec![speaker("s")],
                 edges: vec![],
             };
@@ -1516,6 +1646,7 @@ mod tests {
     fn edge_to_unknown_node_is_rejected() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m")],
             edges: vec![edge("e", "m", None, "ghost", None)],
         };
@@ -1526,6 +1657,7 @@ mod tests {
     fn duplicate_graph_ids_are_rejected_before_routing() {
         let duplicate_nodes = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("same"), speaker("same")],
             edges: vec![],
         };
@@ -1534,6 +1666,7 @@ mod tests {
 
         let duplicate_edges = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
             edges: vec![
                 edge("same", "m", None, "s", Some("ch1")),
@@ -1548,6 +1681,7 @@ mod tests {
     fn edge_into_input_is_rejected() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), mic("m2")],
             edges: vec![edge("e", "m", None, "m2", None)],
         };
@@ -1559,6 +1693,7 @@ mod tests {
     fn edge_from_output_is_rejected() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![speaker("s"), speaker("s2")],
             edges: vec![edge("e", "s", None, "s2", None)],
         };
@@ -1572,6 +1707,7 @@ mod tests {
     fn no_destination_at_all_is_rejected() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g")],
             edges: vec![edge("e", "m", None, "g", None)],
         };
@@ -1583,6 +1719,7 @@ mod tests {
     fn cycle_between_effects_is_rejected() {
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g1"), gain_node("g2"), speaker("s")],
             edges: vec![
                 edge("e1", "m", None, "g1", None),
@@ -1601,6 +1738,7 @@ mod tests {
         mic_node.data = serde_json::json!({}); // no deviceId
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic_node, speaker("s")],
             edges: vec![edge("e", "m", None, "s", None)],
         };
@@ -1614,6 +1752,7 @@ mod tests {
         mic_node.data = serde_json::json!({});
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic_node, mic("m2"), speaker("s")],
             edges: vec![edge("e1", "m2", None, "s", None)],
         };
@@ -1628,6 +1767,7 @@ mod tests {
         sp.data = serde_json::json!({});
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), sp, speaker("s2")],
             edges: vec![edge("e2", "m", None, "s2", None)],
         };
@@ -1642,6 +1782,7 @@ mod tests {
         sp.data = serde_json::json!({});
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), sp],
             edges: vec![edge("e", "m", None, "s", None)],
         };
@@ -1654,6 +1795,7 @@ mod tests {
         let sys = node("sys", NodeKind::SystemAudio, serde_json::json!({}));
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![sys, speaker("s")],
             edges: vec![edge("e", "sys", None, "s", None)],
         };
@@ -1681,6 +1823,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), rec],
             edges: vec![edge("e", "m", None, "rec", None)],
         };
@@ -1703,6 +1846,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), rec],
             edges: vec![edge("e", "m", None, "rec", None)],
         };
@@ -1724,6 +1868,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), rec],
             edges: vec![edge("e", "m", None, "rec", None)],
         };
@@ -1747,6 +1892,7 @@ mod tests {
             );
             let g = GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![mic("m"), rec],
                 edges: vec![edge("e", "m", None, "rec", None)],
             };
@@ -1765,6 +1911,7 @@ mod tests {
             );
             let g = GraphSpec {
                 sample_rate: None,
+                buffer_frames: None,
                 nodes: vec![mic("m"), rec],
                 edges: vec![edge("e", "m", None, "rec", None)],
             };
@@ -1787,6 +1934,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), rec],
             edges: vec![edge("e", "m", None, "rec", None)],
         };
@@ -1809,6 +1957,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), bad],
             edges: vec![edge("e", "m", None, "net", Some("ch1"))],
         };
@@ -1829,6 +1978,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), good],
             edges: vec![edge("e", "m", None, "net", Some("ch1"))],
         };
@@ -1856,6 +2006,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![mic("m"), good],
             edges: vec![edge("e", "m", None, "net", Some("ch1"))],
         };
@@ -1874,6 +2025,7 @@ mod tests {
         let bad_gain = node("g", NodeKind::Gain, serde_json::json!({ "gainDb": "loud" }));
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![bad_gain, speaker("s")],
             edges: vec![edge("e", "g", None, "s", None)],
         };
@@ -1895,6 +2047,7 @@ mod tests {
         );
         let g = GraphSpec {
             sample_rate: None,
+            buffer_frames: None,
             nodes: vec![plugin, speaker("s")],
             edges: vec![edge("e", "p", None, "s", None)],
         };

@@ -1,7 +1,6 @@
 //! Pacing source for the DSP worker.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -60,12 +59,6 @@ impl SystemClockTicker {
         t.catchup_max = t.period * max_blocks;
         t
     }
-
-    fn rate_limiter(sample_rate: u32, block_frames: usize) -> Self {
-        let mut ticker = Self::new(sample_rate, block_frames);
-        ticker.report_late = false;
-        ticker
-    }
 }
 
 impl ClockSource for SystemClockTicker {
@@ -105,88 +98,6 @@ impl ClockSource for SystemClockTicker {
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate
-    }
-}
-
-/// Cap on the sleep between ring-level checks, so `stop` stays responsive
-/// even when the ring is far above target.
-const FILL_CLOCK_MAX_SLEEP: Duration = Duration::from_millis(5);
-
-/// Paces the speaker DSP worker off the speaker ring's own fill level rather
-/// than a wall-clock deadline. A late block just means the ring is below
-/// target, so the worker produces the next block immediately and never loses
-/// the notion of "how far behind" the way a deadline reset would.
-pub struct DeviceFillClock {
-    pipeline_sample_rate: u32,
-    device_sample_rate: Arc<AtomicU32>,
-    engine_block_frames: usize,
-    level: Arc<AtomicI64>,
-    /// Fill target, sized to the device's own buffer by the audio callback
-    /// (see `speaker_ring`). Read here every tick so the ring always bridges
-    /// one full callback whatever buffer the device negotiated.
-    target: Arc<AtomicI64>,
-    /// The startup fill budget has been produced. Until then an empty ring is
-    /// startup prefill, not a worker that fell behind.
-    primed: bool,
-    startup_frames: usize,
-    /// Prevents a sink that drains immediately (for example a PipeWire null
-    /// sink) from turning the real-time worker into an unbounded busy loop.
-    wall_clock: SystemClockTicker,
-}
-
-impl DeviceFillClock {
-    pub fn new(
-        pipeline_sample_rate: u32,
-        device_sample_rate: Arc<AtomicU32>,
-        engine_block_frames: usize,
-        level: Arc<AtomicI64>,
-        target: Arc<AtomicI64>,
-    ) -> Self {
-        Self {
-            pipeline_sample_rate,
-            device_sample_rate,
-            engine_block_frames,
-            level,
-            target,
-            primed: false,
-            startup_frames: 0,
-            wall_clock: SystemClockTicker::rate_limiter(pipeline_sample_rate, engine_block_frames),
-        }
-    }
-}
-
-impl ClockSource for DeviceFillClock {
-    fn wait_for_tick(&mut self, stop: &AtomicBool) -> bool {
-        loop {
-            if stop.load(Ordering::SeqCst) {
-                return false;
-            }
-            let target_frames = self.target.load(Ordering::Relaxed).max(0) as usize;
-            let queued = self.level.load(Ordering::Relaxed).max(0) as usize;
-            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(1);
-            let pipe_sr = self.pipeline_sample_rate.max(1) as u64;
-            let block_frames = ((self.engine_block_frames as u64 * dev_sr as u64 + pipe_sr / 2)
-                / pipe_sr) as usize;
-            if !self.primed {
-                self.startup_frames = self.startup_frames.saturating_add(block_frames);
-                self.primed = self.startup_frames >= target_frames;
-                return true;
-            }
-            if queued + block_frames <= target_frames {
-                return self.wall_clock.wait_for_tick(stop);
-            }
-            let overshoot = queued + block_frames - target_frames;
-            let drain = Duration::from_nanos((overshoot as u64 * 1_000_000_000) / dev_sr as u64);
-            thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));
-        }
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.device_sample_rate.load(Ordering::Relaxed)
-    }
-
-    fn realtime_ready(&self) -> bool {
-        self.primed
     }
 }
 
@@ -253,72 +164,5 @@ mod tests {
         let reset = t.next_deadline.expect("deadline reset");
         assert!(reset >= before + t.period);
         assert!(reset > stale + t.period);
-    }
-
-    #[test]
-    fn rate_limiter_disables_late_reporting() {
-        // Global health counters are intentionally shared by all workers, so
-        // their exact value is not a race-safe unit-test oracle.
-        let t = SystemClockTicker::rate_limiter(48_000, 480);
-        assert!(!t.report_late);
-        assert_eq!(t.catchup_max, Duration::ZERO);
-        assert_eq!(t.period, Duration::from_millis(10));
-    }
-
-    #[test]
-    fn fill_clock_primes_until_the_startup_budget_is_met() {
-        let dev_sr = Arc::new(AtomicU32::new(48_000));
-        let level = Arc::new(AtomicI64::new(0));
-        let target = Arc::new(AtomicI64::new(2 * 1024)); // two engine blocks
-        let mut clock =
-            DeviceFillClock::new(48_000, dev_sr.clone(), 1024, level.clone(), target.clone());
-        let stop = AtomicBool::new(false);
-        assert!(!clock.realtime_ready(), "fresh clock is unprimed");
-        assert!(clock.wait_for_tick(&stop));
-        assert!(!clock.realtime_ready(), "one block is not the full budget");
-        assert!(clock.wait_for_tick(&stop));
-        assert!(clock.realtime_ready(), "budget met after the second block");
-        // Primed clock paces off the ring: below target → wall-clock tick.
-        assert!(clock.wait_for_tick(&stop));
-        // sample_rate follows the device atom.
-        assert_eq!(clock.sample_rate(), 48_000);
-        dev_sr.store(96_000, Ordering::Relaxed);
-        assert_eq!(clock.sample_rate(), 96_000);
-    }
-
-    #[test]
-    fn fill_clock_waits_when_the_ring_is_over_target() {
-        let dev_sr = Arc::new(AtomicU32::new(48_000));
-        let level = Arc::new(AtomicI64::new(1024));
-        let target = Arc::new(AtomicI64::new(1024)); // already at target
-        let mut clock = DeviceFillClock::new(48_000, dev_sr, 1024, level.clone(), target.clone());
-        let stop = AtomicBool::new(false);
-        // First call primes. Stop the otherwise blocking second call after it
-        // has demonstrably waited instead of returning immediately.
-        assert!(clock.wait_for_tick(&stop));
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_setter = stop.clone();
-        let join = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(15));
-            stop_setter.store(true, Ordering::SeqCst);
-        });
-        let start = Instant::now();
-        assert!(!clock.wait_for_tick(&stop));
-        join.join().unwrap();
-        assert!(start.elapsed() >= Duration::from_millis(10));
-    }
-
-    #[test]
-    fn fill_clock_honours_stop() {
-        let dev_sr = Arc::new(AtomicU32::new(48_000));
-        let mut clock = DeviceFillClock::new(
-            48_000,
-            dev_sr,
-            1024,
-            Arc::new(AtomicI64::new(0)),
-            Arc::new(AtomicI64::new(1024)),
-        );
-        let stop = AtomicBool::new(true);
-        assert!(!clock.wait_for_tick(&stop));
     }
 }

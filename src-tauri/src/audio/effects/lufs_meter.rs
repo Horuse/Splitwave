@@ -16,8 +16,9 @@ pub const LUFS_SILENT: f32 = -120.0;
 /// passages, so a window has to be long enough to sit inside one gap.
 const NOISE_WINDOW_MS: usize = 300;
 
-/// Sized for the DSP block; the analyser only ever sees two channels of it.
-const SCRATCH_FRAMES: usize = 1024;
+/// Sized for the largest engine block; the analyser only ever sees two
+/// channels of it.
+const SCRATCH_FRAMES: usize = crate::audio::graph::MAX_BUFFER_FRAMES;
 
 /// A sample at or past this counts as clipped; f32 can exceed 1.0, so the
 /// test is on magnitude rather than equality.
@@ -36,8 +37,8 @@ pub struct LufsMeterEffect {
     /// First two channels of a wider block, deinterleaved for the analyser.
     scratch: Vec<f32>,
     handle: LufsHandle,
-    /// `loudness_global` iterates the entire stored block history (O(N)),
-    /// so we throttle it to ~once per second.
+    /// Global loudness and LRA are read about once a second: nobody reads
+    /// them faster.
     frames_since_global: usize,
     sample_rate: u32,
     /// Unweighted, ungated running RMS. ACX predates BS.1770 and specifies
@@ -119,11 +120,16 @@ impl LufsHandle {
     }
 }
 
+/// Histogram gating keeps integrated loudness and LRA in fixed memory and
+/// fixed cost. Without it every 100 ms block is stored for the whole session:
+/// the history grows on the audio thread, and the once-a-second global
+/// readings walk all of it.
 const LUFS_MODE: Mode = Mode::I
     .union(Mode::M)
     .union(Mode::S)
     .union(Mode::LRA)
-    .union(Mode::TRUE_PEAK);
+    .union(Mode::TRUE_PEAK)
+    .union(Mode::HISTOGRAM);
 
 impl LufsMeterEffect {
     pub fn new(_d: LufsMeterData, node_id: String, sample_rate: u32) -> (Self, LufsHandle) {
@@ -156,7 +162,7 @@ impl LufsMeterEffect {
                 total_frames: 0,
                 win_sum_sq: 0.0,
                 win_frames: 0,
-                window_frames: (sample_rate as usize / 1000) * NOISE_WINDOW_MS,
+                window_frames: sample_rate as usize * NOISE_WINDOW_MS / 1000,
                 noise_floor: f32::INFINITY,
                 sum_dc: 0.0,
                 sample_peak: 0.0,
@@ -183,7 +189,7 @@ impl LufsMeterEffect {
             total_frames: 0,
             win_sum_sq: 0.0,
             win_frames: 0,
-            window_frames: (sample_rate as usize / 1000) * NOISE_WINDOW_MS,
+            window_frames: sample_rate as usize * NOISE_WINDOW_MS / 1000,
             noise_floor: f32::INFINITY,
             sum_dc: 0.0,
             sample_peak: 0.0,

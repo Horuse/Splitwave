@@ -10,6 +10,8 @@
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatHz } from '$lib/components/format';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
 	const isLinux = platform() === 'linux';
@@ -37,7 +39,7 @@
 				d.id === b[i].id &&
 				d.name === b[i].name &&
 				(d.channels ?? 2) === (b[i].channels ?? 2) &&
-				(d.sampleRate ?? 48_000) === (b[i].sampleRate ?? 48_000)
+				(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === (b[i].sampleRate ?? DEFAULT_SAMPLE_RATE)
 		);
 	}
 
@@ -51,7 +53,7 @@
 	}
 
 	function addDevice() {
-		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2, sampleRate: 48_000 }];
+		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2, sampleRate: appSettings.pipelineSampleRate }];
 	}
 
 	function removeDevice(id: string) {
@@ -68,7 +70,7 @@
 	}
 
 	function setSampleRate(id: string, sampleRate: number) {
-		const clamped = Math.min(Math.max(Math.round(sampleRate) || 48_000, 8_000), 384_000);
+		const clamped = Math.min(Math.max(Math.round(sampleRate) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE);
 		devices = devices.map((d) => (d.id === id ? { ...d, sampleRate: clamped } : d));
 	}
 
@@ -231,7 +233,7 @@
 									<div class="flex items-center gap-2">
 										<span class="text-xs text-neutral-900">Sample rate</span>
 										<NumberStepper
-											value={d.sampleRate ?? 48_000}
+											value={d.sampleRate ?? DEFAULT_SAMPLE_RATE}
 											min={8000}
 											max={384000}
 											step={1}
@@ -244,7 +246,7 @@
 											<button
 												class={[
 													'rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums transition-colors',
-													(d.sampleRate ?? 48_000) === preset
+													(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === preset
 														? 'border-neutral-800 bg-neutral-600 text-theme'
 														: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
 												]}

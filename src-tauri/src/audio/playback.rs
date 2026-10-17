@@ -28,16 +28,29 @@ impl Drop for Playback {
 }
 
 impl Playback {
+    /// `block_frames` is the quantum requested from the graph: the speaker
+    /// renders inside `fill`, so it is the output's whole buffering.
     pub fn start(
         sink_node_name: &str,
         sample_rate: u32,
         channels: usize,
+        block_frames: usize,
         fill: impl FnMut(&mut [f32]) -> usize + Send + 'static,
     ) -> AppResult<Self> {
         let (sender, receiver) = pw::channel::channel::<Terminate>();
         let target = sink_node_name.to_string();
         let thread = std::thread::spawn(move || {
-            if let Err(e) = run(receiver, &target, sample_rate, channels, Box::new(fill)) {
+            // `fill` renders the whole speaker graph on this thread's loop.
+            // PipeWire owns the callback quantum, so no frame count is promised.
+            let _rt = crate::audio::pipeline::RtThread::promote("speaker", 0, sample_rate);
+            if let Err(e) = run(
+                receiver,
+                &target,
+                sample_rate,
+                channels,
+                block_frames,
+                Box::new(fill),
+            ) {
                 tracing::error!("pipewire playback: {e:?}");
             }
         });
@@ -53,6 +66,7 @@ fn run(
     sink_node_name: &str,
     sample_rate: u32,
     channels: usize,
+    block_frames: usize,
     fill: Box<dyn FnMut(&mut [f32]) -> usize + Send>,
 ) -> Result<(), pw::Error> {
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
@@ -70,10 +84,9 @@ fn run(
         *pw::keys::MEDIA_ROLE => "Music",
     };
     props.insert(*pw::keys::TARGET_OBJECT, sink_node_name);
-    let latency_frames = (sample_rate / 100).max(1);
     props.insert(
         *pw::keys::NODE_LATENCY,
-        format!("{latency_frames}/{sample_rate}"),
+        format!("{}/{sample_rate}", block_frames.max(1)),
     );
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-playback", props)?;
@@ -164,6 +177,7 @@ mod tests {
             "alsa_output.pci-0000_00_0a.0.stereo-fallback",
             48_000,
             2,
+            256,
             move |buf| {
                 c.fetch_add(1, Ordering::Relaxed);
                 t.fetch_add(buf.len(), Ordering::Relaxed);

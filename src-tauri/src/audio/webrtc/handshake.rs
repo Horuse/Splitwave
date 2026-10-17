@@ -30,7 +30,13 @@ pub struct TrickleAnswer {
     pub sdp: String,
     pub candidates: mpsc::UnboundedReceiver<String>,
     pub pc: Arc<RTCPeerConnection>,
+    /// Every state the connection goes through, to wait on it connecting.
+    pub state: PeerStates,
 }
+
+type PeerStates = tokio::sync::watch::Receiver<
+    webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState,
+>;
 
 async fn new_host_peer(
     node_id: &str,
@@ -100,7 +106,7 @@ async fn new_host_peer(
         .lock()
         .await
         .insert(connection_id.clone(), peer);
-    wire_peer_events(
+    let _ = wire_peer_events(
         pc.clone(),
         connection_id.clone(),
         node_id.to_string(),
@@ -116,7 +122,7 @@ async fn new_guest_peer(
     session: &Arc<WebRtcSession>,
     connection_id: &str,
     remote_sdp: String,
-) -> AppResult<Arc<RTCPeerConnection>> {
+) -> AppResult<(Arc<RTCPeerConnection>, PeerStates)> {
     // Guest displays the host's connection_id as the remote peer label.
     let display_id = Arc::new(Mutex::new(connection_id.to_string()));
 
@@ -189,7 +195,7 @@ async fn new_guest_peer(
         .lock()
         .await
         .insert(connection_id.to_string(), peer);
-    wire_peer_events(
+    let state = wire_peer_events(
         pc.clone(),
         connection_id.to_string(),
         node_id.to_string(),
@@ -203,7 +209,7 @@ async fn new_guest_peer(
         .await
         .map_err(|e| AppError::Stream(format!("set remote description: {e}")))?;
 
-    Ok(pc)
+    Ok((pc, state))
 }
 
 // Manual copy-paste exchange: all candidates gathered into the SDP, nothing to trickle.
@@ -286,7 +292,8 @@ pub async fn accept_offer(
 
     let guest_peer_id = cuid2::create_id();
     let session = get_or_create(&node_id, opus_bitrate, opus_application);
-    let pc = new_guest_peer(&node_id, &session, &connection_id, remote_sdp.to_string()).await?;
+    let (pc, _) =
+        new_guest_peer(&node_id, &session, &connection_id, remote_sdp.to_string()).await?;
 
     let answer = pc
         .create_answer(None)
@@ -325,7 +332,7 @@ pub async fn accept_offer_trickle(
 
     let guest_peer_id = cuid2::create_id();
     let session = get_or_create(&node_id, opus_bitrate, opus_application);
-    let pc = new_guest_peer(&node_id, &session, &connection_id, remote_sdp).await?;
+    let (pc, state) = new_guest_peer(&node_id, &session, &connection_id, remote_sdp).await?;
 
     let answer = pc
         .create_answer(None)
@@ -343,6 +350,7 @@ pub async fn accept_offer_trickle(
         sdp,
         candidates,
         pc,
+        state,
     })
 }
 

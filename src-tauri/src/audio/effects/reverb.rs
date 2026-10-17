@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::audio::graph::ReverbData;
 
-use super::util::load_f32;
+use super::util::{load_f32, Ramp};
 use super::{Effect, EffectControl};
 
 /// Freeverb. Tuning constants are 44.1 kHz; we scale buffer lengths to the
@@ -18,6 +18,8 @@ pub struct ReverbEffect {
     comb_r: [Comb; 8],
     allpass_l: [Allpass; 4],
     allpass_r: [Allpass; 4],
+    ramp_width: Ramp,
+    ramp_mix: Ramp,
 }
 
 struct Comb {
@@ -112,6 +114,8 @@ impl ReverbEffect {
         let scale = sample_rate as f32 / 44100.0;
         let comb_len = |n: usize| (n as f32 * scale) as usize;
         Self {
+            ramp_width: Ramp::new(load_f32(&width).clamp(0.0, 1.0), sample_rate),
+            ramp_mix: Ramp::new(load_f32(&mix).clamp(0.0, 1.0), sample_rate),
             room_size,
             damping,
             width,
@@ -133,17 +137,19 @@ impl Effect for ReverbEffect {
         }
         let room = load_f32(&self.room_size).clamp(0.0, 1.0);
         let damping = load_f32(&self.damping).clamp(0.0, 1.0);
-        let width = load_f32(&self.width).clamp(0.0, 1.0);
-        let mix = load_f32(&self.mix).clamp(0.0, 1.0);
+        self.ramp_width.set(load_f32(&self.width).clamp(0.0, 1.0));
+        self.ramp_mix.set(load_f32(&self.mix).clamp(0.0, 1.0));
         let feedback = room * REVERB_SCALE_ROOM + REVERB_OFFSET_ROOM;
         let damp = damping * REVERB_SCALE_DAMP;
-        let dry = 1.0 - mix;
-        // width=1: strict L/R wet; width=0: mono wet image (cross-channel mix)
-        let wet1 = mix * (width * 0.5 + 0.5);
-        let wet2 = mix * (1.0 - width) * 0.5;
 
         let stereo = &mut samples[..frames * 2];
         for frame in stereo.chunks_exact_mut(2) {
+            let width = self.ramp_width.next();
+            let mix = self.ramp_mix.next();
+            let dry = 1.0 - mix;
+            // width=1: strict L/R wet; width=0: mono wet image (cross-channel mix)
+            let wet1 = mix * (width * 0.5 + 0.5);
+            let wet2 = mix * (1.0 - width) * 0.5;
             let il = frame[0];
             let ir = frame[1];
             let input = (il + ir) * REVERB_INPUT_GAIN;
@@ -367,6 +373,9 @@ mod tests {
             SR,
         );
         mix.store(0.0f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // The mix glides to dry over a few milliseconds, then holds there.
+        let mut settle = vec![0.0; 480 * 2];
+        e.process(&mut settle, 480);
         let input = vec![0.3, -0.7, 0.9, -0.1];
         let mut buf = input.clone();
         e.process(&mut buf, 2);

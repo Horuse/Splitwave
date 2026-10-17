@@ -38,10 +38,15 @@ pub enum BandShape {
     Hpf,
 }
 
+/// Highest corner a filter is designed at, as a share of the sample rate. At
+/// Nyquist the RBJ design degenerates; a corner set for a higher rate (a
+/// 16 kHz de-esser in a 32 kHz pipeline) stays just under it instead.
+const MAX_CORNER: f32 = 0.45;
+
 /// RBJ cookbook coefficients.
 pub fn biquad_for(shape: BandShape, freq_hz: f32, q: f32, sample_rate: u32) -> Biquad {
     let fs = sample_rate as f32;
-    let w0 = 2.0 * std::f32::consts::PI * (freq_hz.max(1.0) / fs);
+    let w0 = 2.0 * std::f32::consts::PI * (freq_hz.clamp(1.0, MAX_CORNER * fs) / fs);
     let (sinw, cosw) = (w0.sin(), w0.cos());
     let q = q.max(0.05);
     let alpha = sinw / (2.0 * q);
@@ -93,6 +98,19 @@ mod tests {
             }
         }
         peak
+    }
+
+    #[test]
+    fn a_corner_past_nyquist_stays_stable() {
+        for shape in [BandShape::Lpf, BandShape::Hpf] {
+            let mut f = biquad_for(shape, 16_000.0, 0.707, 16_000);
+            let mut peak = 0.0f32;
+            for n in 0..4_800 {
+                let x = if n % 2 == 0 { 0.5 } else { -0.5 };
+                peak = peak.max(f.process(x).abs());
+            }
+            assert!(peak.is_finite() && peak < 2.0, "{peak}");
+        }
     }
 
     #[test]

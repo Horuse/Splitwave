@@ -14,12 +14,36 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 /// ~21 ms DSP block rate; a longer tick stall overwrites the oldest frames,
 /// which the UI renders as a skipped span.
 pub const SCOPE_RING_FRAMES: usize = 16384;
+/// Least time the scope ring holds, at any rate: a 33 ms tick plus a late
+/// one's worth.
+const SCOPE_RING_MIN_MS: usize = 85;
+
+/// Scope ring at `sample_rate`: `SCOPE_RING_FRAMES`, or more where that
+/// would hold less than `SCOPE_RING_MIN_MS`.
+fn scope_ring_frames(sample_rate: u32) -> usize {
+    (sample_rate as usize * SCOPE_RING_MIN_MS)
+        .div_ceil(1000)
+        .next_power_of_two()
+        .max(SCOPE_RING_FRAMES)
+}
 
 /// Spectrum nodes need a longer contiguous window than the scope: a single
-/// 1024-frame block is ~47 Hz/bin and cannot separate low tones. 4096 frames
-/// (~11.7 Hz/bin) do, and one snapshot stays gap-free (concatenating separate
-/// snapshots would inject discontinuities that smear across the spectrum).
+/// 1024-frame block is ~47 Hz/bin at 48 kHz and cannot separate low tones.
+/// 4096 frames at 48 kHz (~11.7 Hz/bin) do, and one snapshot stays gap-free
+/// (concatenating separate snapshots would inject discontinuities that smear
+/// across the spectrum). Higher rates get a longer window for the same
+/// resolution: see `spectrum_frames`.
 pub const SPECTRUM_FRAMES: usize = 4096;
+const SPECTRUM_REFERENCE_RATE: usize = 48_000;
+
+/// Spectrum window at `sample_rate`: `SPECTRUM_FRAMES` worth of 48 kHz time,
+/// rounded up to a power of two for the FFT, so a bin is ~11 Hz at any rate.
+pub fn spectrum_frames(sample_rate: u32) -> usize {
+    (SPECTRUM_FRAMES * sample_rate as usize)
+        .div_ceil(SPECTRUM_REFERENCE_RATE)
+        .next_power_of_two()
+        .max(1024)
+}
 
 /// Upper bound on scoped channels; sizes the fixed ring so display never
 /// allocates on the RT path.
@@ -80,14 +104,14 @@ impl WaveformHandle {
     /// Scope-size handle; used by the Waveform effect and by non-effect
     /// consumers such as the File Recording node.
     pub fn new(node_id: String, sample_rate: u32) -> Self {
-        Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+        Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
     }
 
     /// Scope-size handle for one recorder worker invocation.
     pub fn for_recorder(node_id: String, sample_rate: u32, base_frames: u64) -> Self {
         Self {
             base_frames,
-            ..Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+            ..Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
         }
     }
 
@@ -211,7 +235,8 @@ impl WaveformEffect {
     /// Spectrum nodes capture identically to the scope, just over a longer
     /// contiguous window; the FFT runs in the UI.
     pub fn new_for(node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
-        let handle = WaveformHandle::with_frames(node_id, sample_rate, SPECTRUM_FRAMES, true);
+        let handle =
+            WaveformHandle::with_frames(node_id, sample_rate, spectrum_frames(sample_rate), true);
         (
             Self {
                 handle: handle.clone(),
@@ -387,6 +412,23 @@ mod tests {
         let (out, ch) = h.snapshot();
         assert_eq!(ch, 2);
         assert_eq!(out.len(), SPECTRUM_FRAMES * 2);
+    }
+
+    #[test]
+    fn the_scope_holds_a_late_tick_at_any_rate() {
+        for rate in [44_100, 48_000, 96_000, 192_000, 384_000] {
+            let ms = scope_ring_frames(rate) as f64 * 1000.0 / rate as f64;
+            assert!(ms >= SCOPE_RING_MIN_MS as f64, "{rate}: {ms:.0} ms");
+        }
+        assert_eq!(scope_ring_frames(48_000), SCOPE_RING_FRAMES);
+    }
+
+    #[test]
+    fn the_spectrum_resolves_the_same_at_any_rate() {
+        for rate in [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 384_000] {
+            let bin_hz = rate as f64 / spectrum_frames(rate) as f64;
+            assert!((10.0..=12.0).contains(&bin_hz), "{rate}: {bin_hz} Hz/bin");
+        }
     }
 
     proptest::proptest! {

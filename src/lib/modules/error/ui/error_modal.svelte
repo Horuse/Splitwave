@@ -2,13 +2,17 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { errorStore } from '../stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { formatAppInfo, getCachedAppInfo } from '$lib/modules/app_info';
+	import { formatAppInfo, getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import { ModalShell } from '$lib/modules/overlay/ui/modal';
 	import CopyButton from '$lib/components/copy_button.svelte';
 
 	const REPO = 'Horuse/Splitwave';
 
 	let current = $derived(errorStore.current);
+
+	$effect(() => {
+		if (current) loadAppInfo().catch(() => {});
+	});
 
 	function buildDetails(): string {
 		if (!current) return '';
@@ -48,9 +52,10 @@
 
 	async function reportOnGitHub() {
 		if (!current) return;
+		await loadAppInfo().catch(() => {});
 		const title = `[crash] ${current.message.split('\n')[0].slice(0, 80)}`;
-		const body = buildDetails();
-		const url = `https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+		const details = buildDetails();
+		const url = `https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&details=${encodeURIComponent(details)}`;
 		try {
 			await openUrl(url);
 		} catch {}

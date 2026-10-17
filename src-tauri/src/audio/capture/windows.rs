@@ -28,6 +28,10 @@ const TARGET_RATE: u32 = 48_000;
 const TARGET_CHANNELS: u16 = 2;
 // 200 ms shared-mode buffer; we drain it by polling.
 const BUFFER_HNS: i64 = 2_000_000;
+/// Loopback hands over one shared-mode engine period at a time (10 ms by
+/// default). Falling further behind than that is an idle endpoint, not the
+/// wait for the next packet.
+const IDLE_BEHIND_MS: u64 = 10;
 
 pub struct Capture {
     stop: Arc<AtomicBool>,
@@ -44,26 +48,30 @@ impl Drop for Capture {
 }
 
 impl Capture {
+    /// `io_frames` is the engine block at the capture's rate: how often the
+    /// capture is drained.
     pub fn start_system(
         _exclude_current_app: bool,
         _sample_rate: u32,
-        _channels: u32,
+        io_frames: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
-        Ok(spawn(bridge, run_loopback))
+        Ok(spawn(bridge, move |stop, bridge| {
+            run_loopback(io_frames, stop, bridge)
+        }))
     }
 
     pub fn start_app(
         bundle_id: &str,
         sample_rate: u32,
-        _channels: u32,
+        io_frames: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
         let pid = crate::audio::system_audio::pid_for_exe(bundle_id).ok_or_else(|| {
             AppError::Stream(format!("no active audio session found for {bundle_id:?}"))
         })?;
         Ok(spawn(bridge, move |stop, bridge| {
-            run_process_loopback(pid, sample_rate, stop, bridge)
+            run_process_loopback(pid, sample_rate, io_frames, stop, bridge)
         }))
     }
 }
@@ -113,7 +121,7 @@ fn com_err(e: windows::core::Error) -> AppError {
     AppError::Host(format!("wasapi: {e}"))
 }
 
-fn run_loopback(stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
+fn run_loopback(io_frames: u32, stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
     unsafe {
         ensure_com();
         let enumerator: IMMDeviceEnumerator =
@@ -147,7 +155,7 @@ fn run_loopback(stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
 
         let capture: IAudioCaptureClient = client.GetService().map_err(com_err)?;
         client.Start().map_err(com_err)?;
-        let r = pump(&capture, channels, rate, &stop, bridge);
+        let r = pump(&capture, channels, rate, io_frames, &stop, bridge);
         let _ = client.Stop();
         r
     }
@@ -159,6 +167,7 @@ fn run_loopback(stop: Arc<AtomicBool>, bridge: BroadcastRx) -> AppResult<()> {
 fn run_process_loopback(
     pid: u32,
     sample_rate: u32,
+    io_frames: u32,
     stop: Arc<AtomicBool>,
     bridge: BroadcastRx,
 ) -> AppResult<()> {
@@ -233,25 +242,35 @@ fn run_process_loopback(
 
         let capture: IAudioCaptureClient = client.GetService().map_err(com_err)?;
         client.Start().map_err(com_err)?;
-        let r = pump(&capture, TARGET_CHANNELS as usize, rate, &stop, bridge);
+        let r = pump(
+            &capture,
+            TARGET_CHANNELS as usize,
+            rate,
+            io_frames,
+            &stop,
+            bridge,
+        );
         let _ = client.Stop();
         r
     }
 }
 
-// Drain capture packets, downmix to stereo f32, and broadcast. Loopback delivers
+// Drain capture packets, downmix to stereo f32, and broadcast. Polled once per
+// engine block, so a packet waits at most one block for us. Loopback delivers
 // nothing while the endpoint is idle, so pace to the wall clock and emit
-// real-time silence on idle ticks (only when genuinely behind, not on jitter)
-// so the source never looks stalled.
+// real-time silence when genuinely behind (not on jitter) so the source never
+// looks stalled.
 unsafe fn pump(
     capture: &IAudioCaptureClient,
     channels: usize,
     rate: u32,
+    io_frames: u32,
     stop: &AtomicBool,
     mut bridge: BroadcastRx,
 ) -> AppResult<()> {
-    let frames_per_tick = (rate / 100).max(1) as u64;
-    let tick = Duration::from_millis(10);
+    let idle_behind = (rate as u64 * IDLE_BEHIND_MS / 1_000).max(1);
+    let tick = Duration::from_secs_f64(io_frames.max(1) as f64 / rate.max(1) as f64)
+        .max(Duration::from_millis(1));
     let start = Instant::now();
     let mut delivered: u64 = 0;
     let mut next = start;
@@ -291,7 +310,7 @@ unsafe fn pump(
             bridge.broadcast(&stereo);
         }
         let expected = (start.elapsed().as_secs_f64() * rate as f64) as u64;
-        if expected > delivered + frames_per_tick {
+        if expected > delivered + idle_behind {
             let deficit = (expected - delivered) as usize;
             stereo.clear();
             stereo.resize(deficit * 2, 0.0);

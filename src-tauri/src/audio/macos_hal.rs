@@ -792,3 +792,348 @@ pub fn set_device_volume(kind: crate::audio::device::DeviceKind, name: &str, sca
         l || r
     }
 }
+
+const K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE: AudioObjectPropertySelector = fourcc(b"fsiz");
+const K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE_RANGE: AudioObjectPropertySelector =
+    fourcc(b"fsz#");
+const K_AUDIO_DEVICE_PROPERTY_SAFETY_OFFSET: AudioObjectPropertySelector = fourcc(b"saft");
+/// Shared by devices and streams (`kAudioDevicePropertyLatency`,
+/// `kAudioStreamPropertyLatency`).
+const K_AUDIO_PROPERTY_LATENCY: AudioObjectPropertySelector = fourcc(b"ltnc");
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+struct AudioValueRange {
+    minimum: f64,
+    maximum: f64,
+}
+
+unsafe fn read_u32(
+    object: AudioObjectID,
+    selector: AudioObjectPropertySelector,
+    scope: AudioObjectPropertyScope,
+) -> Option<u32> {
+    let addr = AudioObjectPropertyAddress {
+        selector,
+        scope,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    if AudioObjectHasProperty(object, &addr) == 0 {
+        return None;
+    }
+    let mut value: u32 = 0;
+    let mut size = mem::size_of::<u32>() as u32;
+    (AudioObjectGetPropertyData(
+        object,
+        &addr,
+        0,
+        ptr::null(),
+        &mut size,
+        &mut value as *mut _ as *mut c_void,
+    ) == 0)
+        .then_some(value)
+}
+
+unsafe fn first_stream(device_id: AudioObjectID, scope: AudioObjectPropertyScope) -> Option<u32> {
+    let addr = AudioObjectPropertyAddress {
+        selector: K_AUDIO_DEVICE_PROPERTY_STREAMS,
+        scope,
+        element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut size: u32 = 0;
+    if AudioObjectGetPropertyDataSize(device_id, &addr, 0, ptr::null(), &mut size) != 0 {
+        return None;
+    }
+    let count = size as usize / mem::size_of::<AudioObjectID>();
+    if count == 0 {
+        return None;
+    }
+    let mut ids = vec![0u32; count];
+    let mut io_size = size;
+    (AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        ptr::null(),
+        &mut io_size,
+        ids.as_mut_ptr() as *mut c_void,
+    ) == 0)
+        .then(|| ids[0])
+}
+
+/// What CoreAudio adds between the IO callback and the converter, one
+/// direction of one device, in device frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IoLatency {
+    /// The IO buffer the callback fills or drains.
+    pub buffer_frames: u32,
+    /// Safety offset, device latency and stream latency: everything past the
+    /// buffer that the hardware and driver add.
+    pub hardware_frames: u32,
+}
+
+/// Asks the device to run its IO in `frames`-frame buffers, clamped to the
+/// range it supports, and returns the size it actually runs at. The request
+/// holds for this process only; other clients keep their own.
+pub fn set_buffer_frames(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+    frames: u32,
+) -> Option<u32> {
+    let scope = scope_for(kind);
+    let id = find_device_id(name, scope)?;
+    unsafe {
+        let range_addr = AudioObjectPropertyAddress {
+            selector: K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE_RANGE,
+            scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+            element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+        };
+        let mut range = AudioValueRange::default();
+        let mut size = mem::size_of::<AudioValueRange>() as u32;
+        let want = if AudioObjectGetPropertyData(
+            id,
+            &range_addr,
+            0,
+            ptr::null(),
+            &mut size,
+            &mut range as *mut _ as *mut c_void,
+        ) == 0
+            && range.maximum >= range.minimum
+            && range.minimum > 0.0
+        {
+            (frames as f64).clamp(range.minimum, range.maximum) as u32
+        } else {
+            frames
+        };
+        let addr = AudioObjectPropertyAddress {
+            selector: K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE,
+            scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+            element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+        };
+        let mut settable: u8 = 0;
+        if AudioObjectIsPropertySettable(id, &addr, &mut settable) == 0 && settable != 0 {
+            let status = AudioObjectSetPropertyData(
+                id,
+                &addr,
+                0,
+                ptr::null(),
+                mem::size_of::<u32>() as u32,
+                &want as *const _ as *const c_void,
+            );
+            if status != 0 {
+                tracing::warn!(
+                    device = name,
+                    frames = want,
+                    status,
+                    "device refused buffer size"
+                );
+            }
+        }
+        read_u32(
+            id,
+            K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )
+    }
+}
+
+const K_AUDIO_DEVICE_PROPERTY_CLOCK_DOMAIN: AudioObjectPropertySelector = fourcc(b"clkd");
+const K_AUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: AudioObjectPropertySelector =
+    fourcc(b"dOut");
+
+/// The device's clock domain; devices sharing a non-zero domain run off one
+/// clock. `None` when unknown (0), which USB devices commonly report.
+pub fn clock_domain(kind: crate::audio::device::DeviceKind, name: &str) -> Option<u32> {
+    let id = find_device_id(name, scope_for(kind))?;
+    unsafe {
+        read_u32(
+            id,
+            K_AUDIO_DEVICE_PROPERTY_CLOCK_DOMAIN,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )
+    }
+    .filter(|&d| d != 0)
+}
+
+/// Name of the system's default output device, which process taps ride on.
+pub fn default_output_name() -> Option<String> {
+    unsafe {
+        let id = read_u32(
+            K_AUDIO_OBJECT_SYSTEM_OBJECT,
+            K_AUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )?;
+        device_name(id)
+    }
+}
+
+/// The device's current buffer plus everything it adds past it, for one
+/// direction.
+pub fn io_latency(kind: crate::audio::device::DeviceKind, name: &str) -> Option<IoLatency> {
+    let scope = scope_for(kind);
+    let id = find_device_id(name, scope)?;
+    unsafe {
+        let buffer_frames = read_u32(
+            id,
+            K_AUDIO_DEVICE_PROPERTY_BUFFER_FRAME_SIZE,
+            K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        )?;
+        let safety = read_u32(id, K_AUDIO_DEVICE_PROPERTY_SAFETY_OFFSET, scope).unwrap_or(0);
+        let device = read_u32(id, K_AUDIO_PROPERTY_LATENCY, scope).unwrap_or(0);
+        let stream = first_stream(id, scope)
+            .and_then(|s| {
+                read_u32(
+                    s,
+                    K_AUDIO_PROPERTY_LATENCY,
+                    K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                )
+            })
+            .unwrap_or(0);
+        Some(IoLatency {
+            buffer_frames,
+            hardware_frames: safety.saturating_add(device).saturating_add(stream),
+        })
+    }
+}
+
+/// A stream's format as the hardware runs it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalFormat {
+    pub sample_rate: f64,
+    pub bits: u32,
+    pub channels: u32,
+    pub float: bool,
+}
+
+/// The physical format of each of the device's streams in `kind`'s direction.
+pub fn physical_formats(kind: crate::audio::device::DeviceKind, name: &str) -> Vec<PhysicalFormat> {
+    use objc2_core_audio::{
+        kAudioDevicePropertyStreams, kAudioObjectPropertyElementMain,
+        kAudioObjectPropertyScopeGlobal, kAudioStreamPropertyPhysicalFormat,
+        AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
+    };
+    use objc2_core_audio_types::{kAudioFormatFlagIsFloat, AudioStreamBasicDescription};
+    use std::ptr::NonNull;
+
+    let scope = scope_for(kind);
+    let Some(device) = find_device_id(name, scope) else {
+        return Vec::new();
+    };
+    let streams_addr = AudioObjectPropertyAddress {
+        mSelector: kAudioDevicePropertyStreams,
+        mScope: scope,
+        mElement: kAudioObjectPropertyElementMain,
+    };
+    let mut size = 0u32;
+    // SAFETY: plain property reads into buffers sized from the reported size.
+    unsafe {
+        if AudioObjectGetPropertyDataSize(
+            device,
+            NonNull::from(&streams_addr),
+            0,
+            ptr::null(),
+            NonNull::from(&mut size),
+        ) != 0
+        {
+            return Vec::new();
+        }
+        let mut streams = vec![0u32; size as usize / mem::size_of::<u32>()];
+        if streams.is_empty()
+            || AudioObjectGetPropertyData(
+                device,
+                NonNull::from(&streams_addr),
+                0,
+                ptr::null(),
+                NonNull::from(&mut size),
+                NonNull::new_unchecked(streams.as_mut_ptr().cast()),
+            ) != 0
+        {
+            return Vec::new();
+        }
+        let format_addr = AudioObjectPropertyAddress {
+            mSelector: kAudioStreamPropertyPhysicalFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        streams
+            .iter()
+            .filter_map(|&stream| {
+                let mut asbd: AudioStreamBasicDescription = mem::zeroed();
+                let mut size = mem::size_of::<AudioStreamBasicDescription>() as u32;
+                let status = AudioObjectGetPropertyData(
+                    stream,
+                    NonNull::from(&format_addr),
+                    0,
+                    ptr::null(),
+                    NonNull::from(&mut size),
+                    NonNull::from(&mut asbd).cast(),
+                );
+                (status == 0).then_some(PhysicalFormat {
+                    sample_rate: asbd.mSampleRate,
+                    bits: asbd.mBitsPerChannel,
+                    channels: asbd.mChannelsPerFrame,
+                    float: asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+                })
+            })
+            .collect()
+    }
+}
+
+/// cpal sets a device's physical format when it opens a stream on it, for
+/// every app, and never sets it back. Call with what the device ran before
+/// opening; says so when opening changed it.
+pub fn warn_if_physical_format_changed(
+    kind: crate::audio::device::DeviceKind,
+    name: &str,
+    before: &[PhysicalFormat],
+) {
+    let after = physical_formats(kind, name);
+    if after != before {
+        tracing::warn!(
+            device = %name,
+            ?before,
+            ?after,
+            "opening the stream changed the device's physical format; it stays changed for every app"
+        );
+    }
+}
+
+#[cfg(test)]
+mod io_tests {
+    use super::*;
+    use crate::audio::device::DeviceKind;
+
+    #[test]
+    #[ignore = "needs a real output device"]
+    fn physical_formats_are_read() {
+        let dev = list_output_devices()
+            .into_iter()
+            .next()
+            .expect("an output device");
+        let formats = physical_formats(DeviceKind::Output, &dev.name);
+        println!("{}: {formats:?}", dev.name);
+        assert!(!formats.is_empty(), "no stream format read");
+        assert!(formats
+            .iter()
+            .all(|f| f.sample_rate > 0.0 && f.channels > 0));
+    }
+
+    #[test]
+    #[ignore = "needs a real output device"]
+    fn buffer_size_is_set_and_read_back() {
+        let dev = list_output_devices()
+            .into_iter()
+            .next()
+            .expect("an output device");
+        let before = io_latency(DeviceKind::Output, &dev.name).expect("latency readable");
+        println!("{}: {before:?}", dev.name);
+        let got = set_buffer_frames(DeviceKind::Output, &dev.name, 64).expect("buffer readable");
+        println!("asked 64, runs {got}");
+        assert!(got <= before.buffer_frames.max(64), "request ignored");
+        let after = io_latency(DeviceKind::Output, &dev.name).unwrap();
+        assert_eq!(after.buffer_frames, got);
+        let huge = set_buffer_frames(DeviceKind::Output, &dev.name, 1_000_000).unwrap();
+        println!("asked 1e6, runs {huge}");
+        assert!(huge < 1_000_000, "clamped to the device range");
+    }
+}

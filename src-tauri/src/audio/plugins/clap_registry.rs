@@ -168,7 +168,11 @@ impl PluginHost for ClapHost {
         })
     }
 
-    fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
+    fn embed_editor(
+        &self,
+        node_id: &str,
+        window: &editor::EditorWindow,
+    ) -> Result<EditorSize, String> {
         let id = node_id.to_string();
         let window = window.clone();
         main_thread::run(move || {

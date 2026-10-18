@@ -107,6 +107,8 @@ raw-window-handle = "0.6"
 vst3 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Plugin editor windows are plain X11 windows, see `editor_x11`.
+x11rb = "0.13"
 pipewire = { version = "0.9", features = ["v0_3_49"] }
 # Native volume read/set and event-driven change notifications. Talks to
 # pipewire-pulse; high-level, so no subprocess or polling like wpctl/pactl.

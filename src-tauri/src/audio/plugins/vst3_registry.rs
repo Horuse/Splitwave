@@ -177,7 +177,7 @@ fn activate_on_main(
 fn attach_slot_editor(
     slot: &mut Slot,
     node_id: &str,
-    window: &tauri::Window,
+    window: &editor::EditorWindow,
 ) -> Result<EditorSize, String> {
     let view_addr = parent_handle(window).map_err(|e| format!("vst3 {node_id}: {e}"))?;
     let (_, titlebar) = editor::decoration_overhead(window);
@@ -217,27 +217,23 @@ fn attach_slot_editor(
 
 /// The window a plugin view is parented to, as the address VST3 expects for
 /// this platform's `attached` type.
-fn parent_handle(window: &tauri::Window) -> Result<usize, String> {
+fn parent_handle(window: &editor::EditorWindow) -> Result<usize, String> {
     #[cfg(target_os = "macos")]
     {
         window
+            .tauri()
             .ns_view()
             .map(|view| view as usize)
             .map_err(|e| format!("content view: {e}"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use raw_window_handle::RawWindowHandle;
 
-        let handle = window
-            .window_handle()
-            .map_err(|e| format!("window handle: {e}"))?;
-        match handle.as_raw() {
+        match window.raw_handle()? {
             RawWindowHandle::Win32(h) => Ok(h.hwnd.get() as usize),
             RawWindowHandle::Xlib(h) => Ok(h.window as usize),
             RawWindowHandle::Xcb(h) => Ok(h.window.get() as usize),
-            // VST3 defines no Wayland platform type, so there is nothing to
-            // parent into; running the session under XWayland is the way out.
             other => Err(format!(
                 "VST3 editors need an X11 or Win32 window, got {other:?}"
             )),
@@ -324,7 +320,11 @@ impl PluginHost for Vst3Host {
         Ok(())
     }
 
-    fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
+    fn embed_editor(
+        &self,
+        node_id: &str,
+        window: &editor::EditorWindow,
+    ) -> Result<EditorSize, String> {
         let id = node_id.to_string();
         let win = window.clone();
 

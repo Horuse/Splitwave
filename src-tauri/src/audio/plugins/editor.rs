@@ -13,16 +13,114 @@ use super::host_api::EditorSize;
 /// Fallback editor size for plugins that report a nonsensical one.
 pub const FALLBACK_EDITOR_SIZE: EditorSize = (800, 600);
 
+/// The native window a plugin view is parented into. A Tauri window on macOS
+/// and Windows; on Linux a bare X11 one, since plugins there can only embed
+/// into X11 and the app itself may be on native Wayland.
+#[derive(Clone)]
+pub struct EditorWindow {
+    #[cfg(not(target_os = "linux"))]
+    window: tauri::Window,
+    #[cfg(target_os = "linux")]
+    window: super::editor_x11::X11Window,
+}
+
+impl EditorWindow {
+    #[cfg(target_os = "macos")]
+    pub fn tauri(&self) -> &tauri::Window {
+        &self.window
+    }
+
+    pub fn raw_handle(&self) -> Result<raw_window_handle::RawWindowHandle, String> {
+        #[cfg(not(target_os = "linux"))]
+        {
+            use raw_window_handle::HasWindowHandle;
+            self.window
+                .window_handle()
+                .map(|h| h.as_raw())
+                .map_err(|e| format!("window handle: {e}"))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Ok(raw_window_handle::XlibWindowHandle::new(self.window.id() as _).into())
+        }
+    }
+
+    pub fn scale_factor(&self) -> f64 {
+        #[cfg(not(target_os = "linux"))]
+        return self.window.scale_factor().unwrap_or(1.0);
+        #[cfg(target_os = "linux")]
+        return self.window.scale_factor();
+    }
+
+    /// Content area size in the unit plugins report: logical px through Tauri,
+    /// X11 px on Linux.
+    fn content_size(&self) -> Option<EditorSize> {
+        #[cfg(not(target_os = "linux"))]
+        {
+            let inner = self.window.inner_size().ok()?;
+            let scale = self.scale_factor();
+            Some((
+                (inner.width as f64 / scale).round() as u32,
+                (inner.height as f64 / scale).round() as u32,
+            ))
+        }
+        #[cfg(target_os = "linux")]
+        return self.window.size();
+    }
+
+    fn set_size(&self, w: f64, h: f64) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.window.set_size(tauri::LogicalSize::new(w, h));
+        #[cfg(target_os = "linux")]
+        self.window.set_size(w.round() as u32, h.round() as u32);
+    }
+
+    fn show(&self) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.window.show();
+        #[cfg(target_os = "linux")]
+        self.window.show();
+    }
+
+    fn hide(&self) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.window.hide();
+        #[cfg(target_os = "linux")]
+        self.window.hide();
+    }
+
+    fn focus(&self) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.window.set_focus();
+        #[cfg(target_os = "linux")]
+        self.window.raise();
+    }
+
+    fn is_visible(&self) -> bool {
+        #[cfg(not(target_os = "linux"))]
+        return self.window.is_visible().unwrap_or(false);
+        #[cfg(target_os = "linux")]
+        return self.window.is_visible();
+    }
+
+    fn destroy(&self) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = self.window.destroy();
+        #[cfg(target_os = "linux")]
+        self.window.destroy();
+    }
+}
+
 /// Native host windows that plugin editors are embedded into, keyed by node id.
-/// `tauri::Window` is `Send + Sync`, so this lives outside any main-thread state
+/// `EditorWindow` is `Send + Sync`, so this lives outside any main-thread state
 /// and can be created/closed from the command thread.
-fn windows() -> &'static Mutex<HashMap<String, tauri::Window>> {
-    static WINDOWS: OnceLock<Mutex<HashMap<String, tauri::Window>>> = OnceLock::new();
+fn windows() -> &'static Mutex<HashMap<String, EditorWindow>> {
+    static WINDOWS: OnceLock<Mutex<HashMap<String, EditorWindow>>> = OnceLock::new();
     WINDOWS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// The window hosting this node's editor, if one is open.
-pub fn window_for(node_id: &str) -> Option<tauri::Window> {
+pub fn window_for(node_id: &str) -> Option<EditorWindow> {
     windows().lock().unwrap().get(node_id).cloned()
 }
 
@@ -32,8 +130,7 @@ pub fn is_open(node_id: &str) -> bool {
         .lock()
         .unwrap()
         .get(node_id)
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false)
+        .is_some_and(EditorWindow::is_visible)
 }
 
 /// Closes a node's editor window if one is open. Shared with the format hosts,
@@ -43,7 +140,7 @@ pub fn close_window(node_id: &str) {
         host.destroy_editor(node_id);
     }
     if let Some(w) = windows().lock().unwrap().remove(node_id) {
-        let _ = w.destroy();
+        w.destroy();
     }
 }
 
@@ -56,13 +153,13 @@ pub fn valid_gui_size(w: u32, h: u32) -> Option<EditorSize> {
 /// Returns window decoration overhead. Because `window.set_size` in Tauri 2
 /// sets the inner (client) size directly across all platforms, content area
 /// matches the requested dimensions 1:1 without adding synthetic padding.
-pub fn decoration_overhead(_window: &tauri::Window) -> (f64, f64) {
+pub fn decoration_overhead(_window: &EditorWindow) -> (f64, f64) {
     (0.0, 0.0)
 }
 
-/// Sizes the window so its content area is `w` x `h` logical px.
-pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
-    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+/// Sizes the window so its content area is `w` x `h`.
+pub fn set_content_size(window: &EditorWindow, w: f64, h: f64) {
+    window.set_size(w, h);
 }
 
 /// Requests a window resize from a plugin. If the window's content area already
@@ -71,41 +168,26 @@ pub fn set_content_size(window: &tauri::Window, w: f64, h: f64) {
 /// resized synchronously on the main thread so plugin internal layout engines
 /// (JUCE, VST3, AU) immediately see the updated parent bounds without frame
 /// tearing or asynchronous jitter.
-pub fn request_resize(window: &tauri::Window, _node_id: &str, w: u32, h: u32) {
-    if let Ok(inner) = window.inner_size() {
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let cur_w = (inner.width as f64 / scale).round() as u32;
-        let cur_h = (inner.height as f64 / scale).round() as u32;
-        if cur_w == w && cur_h == h {
-            return;
-        }
+pub fn request_resize(window: &EditorWindow, _node_id: &str, w: u32, h: u32) {
+    if window.content_size() == Some((w, h)) {
+        return;
     }
-    let _ = window.set_size(tauri::LogicalSize::new(w as f64, h as f64));
+    window.set_size(w as f64, h as f64);
 }
 
-/// Opens the plugin editor embedded in a native host window. The tested plugins
-/// only support embedded GUIs, so the host must own the window and hand its
-/// native handle to the plugin.
-pub fn open(node_id: &str, title: &str) -> Result<(), String> {
-    tracing::debug!(node_id, title, "opening plugin editor");
+const MIN_EDITOR_SIZE: EditorSize = (200, 150);
+
+#[cfg(not(target_os = "linux"))]
+fn create_window(node_id: &str, title: &str) -> Result<EditorWindow, String> {
     let app = crate::app_handle().ok_or("app handle not ready")?;
-    let existing = windows().lock().unwrap().get(node_id).cloned();
-    if let Some(w) = existing {
-        if let Some(host) = super::registry::for_node(node_id) {
-            let _ = host.show_editor(node_id);
-        }
-        let _ = w.show();
-        let _ = w.set_focus();
-        return Ok(());
-    }
     let builder = tauri::WindowBuilder::new(app, format!("plugin-editor-{node_id}"))
-        .title(if title.is_empty() { "Plugin" } else { title })
+        .title(title)
         .inner_size(FALLBACK_EDITOR_SIZE.0 as f64, FALLBACK_EDITOR_SIZE.1 as f64)
         .visible(false)
         // Always resizable with a small floor: even when a plugin reports a bad
         // size or does not reflow, the user can enlarge the window to reveal it.
         .resizable(true)
-        .min_inner_size(200.0, 150.0);
+        .min_inner_size(MIN_EDITOR_SIZE.0 as f64, MIN_EDITOR_SIZE.1 as f64);
 
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Visible);
@@ -145,6 +227,49 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
             });
         }
     });
+    Ok(EditorWindow { window })
+}
+
+#[cfg(target_os = "linux")]
+fn create_window(node_id: &str, title: &str) -> Result<EditorWindow, String> {
+    let window = super::editor_x11::X11Window::create(title, FALLBACK_EDITOR_SIZE, MIN_EDITOR_SIZE)
+        .map_err(|e| format!("editor window for {node_id}: {e}"))?;
+    Ok(EditorWindow { window })
+}
+
+/// Main thread, on the shared plugin tick. The user closing an X11 editor
+/// window arrives as an event on our connection rather than through Tauri, so
+/// it is turned into the same `close` the Tauri windows get.
+#[cfg(target_os = "linux")]
+pub fn tick() {
+    for id in super::editor_x11::take_close_requests() {
+        let node_id = windows()
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, w)| w.window.id() == id)
+            .map(|(nid, _)| nid.clone());
+        if let Some(node_id) = node_id {
+            let _ = close(&node_id);
+        }
+    }
+}
+
+/// Opens the plugin editor embedded in a native host window. The tested plugins
+/// only support embedded GUIs, so the host must own the window and hand its
+/// native handle to the plugin.
+pub fn open(node_id: &str, title: &str) -> Result<(), String> {
+    tracing::debug!(node_id, title, "opening plugin editor");
+    let existing = windows().lock().unwrap().get(node_id).cloned();
+    if let Some(w) = existing {
+        if let Some(host) = super::registry::for_node(node_id) {
+            let _ = host.show_editor(node_id);
+        }
+        w.show();
+        w.focus();
+        return Ok(());
+    }
+    let window = create_window(node_id, if title.is_empty() { "Plugin" } else { title })?;
     windows()
         .lock()
         .unwrap()
@@ -176,7 +301,7 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
     unsafe {
         use objc2::msg_send;
         use objc2_foundation::{NSPoint, NSRect, NSSize};
-        if let Ok(parent) = window.ns_view() {
+        if let Ok(parent) = window.tauri().ns_view() {
             if let Some(view) = last_subview(parent) {
                 let frame = NSRect::new(
                     NSPoint::new(0.0, 0.0),
@@ -188,8 +313,8 @@ pub fn open(node_id: &str, title: &str) -> Result<(), String> {
         }
     }
 
-    let _ = window.show();
-    let _ = window.set_focus();
+    window.show();
+    window.focus();
     Ok(())
 }
 
@@ -200,7 +325,7 @@ pub fn close(node_id: &str) -> Result<(), String> {
     }
     let existing = windows().lock().unwrap().get(node_id).cloned();
     if let Some(w) = existing {
-        let _ = w.hide();
+        w.hide();
     }
     if let Some(app) = crate::app_handle() {
         let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);

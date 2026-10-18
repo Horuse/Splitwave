@@ -28,6 +28,7 @@ use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginState};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
+use raw_window_handle::HasWindowHandle;
 
 use super::host_api::{AliveFlag, EditorSize, PluginParamInfo};
 use super::node::PluginNode;
@@ -427,7 +428,7 @@ impl ClapInstance {
     pub fn embed_editor(
         &mut self,
         node_id: &str,
-        window: &editor::EditorWindow,
+        window: &tauri::Window,
     ) -> Result<EditorSize, String> {
         // Every failure below names the bundle: an editor error that says only
         // what went wrong is unusable when several plugins are in the graph.
@@ -459,11 +460,13 @@ impl ClapInstance {
         #[cfg(target_os = "macos")]
         let scale = 1.0;
         #[cfg(not(target_os = "macos"))]
-        let scale = window.scale_factor();
+        let scale = window.scale_factor().unwrap_or(1.0);
         let _ = gui.set_scale(&mut self.instance.plugin_handle(), scale);
 
-        let handle = window.raw_handle().map_err(|e| at("window handle", e))?;
-        let clap_window = ClackWindow::from_window_handle(handle).ok_or_else(|| {
+        let handle = window
+            .window_handle()
+            .map_err(|e| at("window handle", e.to_string()))?;
+        let clap_window = ClackWindow::from_window_handle(handle.as_raw()).ok_or_else(|| {
             at(
                 "window handle",
                 "unsupported handle for this platform".into(),

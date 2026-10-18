@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use super::editor::EditorWindow;
 use super::{ParamRing, PluginFormat, PluginNode};
 use crate::audio::effects::offload::{BlockProcessor, Offload};
 use crate::audio::effects::Effect;
@@ -336,7 +335,7 @@ pub trait PluginHost: Sync {
 
     /// Builds the plugin's view into `window`, returning the view's own size so
     /// the caller can fit the window to it.
-    fn embed_editor(&self, node_id: &str, window: &EditorWindow) -> Result<EditorSize, String>;
+    fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String>;
 
     /// Notifies the plugin that its editor window was shown (unhidden) or focused.
     fn show_editor(&self, node_id: &str) -> Result<(), String>;

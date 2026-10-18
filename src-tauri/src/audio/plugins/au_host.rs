@@ -1415,15 +1415,10 @@ impl PluginHost for AuHost {
     /// AppKit is main-thread only, so the view work is marshalled there while
     /// the caller blocks -- the interface promises a blocking answer on any
     /// non-main thread, and hiding this is exactly its job.
-    fn embed_editor(
-        &self,
-        node_id: &str,
-        window: &editor::EditorWindow,
-    ) -> Result<EditorSize, String> {
+    fn embed_editor(&self, node_id: &str, window: &tauri::Window) -> Result<EditorSize, String> {
         // A raw pointer is not `Send`; the address is, and it stays valid
         // because the window outlives the editor.
         let view_addr = window
-            .tauri()
             .ns_view()
             .map_err(|e| format!("au {node_id}: content view: {e}"))?
             as usize;

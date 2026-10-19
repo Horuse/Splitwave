@@ -208,7 +208,8 @@ fn attach_slot_editor(
     let resize = Box::new(move |w: u32, h: u32| {
         editor::request_resize(&resize_target, &nid, w, h);
     });
-    let (view, size) = EditorView::attach(view, view_addr as *mut c_void, titlebar, resize)
+    let scale = window.scale_factor();
+    let (view, size) = EditorView::attach(view, view_addr as *mut c_void, titlebar, scale, resize)
         .map_err(|e| format!("vst3 {node_id}: {e}"))?;
 
     slot.editor = Some(view);

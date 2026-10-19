@@ -70,6 +70,8 @@ pub fn ensure_ticker() {
                 std::thread::sleep(Duration::from_millis(16));
                 if let Some(app) = crate::app_handle() {
                     let _ = app.run_on_main_thread(|| {
+                        #[cfg(target_os = "linux")]
+                        super::editor::tick();
                         for host in super::registry::hosts() {
                             host.tick_and_reclaim();
                         }

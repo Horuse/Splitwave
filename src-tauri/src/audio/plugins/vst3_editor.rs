@@ -121,6 +121,7 @@ impl EditorView {
         view: ComPtr<IPlugView>,
         parent: *mut c_void,
         titlebar: f64,
+        scale: f64,
         resize: ResizeRequest,
     ) -> Result<(Self, EditorSize), String> {
         // SAFETY: main thread, and `parent` is a live window handle owned by a
@@ -140,6 +141,14 @@ impl EditorView {
                 use objc2::runtime::AnyObject;
                 let parent_obj = parent as *mut AnyObject;
                 let _: () = msg_send![parent_obj, setWantsLayer: true];
+            }
+
+            // Before the first `getSize`, so the size it reports is already scaled.
+            // Cocoa scales for Retina itself, and the SDK says not to call it there.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(scaling) = view.cast::<vst3::Steinberg::IPlugViewContentScaleSupport>() {
+                use vst3::Steinberg::IPlugViewContentScaleSupportTrait;
+                let _ = scaling.setContentScaleFactor(scale as f32);
             }
 
             let mut rect = ViewRect {
@@ -229,6 +238,8 @@ impl EditorView {
                 }
             }
             let _ = titlebar;
+            #[cfg(target_os = "macos")]
+            let _ = scale;
 
             let size = (
                 (rect.right - rect.left).max(1) as u32,

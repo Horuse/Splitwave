@@ -10,6 +10,8 @@ mod clap_backend;
 pub mod clap_host;
 pub mod clap_registry;
 pub mod editor;
+#[cfg(target_os = "linux")]
+mod editor_x11;
 pub mod host_api;
 pub mod main_thread;
 mod node;

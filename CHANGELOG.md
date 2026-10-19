@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-10-20
+
+### Fixed
+
+- **Linux plugin editors** - VST3 and CLAP editors now open on native Wayland and X11 sessions in their own X11 windows, at the display's HiDPI scale, while the rest of the app stays native Wayland by @Horuse in (#66). Thanks to @ushiocheng for the help in (#61).
+- Fixed the pipeline editor hanging for minutes with several plugin nodes: plugins are now scanned once and cached on disk, and only new or changed bundles are rescanned by @Horuse in (#65).
+- Crash reports now carry diagnostic info into the GitHub issue form by @Horuse.
+
 ## [1.4.0] - 2026-09-27
 
 ### Added

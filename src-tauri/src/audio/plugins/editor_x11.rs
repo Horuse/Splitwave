@@ -12,8 +12,8 @@ use std::sync::OnceLock;
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, MapState,
-    PropMode, StackMode, WindowClass,
+    AtomEnum, ClientMessageEvent, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux,
+    EventMask, MapState, PropMode, StackMode, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -25,6 +25,7 @@ x11rb::atom_manager! {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         _NET_WM_NAME,
+        _NET_ACTIVE_WINDOW,
         UTF8_STRING,
     }
 }
@@ -114,6 +115,16 @@ impl X11Window {
                 title.as_bytes(),
             )
             .map_err(|e| err(&e))?;
+        // Groups editors with the app in taskbars and window switchers.
+        d.conn
+            .change_property8(
+                PropMode::REPLACE,
+                id,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                b"splitwave\0Splitwave\0",
+            )
+            .map_err(|e| err(&e))?;
         let hints = WmSizeHints {
             min_size: Some((min_w as i32, min_h as i32)),
             ..Default::default()
@@ -171,12 +182,28 @@ impl X11Window {
         self.request(|d| d.conn.unmap_window(self.id).map(drop));
     }
 
+    /// Restacking alone does not focus the window, and a WM that manages the
+    /// stack may ignore it, so the WM is also asked to activate it. Source 2 (a
+    /// pager) marks the request as the user's own, which focus-stealing
+    /// prevention lets through.
     pub fn raise(&self) {
         self.request(|d| {
+            d.conn.configure_window(
+                self.id,
+                &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+            )?;
+            let activate = ClientMessageEvent::new(
+                32,
+                self.id,
+                d.atoms._NET_ACTIVE_WINDOW,
+                [2, x11rb::CURRENT_TIME, 0, 0, 0],
+            );
             d.conn
-                .configure_window(
-                    self.id,
-                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+                .send_event(
+                    false,
+                    d.root,
+                    EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                    activate,
                 )
                 .map(drop)
         });
@@ -210,7 +237,15 @@ pub fn take_close_requests() -> Vec<u32> {
         return Vec::new();
     };
     let mut closed = Vec::new();
-    while let Ok(Some(event)) = d.conn.poll_for_event() {
+    loop {
+        let event = match d.conn.poll_for_event() {
+            Ok(Some(event)) => event,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(error = %e, "x11 editor connection lost, close buttons stop working");
+                break;
+            }
+        };
         if let Event::ClientMessage(msg) = event {
             if msg.type_ == d.atoms.WM_PROTOCOLS
                 && msg.data.as_data32()[0] == d.atoms.WM_DELETE_WINDOW

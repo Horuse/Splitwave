@@ -7,7 +7,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::asrc::Asrc;
 use super::cushion::{startup_fade_frames, Adjust, Cushion, DepthMemos};
-use super::file_reader::SeekFlush;
+use super::file_reader::{SeekFlush, FILE_PACKET_FRAMES};
 use super::latency::NodeTiming;
 use super::sig::MONITOR_KEY;
 use crate::audio::effects::{
@@ -86,10 +86,6 @@ fn splice_samples(channels: usize, rate: u32) -> usize {
 fn staging_samples(channels: usize, rate: u32) -> usize {
     RESAMPLE_CHUNK * channels + splice_samples(channels, rate) + 8
 }
-
-/// Largest packet the file decoders hand over at once (a FLAC block; MP3
-/// and AAC frames are smaller): what a file source holds past a block.
-const FILE_PACKET_FRAMES: usize = 4096;
 
 /// A seek fades the old position out and the new one in over this.
 const SEEK_FADE_MS: f64 = 5.0;

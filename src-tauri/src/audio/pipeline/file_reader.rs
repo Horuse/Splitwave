@@ -27,6 +27,9 @@ const BACKOFF_WHEN_FULL: Duration = Duration::from_micros(200);
 /// source's backlog cushion, deep enough that a scheduler hiccup on either side
 /// never runs it dry.
 const PACE_QUEUE_MS: usize = 120;
+/// Largest packet the file decoders hand over at once (a FLAC block; MP3
+/// and AAC frames are smaller): what a file source holds past a block.
+pub(super) const FILE_PACKET_FRAMES: usize = 4096;
 /// The last frame fades to silence over this at end of file.
 const EOF_FADE_MS: usize = 3;
 /// Cap on how long end-of-file waits for the queued tail to play out.
@@ -178,6 +181,14 @@ pub(super) fn probe_audio_file(path: &Path) -> AppResult<AudioFileInfo> {
         channels,
         total_frames,
     })
+}
+
+/// Frames the reader keeps queued ahead of each graph. A graph's file source
+/// waits for a block and a packet before it plays, so the read-ahead holds a
+/// packet on top of its time budget: a block up to `PACE_QUEUE_MS` long can
+/// always start.
+fn read_ahead_frames(sample_rate: u32) -> usize {
+    sample_rate as usize * PACE_QUEUE_MS / 1000 + FILE_PACKET_FRAMES
 }
 
 pub(super) fn start_audio_file_reader<E: ProgressEmitter>(
@@ -532,7 +543,7 @@ fn run<E: ProgressEmitter>(
     // doesn't pace anything; a wall-clock schedule instead drifts against the
     // audio clock (steady underruns) and turns any stall -- a graph swap
     // re-routing our bridges -- into an unpaced catch-up burst.
-    let pace_queue = (od.sample_rate as usize * PACE_QUEUE_MS / 1000) * ch;
+    let pace_queue = read_ahead_frames(od.sample_rate) * ch;
 
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -835,6 +846,24 @@ mod tests {
     use crate::audio::graph::{
         AiffBitDepth, FlacBitDepth, FlacCompression, OpusApplication, RecordingFormat, WavBitDepth,
     };
+
+    #[test]
+    fn read_ahead_covers_a_file_source_start_at_every_buffer_size() {
+        // The source waits for a block and a packet before it plays; a
+        // read-ahead short of that leaves both waiting on each other.
+        for file_sr in [8_000u32, 22_050, 44_100, 48_000, 96_000, 192_000] {
+            for output_sr in [44_100u32, 48_000, 96_000, 192_000] {
+                for block in crate::audio::graph::BUFFER_FRAME_OPTIONS {
+                    let block_in = (block as u64 * file_sr as u64).div_ceil(output_sr as u64);
+                    let lead = block_in as usize + FILE_PACKET_FRAMES;
+                    assert!(
+                        lead <= read_ahead_frames(file_sr),
+                        "file {file_sr} Hz, output {output_sr} Hz, block {block}"
+                    );
+                }
+            }
+        }
+    }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();

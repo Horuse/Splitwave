@@ -53,6 +53,11 @@ impl SlidingMax {
     #[inline]
     fn push(&mut self, v: f32) -> f32 {
         let cap = self.values.len();
+        if self.len > 0 && self.now >= cap as u64 && self.times[self.head] <= self.now - cap as u64
+        {
+            self.head = (self.head + 1) % cap;
+            self.len -= 1;
+        }
         let at = |i: usize| (self.head + i) % cap;
         while self.len > 0 && self.values[at(self.len - 1)] <= v {
             self.len -= 1;
@@ -61,10 +66,6 @@ impl SlidingMax {
         self.values[tail] = v;
         self.times[tail] = self.now;
         self.len += 1;
-        if self.now >= cap as u64 && self.times[self.head] <= self.now - cap as u64 {
-            self.head = (self.head + 1) % cap;
-            self.len -= 1;
-        }
         self.now += 1;
         self.values[self.head]
     }
@@ -198,6 +199,21 @@ mod tests {
                 [s, s]
             })
             .collect()
+    }
+
+    #[test]
+    fn sliding_max_matches_brute_force_on_a_falling_signal() {
+        let cap = 49;
+        let mut m = SlidingMax::new(cap);
+        let input: Vec<f32> = (0..2000).map(|i| (i as f32 * 0.003).sin().abs()).collect();
+        for (i, &v) in input.iter().enumerate() {
+            let want = input[i.saturating_sub(cap - 1)..=i]
+                .iter()
+                .copied()
+                .fold(f32::MIN, f32::max);
+            assert_eq!(m.push(v), want, "frame {i}");
+            assert!(m.len <= cap);
+        }
     }
 
     #[test]

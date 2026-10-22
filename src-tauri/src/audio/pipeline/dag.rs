@@ -992,6 +992,10 @@ impl EffectState {
         }
         self.run(frames);
         let b = &mut self.bypass;
+        if !bypassed && b.mix == 1.0 {
+            b.warmup = b.warmup.saturating_sub(frames);
+            return;
+        }
         let target = if bypassed { 0.0 } else { 1.0 };
         for f in 0..frames {
             if b.warmup > 0 {

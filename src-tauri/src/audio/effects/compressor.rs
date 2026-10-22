@@ -121,11 +121,25 @@ impl CompressorEffect {
         let main_buf = &mut main[..frames * 2];
         let side = sidechain.filter(|s| s.len() >= frames * 2);
         let mut block_min_gr = 1.0f32;
+        let ratio_settled = self.ramps[1].is_settled();
+        let makeup_settled = self.ramps[3].is_settled();
+        let settled_inv_ratio = 1.0 / self.ramps[1].value();
+        let settled_makeup_lin = 10f32.powf(self.ramps[3].value() / 20.0);
         for (f, frame) in main_buf.chunks_exact_mut(2).enumerate() {
             let threshold_db = self.ramps[0].next();
-            let inv_ratio = 1.0 / self.ramps[1].next();
+            let ratio = self.ramps[1].next();
+            let inv_ratio = if ratio_settled {
+                settled_inv_ratio
+            } else {
+                1.0 / ratio
+            };
             let knee_db = self.ramps[2].next();
-            let makeup_lin = 10f32.powf(self.ramps[3].next() / 20.0);
+            let makeup_db = self.ramps[3].next();
+            let makeup_lin = if makeup_settled {
+                settled_makeup_lin
+            } else {
+                10f32.powf(makeup_db / 20.0)
+            };
             let half_knee = knee_db * 0.5;
             let detected = match side {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),

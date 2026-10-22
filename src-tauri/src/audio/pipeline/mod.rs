@@ -636,6 +636,8 @@ impl ActivePipeline {
             all_old.push(MONITOR_KEY.to_string());
         }
 
+        // Speakers fade out together, then each closes as this drops.
+        let mut retiring = Vec::new();
         for id in &all_old {
             let cat = cats.get(id).copied().unwrap_or(Cat::Drop);
             if matches!(cat, Cat::Full) {
@@ -677,10 +679,12 @@ impl ActivePipeline {
                 state.worker.stop.store(true, Ordering::SeqCst);
                 crate::audio::netaudio::sender::release(id);
                 drop(state);
-            } else {
-                self.speakers.remove(id);
+            } else if let Some(speaker) = self.speakers.remove(id) {
+                speaker._handle.begin_retire();
+                retiring.push(speaker);
             }
         }
+        drop(retiring);
 
         // Drop the meter / xrun tick threads -- they captured stale snapshots.
         // Fresh ones are spawned at the tail of `apply_full`.

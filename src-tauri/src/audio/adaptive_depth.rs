@@ -241,6 +241,7 @@ pub struct OutageJudge {
     tolerance: usize,
     balance: i64,
     peak: i64,
+    sink_carry: usize,
 }
 
 impl OutageJudge {
@@ -252,6 +253,7 @@ impl OutageJudge {
             tolerance: frames(JUDGE_TOLERANCE_MS),
             balance: 0,
             peak: 0,
+            sink_carry: 0,
         }
     }
 
@@ -292,7 +294,10 @@ impl OutageJudge {
             Judgement::Clear => {
                 // The envelope follows the peaks, sinking slowly between them
                 // so it can track a capture clock drifting against ours.
-                self.peak = self.balance.max(self.peak - (elapsed / 64) as i64);
+                self.sink_carry += elapsed;
+                let sink = (self.sink_carry / 64) as i64;
+                self.sink_carry %= 64;
+                self.peak = self.balance.max(self.peak - sink);
                 None
             }
             Judgement::Missing {

@@ -604,7 +604,10 @@ pub(super) fn start_recorder_worker(
                 warn!(error = %e, "recorder finalize failed");
             }
         })
-        .map_err(|e| AppError::Stream(format!("spawn recorder writer: {e}")))?;
+        .map_err(|e| {
+            stop.store(true, Ordering::SeqCst);
+            AppError::Stream(format!("spawn recorder writer: {e}"))
+        })?;
 
     Ok((
         RecorderWorker {

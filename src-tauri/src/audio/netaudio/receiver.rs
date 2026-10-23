@@ -245,7 +245,15 @@ impl NetReceiver {
             if let Some(app) = pkt.opus_app {
                 self.opus_app.store(app as u32, Ordering::Relaxed);
             }
-            let channel = self.channel(pkt.channel, pkt.seq, pkt.sample_rate);
+            let mut channel = self.channel(pkt.channel, pkt.seq, pkt.sample_rate);
+            // The consumers' resamplers are built for the rate a channel
+            // attached at: a new rate re-attaches it, so they are built here
+            // and never on the audio thread.
+            let attached = channel.broadcast.sample_rate.load(Ordering::Relaxed);
+            if pkt.sample_rate > 0 && attached != pkt.sample_rate {
+                self.drop_channel(pkt.channel);
+                channel = self.channel(pkt.channel, pkt.seq, pkt.sample_rate);
+            }
             let max_gap = max_gap_packets(
                 pkt.sample_rate,
                 channel.decoder.lock().unwrap().packet_samples(),

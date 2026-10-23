@@ -187,9 +187,7 @@ pub struct PlaybackTap {
     group: u64,
     consumer: Consumer<f32>,
     resampler: MultiResamplerOut,
-    rate: u32,
     current_source_sr: u32,
-    source_sr: Arc<AtomicU32>,
     base_ratio: f64,
     last_ratio: f64,
     realtime: bool,
@@ -246,9 +244,7 @@ impl PlaybackTap {
             group,
             consumer,
             resampler,
-            rate,
             current_source_sr: in_sr,
-            source_sr,
             base_ratio,
             last_ratio: base_ratio,
             realtime,
@@ -336,18 +332,6 @@ impl PlaybackTap {
     /// cut out of it under a crossfade into the block's tail. Returns the
     /// sample count (0 = emit silence after a sustained network underrun).
     fn fill_block(&mut self, splice: usize) -> usize {
-        let in_sr = self.source_sr.load(Ordering::Relaxed);
-        if in_sr != 0 && in_sr != self.current_source_sr {
-            self.current_source_sr = in_sr;
-            self.base_ratio = self.rate as f64 / in_sr as f64;
-            self.last_ratio = self.base_ratio;
-            if let Ok(r) = MultiResamplerOut::for_drift(in_sr, self.rate, self.last_block.len(), 1)
-            {
-                self.in_buf.clear();
-                self.in_buf.reserve(r.input_frames_max());
-                self.resampler = r;
-            }
-        }
         // Track drift ratio for this block.
         if self.realtime {
             let d = f32::from_bits(self.drift.load(Ordering::Relaxed)) as f64;
@@ -1466,7 +1450,7 @@ mod tests {
             let reg = FanoutRegistry::default();
             let recv =
                 ChannelReceiver::new(reg.register_consumer(48_000, 64, true), Arc::default());
-            let bc = reg.attach_channel("0".into(), 0, SR);
+            let bc = reg.attach_channel("0".into(), 0, rate);
             let mut mix = vec![0.0f32; 64];
             // 5 ms packets for ten seconds, read every 64 output frames.
             let packet = vec![0.5f32; rate as usize / 200];

@@ -113,3 +113,87 @@ impl ParamRing {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn drain(ring: &ParamRing, cursor: &mut usize) -> Vec<(u32, f64)> {
+        std::iter::from_fn(|| ring.read(cursor)).collect()
+    }
+
+    #[test]
+    fn delivers_writes_in_order_once() {
+        let ring = ParamRing::new();
+        let mut cursor = ring.reader();
+        ring.push(1, 0.25);
+        ring.push(2, 0.5);
+        assert_eq!(drain(&ring, &mut cursor), vec![(1, 0.25), (2, 0.5)]);
+        assert_eq!(ring.read(&mut cursor), None, "caught up");
+    }
+
+    #[test]
+    fn every_reader_sees_every_write() {
+        let ring = ParamRing::new();
+        let (mut a, mut b) = (ring.reader(), ring.reader());
+        ring.push(7, 1.0);
+        assert_eq!(drain(&ring, &mut a), vec![(7, 1.0)]);
+        assert_eq!(
+            drain(&ring, &mut b),
+            vec![(7, 1.0)],
+            "not consumed by the first pair"
+        );
+    }
+
+    #[test]
+    fn a_new_reader_replays_nothing() {
+        let ring = ParamRing::new();
+        ring.push(1, 1.0);
+        let mut cursor = ring.reader();
+        assert_eq!(ring.read(&mut cursor), None);
+    }
+
+    #[test]
+    fn a_lagging_reader_jumps_to_the_oldest_live_write() {
+        let ring = ParamRing::new();
+        let mut cursor = ring.reader();
+        let total = CAPACITY + 10;
+        for i in 0..total {
+            ring.push(i as u32, i as f64);
+        }
+        let got = drain(&ring, &mut cursor);
+        assert_eq!(got.len(), CAPACITY);
+        assert_eq!(got[0].0, 10, "oldest overwritten writes are lost");
+        assert_eq!(got.last().map(|g| g.0), Some(total as u32 - 1));
+    }
+
+    #[test]
+    fn concurrent_writers_never_hand_out_a_torn_event() {
+        let ring = Arc::new(ParamRing::new());
+        let mut cursor = ring.reader();
+        let writers: Vec<_> = (0..2u32)
+            .map(|w| {
+                let ring = ring.clone();
+                std::thread::spawn(move || {
+                    for i in 0..20_000u32 {
+                        let id = w * 1_000_000 + i;
+                        ring.push(id, id as f64);
+                    }
+                })
+            })
+            .collect();
+        let mut seen = 0usize;
+        while writers.iter().any(|w| !w.is_finished()) {
+            while let Some((id, value)) = ring.read(&mut cursor) {
+                assert_eq!(value, id as f64, "payload matches its id");
+                seen += 1;
+            }
+        }
+        for w in writers {
+            w.join().expect("writer");
+        }
+        seen += drain(&ring, &mut cursor).len();
+        assert!(seen > 0);
+    }
+}

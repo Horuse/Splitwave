@@ -60,9 +60,17 @@ impl Capture {
     pub fn start_system(
         sample_rate: u32,
         channels: u32,
+        io_frames: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
-        spawn(None, true, sample_rate, channels, Box::new(callback))
+        spawn(
+            None,
+            true,
+            sample_rate,
+            channels,
+            io_frames,
+            Box::new(callback),
+        )
     }
 
     // Tap a specific app's output stream, found by binary/name.
@@ -70,6 +78,7 @@ impl Capture {
         binary: &str,
         sample_rate: u32,
         channels: u32,
+        io_frames: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
         let serial = resolve_serial(binary)?
@@ -79,6 +88,7 @@ impl Capture {
             false,
             sample_rate,
             channels,
+            io_frames,
             Box::new(callback),
         )
     }
@@ -88,6 +98,7 @@ impl Capture {
         node_name: &str,
         sample_rate: u32,
         channels: u32,
+        io_frames: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
         spawn(
@@ -95,6 +106,7 @@ impl Capture {
             false,
             sample_rate,
             channels,
+            io_frames,
             Box::new(callback),
         )
     }
@@ -104,6 +116,7 @@ impl Capture {
         sink_node_name: &str,
         sample_rate: u32,
         channels: u32,
+        io_frames: u32,
         callback: impl FnMut(&[f32]) + Send + 'static,
     ) -> AppResult<Self> {
         spawn(
@@ -111,16 +124,20 @@ impl Capture {
             true,
             sample_rate,
             channels,
+            io_frames,
             Box::new(callback),
         )
     }
 }
 
+/// `io_frames` is the engine block at `sample_rate`: the capture asks the
+/// graph for one per cycle, so a delivery is never burstier than a read.
 fn spawn(
     target: Option<String>,
     capture_sink: bool,
     sample_rate: u32,
     channels: u32,
+    io_frames: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
 ) -> AppResult<Capture> {
     let (sender, receiver) = pw::channel::channel::<Terminate>();
@@ -128,13 +145,14 @@ fn spawn(
     let thread_rate = negotiated_rate.clone();
     let thread = std::thread::spawn(move || {
         // Drain the PipeWire stream on a real-time thread so delivery keeps up.
-        let _rt = RtThread::promote("capture", 0, sample_rate);
+        let _rt = RtThread::promote("capture", io_frames, sample_rate);
         if let Err(e) = run(
             receiver,
             target,
             capture_sink,
             sample_rate,
             channels,
+            io_frames,
             callback,
             thread_rate,
         ) {
@@ -154,6 +172,7 @@ fn run(
     capture_sink: bool,
     sample_rate: u32,
     channels: u32,
+    io_frames: u32,
     callback: Box<dyn FnMut(&[f32]) + Send>,
     negotiated_rate: Arc<AtomicU32>,
 ) -> Result<(), pw::Error> {
@@ -177,6 +196,10 @@ fn run(
     if let Some(target) = target {
         props.insert(*pw::keys::TARGET_OBJECT, target);
     }
+    props.insert(
+        *pw::keys::NODE_LATENCY,
+        format!("{}/{sample_rate}", io_frames.max(1)),
+    );
 
     let stream = pw::stream::StreamRc::new(core.clone(), "splitwave-capture", props)?;
     let user_data = UserData {

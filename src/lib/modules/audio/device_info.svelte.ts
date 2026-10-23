@@ -1,4 +1,5 @@
 import { onDestroy, onMount } from 'svelte';
+import { DEFAULT_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 import { methods } from './methods';
 import { audioStore } from './stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
@@ -130,7 +131,7 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 		if (timer) clearInterval(timer);
 	});
 
-	const sampleRate = $derived(info?.sampleRate ?? 48_000);
+	const sampleRate = $derived(info?.sampleRate ?? DEFAULT_SAMPLE_RATE);
 	const channels = $derived(info?.channels ?? 2);
 	const sampleFormat = $derived(info?.sampleFormat ?? 'f32');
 	const specText = $derived(`${formatHz(sampleRate)} · ${channels} ch · ${sampleFormat}`);

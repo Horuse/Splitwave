@@ -4,7 +4,8 @@
 //! heavy lifting lives in `pipeline::build`; this module is just a command
 //! dispatcher.
 
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
@@ -14,6 +15,10 @@ use crate::audio::pipeline::{self, ActivePipeline};
 use crate::error::{AppError, AppResult};
 
 const STATE_EVENT: &str = "audio://state";
+
+/// How often a running pipeline checks that each speaker's graph is built for
+/// the callbacks its device really makes.
+const CALLBACK_CHECK: Duration = Duration::from_millis(100);
 
 pub enum Command {
     Start {
@@ -68,17 +73,32 @@ pub enum Command {
     IsRunning {
         reply: Sender<bool>,
     },
-    /// Current speaker output buffering latency in milliseconds (0 when idle).
-    OutputLatencyMs {
-        reply: Sender<u32>,
+    /// Round-trip latency, DSP load and node timings (empty when idle).
+    LatencyReport {
+        reply: Sender<crate::audio::pipeline::LatencyReport>,
     },
 }
 
 pub fn run(rx: Receiver<Command>) {
     info!("audio thread started");
     let mut active: Option<ActivePipeline> = None;
+    let mut host_app: Option<AppHandle> = None;
 
-    while let Ok(cmd) = rx.recv() {
+    loop {
+        let cmd = match rx.recv_timeout(CALLBACK_CHECK) {
+            Ok(cmd) => cmd,
+            Err(RecvTimeoutError::Timeout) => {
+                if let (Some(p), Some(app)) = (active.as_mut(), host_app.as_ref()) {
+                    if let Err(e) = p.fit_speaker_callbacks(pipeline::Host::app(app.clone())) {
+                        error!(error = %e, "speaker rebuild failed, clearing active pipeline");
+                        active = None;
+                        let _ = app.emit(STATE_EVENT, serde_json::json!({ "kind": "stopped" }));
+                    }
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         match cmd {
             Command::Start { graph, app, reply } => {
                 if active.is_some() {
@@ -86,7 +106,8 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::AlreadyRunning));
                     continue;
                 }
-                match pipeline::build(&graph, app) {
+                host_app = Some(app.clone());
+                match pipeline::build(&graph, pipeline::Host::app(app)) {
                     Ok(p) => {
                         info!("pipeline built and running");
                         active = Some(p);
@@ -111,7 +132,7 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::NotRunning));
                 }
                 Some(p) => {
-                    let r = p.reconcile(&graph, app.clone());
+                    let r = p.reconcile(&graph, pipeline::Host::app(app.clone()));
                     if let Err(e) = &r {
                         error!(error = %e, "reconcile failed, clearing active pipeline");
                         active = None;
@@ -173,12 +194,134 @@ pub fn run(rx: Receiver<Command>) {
             Command::IsRunning { reply } => {
                 let _ = reply.send(active.is_some());
             }
-            Command::OutputLatencyMs { reply } => {
-                let ms = active.as_ref().map(|p| p.output_latency_ms()).unwrap_or(0);
-                let _ = reply.send(ms);
+            Command::LatencyReport { reply } => {
+                let report = active
+                    .as_mut()
+                    .map(|p| p.latency_report())
+                    .unwrap_or_default();
+                let _ = reply.send(report);
             }
         }
     }
 
     info!("audio thread stopped");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    /// Drives `engine::run` on a thread with a command queue; returns the
+    /// sender plus a join guard that ends the run when dropped.
+    struct EngineHarness {
+        /// Taken and dropped in `Drop` BEFORE joining, so the engine's
+        /// `recv()` sees the disconnect and the run loop exits.
+        tx: Option<Sender<Command>>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl EngineHarness {
+        fn spawn() -> Self {
+            let (tx, rx) = channel::<Command>();
+            let thread = std::thread::spawn(move || run(rx));
+            Self {
+                tx: Some(tx),
+                thread: Some(thread),
+            }
+        }
+
+        fn is_running(&self) -> bool {
+            let (reply, rx) = channel();
+            self.tx
+                .as_ref()
+                .expect("live sender")
+                .send(Command::IsRunning { reply })
+                .expect("send");
+            rx.recv_timeout(Duration::from_secs(5)).expect("reply")
+        }
+
+        fn latency_report(&self) -> crate::audio::pipeline::LatencyReport {
+            let (reply, rx) = channel();
+            self.tx
+                .as_ref()
+                .expect("live sender")
+                .send(Command::LatencyReport { reply })
+                .expect("send");
+            rx.recv_timeout(Duration::from_secs(5)).expect("reply")
+        }
+    }
+
+    impl Drop for EngineHarness {
+        fn drop(&mut self) {
+            if let Some(t) = self.thread.take() {
+                drop(self.tx.take()); // disconnect first, then join
+                let _ = t.join();
+            }
+        }
+    }
+
+    #[test]
+    fn idle_engine_reports_not_running_and_zero_latency() {
+        let harness = EngineHarness::spawn();
+        assert!(!harness.is_running());
+        assert_eq!(harness.latency_report().path, None);
+    }
+
+    #[test]
+    fn idle_commands_ack_without_a_pipeline() {
+        let harness = EngineHarness::spawn();
+        macro_rules! ok_cmd {
+            ($cmd:expr) => {{
+                let (reply, rx) = channel();
+                let cmd = $cmd(reply);
+                harness
+                    .tx
+                    .as_ref()
+                    .expect("live sender")
+                    .send(cmd)
+                    .expect("send");
+                rx.recv_timeout(Duration::from_secs(5))
+                    .expect("reply")
+                    .expect("no-op succeeds");
+            }};
+        }
+        ok_cmd!(|reply| Command::Stop { reply });
+        ok_cmd!(|reply| Command::UpdateEffect {
+            node_id: "n".into(),
+            data: serde_json::json!({}),
+            reply
+        });
+        ok_cmd!(|reply| Command::SeekAudioFile {
+            node_id: "n".into(),
+            frame: 10,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetAudioFileLoop {
+            node_id: "n".into(),
+            enabled: true,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetAudioFilePaused {
+            node_id: "n".into(),
+            paused: true,
+            reply
+        });
+        ok_cmd!(|reply| Command::SetInputVolume {
+            node_id: "n".into(),
+            scalar: 0.5,
+            reply
+        });
+        assert!(!harness.is_running(), "still idle after all no-ops");
+    }
+
+    #[test]
+    fn run_exits_when_the_channel_closes() {
+        // Dropping the sender ends the recv loop; the thread joins cleanly in
+        // the harness Drop (no hang, no leaked audio thread).
+        let harness = EngineHarness::spawn();
+        assert!(!harness.is_running());
+        drop(harness);
+    }
 }

@@ -75,10 +75,45 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	}
 };
 
+function recordingFormatWithDefaults(stored: unknown): NodeDataMap['fileRecording']['format'] {
+	if (typeof stored !== 'object' || stored === null) return DEFAULT_NODE_DATA.fileRecording.format;
+	const format = stored as Record<string, unknown>;
+	switch (format.kind) {
+		case 'wav':
+			return { kind: 'wav', bitDepth: 'f32', ...format } as NodeDataMap['fileRecording']['format'];
+		case 'flac':
+			return {
+				kind: 'flac',
+				bitDepth: 'i24',
+				compression: 'default',
+				...format
+			} as NodeDataMap['fileRecording']['format'];
+		case 'opus':
+			return {
+				kind: 'opus',
+				bitrate: 128_000,
+				application: 'audio',
+				...format
+			} as NodeDataMap['fileRecording']['format'];
+		case 'mp3':
+			return { kind: 'mp3', bitrateKbps: 192, ...format } as NodeDataMap['fileRecording']['format'];
+		case 'aac':
+			return { kind: 'aac', bitrate: 192_000, ...format } as NodeDataMap['fileRecording']['format'];
+		case 'aiff':
+			return { kind: 'aiff', bitDepth: 'i24', ...format } as NodeDataMap['fileRecording']['format'];
+		default:
+			return format as NodeDataMap['fileRecording']['format'];
+	}
+}
+
 /** Stored data wins, defaults fill gaps: adding a parameter to an effect stays a
  * non-breaking change, since older records simply inherit its default. */
 export function withDefaults<K extends NodeKind>(kind: K, stored: unknown): NodeDataMap[K] {
 	const base = DEFAULT_NODE_DATA[kind];
 	if (!base || typeof stored !== 'object' || stored === null) return base;
-	return { ...base, ...(stored as object) } as NodeDataMap[K];
+	const merged = { ...base, ...(stored as object) } as NodeDataMap[K];
+	if (kind === 'fileRecording') {
+		(merged as NodeDataMap['fileRecording']).format = recordingFormatWithDefaults((stored as Record<string, unknown>).format);
+	}
+	return merged;
 }

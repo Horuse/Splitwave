@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::audio::graph::SaturatorData;
 
-use super::util::{db_to_linear, load_f32};
+use super::util::{db_to_linear, load_f32, Ramp};
 use super::{Effect, EffectControl};
 
 /// Soft saturator: `y = ceiling * tanh(x * drive / ceiling)` — smooth tanh
@@ -11,10 +11,12 @@ use super::{Effect, EffectControl};
 pub struct SaturatorEffect {
     ceiling: Arc<AtomicU32>,
     drive: Arc<AtomicU32>,
+    ramp_ceiling: Ramp,
+    ramp_drive: Ramp,
 }
 
 impl SaturatorEffect {
-    pub fn new(d: SaturatorData) -> (Self, EffectControl) {
+    pub fn new(d: SaturatorData, sample_rate: u32) -> (Self, EffectControl) {
         let c = db_to_linear(d.threshold_db).max(1e-6);
         let ceiling = Arc::new(AtomicU32::new(c.to_bits()));
         let drive = Arc::new(AtomicU32::new(db_to_linear(d.drive_db).to_bits()));
@@ -22,24 +24,39 @@ impl SaturatorEffect {
             ceiling: ceiling.clone(),
             drive: drive.clone(),
         };
-        (Self { ceiling, drive }, control)
+        (Self::from_state(ceiling, drive, sample_rate), control)
     }
 
-    pub fn from_state(ceiling: Arc<AtomicU32>, drive: Arc<AtomicU32>) -> Self {
-        Self { ceiling, drive }
+    pub fn from_state(ceiling: Arc<AtomicU32>, drive: Arc<AtomicU32>, sample_rate: u32) -> Self {
+        Self {
+            ramp_ceiling: Ramp::new(load_f32(&ceiling).max(1e-6), sample_rate),
+            ramp_drive: Ramp::new(load_f32(&drive), sample_rate),
+            ceiling,
+            drive,
+        }
     }
 }
 
 impl Effect for SaturatorEffect {
     #[inline]
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        // No `inv_ceiling` cache — RT could read NEW_c with OLD_inv_c (torn pair).
-        let c = load_f32(&self.ceiling).max(1e-6);
-        let d = load_f32(&self.drive);
-        let inv_c = 1.0 / c;
+        self.ramp_ceiling.set(load_f32(&self.ceiling).max(1e-6));
+        self.ramp_drive.set(load_f32(&self.drive));
         let stereo = &mut samples[..frames * 2];
-        for s in stereo {
-            *s = c * fast_tanh(*s * d * inv_c);
+        if self.ramp_ceiling.is_settled() && self.ramp_drive.is_settled() {
+            let c = self.ramp_ceiling.value();
+            let k = self.ramp_drive.value() / c;
+            for s in stereo {
+                *s = c * fast_tanh(*s * k);
+            }
+            return;
+        }
+        for frame in stereo.chunks_exact_mut(2) {
+            let c = self.ramp_ceiling.next();
+            let k = self.ramp_drive.next() / c;
+            for s in frame {
+                *s = c * fast_tanh(*s * k);
+            }
         }
     }
 }
@@ -61,11 +78,14 @@ mod tests {
 
     #[test]
     fn saturator_clips_above_ceiling() {
-        let (mut e, _) = SaturatorEffect::new(SaturatorData {
-            threshold_db: 0.0,
-            drive_db: 0.0,
-            bypassed: false,
-        });
+        let (mut e, _) = SaturatorEffect::new(
+            SaturatorData {
+                threshold_db: 0.0,
+                drive_db: 0.0,
+                bypassed: false,
+            },
+            48_000,
+        );
         let mut buf = [10.0, -10.0];
         e.process(&mut buf, 1);
         assert!(buf[0].abs() < 1.05);

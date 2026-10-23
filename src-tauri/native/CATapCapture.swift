@@ -92,6 +92,9 @@ private func inputBufferCount(_ deviceID: AudioDeviceID) -> Int {
     return Int(raw.assumingMemoryBound(to: AudioBufferList.self).pointee.mNumberBuffers)
 }
 
+/// How often a tap re-reads which of its app's processes render output.
+private let processPollInterval: DispatchTimeInterval = .milliseconds(200)
+
 private func defaultOutputDevice() -> AudioDeviceID? {
     guard let id = readValue(systemObject, kAudioHardwarePropertyDefaultOutputDevice, AudioDeviceID(0)),
           id != AudioDeviceID(kAudioObjectUnknown) else { return nil }
@@ -190,15 +193,24 @@ private final class Tap {
     /// aggregate is created without error but its IOProc never fires.
     private var active: Set<AudioObjectID> = []
     private var pollTimer: DispatchSourceTimer?
+    /// The output device whose start is observed, and its listener.
+    private var runningDevice = AudioDeviceID(0)
+    private var runningBlock: AudioObjectPropertyListenerBlock?
+    /// Moves the running listener along when the default output changes.
+    private var defaultOutputBlock: AudioObjectPropertyListenerBlock?
 
     private var tapChannels = 0
     private var tapBufferIndex = 0
     private var sampleRate = 0.0
+    /// IO buffer the aggregate is asked for, in frames; 0 keeps the HAL default.
+    /// Each delivery is one buffer, so it sets how bursty capture is.
+    private var ioFrames: UInt32 = 0
     /// Preallocated so the IOProc never allocates while de-interleaving.
     private var scratch = [Float]()
 
     func start(
         mode: TapMode,
+        ioFrames: UInt32,
         callback: @escaping TapSampleCallback,
         userData: UnsafeMutableRawPointer?
     ) -> Int32 {
@@ -206,6 +218,7 @@ private final class Tap {
         defer { lock.unlock() }
 
         self.mode = mode
+        self.ioFrames = ioFrames
         self.callback = callback
         self.userData = userData
 
@@ -329,6 +342,7 @@ private final class Tap {
             return RESULT_TAP_ERROR
         }
         aggregateID = aggregate
+        applyBufferSize()
 
         let maxFrames = Int(readValue(aggregateID, kAudioDevicePropertyBufferFrameSize, UInt32(0)) ?? 4096)
         scratch = [Float](repeating: 0, count: max(maxFrames, 4096) * tapChannels)
@@ -349,6 +363,19 @@ private final class Tap {
             return RESULT_TAP_ERROR
         }
         return RESULT_OK
+    }
+
+    /// Clamped to the aggregate's range. A refusal leaves the HAL default, which
+    /// only makes deliveries burstier, never wrong.
+    private func applyBufferSize() {
+        guard ioFrames > 0 else { return }
+        var frames = ioFrames
+        if let range = readValue(aggregateID, kAudioDevicePropertyBufferFrameSizeRange, AudioValueRange()),
+           range.mMinimum > 0, range.mMaximum >= range.mMinimum {
+            frames = UInt32(min(max(Double(frames), range.mMinimum), range.mMaximum))
+        }
+        var addr = address(kAudioDevicePropertyBufferFrameSize)
+        _ = AudioObjectSetPropertyData(aggregateID, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
     }
 
     /// Order matters: a tap destroyed before its aggregate leaves the aggregate
@@ -375,10 +402,14 @@ private final class Tap {
     /// when the app opens a new audio process (extra browser tab) and when one
     /// of its processes starts or stops rendering output.
     ///
-    /// The process list posts change notifications, but `IsRunningOutput` was
-    /// observed never to post one, so a long-lived process going from paused to
-    /// playing would be missed. Both are therefore re-evaluated on a timer;
-    /// these are cheap property reads off the IO queue.
+    /// The process list posts change notifications, but `IsRunningOutput`
+    /// never posts one (its listener registers and stays silent), so a
+    /// long-lived process going from paused to playing would be missed. The
+    /// output device says when it starts running, but not for whom, and says
+    /// nothing while it already runs for someone else. What is left is read
+    /// on a timer: cheap property reads off the IO queue, short enough that a
+    /// process joining the HAL (100-200 ms before it sounds) is picked up
+    /// about as it starts.
     private func observeProcesses() {
         guard case .application = mode else { return }
         var addr = address(kAudioHardwarePropertyProcessObjectList)
@@ -388,8 +419,17 @@ private final class Tap {
         listenerBlock = block
         AudioObjectAddPropertyListenerBlock(systemObject, &addr, controlQueue, block)
 
+        observeRunning(on: defaultOutputDevice())
+        var defaultAddr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        let moved: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.defaultOutputChanged()
+        }
+        if AudioObjectAddPropertyListenerBlock(systemObject, &defaultAddr, controlQueue, moved) == noErr {
+            defaultOutputBlock = moved
+        }
+
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
-        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.schedule(deadline: .now() + processPollInterval, repeating: processPollInterval)
         timer.setEventHandler { [weak self] in self?.rebuildIfTargetChanged() }
         timer.resume()
         pollTimer = timer
@@ -398,10 +438,53 @@ private final class Tap {
     private func removeProcessObservers() {
         pollTimer?.cancel()
         pollTimer = nil
+        if let moved = defaultOutputBlock {
+            var defaultAddr = address(kAudioHardwarePropertyDefaultOutputDevice)
+            AudioObjectRemovePropertyListenerBlock(systemObject, &defaultAddr, controlQueue, moved)
+            defaultOutputBlock = nil
+        }
+        unobserveRunning()
         guard let block = listenerBlock else { return }
         var addr = address(kAudioHardwarePropertyProcessObjectList)
         AudioObjectRemovePropertyListenerBlock(systemObject, &addr, controlQueue, block)
         listenerBlock = nil
+    }
+
+    /// Watches `device` start running for someone, in place of the device
+    /// watched so far.
+    private func observeRunning(on device: AudioDeviceID?) {
+        unobserveRunning()
+        guard let device else { return }
+        var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        let running: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.rebuildIfTargetChanged()
+        }
+        if AudioObjectAddPropertyListenerBlock(device, &runningAddr, controlQueue, running) == noErr {
+            runningDevice = device
+            runningBlock = running
+        }
+    }
+
+    private func unobserveRunning() {
+        guard let running = runningBlock else { return }
+        var runningAddr = address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        AudioObjectRemovePropertyListenerBlock(runningDevice, &runningAddr, controlQueue, running)
+        runningBlock = nil
+        runningDevice = AudioDeviceID(0)
+    }
+
+    /// The app's processes play to the default output, so the running
+    /// listener follows it there.
+    private func defaultOutputChanged() {
+        lock.lock()
+        let observing = callback != nil
+        if observing {
+            observeRunning(on: defaultOutputDevice())
+        }
+        lock.unlock()
+        if observing {
+            rebuildIfTargetChanged()
+        }
     }
 
     private func rebuildIfTargetChanged() {
@@ -495,6 +578,7 @@ public func ba_tap_destroy(_ handle: OpaquePointer) {
 public func ba_tap_start_app(
     _ handle: OpaquePointer,
     _ bundleIDC: UnsafePointer<CChar>,
+    _ ioFrames: UInt32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
@@ -502,6 +586,7 @@ public func ba_tap_start_app(
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
             mode: .application(bundleID: String(cString: bundleIDC)),
+            ioFrames: ioFrames,
             callback: callback,
             userData: userData
         )
@@ -513,6 +598,7 @@ public func ba_tap_start_app(
 public func ba_tap_start_system(
     _ handle: OpaquePointer,
     _ excludeCurrentApp: Int32,
+    _ ioFrames: UInt32,
     _ callback: @escaping TapSampleCallback,
     _ userData: UnsafeMutableRawPointer?
 ) -> Int32 {
@@ -520,6 +606,7 @@ public func ba_tap_start_system(
         let tap = Unmanaged<Tap>.fromOpaque(UnsafeRawPointer(handle)).takeUnretainedValue()
         return tap.start(
             mode: .system(excludeCurrentApp: excludeCurrentApp != 0),
+            ioFrames: ioFrames,
             callback: callback,
             userData: userData
         )

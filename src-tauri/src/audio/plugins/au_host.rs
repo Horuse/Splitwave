@@ -1082,6 +1082,7 @@ mod tests {
     /// signal must come back out at roughly the level it went in.
     #[test]
     fn renders_signal_through_an_audio_unit() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         const FRAMES: usize = 512;
         let mut node = activate(
             "render-test",
@@ -1113,6 +1114,7 @@ mod tests {
     /// every macOS and has a real lookahead, unlike the flat N-band EQ.
     #[test]
     fn reported_latency_matches_when_the_signal_arrives() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         const LIMITER: &str = "au://aufx/lmtr/appl";
         const FRAMES: usize = 512;
 
@@ -1161,6 +1163,7 @@ mod tests {
     /// one that refuses falls back to a stereo pair.
     #[test]
     fn negotiates_the_widest_layout_each_unit_accepts() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         use crate::audio::plugins::PluginBackend;
 
         let found = super::super::au_backend::AuBackend.scan();
@@ -1203,6 +1206,7 @@ mod tests {
     /// which a per-channel loudness check alone would pass.
     #[test]
     fn a_six_channel_unit_keeps_its_channels_in_order() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         const WIDTH: usize = 6;
         const FRAMES: usize = 512;
         // Flat by default, so the block comes back at the level it went in.
@@ -1256,6 +1260,7 @@ mod tests {
     /// the list query and the `AudioUnitParameterInfo` layout.
     #[test]
     fn reads_parameters_of_a_running_unit() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let node = activate(
             "params-test",
             "au://aufx/nbeq/appl",
@@ -1287,6 +1292,7 @@ mod tests {
     /// and read the parameter back. Pins the class-info plist path end to end.
     #[test]
     fn state_survives_a_reactivation() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         const URL: &str = "au://aufx/nbeq/appl";
         const GAIN: u32 = 0;
 

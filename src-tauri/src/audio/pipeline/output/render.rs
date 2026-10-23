@@ -696,18 +696,6 @@ mod tests {
     /// its pad sized for `burst` blocks, plays through a `device_rate`
     /// speaker called back in real time.
     fn dropouts_through_an_offloaded_node(block: usize, device_rate: u32, burst: usize) -> usize {
-        let callback = super::super::device_block(block, SR, device_rate) as usize;
-        dropouts_at_callback(block, device_rate, burst, callback)
-    }
-
-    /// `dropouts_through_an_offloaded_node` with the device calling back for
-    /// `callback` frames.
-    fn dropouts_at_callback(
-        block: usize,
-        device_rate: u32,
-        burst: usize,
-        callback: usize,
-    ) -> usize {
         use crate::audio::pipeline::dag::graph_tests::offload_every_effect;
         let (valid, _) = passthrough_graph();
         let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, false);

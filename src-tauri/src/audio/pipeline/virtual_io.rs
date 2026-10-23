@@ -35,6 +35,9 @@ pub struct VirtualInput {
 pub struct VirtualSpeaker {
     pub sample_rate: u32,
     pub channels: u32,
+    /// Frames per callback, whatever buffer is asked for, as a WASAPI device
+    /// keeps its period; `None` asks for one engine block.
+    pub callback_frames: Option<usize>,
 }
 
 /// The devices a virtual host offers, by the id a graph names them with: a

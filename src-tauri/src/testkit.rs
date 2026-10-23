@@ -83,6 +83,22 @@ impl Rig {
             .unwrap_or_default()
     }
 
+    /// What the engine does between commands: rebuilds a speaker whose
+    /// callbacks are larger than its graph renders at once.
+    pub fn fit_speaker_callbacks(&mut self) -> Result<(), String> {
+        match self.pipeline.as_mut() {
+            Some(p) => p
+                .fit_speaker_callbacks(self.host.clone())
+                .map_err(|e| e.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    /// Engine blocks speaker node `id`'s graph renders per callback.
+    pub fn speaker_burst(&self, id: &str) -> Option<usize> {
+        self.pipeline.as_ref().and_then(|p| p.speaker_burst(id))
+    }
+
     pub fn latency(&mut self) -> Option<LatencyReport> {
         self.pipeline.as_mut().map(ActivePipeline::latency_report)
     }

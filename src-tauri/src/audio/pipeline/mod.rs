@@ -84,6 +84,11 @@ pub struct OutputHealth {
 /// input that delivers nothing (paused, or a quiet tap) waits this long.
 const SWAP_PREFILL_MAX: std::time::Duration = std::time::Duration::from_millis(25);
 
+/// Longest a hot swap waits for the old graphs to fade out and hand back
+/// before the bridges feeding them are retired. Only a stalled output waits
+/// this long.
+const SWAP_LAND_MAX: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Long-lived audio runtime. Owns every cpal/SCK stream, every DspWorker
 /// thread, the meter tick thread, and the effect parameter registry.
 /// State is keyed by node id so `reconcile` can diff against `current` and
@@ -117,6 +122,13 @@ pub struct ActivePipeline {
     /// `(input_id, slot)` bridges of hot-swapping outputs, kept feeding the old
     /// sub-graph while the new one's rings prefill. Removed after the swap.
     stale_bridges: Vec<(String, usize)>,
+    /// Engine blocks each speaker's graph was built to render per callback.
+    speaker_bursts: HashMap<String, usize>,
+    /// Bursts measured from a speaker's real callbacks, which a rebuild of
+    /// its graph sizes for instead of the one predicted.
+    burst_floors: HashMap<String, usize>,
+    /// Speakers rebuilt by the next reconcile though their graph is unchanged.
+    forced_swaps: HashSet<String>,
     /// Latency and working block per effect node, for the report.
     node_timings: HashMap<String, NodeTiming>,
     /// What each output's running graph was built from, so the next graph
@@ -212,6 +224,9 @@ impl ActivePipeline {
             output_stats: Vec::new(),
             xrun_thread: None,
             stale_bridges: Vec::new(),
+            speaker_bursts: HashMap::new(),
+            burst_floors: HashMap::new(),
+            forced_swaps: HashSet::new(),
             node_timings: HashMap::new(),
             carried_nodes: HashMap::new(),
             swapping_slots: HashMap::new(),
@@ -229,7 +244,47 @@ impl ActivePipeline {
             self.current = Some(graph.clone());
             return Ok(());
         }
+        self.rebuild(graph, host)
+    }
 
+    /// A speaker whose device calls back with more audio than its graph was
+    /// built to render at once (a WASAPI period of 10 ms over a 64-frame
+    /// engine block) leaves nodes on their own threads short every callback.
+    /// Its graph is rebuilt for the callbacks measured.
+    pub fn fit_speaker_callbacks(&mut self, host: Host) -> AppResult<()> {
+        let Some(graph) = self.current.clone() else {
+            return Ok(());
+        };
+        for (id, speaker) in &self.speakers {
+            let peak = speaker.io.peak_callback_frames.load(Ordering::Relaxed) as usize;
+            if peak == 0 {
+                continue;
+            }
+            let needed = output::callback_burst(
+                peak,
+                graph.sample_rate,
+                speaker.io.sample_rate,
+                graph.buffer_frames as usize,
+            );
+            let built = self.speaker_bursts.get(id).copied().unwrap_or(1);
+            if needed > built {
+                info!(output = %id, peak, built, needed, "speaker calls back for more than its graph renders; rebuilding");
+                self.burst_floors.insert(id.clone(), needed);
+                self.forced_swaps.insert(id.clone());
+            }
+        }
+        if self.forced_swaps.is_empty() {
+            return Ok(());
+        }
+        self.rebuild(&graph, host)
+    }
+
+    /// Engine blocks speaker `id`'s graph is built to render per callback.
+    pub fn speaker_burst(&self, id: &str) -> Option<usize> {
+        self.speaker_bursts.get(id).copied()
+    }
+
+    fn rebuild(&mut self, graph: &ValidGraph, host: Host) -> AppResult<()> {
         for state in self.inputs.values_mut() {
             state.bridge_tx.drain_discarded();
         }
@@ -245,7 +300,9 @@ impl ActivePipeline {
             state.bridge_tx.drain_discarded();
         }
 
-        match self.apply_full(graph, host) {
+        let applied = self.apply_full(graph, host);
+        self.forced_swaps.clear();
+        match applied {
             Ok(()) => {
                 self.current = Some(graph.clone());
                 Ok(())
@@ -470,6 +527,9 @@ impl ActivePipeline {
         }
         self.tear_down_outputs();
         self.stale_bridges.clear();
+        self.speaker_bursts.clear();
+        self.burst_floors.clear();
+        self.forced_swaps.clear();
         self.carried_nodes.clear();
         self.swapping_slots.clear();
         self.receive_buffers.clear();
@@ -477,6 +537,17 @@ impl ActivePipeline {
         self.meters.clear();
         self.gr_handles.clear();
         self.scopes.clear();
+    }
+
+    fn worker_ctrl(&self, out_id: &str) -> Option<&WorkerCtrl> {
+        if out_id == MONITOR_KEY {
+            return self.monitor.as_ref().map(|m| &m.ctrl);
+        }
+        self.speakers
+            .get(out_id)
+            .map(|s| &s.ctrl)
+            .or_else(|| self.recorders.get(out_id).map(|r| &r.ctrl))
+            .or_else(|| self.wire_senders.get(out_id).map(|w| &w.ctrl))
     }
 
     /// Whether `out_id`'s new graph goes to the worker already running it,
@@ -600,7 +671,7 @@ impl ActivePipeline {
                 Cat::Drop
             } else {
                 match self.current_output_sig(id) {
-                    Some(old) if old == new_sig => Cat::Full,
+                    Some(old) if old == new_sig && !self.forced_swaps.contains(id) => Cat::Full,
                     Some(old) if old.output_spec == new_sig.output_spec => Cat::GraphSwap,
                     _ => Cat::Drop,
                 }
@@ -680,6 +751,8 @@ impl ActivePipeline {
                 crate::audio::netaudio::sender::release(id);
                 drop(state);
             } else if let Some(speaker) = self.speakers.remove(id) {
+                self.speaker_bursts.remove(id);
+                self.burst_floors.remove(id);
                 speaker._handle.begin_retire();
                 retiring.push(speaker);
             }
@@ -957,7 +1030,7 @@ impl ActivePipeline {
             |id: &str| self.current_output_sig(id) != Some(&compute_output_sig(graph, id));
         let mut rebuild: HashSet<String> = HashSet::new();
         for out in &graph.outputs {
-            if base_changed(&out.id) {
+            if base_changed(&out.id) || self.forced_swaps.contains(&out.id) {
                 rebuild.insert(out.id.clone());
             }
         }
@@ -1048,7 +1121,11 @@ impl ActivePipeline {
             // renders a block a tick.
             let burst_blocks = match (&out.spec, output_runtime.get(&out.id)) {
                 (OutputSpec::Speaker { .. }, Some(runtime)) => {
-                    output::render_burst(output_sr, runtime.sample_rate(), block_frames)
+                    let burst =
+                        output::render_burst(output_sr, runtime.sample_rate(), block_frames)
+                            .max(self.burst_floors.get(&out.id).copied().unwrap_or(1));
+                    self.speaker_bursts.insert(out.id.clone(), burst);
+                    burst
                 }
                 _ => 1,
             };
@@ -1424,6 +1501,7 @@ impl ActivePipeline {
         // Hot-swap the new sub-graph into an existing worker when
         // `output_spec` is unchanged and the sample rate still matches;
         // otherwise stop the old worker and start fresh.
+        let mut swapped: Vec<String> = Vec::new();
         for out in &graph.outputs {
             if !output_graphs.contains_key(&out.id) {
                 continue;
@@ -1455,6 +1533,7 @@ impl ActivePipeline {
                     if let Some(state) = self.speakers.get_mut(&out.id) {
                         if state.sample_rate == spec.sample_rate() {
                             state.ctrl.send_graph(og)?;
+                            swapped.push(out.id.clone());
                             state.sig = new_sig;
                             // Same cpal stream keeps running -- carry its
                             // counters into this reconcile's OutputMeta.
@@ -1503,6 +1582,7 @@ impl ActivePipeline {
                     if let Some(state) = self.recorders.get_mut(&out.id) {
                         if state.sample_rate == sample_rate {
                             state.ctrl.send_graph(og)?;
+                            swapped.push(out.id.clone());
                             state.sig = new_sig;
                             continue;
                         }
@@ -1540,6 +1620,7 @@ impl ActivePipeline {
                     let sample_rate = og.sample_rate();
                     if let Some(state) = self.wire_senders.get_mut(&out.id) {
                         state.ctrl.send_graph(og)?;
+                        swapped.push(out.id.clone());
                         state.sig = new_sig;
                         continue;
                     }
@@ -1560,6 +1641,7 @@ impl ActivePipeline {
             let new_sig = compute_output_sig(graph, MONITOR_KEY);
             if let Some(state) = self.monitor.as_mut() {
                 state.ctrl.send_graph(og)?;
+                swapped.push(MONITOR_KEY.to_string());
                 state.sig = new_sig;
             } else {
                 let (worker, ctrl) = start_monitor_worker(og)?;
@@ -1572,6 +1654,18 @@ impl ActivePipeline {
         }
 
         self.swapping_slots.clear();
+        // A swap that changes what is heard fades the old graph out first, and
+        // it plays on its own rings until then: retire them once it is gone.
+        if !self.stale_bridges.is_empty() {
+            let deadline = std::time::Instant::now() + SWAP_LAND_MAX;
+            while swapped
+                .iter()
+                .any(|id| self.worker_ctrl(id).is_some_and(|c| !c.swap_landed()))
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
         // The swapped-in graphs own the live rings now; retire the ones that fed
         // their predecessors.
         for (input_id, slot) in std::mem::take(&mut self.stale_bridges) {

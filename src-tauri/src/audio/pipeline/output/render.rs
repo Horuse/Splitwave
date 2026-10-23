@@ -56,6 +56,27 @@ pub(in crate::audio::pipeline) fn render_burst(
         .map_or(1, |r| r.steady_period().div_ceil(block) + 1)
 }
 
+/// Engine blocks one device callback of `callback_frames` makes the graph
+/// render back to back: the callback in pipeline frames, plus one where a
+/// resampler carries part of a block over.
+pub(in crate::audio::pipeline) fn callback_burst(
+    callback_frames: usize,
+    pipeline_rate: u32,
+    device_rate: u32,
+    block_frames: usize,
+) -> usize {
+    let block = block_frames.max(1);
+    if pipeline_rate == device_rate {
+        return callback_frames.div_ceil(block).max(1);
+    }
+    let frames =
+        (callback_frames as u64 * pipeline_rate as u64).div_ceil(device_rate.max(1) as u64);
+    (frames as usize).div_ceil(block) + 1
+}
+
+/// Callbacks after a start left out of `SpeakerIo::peak_callback_frames`.
+const SETTLE_CALLBACKS: u64 = 4;
+
 /// Per-speaker counters, written relaxed by the callback and read by the
 /// non-RT tick thread and the latency report.
 #[derive(Clone)]
@@ -68,6 +89,10 @@ pub(in crate::audio::pipeline) struct SpeakerIo {
     pub callbacks: Arc<AtomicU64>,
     /// Frames the device asked for in its latest callback: its real IO buffer.
     pub callback_frames: Arc<AtomicU32>,
+    /// Largest callback once the stream settled. The first few after a start,
+    /// and one after a stall, may ask for a whole empty buffer, which no
+    /// steady callback does.
+    pub peak_callback_frames: Arc<AtomicU32>,
     /// Device frames already rendered but not yet played when the latest
     /// callback started: the block adapter's share of the latency.
     pub carried_frames: Arc<AtomicU32>,
@@ -152,6 +177,7 @@ impl SpeakerRenderer {
             requested: Arc::new(AtomicU64::new(0)),
             callbacks: Arc::new(AtomicU64::new(0)),
             callback_frames: Arc::new(AtomicU32::new(0)),
+            peak_callback_frames: Arc::new(AtomicU32::new(0)),
             carried_frames: Arc::new(AtomicU32::new(0)),
             load_peak_permille: Arc::new(AtomicU32::new(0)),
             overloads: Arc::new(AtomicU64::new(0)),
@@ -187,8 +213,10 @@ impl SpeakerRenderer {
     /// deliver in several slices. RT-safe: no allocation, lock or syscall.
     pub(in crate::audio::pipeline) fn render(&mut self, out: &mut [f32], callback_frames: usize) {
         let started = Instant::now();
+        let mut stalled = false;
         if let Some(last) = self.last_callback.replace(started) {
             if device_stalled(started - last, callback_frames, self.io.sample_rate) {
+                stalled = true;
                 health::bump(&health::OUTPUT_STALLS, 1);
                 self.worker.output_stalled();
             }
@@ -196,10 +224,16 @@ impl SpeakerRenderer {
         self.io
             .requested
             .fetch_add(out.len() as u64, Ordering::Relaxed);
-        self.io.callbacks.fetch_add(1, Ordering::Relaxed);
+        let calls = self.io.callbacks.fetch_add(1, Ordering::Relaxed);
         self.io
             .callback_frames
             .store(callback_frames as u32, Ordering::Relaxed);
+        // A callback after a stall catches up on the buffer it emptied.
+        if calls >= SETTLE_CALLBACKS && !stalled {
+            self.io
+                .peak_callback_frames
+                .fetch_max(callback_frames as u32, Ordering::Relaxed);
+        }
         self.io.carried_frames.store(
             ((self.pending_len - self.pending_pos) / self.channels) as u32,
             Ordering::Relaxed,
@@ -662,6 +696,18 @@ mod tests {
     /// its pad sized for `burst` blocks, plays through a `device_rate`
     /// speaker called back in real time.
     fn dropouts_through_an_offloaded_node(block: usize, device_rate: u32, burst: usize) -> usize {
+        let callback = super::super::device_block(block, SR, device_rate) as usize;
+        dropouts_at_callback(block, device_rate, burst, callback)
+    }
+
+    /// `dropouts_through_an_offloaded_node` with the device calling back for
+    /// `callback` frames.
+    fn dropouts_at_callback(
+        block: usize,
+        device_rate: u32,
+        burst: usize,
+        callback: usize,
+    ) -> usize {
         use crate::audio::pipeline::dag::graph_tests::offload_every_effect;
         let (valid, _) = passthrough_graph();
         let (mut built, mut producers) = build_with_block(Some("s"), SR, block, &valid, SR, false);
@@ -702,6 +748,29 @@ mod tests {
         // That a pad sized for one block starves here is pinned by the
         // offload's model test: the worker sizes its pad from timing it, and
         // a loaded machine times it slow enough to cover a burst anyway.
+    }
+
+    #[test]
+    fn callback_burst_counts_the_blocks_one_callback_renders() {
+        assert_eq!(callback_burst(64, SR, SR, 64), 1);
+        assert_eq!(callback_burst(480, SR, SR, 64), 8);
+        assert_eq!(callback_burst(512, SR, SR, 64), 8);
+        // 441 device frames are 480 pipeline frames, plus one carried over.
+        assert_eq!(callback_burst(441, SR, 44_100, 64), 9);
+    }
+
+    #[test]
+    fn the_peak_callback_leaves_out_the_first_ones() {
+        let mut t = rig(64, SR);
+        feed(&mut t.input, &vec![0.25_f32; 48_000 * 2]);
+        let mut out = vec![0.0; 1024 * 2];
+        t.r.render(&mut out, 1024);
+        assert_eq!(t.io.peak_callback_frames.load(Ordering::Relaxed), 0);
+        let mut out = vec![0.0; 64 * 2];
+        for _ in 0..8 {
+            t.r.render(&mut out, 64);
+        }
+        assert_eq!(t.io.peak_callback_frames.load(Ordering::Relaxed), 64);
     }
 
     #[test]

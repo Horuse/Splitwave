@@ -38,7 +38,7 @@ mod render;
 
 pub(super) use platform::resolve_speaker;
 use platform::{start_speaker_stream, SpeakerHandle, SpeakerResolved};
-pub(super) use render::{render_burst, SpeakerIo};
+pub(super) use render::{callback_burst, render_burst, SpeakerIo};
 use render::{speaker_link, SpeakerLink, SpeakerRenderer};
 
 use super::virtual_io::{DeviceClock, VirtualSpeaker};
@@ -121,7 +121,11 @@ impl SpeakerTarget {
             } => {
                 let channels = speaker.channels.max(1) as usize;
                 let rate = speaker.sample_rate;
-                let period = device_block(graph.block_frames(), graph.sample_rate(), rate) as usize;
+                let period = speaker.callback_frames.unwrap_or(device_block(
+                    graph.block_frames(),
+                    graph.sample_rate(),
+                    rate,
+                ) as usize);
                 let (renderer, ctrl, io) = speaker_renderer(graph, rate, channels, None, meter)?;
                 let (mut link, mut fill) = speaker_callback();
                 link.attach(renderer);

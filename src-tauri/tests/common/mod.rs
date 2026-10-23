@@ -55,11 +55,20 @@ pub fn devices() -> VirtualDevices {
     let speaker = |sample_rate, channels| VirtualSpeaker {
         sample_rate,
         channels,
+        callback_frames: None,
     };
     d.add_speaker("out", speaker(RATE, 2));
     d.add_speaker("out-2", speaker(RATE, 2));
     d.add_speaker("out-44k", speaker(44_100, 2));
     d.add_speaker("out-6ch", speaker(RATE, 6));
+    // A WASAPI device in shared mode: a 10 ms period, whatever is asked.
+    d.add_speaker(
+        "out-wasapi",
+        VirtualSpeaker {
+            callback_frames: Some(480),
+            ..speaker(RATE, 2)
+        },
+    );
     d
 }
 

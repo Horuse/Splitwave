@@ -4,7 +4,8 @@
 //! heavy lifting lives in `pipeline::build`; this module is just a command
 //! dispatcher.
 
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
@@ -14,6 +15,10 @@ use crate::audio::pipeline::{self, ActivePipeline};
 use crate::error::{AppError, AppResult};
 
 const STATE_EVENT: &str = "audio://state";
+
+/// How often a running pipeline checks that each speaker's graph is built for
+/// the callbacks its device really makes.
+const CALLBACK_CHECK: Duration = Duration::from_millis(100);
 
 pub enum Command {
     Start {
@@ -77,8 +82,23 @@ pub enum Command {
 pub fn run(rx: Receiver<Command>) {
     info!("audio thread started");
     let mut active: Option<ActivePipeline> = None;
+    let mut host_app: Option<AppHandle> = None;
 
-    while let Ok(cmd) = rx.recv() {
+    loop {
+        let cmd = match rx.recv_timeout(CALLBACK_CHECK) {
+            Ok(cmd) => cmd,
+            Err(RecvTimeoutError::Timeout) => {
+                if let (Some(p), Some(app)) = (active.as_mut(), host_app.as_ref()) {
+                    if let Err(e) = p.fit_speaker_callbacks(pipeline::Host::app(app.clone())) {
+                        error!(error = %e, "speaker rebuild failed, clearing active pipeline");
+                        active = None;
+                        let _ = app.emit(STATE_EVENT, serde_json::json!({ "kind": "stopped" }));
+                    }
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         match cmd {
             Command::Start { graph, app, reply } => {
                 if active.is_some() {
@@ -86,6 +106,7 @@ pub fn run(rx: Receiver<Command>) {
                     let _ = reply.send(Err(AppError::AlreadyRunning));
                     continue;
                 }
+                host_app = Some(app.clone());
                 match pipeline::build(&graph, pipeline::Host::app(app)) {
                     Ok(p) => {
                         info!("pipeline built and running");

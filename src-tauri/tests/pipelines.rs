@@ -576,3 +576,25 @@ fn analyzers_only_run_in_real_time() {
     m.assert_real_time();
     m.assert_no_dropouts();
 }
+
+#[test]
+fn a_speaker_calling_back_for_many_blocks_gets_its_graph_rebuilt() {
+    let _g = serial();
+    let graph = Graph::new(64)
+        .node("m", "microphone", mic("mic"))
+        .node("ns", "noiseSuppressor", effect("noiseSuppressor"))
+        .node("s", "speaker", speaker("out-wasapi"))
+        .chain(&["m", "ns", "s"]);
+    let mut rig = splitwave_lib::testkit::Rig::new(devices());
+    rig.apply(graph.json()).expect("graph starts");
+    assert_eq!(rig.speaker_burst("s"), Some(1));
+    std::thread::sleep(WARMUP);
+    rig.fit_speaker_callbacks().expect("rebuild");
+    // 480-frame callbacks render eight 64-frame blocks at once.
+    assert_eq!(rig.speaker_burst("s"), Some(8));
+    rig.fit_speaker_callbacks().expect("nothing to fit");
+    assert_eq!(rig.speaker_burst("s"), Some(8));
+    let m = measure(rig, &[("out-wasapi", 2)]);
+    m.assert_real_time();
+    m.assert_no_dropouts();
+}

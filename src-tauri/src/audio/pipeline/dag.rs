@@ -1306,6 +1306,14 @@ struct DelayLine {
     buf: Box<[f32]>,
     scratch: Box<[f32]>,
     pos: usize,
+    channels: usize,
+    /// Samples of `buf` written since it was built: the rest still plays the
+    /// silence it started with.
+    primed: usize,
+}
+
+fn delay_unprimed(d: &Option<DelayLine>) -> usize {
+    d.as_ref().map_or(0, DelayLine::unprimed_frames)
 }
 
 fn delay_len(d: &Option<DelayLine>) -> usize {
@@ -1367,7 +1375,13 @@ impl DelayLine {
             buf: vec![0.0; delay_frames * channels].into_boxed_slice(),
             scratch: vec![0.0; block_frames * channels].into_boxed_slice(),
             pos: 0,
+            channels: channels.max(1),
+            primed: 0,
         }
+    }
+
+    fn unprimed_frames(&self) -> usize {
+        (self.buf.len() - self.primed) / self.channels
     }
 
     fn delayed<'a>(&'a mut self, input: &'a [f32]) -> &'a [f32] {
@@ -1383,6 +1397,7 @@ impl DelayLine {
             pos = if pos + 1 == cap { 0 } else { pos + 1 };
         }
         self.pos = pos;
+        self.primed = (self.primed + n).min(cap);
         &self.scratch[..n]
     }
 }
@@ -1409,6 +1424,8 @@ pub(super) struct OutputGraph {
     /// deepest cumulative effect latency from any source to this output. The
     /// whole mix is delayed by this, so it is the graph's own latency.
     latency_frames: usize,
+    /// Per node, scratch for `unprimed_frames`.
+    unprimed: Vec<usize>,
     /// Blocks produced by `process_block`. A clone lives in this build's
     /// `BuiltOutputGraph::output` so the non-RT tick thread can compare this
     /// worker's real block rate against `sample_rate / block_frames`.
@@ -1430,6 +1447,37 @@ impl OutputGraph {
 
     pub(super) fn latency_frames(&self) -> usize {
         self.latency_frames
+    }
+
+    /// Frames before every heard path plays audio rather than the silence its
+    /// newly built delay lines and effects start with. A node carried over
+    /// from the graph before is already full. RT-safe.
+    pub(super) fn unprimed_frames(&mut self) -> usize {
+        let deepest = |edges: &[IncomingEdge], unprimed: &[usize]| {
+            edges
+                .iter()
+                .map(|e| unprimed[e.src_idx] + delay_unprimed(&e.delay))
+                .max()
+                .unwrap_or(0)
+        };
+        let mut held = 0;
+        for i in 0..self.nodes.len() {
+            let u = match &self.nodes[i] {
+                DagNode::Source(_) | DagNode::Producer(_) => 0,
+                DagNode::Effect(e) => {
+                    deepest(&e.incoming, &self.unprimed) + e.bypass.dry.unprimed_frames()
+                }
+                DagNode::Consumer(c) => deepest(&c.incoming, &self.unprimed),
+            };
+            self.unprimed[i] = u;
+            if self.audible[i] {
+                held = held.max(u);
+            }
+        }
+        self.terminals
+            .iter()
+            .map(|t| self.unprimed[t.src_idx] + delay_unprimed(&t.delay))
+            .fold(held, usize::max)
     }
 
     pub(super) fn set_out_channels(&mut self, channels: usize) {
@@ -2488,6 +2536,7 @@ pub(super) fn build_output_graph(
 
         let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
         let audible = audible_nodes(&nodes, &[]);
+        let unprimed = vec![0; nodes.len()];
         return Ok(BuiltOutputGraph {
             graph: OutputGraph {
                 sample_rate: output_sr,
@@ -2499,6 +2548,7 @@ pub(super) fn build_output_graph(
                 audible,
                 terminals: Vec::new(),
                 latency_frames: max_up,
+                unprimed,
                 blocks: blocks.clone(),
             },
             controls,
@@ -2571,6 +2621,7 @@ pub(super) fn build_output_graph(
 
     let (node_ids, node_keys) = node_identities(nodes.len(), &id_to_index, &carried);
     let audible = audible_nodes(&nodes, &terminals);
+    let unprimed = vec![0; nodes.len()];
     Ok(BuiltOutputGraph {
         graph: OutputGraph {
             sample_rate: output_sr,
@@ -2582,6 +2633,7 @@ pub(super) fn build_output_graph(
             audible,
             terminals,
             latency_frames: node_latencies.iter().copied().max().unwrap_or(0),
+            unprimed,
             blocks: blocks.clone(),
         },
         controls,

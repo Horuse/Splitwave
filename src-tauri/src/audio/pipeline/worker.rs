@@ -60,8 +60,8 @@ pub(super) struct DspWorker {
     /// back to 1 after the swap.
     gain: f32,
     /// Frames a graph that just swapped in stays silent before it fades in:
-    /// its new delay lines start empty, and audio arriving at the end of one
-    /// mid-fade would step in.
+    /// the delay lines it built anew start empty, and audio arriving at the
+    /// end of one mid-fade would step in.
     hold: usize,
     /// Hot-swap channel: main thread pushes a freshly-built `OutputGraph`
     /// here; worker takes ownership at the next block boundary.
@@ -88,6 +88,12 @@ impl WorkerCtrl {
             .push(graph)
             .map_err(|_| AppError::Stream("worker swap queue full".into()))?;
         Ok(())
+    }
+
+    /// Whether the worker has swapped in the graph last sent, handing the one
+    /// before it back.
+    pub(super) fn swap_landed(&self) -> bool {
+        !self.old_graph_rx.is_empty()
     }
 
     fn drain_old(&mut self) {
@@ -180,8 +186,8 @@ impl DspWorker {
         }
         if self.gain <= 0.0 {
             if let Some(new_graph) = self.pending.take() {
-                self.hold = new_graph.latency_frames();
                 self.swap_in(new_graph);
+                self.hold = self.graph.unprimed_frames();
             }
         }
         active

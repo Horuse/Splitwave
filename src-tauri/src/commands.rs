@@ -45,6 +45,18 @@ where
     .map_err(|_| AppError::Stream("audio request task failed".into()))?
 }
 
+/// Device queries can stall for seconds on a busy or wedged endpoint (WASAPI
+/// especially); on the main thread that hangs the whole window.
+async fn off_main<T, F>(f: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|_| AppError::Device("device task failed".into()))
+}
+
 /// Scans standard install directories for hostable plugins, opening only
 /// bundles that are new or changed since the cached scan; `full` reopens all of
 /// them. Loading foreign dylibs blocks and can be slow, so it runs off the main
@@ -242,15 +254,15 @@ pub async fn play_cue(device_id: String, muted: bool, gain: f32, beep: bool) -> 
 }
 
 #[tauri::command]
-pub fn list_input_devices() -> AppResult<Vec<DeviceInfo>> {
-    let devices = device::list_inputs()?;
+pub async fn list_input_devices() -> AppResult<Vec<DeviceInfo>> {
+    let devices = off_main(device::list_inputs).await??;
     info!(count = devices.len(), "input devices listed");
     Ok(devices)
 }
 
 #[tauri::command]
-pub fn list_output_devices() -> AppResult<Vec<DeviceInfo>> {
-    let devices = device::list_outputs()?;
+pub async fn list_output_devices() -> AppResult<Vec<DeviceInfo>> {
+    let devices = off_main(device::list_outputs).await??;
     info!(count = devices.len(), "output devices listed");
     Ok(devices)
 }
@@ -271,8 +283,8 @@ pub fn get_app_icons(bundle_ids: Vec<String>) -> std::collections::HashMap<Strin
 }
 
 #[tauri::command]
-pub fn device_info(kind: DeviceKind, name: String) -> AppResult<NativeDeviceInfo> {
-    device::device_info(kind, &name)
+pub async fn device_info(kind: DeviceKind, name: String) -> AppResult<NativeDeviceInfo> {
+    off_main(move || device::device_info(kind, &name)).await?
 }
 
 #[tauri::command]
@@ -356,27 +368,28 @@ pub async fn update_effect(
 }
 
 #[tauri::command]
-pub fn get_device_volume(
+pub async fn get_device_volume(
     kind: DeviceKind,
     name: String,
-) -> Option<crate::audio::volume::DeviceVolume> {
-    crate::audio::volume::device_volume(kind, &name)
+) -> AppResult<Option<crate::audio::volume::DeviceVolume>> {
+    off_main(move || crate::audio::volume::device_volume(kind, &name)).await
 }
 
 /// Starts emitting `audio://device_volume` for this device until unwatched.
 #[tauri::command]
-pub fn watch_device_volume(kind: DeviceKind, name: String, app: AppHandle) -> AppResult<()> {
-    crate::audio::volume::watch_device_volume(&app, kind, name)
+pub async fn watch_device_volume(kind: DeviceKind, name: String, app: AppHandle) -> AppResult<()> {
+    off_main(move || crate::audio::volume::watch_device_volume(&app, kind, name)).await?
 }
 
 #[tauri::command]
-pub fn unwatch_device_volume(kind: DeviceKind, name: String) {
-    crate::audio::volume::unwatch_device_volume(kind, name);
+pub async fn unwatch_device_volume(kind: DeviceKind, name: String) -> AppResult<()> {
+    off_main(move || crate::audio::volume::unwatch_device_volume(kind, name)).await
 }
 
 #[tauri::command]
-pub fn set_device_volume(kind: DeviceKind, name: String, scalar: f32) -> AppResult<()> {
-    if crate::audio::volume::set_device_volume(kind, &name, scalar) {
+pub async fn set_device_volume(kind: DeviceKind, name: String, scalar: f32) -> AppResult<()> {
+    let target = name.clone();
+    if off_main(move || crate::audio::volume::set_device_volume(kind, &target, scalar)).await? {
         Ok(())
     } else {
         Err(AppError::Device(format!(

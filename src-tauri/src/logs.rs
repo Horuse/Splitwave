@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -179,31 +179,37 @@ pub fn previous_session_tail(dir: &Path, home: Option<&Path>) -> Option<String> 
 
 /// Hides the home directory (it carries the user name) and IP addresses.
 fn redact(text: &str, home: Option<&Path>) -> String {
-    let text = match home.and_then(Path::to_str) {
-        Some(home) if home.len() > 1 => text.replace(home, "~"),
-        _ => text.to_string(),
-    };
+    let mut text = text.to_string();
+    if let Some(home) = home.and_then(Path::to_str).filter(|h| h.len() > 1) {
+        // `?path` fields log the Debug form, with backslashes doubled on Windows.
+        let escaped = home.replace('\\', "\\\\");
+        text = text.replace(&escaped, "~").replace(home, "~");
+    }
     redact_ips(&text)
 }
 
 fn redact_ips(text: &str) -> String {
-    // Candidates only; std's parsers decide what is an address, so clock
+    static V4: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap());
+    // Candidates only; std's parser decides what is an address, so clock
     // times and `crate::path` targets stay untouched.
-    static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w:.]+").unwrap());
-    TOKEN
-        .replace_all(text, |caps: &Captures| {
-            let token = &caps[0];
-            let addr = token.trim_end_matches('.');
-            let rest = &token[addr.len()..];
-            if addr.parse::<IpAddr>().is_ok() {
-                format!("<ip>{rest}")
-            } else if let Ok(socket) = addr.parse::<SocketAddr>() {
-                format!("<ip>:{}{rest}", socket.port())
-            } else {
-                token.to_string()
+    static V6: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w:.]+").unwrap());
+    let text = V4.replace_all(text, |caps: &Captures| match caps[0].parse::<Ipv4Addr>() {
+        Ok(_) => "<ip>".to_string(),
+        Err(_) => caps[0].to_string(),
+    });
+    V6.replace_all(&text, |caps: &Captures| {
+        let token = &caps[0];
+        // `::1` opens with colons of its own; a stray `:` around an address is
+        // punctuation.
+        for addr in [token.trim_end_matches('.'), token.trim_matches([':', '.'])] {
+            if addr.parse::<Ipv6Addr>().is_ok() {
+                return token.replacen(addr, "<ip>", 1);
             }
-        })
-        .into_owned()
+        }
+        token.to_string()
+    })
+    .into_owned()
 }
 
 #[cfg(test)]
@@ -222,6 +228,24 @@ mod tests {
         assert!(out.contains("candidate <ip> and <ip>"));
         assert!(out.contains("splitwave_lib::audio::engine: v1.4.1 at 12:34:56"));
         assert!(out.starts_with("16:02:48.787Z"));
+    }
+
+    #[test]
+    fn redacts_addresses_next_to_colons() {
+        assert_eq!(redact_ips("ip:1.2.3.4"), "ip:<ip>");
+        assert_eq!(redact_ips("to 1.2.3.4: refused"), "to <ip>: refused");
+        assert_eq!(redact_ips("host:[::1]:80"), "host:[<ip>]:80");
+        assert_eq!(redact_ips("addr fe80::1:"), "addr <ip>:");
+    }
+
+    #[test]
+    fn redacts_debug_escaped_home() {
+        let home = Path::new(r"C:\Users\jane");
+        let out = redact(
+            r#"path="C:\\Users\\jane\\AppData" dir=C:\Users\jane\x"#,
+            Some(home),
+        );
+        assert_eq!(out, r#"path="~\\AppData" dir=~\x"#);
     }
 
     #[test]

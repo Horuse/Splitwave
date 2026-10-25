@@ -5,6 +5,8 @@ mod logs;
 mod native_crash;
 mod state;
 mod watchdog;
+#[doc(hidden)]
+pub mod testkit;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -408,7 +410,7 @@ pub fn run() {
             commands::path_exists,
             commands::read_file_peaks,
             commands::is_pipeline_running,
-            commands::output_latency_ms,
+            commands::latency_report,
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::reconcile_pipeline,

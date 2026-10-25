@@ -124,6 +124,7 @@ impl AiffRecorder {
 
 impl AudioEncoder for AiffRecorder {
     fn write_interleaved(&mut self, samples: &[f32]) -> AppResult<()> {
+        super::validate_interleaved(samples, self.channels)?;
         self.write_pcm(samples)?;
         self.samples_per_channel += (samples.len() / self.channels as usize) as u64;
         Ok(())

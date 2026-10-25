@@ -14,11 +14,14 @@
 		UI_SCALE_STEP,
 		GRID_SIZES,
 		SNAPSHOT_LIMITS,
-		PIPELINE_SAMPLE_RATE_PRESETS
+		PIPELINE_SAMPLE_RATE_PRESETS,
+		BUFFER_FRAME_PRESETS
 	} from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz, formatLatencyMs } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
 		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },
@@ -44,9 +47,23 @@
 	];
 
 	function resetAll() {
+		const rate = appSettings.pipelineSampleRate;
+		const frames = appSettings.bufferFrames;
 		edgeSettings.reset();
 		appSettings.reset();
 		void disableAutostart();
+		if (appSettings.pipelineSampleRate !== rate || appSettings.bufferFrames !== frames) applyEngineFormat();
+	}
+
+	/** Every device reopens at the new format, so a running pipeline takes it now. */
+	function applyEngineFormat() {
+		audioStore.applyEngineFormat().catch((e) => audioStore.reportError(e));
+	}
+
+	function setEngine<K extends 'pipelineSampleRate' | 'bufferFrames'>(key: K, value: (typeof appSettings)[K]) {
+		if (appSettings[key] === value) return;
+		setApp(key, value);
+		applyEngineFormat();
 	}
 
 	let customRateSelected = $state(false);
@@ -61,6 +78,7 @@
 			| 'confirmOverwriteChanges'
 			| 'keepRunningOnDisconnect'
 			| 'pipelineSampleRate'
+			| 'bufferFrames'
 	>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
@@ -273,7 +291,7 @@
 						type="button"
 						onclick={() => {
 							customRateSelected = false;
-							setApp('pipelineSampleRate', rate);
+							setEngine('pipelineSampleRate', rate);
 						}}
 						class={[
 							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
@@ -302,14 +320,43 @@
 					<span class="text-xs text-neutral-900">Custom frequency</span>
 					<NumberStepper
 						value={appSettings.pipelineSampleRate}
-						min={8000}
-						max={384000}
+						min={MIN_SAMPLE_RATE}
+						max={MAX_SAMPLE_RATE}
 						step={1}
 						label="Custom sample rate"
-						onchange={(v) => setApp('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
+						onchange={(v) =>
+							setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
 					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
 				</div>
 			{/if}
+		</section>
+
+		<section class="flex flex-col gap-2">
+			<div>
+				<h2 class="text-sm font-semibold text-theme">Buffer size</h2>
+				<p class="text-xs text-neutral-900">
+					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the latency readout
+					reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running pipeline reopens its devices at
+					the new size right away.
+				</p>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2">
+				{#each BUFFER_FRAME_PRESETS as frames (frames)}
+					<button
+						type="button"
+						onclick={() => setEngine('bufferFrames', frames)}
+						class={[
+							'flex flex-col items-center rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
+							appSettings.bufferFrames === frames
+								? 'border-neutral-900 bg-neutral-200 text-theme'
+								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+						]}>
+						<span>{frames}</span>
+						<span class="text-[9px] text-neutral-800">{formatLatencyMs((frames * 1000) / appSettings.pipelineSampleRate)} ms</span>
+					</button>
+				{/each}
+			</div>
 		</section>
 
 		<section class="flex flex-col gap-2">

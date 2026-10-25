@@ -1,6 +1,8 @@
+pub mod adaptive_depth;
 pub mod capture;
 pub mod clock;
 pub mod device;
+pub mod drift_loop;
 pub mod effects;
 pub mod encoders;
 pub mod engine;
@@ -18,11 +20,14 @@ pub mod plugins;
 #[cfg(target_os = "linux")]
 pub mod pw_enum;
 pub mod resample;
+#[cfg(test)]
+pub mod rt_guard;
 pub mod signaling;
 pub mod stream_recv;
 pub mod streams;
 pub mod system_audio;
 pub mod virtual_device;
 pub mod volume;
+pub mod wake;
 pub mod webrtc;
 pub mod webrtc_codec;

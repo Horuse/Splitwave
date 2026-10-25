@@ -1,7 +1,6 @@
 //! Pacing source for the DSP worker.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -60,12 +59,6 @@ impl SystemClockTicker {
         t.catchup_max = t.period * max_blocks;
         t
     }
-
-    fn rate_limiter(sample_rate: u32, block_frames: usize) -> Self {
-        let mut ticker = Self::new(sample_rate, block_frames);
-        ticker.report_late = false;
-        ticker
-    }
 }
 
 impl ClockSource for SystemClockTicker {
@@ -108,84 +101,68 @@ impl ClockSource for SystemClockTicker {
     }
 }
 
-/// Cap on the sleep between ring-level checks, so `stop` stays responsive
-/// even when the ring is far above target.
-const FILL_CLOCK_MAX_SLEEP: Duration = Duration::from_millis(5);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Paces the speaker DSP worker off the speaker ring's own fill level rather
-/// than a wall-clock deadline. A late block just means the ring is below
-/// target, so the worker produces the next block immediately and never loses
-/// the notion of "how far behind" the way a deadline reset would.
-pub struct DeviceFillClock {
-    pipeline_sample_rate: u32,
-    device_sample_rate: Arc<AtomicU32>,
-    engine_block_frames: usize,
-    level: Arc<AtomicI64>,
-    /// Fill target, sized to the device's own buffer by the audio callback
-    /// (see `speaker_ring`). Read here every tick so the ring always bridges
-    /// one full callback whatever buffer the device negotiated.
-    target: Arc<AtomicI64>,
-    /// The startup fill budget has been produced. Until then an empty ring is
-    /// startup prefill, not a worker that fell behind.
-    primed: bool,
-    startup_frames: usize,
-    /// Prevents a sink that drains immediately (for example a PipeWire null
-    /// sink) from turning the real-time worker into an unbounded busy loop.
-    wall_clock: SystemClockTicker,
-}
+    #[test]
+    fn stop_flag_returns_false_immediately() {
+        let stop = AtomicBool::new(true);
+        let mut t = SystemClockTicker::new(48_000, 1024);
+        assert!(!t.wait_for_tick(&stop));
+    }
 
-impl DeviceFillClock {
-    pub fn new(
-        pipeline_sample_rate: u32,
-        device_sample_rate: Arc<AtomicU32>,
-        engine_block_frames: usize,
-        level: Arc<AtomicI64>,
-        target: Arc<AtomicI64>,
-    ) -> Self {
-        Self {
-            pipeline_sample_rate,
-            device_sample_rate,
-            engine_block_frames,
-            level,
-            target,
-            primed: false,
-            startup_frames: 0,
-            wall_clock: SystemClockTicker::rate_limiter(pipeline_sample_rate, engine_block_frames),
+    #[test]
+    fn never_ticks_faster_than_the_block_period() {
+        let sr = 48_000;
+        let block = 480; // 10 ms
+        let mut t = SystemClockTicker::new(sr, block);
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        for _ in 0..10 {
+            assert!(t.wait_for_tick(&stop));
         }
-    }
-}
-
-impl ClockSource for DeviceFillClock {
-    fn wait_for_tick(&mut self, stop: &AtomicBool) -> bool {
-        loop {
-            if stop.load(Ordering::SeqCst) {
-                return false;
-            }
-            let target_frames = self.target.load(Ordering::Relaxed).max(0) as usize;
-            let queued = self.level.load(Ordering::Relaxed).max(0) as usize;
-            let dev_sr = self.device_sample_rate.load(Ordering::Relaxed).max(1);
-            let pipe_sr = self.pipeline_sample_rate.max(1) as u64;
-            let block_frames = ((self.engine_block_frames as u64 * dev_sr as u64 + pipe_sr / 2)
-                / pipe_sr) as usize;
-            if !self.primed {
-                self.startup_frames = self.startup_frames.saturating_add(block_frames);
-                self.primed = self.startup_frames >= target_frames;
-                return true;
-            }
-            if queued + block_frames <= target_frames {
-                return self.wall_clock.wait_for_tick(stop);
-            }
-            let overshoot = queued + block_frames - target_frames;
-            let drain = Duration::from_nanos((overshoot as u64 * 1_000_000_000) / dev_sr as u64);
-            thread::sleep(drain.min(FILL_CLOCK_MAX_SLEEP));
-        }
+        let elapsed = started.elapsed();
+        // Nine sleeping intervals must not complete early. There is
+        // intentionally no upper bound: a preempted CI runner says nothing
+        // about the ticker's pacing contract.
+        let want = Duration::from_millis(90);
+        assert!(
+            elapsed >= want - Duration::from_millis(5),
+            "paced too quickly: {elapsed:?}, minimum ~{want:?}"
+        );
     }
 
-    fn sample_rate(&self) -> u32 {
-        self.device_sample_rate.load(Ordering::Relaxed)
+    #[test]
+    fn sample_rate_reports_configured_rate() {
+        let t = SystemClockTicker::new(44_100, 1024);
+        assert_eq!(t.sample_rate(), 44_100);
     }
 
-    fn realtime_ready(&self) -> bool {
-        self.primed
+    #[test]
+    fn bounded_lateness_bursts_through_catchup() {
+        let sr = 48_000;
+        let block = 480; // 10 ms period
+        let mut t = SystemClockTicker::with_catchup(sr, block, 8);
+        let stop = AtomicBool::new(false);
+        let deadline = Instant::now() - Duration::from_millis(25);
+        t.next_deadline = Some(deadline);
+        assert!(t.wait_for_tick(&stop));
+        assert_eq!(t.next_deadline, Some(deadline + t.period));
+    }
+
+    #[test]
+    fn beyond_catchup_resets_the_deadline() {
+        let sr = 48_000;
+        let block = 480; // 10 ms; catchup 8 blocks = 80 ms
+        let mut t = SystemClockTicker::with_catchup(sr, block, 8);
+        let stop = AtomicBool::new(false);
+        let stale = Instant::now() - Duration::from_millis(120);
+        t.next_deadline = Some(stale);
+        let before = Instant::now();
+        assert!(t.wait_for_tick(&stop));
+        let reset = t.next_deadline.expect("deadline reset");
+        assert!(reset >= before + t.period);
+        assert!(reset > stale + t.period);
     }
 }

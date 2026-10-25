@@ -53,7 +53,7 @@ pub(in crate::audio::pipeline) fn native_config(
     Ok(NativeConfig {
         config: cpal::StreamConfig {
             channels,
-            sample_rate: cpal::SampleRate(hal.sample_rate),
+            sample_rate: hal.sample_rate,
             buffer_size: cpal::BufferSize::Default,
         },
         sample_format: cpal::SampleFormat::F32,
@@ -78,12 +78,12 @@ pub(in crate::audio::pipeline) fn native_config(
     }
     .map_err(|e| AppError::Device(format!("default config for {name:?}: {e}")))?;
 
-    let sample_rate = supported.sample_rate().0;
+    let sample_rate = supported.sample_rate();
     let channels = supported.channels();
     Ok(NativeConfig {
         config: cpal::StreamConfig {
             channels,
-            sample_rate: cpal::SampleRate(sample_rate),
+            sample_rate,
             buffer_size: cpal::BufferSize::Default,
         },
         sample_format: supported.sample_format(),

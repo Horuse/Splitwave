@@ -42,6 +42,7 @@ export { default as PeopleTeam } from './people_team.svelte';
 export { default as SpeakerMute } from './speaker_mute.svelte';
 export { default as Sliders } from './sliders.svelte';
 export { default as Gauge } from './gauge.svelte';
+export { default as Hourglass } from './hourglass.svelte';
 export { default as Trending } from './trending.svelte';
 export { default as Pulse } from './pulse.svelte';
 export { default as Wand } from './wand.svelte';

@@ -13,9 +13,9 @@ use serde_json::Value;
 use crate::audio::graph::EffectSpec;
 use crate::audio::plugins::host_api::HostedEffect;
 
-/// Fixed DSP block size; hosted-plugin scratch buffers are sized to it. Must
-/// stay >= the pipeline's `DSP_BLOCK_FRAMES`, or a block would overrun them.
-const PLUGIN_MAX_BLOCK: usize = 1024;
+/// Most frames a hosted plugin is ever handed at once: the largest engine
+/// block, since an offload worker forwards at most that much per call.
+const PLUGIN_MAX_BLOCK: usize = crate::audio::graph::MAX_BUFFER_FRAMES;
 
 pub mod biquad;
 pub mod channel_balance;
@@ -54,6 +54,7 @@ use noise_gate::NoiseGateEffect;
 use noise_suppressor::{NoiseSuppressorControls, NoiseSuppressorEffect};
 use reverb::ReverbEffect;
 use saturator::SaturatorEffect;
+pub(crate) use util::Ramp;
 pub use waveform::{WaveformEffect, WaveformHandle};
 
 /// Shared atom for a dynamic-gain effect (compressor / noise gate / limiter).
@@ -95,9 +96,23 @@ pub enum RuntimeEffect {
     Declick(DeclickEffect),
     DeEsser(DeEsserEffect),
     HostedPlugin(HostedEffect),
+    /// A node run on its own thread with no work of its own, standing in
+    /// for a light plugin where no real one can be loaded.
+    #[cfg(test)]
+    Offloaded(offload::Offload),
 }
 
 impl RuntimeEffect {
+    /// Frames this effect gathers before it can answer, when that is more
+    /// than the engine block it was built for; `None` when it keeps up with
+    /// any block. Drives the node's "runs at a larger block" badge.
+    pub fn working_block(&self) -> Option<usize> {
+        match self {
+            RuntimeEffect::NoiseSuppressor(e) => e.working_block(),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn latency_frames(&self) -> usize {
         match self {
@@ -118,6 +133,8 @@ impl RuntimeEffect {
             RuntimeEffect::Declick(e) => e.latency_frames(),
             RuntimeEffect::DeEsser(e) => e.latency_frames(),
             RuntimeEffect::HostedPlugin(e) => e.latency_frames(),
+            #[cfg(test)]
+            RuntimeEffect::Offloaded(o) => o.latency_frames(),
         }
     }
 
@@ -128,24 +145,41 @@ impl RuntimeEffect {
         sidechain: Option<&[f32]>,
         frames: usize,
     ) {
+        // Whatever width the node runs at: a stereo pair for most effects, the
+        // node's whole width (mono included) for analyzers and plugins that
+        // take every channel.
+        let width = main.len() / frames.max(1);
+        let active = &mut main[..frames * width];
+        for sample in active.iter_mut() {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
+        }
         match self {
-            RuntimeEffect::Compressor(e) => e.process_with_sidechain(main, sidechain, frames),
-            RuntimeEffect::NoiseGate(e) => e.process_with_sidechain(main, sidechain, frames),
-            RuntimeEffect::Gain(e) => e.process(main, frames),
-            RuntimeEffect::Mute(e) => e.process(main, frames),
-            RuntimeEffect::ChannelBalance(e) => e.process(main, frames),
-            RuntimeEffect::Saturator(e) => e.process(main, frames),
-            RuntimeEffect::Eq(e) => e.process(main, frames),
-            RuntimeEffect::LevelMeter(e) => e.process(main, frames),
-            RuntimeEffect::LufsMeter(e) => e.process(main, frames),
-            RuntimeEffect::Waveform(e) => e.process(main, frames),
-            RuntimeEffect::Limiter(e) => e.process(main, frames),
-            RuntimeEffect::Delay(e) => e.process(main, frames),
-            RuntimeEffect::Reverb(e) => e.process(main, frames),
-            RuntimeEffect::NoiseSuppressor(e) => e.process(main, frames),
-            RuntimeEffect::Declick(e) => e.process(main, frames),
-            RuntimeEffect::DeEsser(e) => e.process(main, frames),
-            RuntimeEffect::HostedPlugin(e) => e.process(main, frames),
+            RuntimeEffect::Compressor(e) => e.process_with_sidechain(active, sidechain, frames),
+            RuntimeEffect::NoiseGate(e) => e.process_with_sidechain(active, sidechain, frames),
+            RuntimeEffect::Gain(e) => e.process(active, frames),
+            RuntimeEffect::Mute(e) => e.process(active, frames),
+            RuntimeEffect::ChannelBalance(e) => e.process(active, frames),
+            RuntimeEffect::Saturator(e) => e.process(active, frames),
+            RuntimeEffect::Eq(e) => e.process(active, frames),
+            RuntimeEffect::LevelMeter(e) => e.process(active, frames),
+            RuntimeEffect::LufsMeter(e) => e.process(active, frames),
+            RuntimeEffect::Waveform(e) => e.process(active, frames),
+            RuntimeEffect::Limiter(e) => e.process(active, frames),
+            RuntimeEffect::Delay(e) => e.process(active, frames),
+            RuntimeEffect::Reverb(e) => e.process(active, frames),
+            RuntimeEffect::NoiseSuppressor(e) => e.process(active, frames),
+            RuntimeEffect::Declick(e) => e.process(active, frames),
+            RuntimeEffect::DeEsser(e) => e.process(active, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process(active, frames),
+            #[cfg(test)]
+            RuntimeEffect::Offloaded(o) => o.process(active),
+        }
+        for sample in active {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
         }
     }
 }
@@ -478,6 +512,10 @@ pub fn instantiate_effect(
     spec: &EffectSpec,
     node_id: &str,
     sample_rate: u32,
+    // Engine block the node runs in. Offloaded effects size their pad from it.
+    block_frames: usize,
+    // Most blocks the graph renders back to back (see `Offload::spawn`).
+    burst_blocks: usize,
     // False for file-recording outputs: an offline render outruns real time,
     // so an expensive effect must process in place instead of on a worker.
     realtime: bool,
@@ -516,7 +554,7 @@ pub fn instantiate_effect(
     match *spec {
         EffectSpec::Gain(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Gain { linear }) => mk(
-                RuntimeEffect::Gain(GainEffect::from_state(linear.clone())),
+                RuntimeEffect::Gain(GainEffect::from_state(linear.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -524,14 +562,14 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = GainEffect::new(d);
+                let (e, c) = GainEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Gain(e), Some(c), None, None, None, None)
             }
         },
         EffectSpec::Mute(d) => match registry.controls.get(node_id) {
             Some(EffectControl::Mute { muted }) => mk(
-                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone())),
+                RuntimeEffect::Mute(MuteEffect::from_state(muted.clone(), sample_rate)),
                 None,
                 None,
                 None,
@@ -539,7 +577,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = MuteEffect::new(d);
+                let (e, c) = MuteEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Mute(e), Some(c), None, None, None, None)
             }
@@ -549,6 +587,7 @@ pub fn instantiate_effect(
                 RuntimeEffect::ChannelBalance(ChannelBalanceEffect::from_state(
                     left.clone(),
                     right.clone(),
+                    sample_rate,
                 )),
                 None,
                 None,
@@ -557,7 +596,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = ChannelBalanceEffect::new(d);
+                let (e, c) = ChannelBalanceEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(
                     RuntimeEffect::ChannelBalance(e),
@@ -574,6 +613,7 @@ pub fn instantiate_effect(
                 RuntimeEffect::Saturator(SaturatorEffect::from_state(
                     ceiling.clone(),
                     drive.clone(),
+                    sample_rate,
                 )),
                 None,
                 None,
@@ -582,7 +622,7 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = SaturatorEffect::new(d);
+                let (e, c) = SaturatorEffect::new(d, sample_rate);
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(RuntimeEffect::Saturator(e), Some(c), None, None, None, None)
             }
@@ -646,8 +686,11 @@ pub fn instantiate_effect(
                 )
             }
         },
+        // A handle carries the rate its samples run at; a node rebuilt in a
+        // graph at another rate starts a new one, or the UI reads its time
+        // and frequency axes at the old rate.
         EffectSpec::Waveform(d) => match registry.scopes.get(node_id) {
-            Some(handle) => mk(
+            Some(handle) if handle.sample_rate == sample_rate => mk(
                 RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
                 None,
                 None,
@@ -655,7 +698,7 @@ pub fn instantiate_effect(
                 None,
                 None,
             ),
-            None => {
+            _ => {
                 let (e, handle) = WaveformEffect::new(d, node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(
@@ -671,7 +714,7 @@ pub fn instantiate_effect(
         // Spectrum reuses the scope's time-domain capture and SCOPE_EVENT
         // transport; the UI runs the FFT. No distinct runtime effect is needed.
         EffectSpec::Spectrum(_) => match registry.scopes.get(node_id) {
-            Some(handle) => mk(
+            Some(handle) if handle.sample_rate == sample_rate => mk(
                 RuntimeEffect::Waveform(WaveformEffect::from_handle(handle.clone())),
                 None,
                 None,
@@ -679,7 +722,7 @@ pub fn instantiate_effect(
                 None,
                 None,
             ),
-            None => {
+            _ => {
                 let (e, handle) = WaveformEffect::new_for(node_id.to_string(), sample_rate);
                 registry.scopes.insert(node_id.to_string(), handle.clone());
                 mk(
@@ -926,6 +969,8 @@ pub fn instantiate_effect(
                 RuntimeEffect::NoiseSuppressor(NoiseSuppressorEffect::from_state(
                     controls.clone(),
                     sample_rate,
+                    block_frames,
+                    burst_blocks,
                     realtime,
                 )),
                 None,
@@ -935,7 +980,13 @@ pub fn instantiate_effect(
                 None,
             ),
             _ => {
-                let (e, c) = NoiseSuppressorEffect::new(d, sample_rate, realtime);
+                let (e, c) = NoiseSuppressorEffect::new(
+                    d,
+                    sample_rate,
+                    block_frames,
+                    burst_blocks,
+                    realtime,
+                );
                 registry.controls.insert(node_id.to_string(), c.clone());
                 mk(
                     RuntimeEffect::NoiseSuppressor(e),
@@ -956,6 +1007,7 @@ pub fn instantiate_effect(
                     sensitivity.clone(),
                     max_width_ms.clone(),
                     sample_rate,
+                    d.max_width_ms,
                 )),
                 None,
                 None,
@@ -1006,7 +1058,7 @@ pub fn instantiate_effect(
                 crate::audio::plugins::registry::forget(node_id);
                 let muted = Arc::new(AtomicBool::new(false));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1020,7 +1072,7 @@ pub fn instantiate_effect(
                 tracing::error!(node_id, path, "plugin node has no format");
                 let muted = Arc::new(AtomicBool::new(true));
                 return mk(
-                    RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                     None,
                     None,
                     None,
@@ -1063,7 +1115,13 @@ pub fn instantiate_effect(
                     // splitting it into pairs and hand it every channel.
                     let full_width = node.channels() == channels;
                     let mut build = mk(
-                        RuntimeEffect::HostedPlugin(HostedEffect::new(node, realtime)),
+                        RuntimeEffect::HostedPlugin(HostedEffect::new(
+                            node,
+                            realtime,
+                            sample_rate,
+                            block_frames,
+                            burst_blocks,
+                        )),
                         control,
                         None,
                         None,
@@ -1079,7 +1137,7 @@ pub fn instantiate_effect(
                     crate::audio::plugins::registry::forget(node_id);
                     let muted = Arc::new(AtomicBool::new(true));
                     mk(
-                        RuntimeEffect::Mute(MuteEffect::from_state(muted)),
+                        RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
                         None,
                         None,
                         None,
@@ -1088,6 +1146,995 @@ pub fn instantiate_effect(
                     )
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::util::{db_to_linear, load_f32};
+    use super::*;
+    use crate::audio::graph::{
+        ChannelBalanceData, CompressorData, DeEsserData, DeclickData, DelayData, EqData, GainData,
+        LevelMeterData, LimiterData, LufsMeterData, MuteData, NoiseGateData, NoiseSuppressorData,
+        ReverbData, SaturatorData, SpectrumData, WaveformData,
+    };
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn apply_update_gain_maps_db_to_linear() {
+        let linear = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::Gain {
+            linear: linear.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("gainDb".into(), serde_json::json!(-6.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert!((load_f32(&linear) - db_to_linear(-6.0)).abs() < 1e-6);
+        // Unknown keys and wrong types are silently ignored.
+        let mut bad = serde_json::Map::new();
+        bad.insert("gain".into(), serde_json::json!(5.0));
+        bad.insert("gainDb".into(), serde_json::json!("text"));
+        c.apply_update(&serde_json::Value::Object(bad));
+        assert_eq!(load_f32(&linear), db_to_linear(-6.0));
+    }
+
+    #[test]
+    fn apply_update_mute_toggles_bool() {
+        let muted = Arc::new(AtomicBool::new(false));
+        let c = EffectControl::Mute {
+            muted: muted.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("muted".into(), serde_json::json!(true));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert!(muted.load(Ordering::Relaxed));
+        // Missing key leaves state untouched.
+        c.apply_update(&serde_json::Value::Object(serde_json::Map::new()));
+        assert!(muted.load(Ordering::Relaxed));
+        // Non-bool is ignored.
+        let mut bad = serde_json::Map::new();
+        bad.insert("muted".into(), serde_json::json!(1));
+        c.apply_update(&serde_json::Value::Object(bad));
+        assert!(muted.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn apply_update_channel_balance() {
+        let left = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let right = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::ChannelBalance {
+            left: left.clone(),
+            right: right.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("leftGainDb".into(), serde_json::json!(-6.0));
+        m.insert("rightGainDb".into(), serde_json::json!(6.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&left), db_to_linear(-6.0));
+        assert_eq!(load_f32(&right), db_to_linear(6.0));
+    }
+
+    #[test]
+    fn apply_update_saturator_clamps_ceiling_floor() {
+        let ceiling = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let drive = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::Saturator {
+            ceiling: ceiling.clone(),
+            drive: drive.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("thresholdDb".into(), serde_json::json!(-120.0));
+        m.insert("driveDb".into(), serde_json::json!(12.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&ceiling), db_to_linear(-120.0).max(1e-6));
+        assert_eq!(load_f32(&drive), db_to_linear(12.0));
+    }
+
+    #[test]
+    fn apply_update_eq_partial_array() {
+        let gains: [Arc<AtomicU32>; 10] =
+            std::array::from_fn(|_| Arc::new(AtomicU32::new(0.0f32.to_bits())));
+        let c = EffectControl::Eq {
+            gains: gains.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("gainsDb".into(), serde_json::json!([2.0, -2.0]));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&gains[0]), 2.0);
+        assert_eq!(load_f32(&gains[1]), -2.0);
+        assert_eq!(load_f32(&gains[2]), 0.0);
+    }
+
+    #[test]
+    fn apply_update_limiter_clamps() {
+        let ceiling = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let release_ms = Arc::new(AtomicU32::new(50.0f32.to_bits()));
+        let c = EffectControl::Limiter {
+            ceiling: ceiling.clone(),
+            release_ms: release_ms.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("ceilingDb".into(), serde_json::json!(-200.0));
+        m.insert("releaseMs".into(), serde_json::json!(0.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&ceiling), 1e-6);
+        assert_eq!(load_f32(&release_ms), 0.1);
+    }
+
+    #[test]
+    fn apply_update_compressor_clamps_each_param() {
+        let threshold_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let ratio = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let attack_ms = Arc::new(AtomicU32::new(10.0f32.to_bits()));
+        let release_ms = Arc::new(AtomicU32::new(100.0f32.to_bits()));
+        let knee_db = Arc::new(AtomicU32::new(6.0f32.to_bits()));
+        let makeup_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::Compressor {
+            threshold_db: threshold_db.clone(),
+            ratio: ratio.clone(),
+            attack_ms: attack_ms.clone(),
+            release_ms: release_ms.clone(),
+            knee_db: knee_db.clone(),
+            makeup_db: makeup_db.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("thresholdDb".into(), serde_json::json!(-24.0));
+        m.insert("ratio".into(), serde_json::json!(0.5));
+        m.insert("attackMs".into(), serde_json::json!(0.0));
+        m.insert("releaseMs".into(), serde_json::json!(0.0));
+        m.insert("kneeDb".into(), serde_json::json!(-5.0));
+        m.insert("makeupDb".into(), serde_json::json!(7.5));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&threshold_db), -24.0);
+        assert_eq!(load_f32(&ratio), 1.0);
+        assert_eq!(load_f32(&attack_ms), 0.01);
+        assert_eq!(load_f32(&release_ms), 0.1);
+        assert_eq!(load_f32(&knee_db), 0.0);
+        assert_eq!(load_f32(&makeup_db), 7.5);
+    }
+
+    #[test]
+    fn apply_update_noise_gate_clamps() {
+        let threshold_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let range_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let attack_ms = Arc::new(AtomicU32::new(10.0f32.to_bits()));
+        let hold_ms = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let release_ms = Arc::new(AtomicU32::new(100.0f32.to_bits()));
+        let c = EffectControl::NoiseGate {
+            threshold_db: threshold_db.clone(),
+            range_db: range_db.clone(),
+            attack_ms: attack_ms.clone(),
+            hold_ms: hold_ms.clone(),
+            release_ms: release_ms.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("thresholdDb".into(), serde_json::json!(-40.0));
+        m.insert("rangeDb".into(), serde_json::json!(5.0));
+        m.insert("attackMs".into(), serde_json::json!(0.0));
+        m.insert("holdMs".into(), serde_json::json!(-3.0));
+        m.insert("releaseMs".into(), serde_json::json!(0.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&threshold_db), -40.0);
+        assert_eq!(load_f32(&range_db), 0.0, "positive range clamps to 0");
+        assert_eq!(load_f32(&attack_ms), 0.01);
+        assert_eq!(load_f32(&hold_ms), 0.0);
+        assert_eq!(load_f32(&release_ms), 0.1);
+    }
+
+    #[test]
+    fn apply_update_delay_clamps() {
+        let time_ms = Arc::new(AtomicU32::new(10.0f32.to_bits()));
+        let feedback = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let mix = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::Delay {
+            time_ms: time_ms.clone(),
+            feedback: feedback.clone(),
+            mix: mix.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("timeMs".into(), serde_json::json!(0.0));
+        m.insert("feedback".into(), serde_json::json!(3.0));
+        m.insert("mix".into(), serde_json::json!(-1.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&time_ms), 1.0);
+        assert_eq!(load_f32(&feedback), 0.95);
+        assert_eq!(load_f32(&mix), 0.0);
+    }
+
+    #[test]
+    fn apply_update_reverb_clamps_all() {
+        let room_size = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let damping = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let width = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let mix = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let c = EffectControl::Reverb {
+            room_size: room_size.clone(),
+            damping: damping.clone(),
+            width: width.clone(),
+            mix: mix.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("roomSize".into(), serde_json::json!(9.0));
+        m.insert("damping".into(), serde_json::json!(-2.0));
+        m.insert("width".into(), serde_json::json!(4.0));
+        m.insert("mix".into(), serde_json::json!(-1.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&room_size), 1.0);
+        assert_eq!(load_f32(&damping), 0.0);
+        assert_eq!(load_f32(&width), 1.0);
+        assert_eq!(load_f32(&mix), 0.0);
+    }
+
+    #[test]
+    fn apply_update_noise_suppressor() {
+        let c = EffectControl::NoiseSuppressor {
+            controls: NoiseSuppressorControls {
+                atten_lim_db: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+                pf_beta: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+                min_thresh_db: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+                max_erb_thresh_db: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+                max_df_thresh_db: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            },
+        };
+        let EffectControl::NoiseSuppressor { controls } = &c else {
+            panic!("variant")
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("attenuationLimitDb".into(), serde_json::json!(-3.0));
+        m.insert("postFilterBeta".into(), serde_json::json!(-1.0));
+        m.insert("minThreshDb".into(), serde_json::json!(-12.0));
+        m.insert("maxErbThreshDb".into(), serde_json::json!(25.0));
+        m.insert("maxDfThreshDb".into(), serde_json::json!(15.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&controls.atten_lim_db), 0.0);
+        assert_eq!(load_f32(&controls.pf_beta), 0.0);
+        assert_eq!(load_f32(&controls.min_thresh_db), -12.0);
+        assert_eq!(load_f32(&controls.max_erb_thresh_db), 25.0);
+        assert_eq!(load_f32(&controls.max_df_thresh_db), 15.0);
+    }
+
+    #[test]
+    fn apply_update_declick_and_de_esser_clamp() {
+        let sensitivity = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let max_width_ms = Arc::new(AtomicU32::new(2.0f32.to_bits()));
+        let c = EffectControl::Declick {
+            sensitivity: sensitivity.clone(),
+            max_width_ms: max_width_ms.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("sensitivity".into(), serde_json::json!(7.0));
+        m.insert("maxWidthMs".into(), serde_json::json!(0.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&sensitivity), 1.0);
+        assert_eq!(load_f32(&max_width_ms), 0.3);
+
+        let frequency = Arc::new(AtomicU32::new(4000.0f32.to_bits()));
+        let threshold_db = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let ratio = Arc::new(AtomicU32::new(2.0f32.to_bits()));
+        let c = EffectControl::DeEsser {
+            frequency: frequency.clone(),
+            threshold_db: threshold_db.clone(),
+            ratio: ratio.clone(),
+        };
+        let mut m = serde_json::Map::new();
+        m.insert("frequency".into(), serde_json::json!(100.0));
+        m.insert("thresholdDb".into(), serde_json::json!(5.0));
+        m.insert("ratio".into(), serde_json::json!(50.0));
+        c.apply_update(&serde_json::Value::Object(m));
+        assert_eq!(load_f32(&frequency), 2000.0);
+        assert_eq!(load_f32(&threshold_db), 0.0);
+        assert_eq!(load_f32(&ratio), 12.0);
+    }
+
+    #[test]
+    fn apply_update_plugin_pushes_params_to_ring() {
+        let ring = Arc::new(crate::audio::plugins::ParamRing::new());
+        let c = EffectControl::Plugin {
+            events: ring.clone(),
+        };
+        // A fresh reader positioned before the writes sees them all.
+        let mut cursor = ring.reader();
+        let mut m = serde_json::Map::new();
+        m.insert(
+            "pluginParams".into(),
+            serde_json::json!({"12": 0.5, "oops": 1.0, "abc": 2.0}),
+        );
+        c.apply_update(&serde_json::Value::Object(m));
+        let mut seen = Vec::new();
+        while let Some((id, v)) = ring.read(&mut cursor) {
+            seen.push((id, v));
+        }
+        assert_eq!(seen, vec![(12, 0.5)], "non-numeric ids must be skipped");
+    }
+
+    #[test]
+    fn a_setting_that_changes_the_level_glides_instead_of_stepping() {
+        // On a steady input only the setting moves the output: a change must
+        // spread over the glide, never land in one sample.
+        use crate::audio::graph::{
+            ChannelBalanceData, CompressorData, EqData, GainData, SaturatorData,
+        };
+        let cases: Vec<(EffectSpec, serde_json::Value)> = vec![
+            (
+                EffectSpec::Gain(GainData {
+                    gain_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "gainDb": -12.0 }),
+            ),
+            (
+                EffectSpec::ChannelBalance(ChannelBalanceData {
+                    left_gain_db: 0.0,
+                    right_gain_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "leftGainDb": -12.0, "rightGainDb": -12.0 }),
+            ),
+            (
+                EffectSpec::Saturator(SaturatorData {
+                    threshold_db: 0.0,
+                    drive_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "driveDb": 12.0 }),
+            ),
+            (
+                EffectSpec::Compressor(CompressorData {
+                    threshold_db: -30.0,
+                    ratio: 4.0,
+                    attack_ms: 1.0,
+                    release_ms: 50.0,
+                    knee_db: 0.0,
+                    makeup_db: 0.0,
+                    bypassed: false,
+                }),
+                serde_json::json!({ "makeupDb": 12.0, "thresholdDb": -10.0 }),
+            ),
+            (
+                EffectSpec::Eq(EqData {
+                    gains_db: [0.0; 10],
+                    bypassed: false,
+                }),
+                serde_json::json!({ "gainsDb": [-12.0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }),
+            ),
+        ];
+        for (spec, update) in cases {
+            let mut reg = EffectRegistry::new();
+            let mut build =
+                instantiate_effect(&spec, "n", 48_000, 1024, 1, true, true, 2, &mut reg);
+            let mut warm = vec![0.25f32; 48_000 * 2];
+            build.effect.process_with_sidechain(&mut warm, None, 48_000);
+            let before = warm[warm.len() - 1];
+            build
+                .control
+                .as_ref()
+                .expect("control")
+                .apply_update(&update);
+            let mut buf = vec![0.25f32; 4_800 * 2];
+            build.effect.process_with_sidechain(&mut buf, None, 4_800);
+            let mut prev = before;
+            let mut worst = 0.0f32;
+            for frame in buf.chunks_exact(2) {
+                worst = worst.max((frame[0] - prev).abs());
+                prev = frame[0];
+            }
+            let moved = (buf[buf.len() - 1] - before).abs();
+            assert!(moved > 0.01, "{spec:?}: the setting changed nothing");
+            assert!(
+                worst < moved / 50.0,
+                "{spec:?}: stepped by {worst} of {moved}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scope_rebuilt_at_another_rate_starts_a_new_handle() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Spectrum(Default::default());
+        let first = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let same = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
+        assert!(same.scope.is_none(), "same rate reuses the handle");
+        let other = instantiate_effect(&spec, "sp", 44_100, 1024, 1, true, true, 2, &mut reg);
+        let handle = other.scope.expect("a new handle at the new rate");
+        assert_eq!(handle.sample_rate, 44_100);
+        assert_ne!(handle.session, first.scope.unwrap().session);
+    }
+
+    #[test]
+    fn instantiate_reuses_control_and_bypass_for_same_node() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Gain(GainData {
+            gain_db: -6.0,
+            bypassed: true,
+        });
+        let first = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        assert!(first.bypass_is_new);
+        assert!(first.control.is_some());
+        assert!(
+            first.bypass.load(Ordering::Relaxed),
+            "bypassed spec latches"
+        );
+        let second = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        assert!(!second.bypass_is_new);
+        assert!(second.control.is_none());
+        let other = instantiate_effect(&spec, "n2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        assert!(other.bypass_is_new);
+        assert!(other.control.is_some());
+    }
+
+    #[test]
+    fn limiter_rebuild_republishes_gr_atom() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Limiter(LimiterData {
+            ceiling_db: -6.0,
+            lookahead_ms: 1.0,
+            release_ms: 50.0,
+            bypassed: false,
+        });
+        let first = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let gr1 = first.gr.clone().expect("first build publishes GR");
+        let second = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let gr2 = second.gr.clone().expect("rebuild republishes GR");
+        assert_eq!(gr1.node_id, gr2.node_id);
+        assert!(Arc::ptr_eq(&gr1.gr_lin, &gr2.gr_lin), "same atom reused");
+        assert!(second.control.is_none(), "control must not be re-published");
+    }
+
+    #[test]
+    fn compressor_and_gate_publish_gr_handles() {
+        let mut reg = EffectRegistry::new();
+        let comp = instantiate_effect(
+            &EffectSpec::Compressor(CompressorData {
+                threshold_db: -12.0,
+                ratio: 4.0,
+                attack_ms: 5.0,
+                release_ms: 100.0,
+                knee_db: 0.0,
+                makeup_db: 0.0,
+                bypassed: false,
+            }),
+            "c",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(comp.gr.is_some());
+        let gate = instantiate_effect(
+            &EffectSpec::NoiseGate(NoiseGateData {
+                threshold_db: -30.0,
+                range_db: -24.0,
+                attack_ms: 5.0,
+                hold_ms: 50.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            "g",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(gate.gr.is_some());
+    }
+
+    #[test]
+    fn metering_specs_return_handles_once() {
+        let mut reg = EffectRegistry::new();
+        let lvl = instantiate_effect(
+            &EffectSpec::LevelMeter(LevelMeterData {}),
+            "m",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(lvl.meter.is_some());
+        let lvl2 = instantiate_effect(
+            &EffectSpec::LevelMeter(LevelMeterData {}),
+            "m",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(lvl2.meter.is_none());
+
+        let lufs = instantiate_effect(
+            &EffectSpec::LufsMeter(LufsMeterData {}),
+            "l",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(lufs.lufs.is_some());
+        let wave = instantiate_effect(
+            &EffectSpec::Waveform(WaveformData {}),
+            "w",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(wave.scope.is_some());
+        let spec_first = instantiate_effect(
+            &EffectSpec::Spectrum(SpectrumData {}),
+            "s",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(spec_first.scope.is_some());
+        let spec_second = instantiate_effect(
+            &EffectSpec::Spectrum(SpectrumData {}),
+            "s",
+            48_000,
+            1024,
+            1,
+            true,
+            true,
+            2,
+            &mut reg,
+        );
+        assert!(spec_second.scope.is_none());
+    }
+
+    #[test]
+    fn plugin_without_path_is_inert_passthrough() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Plugin {
+            node_id: "p".into(),
+            format: Some(crate::audio::plugins::PluginFormat::Vst3),
+            path: String::new(),
+            plugin_id: String::new(),
+            bypassed: false,
+            state: None,
+        };
+        let mut build = instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &mut reg);
+        assert!(build.control.is_none());
+        assert!(!build.full_width);
+        let mut buf = vec![0.3f32, -0.4];
+        build.effect.process_with_sidechain(&mut buf, None, 1);
+        assert_eq!(buf, vec![0.3, -0.4]);
+    }
+
+    #[test]
+    fn plugin_without_format_is_silenced() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Plugin {
+            node_id: "p2".into(),
+            format: None,
+            path: "/some/plugin.vst3".into(),
+            plugin_id: String::new(),
+            bypassed: false,
+            state: None,
+        };
+        let mut build = instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut buf = vec![0.3f32, -0.4];
+        build.effect.process_with_sidechain(&mut buf, None, 1);
+        assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn plugin_with_unloadable_path_is_silenced() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Plugin {
+            node_id: "p3".into(),
+            format: Some(crate::audio::plugins::PluginFormat::Vst3),
+            path: "/definitely/not/a/plugin.vst3".into(),
+            plugin_id: String::new(),
+            bypassed: false,
+            state: None,
+        };
+        let mut build = instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut buf = vec![0.3f32, -0.4];
+        build.effect.process_with_sidechain(&mut buf, None, 1);
+        assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn begin_reconcile_resets_primary_claims() {
+        let mut reg = EffectRegistry::new();
+        reg.plugin_primary_claimed.insert("x".to_string());
+        assert!(reg.plugin_primary_claimed.contains("x"));
+        reg.begin_reconcile();
+        assert!(!reg.plugin_primary_claimed.contains("x"));
+    }
+
+    /// One of every built-in effect with neutral-ish settings.
+    fn builtin_specs() -> Vec<EffectSpec> {
+        vec![
+            EffectSpec::Gain(GainData {
+                gain_db: -6.0,
+                bypassed: false,
+            }),
+            EffectSpec::Mute(MuteData {
+                muted: false,
+                bypassed: false,
+            }),
+            EffectSpec::ChannelBalance(ChannelBalanceData {
+                left_gain_db: 0.0,
+                right_gain_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::Saturator(SaturatorData {
+                threshold_db: 0.0,
+                drive_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::Eq(EqData {
+                gains_db: [0.0; 10],
+                bypassed: false,
+            }),
+            EffectSpec::LevelMeter(LevelMeterData {}),
+            EffectSpec::LufsMeter(LufsMeterData {}),
+            EffectSpec::Waveform(WaveformData {}),
+            EffectSpec::Spectrum(SpectrumData {}),
+            EffectSpec::Limiter(LimiterData {
+                ceiling_db: 0.0,
+                lookahead_ms: 1.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Compressor(CompressorData {
+                threshold_db: -12.0,
+                ratio: 4.0,
+                attack_ms: 5.0,
+                release_ms: 100.0,
+                knee_db: 0.0,
+                makeup_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::NoiseGate(NoiseGateData {
+                threshold_db: -30.0,
+                range_db: -24.0,
+                attack_ms: 5.0,
+                hold_ms: 0.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Delay(DelayData {
+                time_ms: 10.0,
+                feedback: 0.0,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::Reverb(ReverbData {
+                room_size: 0.5,
+                damping: 0.5,
+                width: 1.0,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::Declick(DeclickData {
+                sensitivity: 0.5,
+                max_width_ms: 2.0,
+                bypassed: false,
+            }),
+            EffectSpec::DeEsser(DeEsserData {
+                frequency: 6000.0,
+                threshold_db: -20.0,
+                ratio: 4.0,
+                bypassed: false,
+            }),
+        ]
+    }
+
+    /// A stereo signal with transients, level changes and silence, so
+    /// dynamics, detectors and filters all have something to react to.
+    fn program(frames: usize) -> Vec<f32> {
+        (0..frames)
+            .flat_map(|f| {
+                let t = f as f32 / 48_000.0;
+                let env = if (f / 3000) % 2 == 0 { 0.9 } else { 0.05 };
+                let click = if f % 1711 == 0 { 0.8 } else { 0.0 };
+                let l = env * (t * 440.0 * std::f32::consts::TAU).sin() + click;
+                let r = env * (t * 6_500.0 * std::f32::consts::TAU).sin() * 0.7;
+                [l, r]
+            })
+            .collect()
+    }
+
+    fn run_in_blocks(spec: &EffectSpec, input: &[f32], block: usize) -> Vec<f32> {
+        let mut reg = EffectRegistry::new();
+        let mut build = instantiate_effect(spec, "inv", 48_000, block, 1, false, true, 2, &mut reg);
+        let mut out = input.to_vec();
+        for chunk in out.chunks_mut(block * 2) {
+            let frames = chunk.len() / 2;
+            build.effect.process_with_sidechain(chunk, None, frames);
+        }
+        out
+    }
+
+    // The engine block is a user setting now, so an effect's output must not
+    // depend on how its input was cut into blocks.
+    #[test]
+    fn every_builtin_effect_is_block_size_invariant() {
+        let input = program(12_288);
+        let mut shaping = 0;
+        for spec in builtin_specs() {
+            let reference = run_in_blocks(&spec, &input, 1024);
+            if reference
+                .iter()
+                .zip(&input)
+                .any(|(a, b)| (a - b).abs() > 1e-3)
+            {
+                shaping += 1;
+            }
+            for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+                let got = run_in_blocks(&spec, &input, block);
+                let worst = got
+                    .iter()
+                    .zip(&reference)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0_f32, f32::max);
+                assert!(
+                    worst < 1e-4,
+                    "{spec:?} at {block}-frame blocks differs by {worst}"
+                );
+            }
+        }
+        assert!(shaping >= 8, "only {shaping} effects changed the signal");
+    }
+
+    #[test]
+    fn every_builtin_effect_processes_without_allocating() {
+        for spec in builtin_specs() {
+            for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
+                let mut reg = EffectRegistry::new();
+                let mut build =
+                    instantiate_effect(&spec, "rt", 48_000, block, 1, true, true, 2, &mut reg);
+                let mut buf = program(block);
+                // First blocks may size lazily; the steady state must not.
+                for _ in 0..4 {
+                    build.effect.process_with_sidechain(&mut buf, None, block);
+                }
+                crate::audio::rt_guard::assert_no_alloc(&format!("{spec:?} @ {block}"), || {
+                    for _ in 0..16 {
+                        build.effect.process_with_sidechain(&mut buf, None, block);
+                    }
+                });
+            }
+        }
+    }
+
+    // Analyzers take a node's whole width, which is not always stereo: a mono
+    // mic feeds them one channel, a multichannel interface four or more.
+    #[test]
+    fn full_width_analyzers_see_every_channel_at_any_width() {
+        for width in [1usize, 2, 4, 6] {
+            let mut reg = EffectRegistry::new();
+            let spec = EffectSpec::LevelMeter(LevelMeterData {});
+            let mut build =
+                instantiate_effect(&spec, "lm", 48_000, 1024, 1, true, true, width, &mut reg);
+            let meter = build.meter.clone().expect("level meter publishes a handle");
+            let frames = 1024;
+            // Channel c carries a constant 0.1 * (c + 1).
+            let mut buf: Vec<f32> = (0..frames * width)
+                .map(|i| 0.1 * ((i % width) + 1) as f32)
+                .collect();
+            build.effect.process_with_sidechain(&mut buf, None, frames);
+            let snap = meter.snapshot_and_decay();
+            assert_eq!(snap.peaks.len(), width, "{width} channels metered");
+            for (c, peak) in snap.peaks.iter().enumerate() {
+                let want = 0.1 * (c + 1) as f32;
+                assert!(
+                    (peak - want).abs() < 1e-4,
+                    "{width}ch: channel {c} peak {peak}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_effect_dispatch_latency_and_processing() {
+        let mut reg = EffectRegistry::new();
+        let sr = 48_000;
+        let specs = builtin_specs();
+        for spec in &specs {
+            let mut build =
+                instantiate_effect(spec, "dispatch", sr, 1024, 1, true, true, 2, &mut reg);
+            assert!(build.effect.latency_frames() < 100_000);
+            let mut buf = vec![0.25f32; 96];
+            let side = vec![0.5f32; 96];
+            build
+                .effect
+                .process_with_sidechain(&mut buf, Some(&side), 48);
+            assert!(buf.iter().all(|s| s.is_finite()));
+            reg.controls.clear();
+            reg.meters.clear();
+            reg.lufs.clear();
+            reg.scopes.clear();
+            reg.gr_atomics.clear();
+            reg.plugin_primary_claimed.clear();
+        }
+    }
+
+    #[test]
+    fn runtime_effects_contain_non_finite_samples_and_recover() {
+        let mut reg = EffectRegistry::new();
+        let specs = [
+            EffectSpec::Gain(GainData {
+                gain_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::Saturator(SaturatorData {
+                threshold_db: -1.0,
+                drive_db: 3.0,
+                bypassed: false,
+            }),
+            EffectSpec::Eq(EqData {
+                gains_db: [0.0; 10],
+                bypassed: false,
+            }),
+            EffectSpec::Limiter(LimiterData {
+                ceiling_db: -1.0,
+                lookahead_ms: 1.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Delay(DelayData {
+                time_ms: 10.0,
+                feedback: 0.5,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::Reverb(ReverbData {
+                room_size: 0.5,
+                damping: 0.5,
+                width: 1.0,
+                mix: 0.5,
+                bypassed: false,
+            }),
+        ];
+        for spec in &specs {
+            let mut build =
+                instantiate_effect(spec, "finite", 48_000, 1024, 1, true, true, 2, &mut reg);
+            let mut poisoned = vec![0.25; 96];
+            poisoned[10] = f32::NAN;
+            poisoned[11] = f32::INFINITY;
+            build.effect.process_with_sidechain(&mut poisoned, None, 48);
+            assert!(poisoned.iter().all(|sample| sample.is_finite()), "{spec:?}");
+
+            let mut clean = vec![0.25; 96];
+            build.effect.process_with_sidechain(&mut clean, None, 48);
+            assert!(
+                clean.iter().all(|sample| sample.is_finite()),
+                "state poisoned: {spec:?}"
+            );
+            reg.controls.clear();
+            reg.gr_atomics.clear();
+        }
+    }
+
+    #[test]
+    fn rebuild_uses_from_state_and_shares_atoms() {
+        let mut reg = EffectRegistry::new();
+        let sr = 48_000;
+        let specs: Vec<EffectSpec> = vec![
+            EffectSpec::Gain(GainData {
+                gain_db: -6.0,
+                bypassed: false,
+            }),
+            EffectSpec::Mute(MuteData {
+                muted: false,
+                bypassed: false,
+            }),
+            EffectSpec::ChannelBalance(ChannelBalanceData {
+                left_gain_db: -3.0,
+                right_gain_db: 3.0,
+                bypassed: false,
+            }),
+            EffectSpec::Saturator(SaturatorData {
+                threshold_db: 0.0,
+                drive_db: 3.0,
+                bypassed: false,
+            }),
+            EffectSpec::Eq(EqData {
+                gains_db: [1.0; 10],
+                bypassed: false,
+            }),
+            EffectSpec::LevelMeter(LevelMeterData {}),
+            EffectSpec::LufsMeter(LufsMeterData {}),
+            EffectSpec::Waveform(WaveformData {}),
+            EffectSpec::Spectrum(SpectrumData {}),
+            EffectSpec::Limiter(LimiterData {
+                ceiling_db: -6.0,
+                lookahead_ms: 1.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Compressor(CompressorData {
+                threshold_db: -12.0,
+                ratio: 4.0,
+                attack_ms: 5.0,
+                release_ms: 100.0,
+                knee_db: 0.0,
+                makeup_db: 0.0,
+                bypassed: false,
+            }),
+            EffectSpec::NoiseGate(NoiseGateData {
+                threshold_db: -30.0,
+                range_db: -24.0,
+                attack_ms: 5.0,
+                hold_ms: 0.0,
+                release_ms: 50.0,
+                bypassed: false,
+            }),
+            EffectSpec::Delay(DelayData {
+                time_ms: 10.0,
+                feedback: 0.3,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::Reverb(ReverbData {
+                room_size: 0.5,
+                damping: 0.5,
+                width: 1.0,
+                mix: 0.5,
+                bypassed: false,
+            }),
+            EffectSpec::NoiseSuppressor(NoiseSuppressorData {
+                attenuation_limit_db: 15.0,
+                post_filter_beta: 0.0,
+                min_thresh_db: -10.0,
+                max_erb_thresh_db: 30.0,
+                max_df_thresh_db: 20.0,
+                bypassed: false,
+            }),
+            EffectSpec::Declick(DeclickData {
+                sensitivity: 0.5,
+                max_width_ms: 2.0,
+                bypassed: false,
+            }),
+            EffectSpec::DeEsser(DeEsserData {
+                frequency: 6000.0,
+                threshold_db: -20.0,
+                ratio: 4.0,
+                bypassed: false,
+            }),
+        ];
+        for (i, spec) in specs.iter().enumerate() {
+            let node = format!("reuse-{i}");
+            let first = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            assert!(
+                first.control.is_some()
+                    || first.meter.is_some()
+                    || first.lufs.is_some()
+                    || first.scope.is_some()
+            );
+            // Same node id → the registry already holds the state; the rebuild
+            // must go through from_state and stay functional.
+            let mut second = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            assert!(second.control.is_none());
+            assert!(second.meter.is_none() && second.lufs.is_none() && second.scope.is_none());
+            let mut buf = vec![0.3f32; 96];
+            second.effect.process_with_sidechain(&mut buf, None, 48);
+            assert!(buf.iter().all(|s| s.is_finite()));
         }
     }
 }

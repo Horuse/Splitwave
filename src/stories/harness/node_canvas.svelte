@@ -6,7 +6,7 @@
 	import ChannelEdge from '$lib/modules/flow/ui/_channel_edge.svelte';
 	import StubSource from './stub_source.svelte';
 	import EnvScope from './env_scope.svelte';
-	import { setNodeDataLookup } from './backend';
+	import { setNodeDataLookup, STORY_NODE_ID } from './backend';
 	import { startSignal } from './signal';
 	import { splitArgs } from './args';
 
@@ -16,7 +16,7 @@
 	}
 	let { kind, args }: Props = $props();
 
-	const NODE_ID = 'story-node';
+	const NODE_ID = STORY_NODE_ID;
 	const STUB_ID = 'story-source';
 	const types = { ...nodeTypes, stub: StubSource };
 	const edgeTypes = { channel: ChannelEdge };

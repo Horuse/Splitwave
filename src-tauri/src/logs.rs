@@ -2,14 +2,16 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use regex::{Captures, Regex};
 use serde::Serialize;
 use tracing::field::{Field, Visit};
-use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing::{Event, Subscriber};
+use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::layer::{Context, Layer};
 
 const CAPACITY: usize = 2000;
@@ -166,12 +168,67 @@ fn keep_tail(path: &Path) -> Option<File> {
 }
 
 /// The newest lines of the previous session's log, if it left one.
-pub fn previous_session_tail(dir: &Path) -> Option<String> {
+/// Redacted: the report may be pasted into a public issue.
+pub fn previous_session_tail(dir: &Path, home: Option<&Path>) -> Option<String> {
     let tail = read_tail(&dir.join(PREVIOUS_SESSION_LOG), TAIL_BYTES)?;
     let lines: Vec<&str> = tail.lines().collect();
     let start = lines.len().saturating_sub(TAIL_LINES);
     let text = lines[start..].join("\n");
-    (!text.is_empty()).then_some(text)
+    (!text.is_empty()).then(|| redact(&text, home))
+}
+
+/// Hides the home directory (it carries the user name) and IP addresses.
+fn redact(text: &str, home: Option<&Path>) -> String {
+    let text = match home.and_then(Path::to_str) {
+        Some(home) if home.len() > 1 => text.replace(home, "~"),
+        _ => text.to_string(),
+    };
+    redact_ips(&text)
+}
+
+fn redact_ips(text: &str) -> String {
+    // Candidates only; std's parsers decide what is an address, so clock
+    // times and `crate::path` targets stay untouched.
+    static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w:.]+").unwrap());
+    TOKEN
+        .replace_all(text, |caps: &Captures| {
+            let token = &caps[0];
+            let addr = token.trim_end_matches('.');
+            let rest = &token[addr.len()..];
+            if addr.parse::<IpAddr>().is_ok() {
+                format!("<ip>{rest}")
+            } else if let Ok(socket) = addr.parse::<SocketAddr>() {
+                format!("<ip>:{}{rest}", socket.port())
+            } else {
+                token.to_string()
+            }
+        })
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_home_and_addresses() {
+        let home = Path::new("/Users/jane");
+        let log = "16:02:48.787Z  INFO splitwave_lib: crash log path=/Users/jane/Library/Logs/x\n\
+                   peer 192.168.1.20:5004 joined, candidate fe80::1c2b:3aff:fe4d:2 and 2001:db8::7\n\
+                   WARN splitwave_lib::audio::engine: v1.4.1 at 12:34:56";
+        let out = redact(log, Some(home));
+        assert!(out.contains("path=~/Library/Logs/x"));
+        assert!(out.contains("peer <ip>:5004 joined"));
+        assert!(out.contains("candidate <ip> and <ip>"));
+        assert!(out.contains("splitwave_lib::audio::engine: v1.4.1 at 12:34:56"));
+        assert!(out.starts_with("16:02:48.787Z"));
+    }
+
+    #[test]
+    fn leaves_non_addresses_alone() {
+        let line = "blocked_ms=20081 device \"MacBook Pro Speakers\" 48000 Hz 10.0.26100";
+        assert_eq!(redact_ips(line), line);
+    }
 }
 
 /// Last `max` bytes, starting at a line boundary.

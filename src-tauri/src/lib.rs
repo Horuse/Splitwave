@@ -40,7 +40,7 @@ fn append_report(path: &std::path::Path, payload: &serde_json::Value) {
     }
 }
 
-fn initialize_crash_reporting(dir: &std::path::Path) {
+fn initialize_crash_reporting(dir: &std::path::Path, home: Option<&std::path::Path>) {
     let crash_file = dir.join("crashes.jsonl");
     let session_file = dir.join("running-session");
     let crash_len = std::fs::metadata(&crash_file).map_or(0, |meta| meta.len());
@@ -48,7 +48,7 @@ fn initialize_crash_reporting(dir: &std::path::Path) {
 
     if let Ok(baseline) = std::fs::read_to_string(&session_file) {
         if let Ok(mut logs) = PREVIOUS_LOGS.lock() {
-            *logs = logs::previous_session_tail(dir);
+            *logs = logs::previous_session_tail(dir, home);
         }
         let baseline = baseline.trim().parse::<u64>().unwrap_or(0);
         if crash_len <= baseline {
@@ -296,7 +296,8 @@ pub fn run() {
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 logs::start_file_sink(&dir);
-                initialize_crash_reporting(&dir);
+                let home = handle.path().home_dir().ok();
+                initialize_crash_reporting(&dir, home.as_deref());
                 watchdog::start(handle.clone(), &dir);
                 if let Some(file) = CRASH_FILE.get() {
                     info!(path = %file.display(), "crash log");

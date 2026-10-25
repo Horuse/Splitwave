@@ -211,4 +211,57 @@ mod tests {
         assert_eq!(parsed.sample_rate, 48_000);
         assert_eq!(parsed.payload, &[0xAA, 0xBB]);
     }
+
+    #[test]
+    fn malformed_datagrams_are_rejected() {
+        assert!(parse(&[]).is_none());
+        assert!(parse(&[0, 0, 0]).is_none(), "shorter than a v1 header");
+        assert!(parse(&[7, 0, 0, 0]).is_none(), "unknown v1 format");
+        assert!(
+            parse(&[PROTOCOL_V2, 0, 0, 0, 0, 0, 0, 0]).is_none(),
+            "truncated v2"
+        );
+        assert!(
+            parse(&[PROTOCOL_V2, 9, 0, 0, 0, 0, 0, 0, 0]).is_none(),
+            "unknown v2 format"
+        );
+        let mut opus = Vec::new();
+        write_header(&mut opus, Format::Opus, 0, 1, 48_000, 64, 1);
+        opus.truncate(HEADER_LEN_V2_OPUS - 1);
+        assert!(parse(&opus).is_none(), "opus header cut short");
+    }
+
+    #[test]
+    fn header_only_packet_has_empty_payload() {
+        let mut buf = Vec::new();
+        write_header(&mut buf, Format::PcmI16, 3, 7, 44_100, 0, 0);
+        let parsed = parse(&buf).expect("header-only packet parses");
+        assert!(parsed.payload.is_empty());
+    }
+
+    #[test]
+    fn opus_zero_bitrate_and_app_mean_unknown() {
+        let mut buf = Vec::new();
+        write_header(&mut buf, Format::Opus, 0, 1, 48_000, 0, 0);
+        let parsed = parse(&buf).expect("parses");
+        assert_eq!(parsed.opus_bitrate_kbps, None);
+        assert_eq!(parsed.opus_app, None);
+    }
+
+    #[test]
+    fn pcm_codecs_roundtrip_and_clamp() {
+        let samples = [0.0f32, 0.5, -0.5, 1.0, -1.0];
+        let mut bytes = Vec::new();
+        let mut back = Vec::new();
+        pcm_f32_encode(&samples, &mut bytes);
+        pcm_f32_decode(&bytes, &mut back);
+        assert_eq!(back, samples);
+
+        pcm_i16_encode(&[2.0, -2.0, 0.5], &mut bytes);
+        back.clear();
+        pcm_i16_decode(&bytes, &mut back);
+        assert_eq!(back[0], 1.0);
+        assert_eq!(back[1], -1.0);
+        assert!((back[2] - 0.5).abs() < 1e-4);
+    }
 }

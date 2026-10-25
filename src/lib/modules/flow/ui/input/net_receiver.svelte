@@ -9,6 +9,7 @@
 	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
 	let { id, data }: NodeProps<NetReceiverNodeType> = $props();
@@ -51,21 +52,24 @@
 	const lossWindow = new LossWindow();
 
 	const POLL_MS = 1000;
-	const interval = setInterval(async () => {
+	function reset(now: number) {
+		loss = null;
+		rate = 0;
+		bufferMs = 0;
+		received = 0;
+		detectedSampleRate = null;
+		detectedFormat = null;
+		detectedOpusBitrate = null;
+		detectedOpusApp = null;
+		prevBytes = 0;
+		prevAt = now;
+		lossWindow.reset();
+	}
+	async function poll() {
 		const s = await audioMethods.netReceiverStats(id).catch(() => null);
 		const now = performance.now();
 		if (!s) {
-			loss = null;
-			rate = 0;
-			bufferMs = 0;
-			received = 0;
-			detectedSampleRate = null;
-			detectedFormat = null;
-			detectedOpusBitrate = null;
-			detectedOpusApp = null;
-			prevBytes = 0;
-			prevAt = now;
-			lossWindow.reset();
+			reset(now);
 			return;
 		}
 		loss = lossWindow.update(s.packets, s.lost);
@@ -80,12 +84,21 @@
 		detectedFormat = s.format || null;
 		detectedOpusBitrate = s.opusBitrate || null;
 		detectedOpusApp = s.opusApp || null;
-	}, POLL_MS);
+	}
+	// Stats exist only while the pipeline runs.
+	$effect(() => {
+		if (!audioStore.isRunning) {
+			untrack(() => reset(performance.now()));
+			return;
+		}
+		poll();
+		const interval = setInterval(poll, POLL_MS);
+		return () => clearInterval(interval);
+	});
 
 	let isDestroyed = false;
 	onDestroy(() => {
 		isDestroyed = true;
-		clearInterval(interval);
 	});
 
 	const MAX_CHANNELS = 255;

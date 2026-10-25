@@ -69,12 +69,14 @@ extern "C" {
     fn ba_tap_start_app(
         handle: *mut c_void,
         bundle_id: *const c_char,
+        io_frames: u32,
         callback: SampleCallback,
         user_data: *mut c_void,
     ) -> i32;
     fn ba_tap_start_system(
         handle: *mut c_void,
         exclude_current_app: i32,
+        io_frames: u32,
         callback: SampleCallback,
         user_data: *mut c_void,
     ) -> i32;
@@ -142,7 +144,9 @@ extern "C" fn sample_trampoline(
 }
 
 impl TapCapture {
-    pub fn start_app(bundle_id: &str, bridge: BroadcastRx) -> AppResult<Self> {
+    /// `io_frames` is the IO buffer asked of the tap's aggregate. Each delivery
+    /// carries one, so it sets how bursty capture is; 0 keeps the HAL default.
+    pub fn start_app(bundle_id: &str, io_frames: u32, bridge: BroadcastRx) -> AppResult<Self> {
         let bundle_cstr = CString::new(bundle_id)
             .map_err(|_| AppError::Validation("bundle id contains nul byte".into()))?;
         Self::start(
@@ -150,7 +154,7 @@ impl TapCapture {
             &format!("app audio capture ({bundle_id})"),
             bridge,
             |handle, callback, user_data| unsafe {
-                ba_tap_start_app(handle, bundle_cstr.as_ptr(), callback, user_data)
+                ba_tap_start_app(handle, bundle_cstr.as_ptr(), io_frames, callback, user_data)
             },
         )
     }
@@ -158,7 +162,11 @@ impl TapCapture {
     /// When `exclude_current_app` is set our own output is dropped from the
     /// mix, which prevents a feedback loop when System Audio is routed back
     /// through Splitwave.
-    pub fn start_system(exclude_current_app: bool, bridge: BroadcastRx) -> AppResult<Self> {
+    pub fn start_system(
+        exclude_current_app: bool,
+        io_frames: u32,
+        bridge: BroadcastRx,
+    ) -> AppResult<Self> {
         Self::start(
             "system".to_string(),
             "system audio capture",
@@ -167,6 +175,7 @@ impl TapCapture {
                 ba_tap_start_system(
                     handle,
                     if exclude_current_app { 1 } else { 0 },
+                    io_frames,
                     callback,
                     user_data,
                 )

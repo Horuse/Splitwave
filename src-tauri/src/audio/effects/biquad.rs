@@ -38,10 +38,15 @@ pub enum BandShape {
     Hpf,
 }
 
+/// Highest corner a filter is designed at, as a share of the sample rate. At
+/// Nyquist the RBJ design degenerates; a corner set for a higher rate (a
+/// 16 kHz de-esser in a 32 kHz pipeline) stays just under it instead.
+const MAX_CORNER: f32 = 0.45;
+
 /// RBJ cookbook coefficients.
 pub fn biquad_for(shape: BandShape, freq_hz: f32, q: f32, sample_rate: u32) -> Biquad {
     let fs = sample_rate as f32;
-    let w0 = 2.0 * std::f32::consts::PI * (freq_hz.max(1.0) / fs);
+    let w0 = 2.0 * std::f32::consts::PI * (freq_hz.clamp(1.0, MAX_CORNER * fs) / fs);
     let (sinw, cosw) = (w0.sin(), w0.cos());
     let q = q.max(0.05);
     let alpha = sinw / (2.0 * q);
@@ -73,5 +78,81 @@ pub fn biquad_for(shape: BandShape, freq_hz: f32, q: f32, sample_rate: u32) -> B
         a2: a2 * inv,
         z1: 0.0,
         z2: 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: u32 = 48_000;
+
+    // Steady-state amplitude of a sine at `freq` after the filter settles.
+    fn gain_at(mut f: Biquad, freq: f32) -> f32 {
+        let mut peak = 0.0f32;
+        for n in 0..SR as usize {
+            let x = (std::f32::consts::TAU * freq * n as f32 / SR as f32).sin();
+            let y = f.process(x);
+            if n > SR as usize / 2 {
+                peak = peak.max(y.abs());
+            }
+        }
+        peak
+    }
+
+    #[test]
+    fn a_corner_past_nyquist_stays_stable() {
+        for shape in [BandShape::Lpf, BandShape::Hpf] {
+            let mut f = biquad_for(shape, 16_000.0, 0.707, 16_000);
+            let mut peak = 0.0f32;
+            for n in 0..4_800 {
+                let x = if n % 2 == 0 { 0.5 } else { -0.5 };
+                peak = peak.max(f.process(x).abs());
+            }
+            assert!(peak.is_finite() && peak < 2.0, "{peak}");
+        }
+    }
+
+    #[test]
+    fn lowpass_passes_lows_and_cuts_highs() {
+        let f = biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR);
+        assert!((gain_at(f, 100.0) - 1.0).abs() < 0.02);
+        assert!(gain_at(f, 10_000.0) < 0.02);
+    }
+
+    #[test]
+    fn highpass_passes_highs_and_cuts_lows() {
+        let f = biquad_for(BandShape::Hpf, 1_000.0, 0.707, SR);
+        assert!((gain_at(f, 10_000.0) - 1.0).abs() < 0.02);
+        assert!(gain_at(f, 50.0) < 0.01);
+    }
+
+    #[test]
+    fn butterworth_q_is_minus_3db_at_cutoff() {
+        let f = biquad_for(BandShape::Lpf, 1_000.0, std::f32::consts::FRAC_1_SQRT_2, SR);
+        assert!((gain_at(f, 1_000.0) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
+    }
+
+    #[test]
+    fn degenerate_params_stay_finite() {
+        let mut f = biquad_for(BandShape::Lpf, 0.0, 0.0, SR);
+        for _ in 0..1_000 {
+            assert!(f.process(1.0).is_finite());
+        }
+    }
+
+    #[test]
+    fn retune_keeps_state() {
+        let mut f = biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR);
+        for _ in 0..100 {
+            f.process(1.0);
+        }
+        let mut retuned = f;
+        retuned.retune(biquad_for(BandShape::Lpf, 1_000.0, 0.707, SR));
+        assert_eq!(
+            retuned.process(1.0),
+            f.process(1.0),
+            "same coefficients, same output"
+        );
     }
 }

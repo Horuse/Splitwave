@@ -7,10 +7,11 @@ use tracing::warn;
 
 use webrtc::data_channel::RTCDataChannel;
 
-use crate::audio::graph::OpusApplication;
-use crate::audio::netaudio::codec::{ChannelDecoder, ChannelEncoder};
+use crate::audio::netaudio::codec::{
+    opus_application, opus_application_byte, ChannelDecoder, ChannelEncoder,
+};
 use crate::audio::netaudio::packet::{self, Format};
-use crate::audio::netaudio::timeline::SeqStep;
+use crate::audio::netaudio::timeline::{max_gap_packets, SeqStep};
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::broadcast_push;
 
@@ -29,26 +30,35 @@ struct ChannelEnc {
     format: Format,
     bitrate: u32,
     application: opus::Application,
+    /// One DAG block, in 48 kHz frames.
+    block_frames: usize,
 }
 
 impl ChannelEnc {
-    fn new(format: Format, bitrate: u32, application: opus::Application) -> Self {
+    fn new(
+        format: Format,
+        bitrate: u32,
+        application: opus::Application,
+        block_frames: usize,
+    ) -> Self {
         Self {
             resampler: None,
             resampler_sr: 0,
             in_acc: Vec::new(),
             out_acc: Vec::new(),
-            encoder: ChannelEncoder::new(format, bitrate, application),
+            encoder: ChannelEncoder::new(format, bitrate, application, block_frames),
             format,
             bitrate,
             application,
+            block_frames,
         }
     }
 
     fn ensure_format(&mut self, format: Format) {
         if format != self.format {
             self.format = format;
-            self.encoder = ChannelEncoder::new(format, self.bitrate, self.application);
+            self.encoder =
+                ChannelEncoder::new(format, self.bitrate, self.application, self.block_frames);
         }
     }
 
@@ -94,88 +104,109 @@ impl ChannelEnc {
     }
 }
 
+/// Longest the encode thread sleeps without being rung.
+const IDLE_WAKE: Duration = Duration::from_millis(20);
+
+/// One encode thread per session. The DAG rings it after each block it pushes,
+/// so audio goes out as soon as it exists; it ends with the session.
 pub fn spawn_encode_task(session: Arc<WebRtcSession>) {
     let bitrate = session.opus_bitrate;
-    let application = match session.opus_application {
-        OpusApplication::Voip => opus::Application::Voip,
-        OpusApplication::Audio => opus::Application::Audio,
-        OpusApplication::LowDelay => opus::Application::LowDelay,
-    };
+    let application = opus_application(session.opus_application);
+    let application_byte = opus_application_byte(session.opus_application);
+    let bell = session.send_bell.clone();
+    let session = Arc::downgrade(&session);
 
-    tauri::async_runtime::spawn(async move {
-        let mut encs: Vec<ChannelEnc> = Vec::new();
-        let mut seqs: Vec<u16> = Vec::new();
-        let mut seen_gen = u64::MAX;
-        let mut interval = tokio::time::interval(Duration::from_millis(20));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let spawned = std::thread::Builder::new()
+        .name("webrtc-send".into())
+        .spawn(move || {
+            bell.answer_here();
+            // Each block the graph makes leaves from here: an encode that
+            // waits behind ordinary threads is a gap at every peer.
+            let _rt = session.upgrade().map(|s| {
+                let sr = s.output_sr.load(Ordering::Relaxed).max(1);
+                let block = s.block_frames.load(Ordering::Relaxed).max(1);
+                crate::audio::pipeline::RtThread::promote("webrtc-send", block as u32, sr)
+            });
+            let mut encs: Vec<ChannelEnc> = Vec::new();
+            let mut seqs: Vec<u16> = Vec::new();
+            let mut seen_gen = u64::MAX;
 
-        loop {
-            interval.tick().await;
-            let sr = session.output_sr.load(Ordering::Relaxed);
-            let format =
-                Format::from_byte(session.codec.load(Ordering::Relaxed)).unwrap_or(Format::Opus);
+            loop {
+                bell.wait(IDLE_WAKE);
+                let Some(session) = session.upgrade() else {
+                    return;
+                };
+                let sr = session.output_sr.load(Ordering::Relaxed);
+                let block_frames = (session.block_frames.load(Ordering::Relaxed) as u64
+                    * OPUS_SR as u64)
+                    .div_ceil(sr.max(1) as u64) as usize;
+                let format = Format::from_byte(session.codec.load(Ordering::Relaxed))
+                    .unwrap_or(Format::Opus);
 
-            // Drain each channel's send ring under the lock, then release it
-            // before the async resample/encode/send work.
-            {
-                let mut cons = session.send_consumers.lock().unwrap();
-                // Each encoder holds a partial Opus frame and a resampler tail;
-                // keeping them across a ring swap would leave a channel added
-                // now offset from its siblings by whatever they had buffered.
-                let gen = session.send_gen.load(Ordering::SeqCst);
-                if gen != seen_gen {
-                    seen_gen = gen;
-                    encs.clear();
-                    seqs.clear();
-                }
-                while encs.len() < cons.len() {
-                    encs.push(ChannelEnc::new(format, bitrate, application));
-                    seqs.push(0);
-                }
-                encs.truncate(cons.len());
-                seqs.truncate(cons.len());
-                for (i, c) in cons.iter_mut().enumerate() {
-                    let take = c.slots();
-                    if take > 0 {
-                        if let Ok(chunk) = c.read_chunk(take) {
-                            let (a, b) = chunk.as_slices();
-                            encs[i].in_acc.extend_from_slice(a);
-                            encs[i].in_acc.extend_from_slice(b);
-                            chunk.commit_all();
+                // Drain each channel's send ring under the lock, then release it
+                // before the async resample/encode/send work.
+                {
+                    let mut cons = session.send_consumers.lock().unwrap();
+                    // Each encoder holds a partial Opus frame and a resampler tail;
+                    // keeping them across a ring swap would leave a channel added
+                    // now offset from its siblings by whatever they had buffered.
+                    let gen = session.send_gen.load(Ordering::SeqCst);
+                    if gen != seen_gen {
+                        seen_gen = gen;
+                        encs.clear();
+                        seqs.clear();
+                    }
+                    while encs.len() < cons.len() {
+                        encs.push(ChannelEnc::new(format, bitrate, application, block_frames));
+                        seqs.push(0);
+                    }
+                    encs.truncate(cons.len());
+                    seqs.truncate(cons.len());
+                    for (i, c) in cons.iter_mut().enumerate() {
+                        let take = c.slots();
+                        if take > 0 {
+                            if let Ok(chunk) = c.read_chunk(take) {
+                                let (a, b) = chunk.as_slices();
+                                encs[i].in_acc.extend_from_slice(a);
+                                encs[i].in_acc.extend_from_slice(b);
+                                chunk.commit_all();
+                            }
                         }
                     }
                 }
-            }
 
-            for (i, enc) in encs.iter_mut().enumerate() {
-                enc.ensure_format(format);
-                enc.ensure_resampler(sr);
-                enc.resample();
-                let channel = i as u8;
-                let seq = &mut seqs[i];
-                let mut frames: Vec<Bytes> = Vec::new();
-                enc.encoder.push(&enc.out_acc, |payload| {
-                    let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
-                    packet::write_header(
-                        &mut d,
-                        format,
-                        channel,
-                        *seq,
-                        OPUS_SR,
-                        (bitrate / 1000) as u16,
-                        1,
-                    );
-                    *seq = seq.wrapping_add(1);
-                    d.extend_from_slice(payload);
-                    frames.push(Bytes::copy_from_slice(&d));
-                });
-                enc.out_acc.clear();
-                for b in frames {
-                    send_to_peers(&b, &session).await;
+                for (i, enc) in encs.iter_mut().enumerate() {
+                    enc.ensure_format(format);
+                    enc.ensure_resampler(sr);
+                    enc.resample();
+                    let channel = i as u8;
+                    let seq = &mut seqs[i];
+                    let mut frames: Vec<Bytes> = Vec::new();
+                    enc.encoder.push(&enc.out_acc, |payload| {
+                        let mut d = Vec::with_capacity(packet::HEADER_LEN_V2_OPUS + payload.len());
+                        packet::write_header(
+                            &mut d,
+                            format,
+                            channel,
+                            *seq,
+                            OPUS_SR,
+                            (bitrate / 1000) as u16,
+                            application_byte,
+                        );
+                        *seq = seq.wrapping_add(1);
+                        d.extend_from_slice(payload);
+                        frames.push(Bytes::copy_from_slice(&d));
+                    });
+                    enc.out_acc.clear();
+                    for b in frames {
+                        tauri::async_runtime::block_on(send_to_peers(&b, &session));
+                    }
                 }
             }
-        }
-    });
+        });
+    if let Err(e) = spawned {
+        warn!(error = %e, "webrtc encode thread failed to start");
+    }
 }
 
 async fn send_to_peers(data: &Bytes, session: &Arc<WebRtcSession>) {
@@ -209,6 +240,7 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
     let format = pkt.format;
     let channel = pkt.channel;
     let seq = pkt.seq;
+    let sample_rate = pkt.sample_rate;
     let header_len = data.len() - pkt.payload.len();
     let payload = data.slice(header_len..);
 
@@ -240,7 +272,8 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
 
     // The timeline advances even while muted, so unmuting resumes in step with
     // the peer's other channels instead of counting the mute as one huge loss.
-    let step = ch.timeline.lock().unwrap().step(seq);
+    let max_gap = max_gap_packets(sample_rate, ch.decoder.lock().unwrap().packet_samples());
+    let step = ch.timeline.lock().unwrap().step(seq, max_gap);
     match step {
         SeqStep::Drop => return,
         // The break is longer than concealment covers, so this channel no
@@ -276,4 +309,140 @@ pub async fn decode_and_write(data: Bytes, session: &Arc<WebRtcSession>, peer_id
         dec.decode(format, &payload, &mut pcm);
     }
     broadcast_push(&ch.broadcast, seq, packets, &pcm);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::netaudio::packet::{pcm_f32_encode, write_header};
+    use crate::audio::webrtc::session::PeerState;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+    use std::sync::Mutex;
+    use webrtc::peer_connection::configuration::RTCConfiguration;
+    use webrtc::peer_connection::RTCPeerConnection;
+
+    async fn bare_peer_connection() -> Arc<RTCPeerConnection> {
+        // A peer connection whose ICE is never exercised: decode paths only
+        // touch counters and the fanout, never the transport.
+        use webrtc::api::APIBuilder;
+        let api = APIBuilder::new().build();
+        Arc::new(
+            api.new_peer_connection(RTCConfiguration::default())
+                .await
+                .expect("bare pc"),
+        )
+    }
+
+    async fn session_with_peer(node: &str) -> (Arc<WebRtcSession>, String, Arc<PeerState>) {
+        let session = crate::audio::webrtc::registry::get_or_create(
+            node,
+            96_000,
+            crate::audio::graph::OpusApplication::Audio,
+        );
+        let peer_id = format!("peer-{}", cuid2::create_id());
+        let peer = Arc::new(PeerState {
+            peer_id: peer_id.clone(),
+            pc: bare_peer_connection().await,
+            dc: Mutex::new(None),
+            ctrl_dc: Mutex::new(None),
+            channels: Mutex::new(HashMap::new()),
+            muted: Arc::new(AtomicBool::new(false)),
+            ping_ms: Arc::new(AtomicU32::new(0)),
+            packets: Arc::new(AtomicU64::new(0)),
+            lost: Arc::new(AtomicU64::new(0)),
+            remote_name: Arc::new(Mutex::new("remote".into())),
+            remote_channels: Arc::new(AtomicU32::new(0)),
+            display_id: Arc::new(Mutex::new(peer_id.clone())),
+        });
+        session
+            .peers
+            .lock()
+            .await
+            .insert(peer_id.clone(), peer.clone());
+        (session, peer_id, peer)
+    }
+
+    fn pcm_packet(channel: u8, seq: u16, samples: usize) -> Bytes {
+        let mut body = Vec::new();
+        pcm_f32_encode(&vec![0.25f32; samples], &mut body);
+        let mut buf = Vec::new();
+        write_header(&mut buf, Format::PcmF32, channel, seq, 48_000, 0, 0);
+        buf.extend_from_slice(&body);
+        Bytes::from(buf)
+    }
+
+    #[test]
+    fn decode_and_write_walks_the_channel_timeline() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            // Garbage datagram: parse fails, nothing is counted.
+            decode_and_write(Bytes::from_static(b"junk"), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 0);
+
+            // Unknown peer id: silently dropped.
+            decode_and_write(pcm_packet(0, 0, 480), &session, "ghost").await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 0);
+
+            // First packet attaches the channel and counts.
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 1);
+            assert_eq!(peer.channels.lock().unwrap().len(), 1, "channel 0 attached");
+
+            // A gap in seq conceals and lands in the lost counter.
+            decode_and_write(pcm_packet(0, 5, 480), &session, &peer_id).await;
+            assert!(peer.lost.load(Ordering::Relaxed) >= 4, "gap concealed");
+
+            // A duplicate is refused but still counted on arrival.
+            let before = peer.packets.load(Ordering::Relaxed);
+            decode_and_write(pcm_packet(0, 5, 480), &session, &peer_id).await;
+            assert_eq!(peer.packets.load(Ordering::Relaxed), before + 1);
+            assert_eq!(
+                peer.lost.load(Ordering::Relaxed),
+                4,
+                "duplicates must not count as losses"
+            );
+
+            // A second channel gets its own state.
+            decode_and_write(pcm_packet(1, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.channels.lock().unwrap().len(), 2);
+        });
+    }
+
+    #[test]
+    fn muted_peer_advances_timeline_without_pushing() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-mute-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            peer.muted.store(true, Ordering::Relaxed);
+            decode_and_write(pcm_packet(0, 1, 480), &session, &peer_id).await;
+            // The timeline advanced (next unmuted packet continues in step),
+            // but the muted packet's loss bookkeeping shows no concealment.
+            assert_eq!(peer.packets.load(Ordering::Relaxed), 2);
+            assert_eq!(peer.lost.load(Ordering::Relaxed), 0);
+        });
+    }
+
+    #[test]
+    fn huge_gap_drops_the_channel_state() {
+        tauri::async_runtime::block_on(async {
+            let node = format!("tasks-gap-{}", cuid2::create_id());
+            let (session, peer_id, peer) = session_with_peer(&node).await;
+
+            decode_and_write(pcm_packet(0, 0, 480), &session, &peer_id).await;
+            assert_eq!(peer.channels.lock().unwrap().len(), 1);
+
+            // A 200-packet outage is an outage, not a gap: the channel is
+            // forgotten and re-attaches on the next packet, in phase.
+            decode_and_write(pcm_packet(0, 250, 480), &session, &peer_id).await;
+            assert!(
+                peer.channels.lock().unwrap().is_empty(),
+                "outage drops the channel state"
+            );
+        });
+    }
 }

@@ -19,7 +19,7 @@ use super::editor::EditorWindow;
 use super::{ParamRing, PluginFormat, PluginNode};
 use crate::audio::effects::offload::{BlockProcessor, Offload};
 use crate::audio::effects::Effect;
-use crate::audio::pipeline::dag::DSP_BLOCK_FRAMES;
+use crate::audio::graph::MAX_BUFFER_FRAMES;
 
 /// Emitted with the node id when a plugin editor window is closed via its
 /// titlebar, so the frontend node can reset its open/close button.
@@ -156,7 +156,13 @@ enum HostedBackend {
 }
 
 impl HostedEffect {
-    pub fn new(node: HostedNode, realtime: bool) -> Self {
+    pub fn new(
+        node: HostedNode,
+        realtime: bool,
+        sample_rate: u32,
+        block_frames: usize,
+        burst_blocks: usize,
+    ) -> Self {
         let latency = node.latency_frames();
         let width = node.channels();
         if !realtime {
@@ -169,17 +175,24 @@ impl HostedEffect {
         let processor = HostedProcessor {
             node,
             width,
-            scratch: Vec::with_capacity(DSP_BLOCK_FRAMES * width),
+            scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
         };
-        match Offload::spawn("plugin", processor, width) {
-            Ok(o) => {
-                let latency = latency + o.latency_frames();
-                Self {
-                    backend: HostedBackend::Offloaded(o),
-                    channels: width,
-                    latency,
-                }
-            }
+        // A plugin takes the engine's blocks as they come; the offload's pad is
+        // latency it adds, not a block it works in.
+        match Offload::spawn(
+            "plugin",
+            processor,
+            width,
+            None,
+            block_frames,
+            burst_blocks,
+            sample_rate,
+        ) {
+            Ok(o) => Self {
+                latency: latency + o.latency_frames(),
+                backend: HostedBackend::Offloaded(o),
+                channels: width,
+            },
             Err(p) => Self {
                 backend: HostedBackend::Inline { node: p.node },
                 channels: width,

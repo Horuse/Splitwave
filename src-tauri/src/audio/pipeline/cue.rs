@@ -21,6 +21,10 @@ const BEEP_OFF_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_off.mp3");
 const BEEP_ON_MP3: &[u8] = include_bytes!("../../../assets/cues/beep_on.mp3");
 
 const RESAMPLE_CHUNK: usize = 1024;
+/// Quantum asked of PipeWire for a cue. Nobody waits on a cue, so it asks for
+/// a large one rather than pull the whole graph down to a small quantum.
+#[cfg(target_os = "linux")]
+const CUE_QUANTUM: usize = 1024;
 // Slack after the clip ends so the device drains before the stream is dropped.
 const DRAIN: Duration = Duration::from_millis(120);
 
@@ -68,6 +72,7 @@ pub fn play(device_id: &str, muted: bool, gain: f32, beep: bool) -> AppResult<()
             &spec.node_id,
             spec.sample_rate,
             channels,
+            CUE_QUANTUM,
             move |out| {
                 let frames = out.len() / channels;
                 render(out, frames);
@@ -159,4 +164,55 @@ fn decode_mono(bytes: &'static [u8], target_rate: u32) -> AppResult<Vec<f32>> {
         rs.process_chunk(chunk, &mut out)?;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_clips_decode_to_mono() {
+        for clip in [MUTED_MP3, UNMUTED_MP3, BEEP_OFF_MP3, BEEP_ON_MP3] {
+            let mono = decode_mono(clip, 48_000).expect("clip decodes");
+            assert!(!mono.is_empty());
+            assert!(mono.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        }
+    }
+
+    #[test]
+    fn same_rate_decode_is_direct() {
+        // Decode twice: once at the source rate (no resampler), once at a
+        // rate that must go through it. Both produce audio.
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(MUTED_MP3)), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("mp3");
+        let format = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
+            .unwrap();
+        let track = format.default_track(TrackType::Audio).expect("track");
+        let src_rate = track
+            .codec_params
+            .as_ref()
+            .and_then(|p| p.audio())
+            .and_then(|a| a.sample_rate)
+            .expect("rate");
+        let direct = decode_mono(MUTED_MP3, src_rate).expect("direct decode");
+        let resampled = decode_mono(MUTED_MP3, src_rate + 1).expect("resampled decode");
+        assert!(!direct.is_empty() && !resampled.is_empty());
+        // Resampled length tracks the ratio.
+        let ratio = resampled.len() as f64 / direct.len() as f64;
+        let want = (src_rate + 1) as f64 / src_rate as f64;
+        assert!((ratio - want).abs() < 0.05, "ratio {ratio} vs {want}");
+    }
+
+    #[test]
+    fn garbage_bytes_fail_probe() {
+        let err = decode_mono(&[0u8; 512], 48_000);
+        assert!(err.is_err(), "garbage must not decode");
+    }
 }

@@ -14,12 +14,36 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 /// ~21 ms DSP block rate; a longer tick stall overwrites the oldest frames,
 /// which the UI renders as a skipped span.
 pub const SCOPE_RING_FRAMES: usize = 16384;
+/// Least time the scope ring holds, at any rate: a 33 ms tick plus a late
+/// one's worth.
+const SCOPE_RING_MIN_MS: usize = 85;
+
+/// Scope ring at `sample_rate`: `SCOPE_RING_FRAMES`, or more where that
+/// would hold less than `SCOPE_RING_MIN_MS`.
+fn scope_ring_frames(sample_rate: u32) -> usize {
+    (sample_rate as usize * SCOPE_RING_MIN_MS)
+        .div_ceil(1000)
+        .next_power_of_two()
+        .max(SCOPE_RING_FRAMES)
+}
 
 /// Spectrum nodes need a longer contiguous window than the scope: a single
-/// 1024-frame block is ~47 Hz/bin and cannot separate low tones. 4096 frames
-/// (~11.7 Hz/bin) do, and one snapshot stays gap-free (concatenating separate
-/// snapshots would inject discontinuities that smear across the spectrum).
+/// 1024-frame block is ~47 Hz/bin at 48 kHz and cannot separate low tones.
+/// 4096 frames at 48 kHz (~11.7 Hz/bin) do, and one snapshot stays gap-free
+/// (concatenating separate snapshots would inject discontinuities that smear
+/// across the spectrum). Higher rates get a longer window for the same
+/// resolution: see `spectrum_frames`.
 pub const SPECTRUM_FRAMES: usize = 4096;
+const SPECTRUM_REFERENCE_RATE: usize = 48_000;
+
+/// Spectrum window at `sample_rate`: `SPECTRUM_FRAMES` worth of 48 kHz time,
+/// rounded up to a power of two for the FFT, so a bin is ~11 Hz at any rate.
+pub fn spectrum_frames(sample_rate: u32) -> usize {
+    (SPECTRUM_FRAMES * sample_rate as usize)
+        .div_ceil(SPECTRUM_REFERENCE_RATE)
+        .next_power_of_two()
+        .max(1024)
+}
 
 /// Upper bound on scoped channels; sizes the fixed ring so display never
 /// allocates on the RT path.
@@ -80,14 +104,14 @@ impl WaveformHandle {
     /// Scope-size handle; used by the Waveform effect and by non-effect
     /// consumers such as the File Recording node.
     pub fn new(node_id: String, sample_rate: u32) -> Self {
-        Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+        Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
     }
 
     /// Scope-size handle for one recorder worker invocation.
     pub fn for_recorder(node_id: String, sample_rate: u32, base_frames: u64) -> Self {
         Self {
             base_frames,
-            ..Self::with_frames(node_id, sample_rate, SCOPE_RING_FRAMES, false)
+            ..Self::with_frames(node_id, sample_rate, scope_ring_frames(sample_rate), false)
         }
     }
 
@@ -143,7 +167,11 @@ impl WaveformHandle {
         // write() resets the counters when it latches the channel stride, so the
         // append base must be applied after it.
         let seed = g.total == 0 && g.emit_pos == 0 && base_frames > 0;
-        write(&mut g, samples, frames);
+        // Align the ring head with the file-absolute counter: drain maps
+        // absolute frames to `(start + i) % cap` slots, so without this the
+        // seeded block would be written at 0..n but read back as silence.
+        let head = seed.then(|| (base_frames as usize) % g.frames);
+        write(&mut g, samples, frames, head);
         if seed {
             g.total = base_frames + frames as u64;
             g.emit_pos = base_frames;
@@ -153,8 +181,10 @@ impl WaveformHandle {
 
 /// Writes one interleaved block into a `WaveformState`; `channels` is derived
 /// from the stride and a change resets the ring (and its absolute counter)
-/// rather than misaligning it.
-fn write(g: &mut WaveformState, samples: &[f32], frames: usize) {
+/// rather than misaligning it. `head_seed` overrides the write head after the
+/// reset (used by append-mode seeding so the block lands where `drain`
+/// expects it).
+fn write(g: &mut WaveformState, samples: &[f32], frames: usize, head_seed: Option<usize>) {
     let ch = (samples.len() / frames).clamp(1, MAX_WAVEFORM_CHANNELS);
     if g.channels != ch {
         g.channels = ch;
@@ -162,10 +192,14 @@ fn write(g: &mut WaveformState, samples: &[f32], frames: usize) {
         g.total = 0;
         g.emit_pos = 0;
     }
+    if let Some(head) = head_seed {
+        g.write = head;
+    }
     let cap = g.frames;
     let n = frames.min(cap);
-    let src = &samples[..n * ch];
-    let pos = g.write;
+    let skipped = frames - n;
+    let src = &samples[skipped * ch..frames * ch];
+    let pos = (g.write + skipped) % cap;
     let end = pos + n;
     if end <= cap {
         g.buf[pos * ch..end * ch].copy_from_slice(src);
@@ -176,7 +210,7 @@ fn write(g: &mut WaveformState, samples: &[f32], frames: usize) {
         g.buf[..(n * ch - first)].copy_from_slice(&src[first..]);
         g.write = end - cap;
     }
-    g.total += n as u64;
+    g.total += frames as u64;
 }
 
 pub struct WaveformEffect {
@@ -201,7 +235,8 @@ impl WaveformEffect {
     /// Spectrum nodes capture identically to the scope, just over a longer
     /// contiguous window; the FFT runs in the UI.
     pub fn new_for(node_id: String, sample_rate: u32) -> (Self, WaveformHandle) {
-        let handle = WaveformHandle::with_frames(node_id, sample_rate, SPECTRUM_FRAMES, true);
+        let handle =
+            WaveformHandle::with_frames(node_id, sample_rate, spectrum_frames(sample_rate), true);
         (
             Self {
                 handle: handle.clone(),
@@ -219,7 +254,213 @@ impl Effect for WaveformEffect {
         }
         // try_lock: a miss means this display block is skipped -- acceptable.
         if let Ok(mut g) = self.handle.state.try_lock() {
-            write(&mut g, samples, frames);
+            write(&mut g, samples, frames, None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn handle(node: &str, sr: u32) -> WaveformHandle {
+        WaveformHandle::new(node.to_string(), sr)
+    }
+
+    fn block(k: usize, frames: usize, ch: usize) -> Vec<f32> {
+        (0..frames * ch)
+            .map(|i| (k as f32) * 1000.0 + i as f32)
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_keeps_ring_layout() {
+        let h = handle("n", 48_000);
+        let b = block(1, 4, 2);
+        h.push_interleaved(&b, 4, 0);
+        // Snapshot always returns the full ring worth, chronologically
+        // arranged from the write head; freshly written frames land last.
+        let (out, ch) = h.snapshot();
+        assert_eq!(ch, 2);
+        assert_eq!(out.len(), SCOPE_RING_FRAMES * 2);
+        assert_eq!(&out[out.len() - 8..], b.as_slice());
+    }
+
+    #[test]
+    fn snapshot_holds_everything_until_ring_fills() {
+        let h = handle("n", 48_000);
+        for k in 0..3 {
+            h.push_interleaved(&block(k, 10, 2), 10, 0);
+        }
+        let (out, ch) = h.snapshot();
+        assert_eq!(ch, 2);
+        assert_eq!(out.len(), SCOPE_RING_FRAMES * 2);
+        let mut want = block(0, 10, 2);
+        want.extend(block(1, 10, 2));
+        want.extend(block(2, 10, 2));
+        assert_eq!(&out[out.len() - 60..], want.as_slice());
+    }
+
+    #[test]
+    fn ring_wraps_and_keeps_only_recent_frames() {
+        let h = handle("n", 48_000);
+        let per = 1000usize;
+        let n_blocks = 20usize; // 20000 frames > 16384 ring
+        for k in 0..n_blocks {
+            h.push_interleaved(&block(k, per, 2), per, 0);
+        }
+        let (out, ch) = h.snapshot();
+        assert_eq!(ch, 2);
+        assert_eq!(out.len(), SCOPE_RING_FRAMES * 2);
+        // The newest frames must match the last block's values.
+        let newest = block(19, per, 2);
+        for i in 0..per * 2 {
+            assert_eq!(out[out.len() - per * 2 + i], newest[i], "sample {i}");
+        }
+    }
+
+    #[test]
+    fn drain_returns_delta_once() {
+        let h = handle("n", 48_000);
+        for k in 0..3 {
+            h.push_interleaved(&block(k, 10, 2), 10, 0);
+        }
+        let (start, out, ch) = h.drain();
+        assert_eq!(start, 0);
+        assert_eq!(ch, 2);
+        let mut want = block(0, 10, 2);
+        want.extend(block(1, 10, 2));
+        want.extend(block(2, 10, 2));
+        assert_eq!(out, want);
+        let (start2, out2, _) = h.drain();
+        assert_eq!(start2, 30);
+        assert!(out2.is_empty());
+    }
+
+    #[test]
+    fn drain_skips_overwritten_frames() {
+        let h = handle("n", 48_000);
+        let input = block(1, SCOPE_RING_FRAMES + 37, 1);
+        h.push_interleaved(&input, SCOPE_RING_FRAMES + 37, 0);
+        let (start, out, ch) = h.drain();
+        assert_eq!(ch, 1);
+        assert_eq!(start, 37);
+        assert_eq!(out, input[37..]);
+    }
+
+    #[test]
+    fn channel_change_resets_counters() {
+        let h = handle("n", 48_000);
+        h.push_interleaved(&block(1, 10, 2), 10, 0);
+        h.push_interleaved(&block(2, 10, 1), 10, 0);
+        let (_, ch) = h.snapshot();
+        assert_eq!(ch, 1);
+        let (start, out, _) = h.drain();
+        assert_eq!(start, 0);
+        assert_eq!(out, block(2, 10, 1));
+    }
+
+    #[test]
+    fn push_interleaved_seeds_absolute_frames() {
+        let h = WaveformHandle::for_recorder("n".to_string(), 48_000, 1000);
+        h.push_interleaved(&block(1, 10, 2), 10, 1000);
+        let (start, out, _) = h.drain();
+        assert_eq!(start, 1000);
+        assert_eq!(out, block(1, 10, 2));
+    }
+
+    #[test]
+    fn zero_frames_is_noop() {
+        let h = handle("n", 48_000);
+        h.push_interleaved(&[], 0, 0);
+        let (start, out, _) = h.drain();
+        assert_eq!(start, 0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn channels_clamped_to_max() {
+        let h = handle("n", 48_000);
+        // 100-channel block → stride clamps to 64.
+        h.push_interleaved(&block(1, 4, 100), 4, 0);
+        let (_, ch) = h.snapshot();
+        assert_eq!(ch, MAX_WAVEFORM_CHANNELS);
+    }
+
+    #[test]
+    fn effect_process_captures_via_try_lock() {
+        let d = WaveformData {};
+        let (mut effect, h) = WaveformEffect::new(d, "n".to_string(), 48_000);
+        let b = block(7, 4, 2);
+        let mut buf = b.clone();
+        effect.process(&mut buf, 4);
+        let (out, ch) = h.snapshot();
+        assert_eq!(ch, 2);
+        assert_eq!(&out[out.len() - 8..], b.as_slice());
+    }
+
+    #[test]
+    fn spectrum_handle_uses_long_window() {
+        let (mut effect, h) = WaveformEffect::new_for("n".to_string(), 48_000);
+        assert!(h.is_spectrum());
+        // Push more than SPECTRUM_FRAMES; snapshot is capped at the window.
+        for k in 0..3 {
+            let b = block(k, 2000, 2);
+            effect.process(&mut b.clone(), 2000);
+        }
+        let (out, ch) = h.snapshot();
+        assert_eq!(ch, 2);
+        assert_eq!(out.len(), SPECTRUM_FRAMES * 2);
+    }
+
+    #[test]
+    fn the_scope_holds_a_late_tick_at_any_rate() {
+        for rate in [44_100, 48_000, 96_000, 192_000, 384_000] {
+            let ms = scope_ring_frames(rate) as f64 * 1000.0 / rate as f64;
+            assert!(ms >= SCOPE_RING_MIN_MS as f64, "{rate}: {ms:.0} ms");
+        }
+        assert_eq!(scope_ring_frames(48_000), SCOPE_RING_FRAMES);
+    }
+
+    #[test]
+    fn the_spectrum_resolves_the_same_at_any_rate() {
+        for rate in [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 384_000] {
+            let bin_hz = rate as f64 / spectrum_frames(rate) as f64;
+            assert!((10.0..=12.0).contains(&bin_hz), "{rate}: {bin_hz} Hz/bin");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn ring_roundtrip_preserves_last_written_frames(
+            seed in 0u64..100_000,
+            chunks in 34usize..42,
+            ch in 1usize..5,
+        ) {
+            let h = handle("p", 48_000);
+            let mut x = seed | 1;
+            let mut expected: Vec<f64> = Vec::new();
+            for k in 0..chunks {
+                let frames = 1 + ((k * 37 + (seed as usize)) % 500);
+                let b: Vec<f32> = (0..frames * ch)
+                     .map(|_i| {
+                        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                        ((x >> 33) as u32 as f32 / u32::MAX as f32) * 2.0 - 1.0
+                    })
+                    .collect();
+                expected.extend(b.iter().map(|v| *v as f64));
+                h.push_interleaved(&b, frames, 0);
+            }
+            let (start, out, got_ch) = h.drain();
+            prop_assert_eq!(got_ch, ch);
+            let kept = SCOPE_RING_FRAMES * ch;
+            let expected_start = expected.len().saturating_sub(kept);
+            prop_assert_eq!(out.len(), expected.len() - expected_start);
+            prop_assert_eq!(start as usize, expected_start / ch);
+            for (got, want) in out.iter().zip(&expected[expected_start..]) {
+                prop_assert!((*got as f64 - *want).abs() < 1e-6);
+            }
         }
     }
 }

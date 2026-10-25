@@ -19,8 +19,6 @@ macro_rules! counters {
 }
 
 counters! {
-    /// Samples zero-filled into a device output because the ring ran dry.
-    OUTPUT_UNDERRUN_SAMPLES,
     /// Samples dropped by the capture broadcast into a per-output input ring
     /// (input_bridge.rs) -- a DSP source fell behind the capture callback.
     CAPTURE_RING_OVERRUN_SAMPLES,
@@ -29,19 +27,25 @@ counters! {
     /// Samples dropped by a DAG fan-out tap or wire-sender push (dag.rs) --
     /// another output or a wire consumer fell behind this node's block rate.
     TAP_RING_OVERRUN_SAMPLES,
-    /// Samples dropped pushing into the speaker worker's output ring
-    /// (pipeline/output/mod.rs) -- the cpal callback fell behind the worker.
-    SPEAKER_RING_OVERRUN_SAMPLES,
-    /// Input samples discarded by a source's backlog trim (SourceState::fill_block).
-    SOURCE_TRIM_DROPPED_SAMPLES,
+    /// Speaker blocks the output resampler failed to convert; the device
+    /// played silence for them (pipeline/output/render.rs).
+    SPEAKER_RENDER_FAILED_BLOCKS,
     /// Samples dropped by a StagingRing overrun (producer outran the drain).
     STAGING_OVERRUN_SAMPLES,
     /// Worker blocks whose wall-clock deadline had already passed on wake.
     CLOCK_LATE_BLOCKS,
     /// Worst single deadline miss, microseconds (monotonic high-water mark).
     CLOCK_LATE_MAX_US,
+    /// Times a speaker stopped calling back for several of its periods (a
+    /// device overload) and its sources realigned under the dropout.
+    OUTPUT_STALLS,
     /// Fatal cpal stream errors reported via the error callback.
     STREAM_ERRORS,
+    /// Device IO overloads cpal reported (a CoreAudio HAL overload, a WASAPI
+    /// capture discontinuity). The stream plays on. cpal drops a report that
+    /// lands while the previous one is still being handled, so this is a
+    /// lower bound.
+    DEVICE_XRUNS,
     /// Samples zero-filled on the RT thread because an offloaded effect's
     /// worker had not returned the block in time.
     OFFLOAD_STARVED_SAMPLES,
@@ -50,6 +54,9 @@ counters! {
     OFFLOAD_RESYNC_DROPPED_SAMPLES,
     /// Samples dropped pushing into an offload ring (either direction).
     OFFLOAD_RING_OVERRUN_SAMPLES,
+    /// Rendered samples a recorder dropped because its file writer fell
+    /// further behind than its queue holds.
+    RECORDER_OVERRUN_SAMPLES,
 }
 
 /// Name of the high-water-mark counter, whose delta is meaningless.
@@ -71,5 +78,79 @@ pub fn raise_max(counter: &AtomicU64, value: u64) {
             Ok(_) => return,
             Err(actual) => cur = actual,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn snapshot_covers_every_counter_in_order() {
+        let snap = snapshot();
+        let names: Vec<&str> = snap.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "CAPTURE_RING_OVERRUN_SAMPLES",
+                "NET_RING_OVERRUN_SAMPLES",
+                "TAP_RING_OVERRUN_SAMPLES",
+                "SPEAKER_RENDER_FAILED_BLOCKS",
+                "STAGING_OVERRUN_SAMPLES",
+                "CLOCK_LATE_BLOCKS",
+                "CLOCK_LATE_MAX_US",
+                "OUTPUT_STALLS",
+                "STREAM_ERRORS",
+                "DEVICE_XRUNS",
+                "OFFLOAD_STARVED_SAMPLES",
+                "OFFLOAD_RESYNC_DROPPED_SAMPLES",
+                "OFFLOAD_RING_OVERRUN_SAMPLES",
+                "RECORDER_OVERRUN_SAMPLES",
+            ]
+        );
+    }
+
+    #[test]
+    fn bump_ignores_zero_adds() {
+        let counter = AtomicU64::new(7);
+        bump(&counter, 0);
+        assert_eq!(counter.load(Ordering::Relaxed), 7);
+        bump(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 12);
+    }
+
+    #[test]
+    fn raise_max_never_goes_backwards() {
+        let counter = AtomicU64::new(10);
+        raise_max(&counter, 5);
+        assert_eq!(counter.load(Ordering::Relaxed), 10);
+        raise_max(&counter, 20);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
+        raise_max(&counter, 15);
+        assert_eq!(counter.load(Ordering::Relaxed), 20);
+    }
+
+    #[test]
+    fn raise_max_survives_concurrent_bumps() {
+        // Races on the high-water mark resolve to the true maximum, not to
+        // whichever CAS got there first.
+        let counter = Arc::new(AtomicU64::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|k| {
+                let c = counter.clone();
+                thread::spawn(move || {
+                    for i in 0..100u64 {
+                        raise_max(&c, (k * 100 + i) as u64);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 799);
     }
 }

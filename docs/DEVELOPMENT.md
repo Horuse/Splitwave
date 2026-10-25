@@ -38,10 +38,10 @@ bun run tauri dev
 ## Useful commands
 
 ```bash
-bun run check                          # svelte-check + tsc
+bun run test                           # frontend + Rust tests in parallel
+bun run check                          # frontend + Rust checks in parallel
 bun run generate                       # regenerate TypeScript types from Rust (ts-rs)
 bun run storybook                      # Storybook on :6006, nodes and shared components with mocked engine
-cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri build --bundles app      # local .app build (macOS)
 bun run tauri build --bundles appimage # local AppImage build (Linux)
 bun run tauri build --bundles nsis     # local installer build (Windows)

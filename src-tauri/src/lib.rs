@@ -4,9 +4,10 @@ mod error;
 mod logs;
 mod native_crash;
 mod state;
+mod watchdog;
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::json;
 use state::AppState;
@@ -25,6 +26,8 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 // next launch because a dying process cannot reliably notify the webview.
 static CRASH_FILE: OnceLock<PathBuf> = OnceLock::new();
 static SESSION_FILE: OnceLock<PathBuf> = OnceLock::new();
+/// Tail of the log of a session that ended uncleanly, attached to its reports.
+static PREVIOUS_LOGS: Mutex<Option<String>> = Mutex::new(None);
 
 fn append_report(path: &std::path::Path, payload: &serde_json::Value) {
     if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -41,17 +44,21 @@ fn initialize_crash_reporting(dir: &std::path::Path) {
     let crash_file = dir.join("crashes.jsonl");
     let session_file = dir.join("running-session");
     let crash_len = std::fs::metadata(&crash_file).map_or(0, |meta| meta.len());
+    let previous_hang = watchdog::take_previous_hang(dir);
 
     if let Ok(baseline) = std::fs::read_to_string(&session_file) {
+        if let Ok(mut logs) = PREVIOUS_LOGS.lock() {
+            *logs = logs::previous_session_tail(dir);
+        }
         let baseline = baseline.trim().parse::<u64>().unwrap_or(0);
         if crash_len <= baseline {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as u64)
                 .unwrap_or(0);
-            append_report(
-                &crash_file,
-                &json!({
+            let report = match previous_hang {
+                Some(hang) => hang_report(&hang, ts),
+                None => json!({
                     "kind": "unexpectedExit",
                     "message": "Splitwave did not shut down cleanly",
                     "backtrace": "No native stack was captured. The process may have been killed by the OS, an out-of-memory condition, or a native crash without a dump.",
@@ -59,7 +66,8 @@ fn initialize_crash_reporting(dir: &std::path::Path) {
                     "version": env!("CARGO_PKG_VERSION"),
                     "ts": ts,
                 }),
-            );
+            };
+            append_report(&crash_file, &report);
         }
     }
 
@@ -72,10 +80,37 @@ fn initialize_crash_reporting(dir: &std::path::Path) {
     }
 }
 
+fn hang_report(hang: &serde_json::Value, ts: u64) -> serde_json::Value {
+    let seconds = hang["stalledMs"].as_u64().unwrap_or(0) / 1000;
+    let place = match hang["command"].as_str() {
+        Some(command) => format!("in the `{command}` command"),
+        None => "outside any IPC command".to_string(),
+    };
+    json!({
+        "kind": "hang",
+        "message": "Splitwave stopped responding and was closed",
+        "backtrace": format!("The main thread was blocked for at least {seconds} s {place} before the app was closed. A hang captures no stack; the session log shows what led up to it."),
+        "thread": "main",
+        "version": env!("CARGO_PKG_VERSION"),
+        "ts": hang["ts"].as_u64().unwrap_or(ts),
+    })
+}
+
+fn with_watchdog(
+    handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let _command = watchdog::enter_command(invoke.message.command());
+        handler(invoke)
+    }
+}
+
 fn mark_clean_exit() {
     if let Some(path) = SESSION_FILE.get() {
         let _ = std::fs::remove_file(path);
     }
+    watchdog::clear_marker();
+    logs::flush_file_sink();
 }
 
 #[cfg(target_os = "windows")]
@@ -102,10 +137,17 @@ pub fn take_crash_reports() -> Vec<serde_json::Value> {
     if let Some(session) = SESSION_FILE.get() {
         let _ = std::fs::write(session, "0");
     }
+    let logs = PREVIOUS_LOGS.lock().ok().and_then(|mut l| l.take());
     contents
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .map(|mut report| {
+            if let (Some(logs), Some(fields)) = (&logs, report.as_object_mut()) {
+                fields.insert("logs".into(), json!(logs));
+            }
+            report
+        })
         .collect()
 }
 
@@ -253,7 +295,9 @@ pub fn run() {
 
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);
+                logs::start_file_sink(&dir);
                 initialize_crash_reporting(&dir);
+                watchdog::start(handle.clone(), &dir);
                 if let Some(file) = CRASH_FILE.get() {
                     info!(path = %file.display(), "crash log");
                 }
@@ -301,7 +345,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::spawn())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(with_watchdog(tauri::generate_handler![
             commands::scan_plugins,
             commands::open_plugin_editor,
             commands::close_plugin_editor,
@@ -311,9 +355,11 @@ pub fn run() {
             commands::take_crash_reports,
             commands::get_logs,
             commands::clear_logs,
+            commands::log_frontend,
             commands::debug_panic,
             commands::debug_native_crash,
             commands::debug_unexpected_exit,
+            commands::debug_hang,
             commands::list_input_devices,
             commands::list_output_devices,
             commands::play_cue,
@@ -363,7 +409,7 @@ pub fn run() {
             commands::net_sender_stats,
             commands::webrtc_set_identity,
             commands::webrtc_session_state,
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_, event| {

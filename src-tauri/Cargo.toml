@@ -97,6 +97,7 @@ bytes = "1"
 cuid2 = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 ts-rs = { version = "12", features = ["serde-compat"] }
 ndarray = "0.15"
 # CLAP plugin hosting. clack is git-only and pre-1.0; pin an exact rev because

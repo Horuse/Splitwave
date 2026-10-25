@@ -7,6 +7,8 @@
 	import CopyButton from '$lib/components/copy_button.svelte';
 
 	const REPO = 'Horuse/Splitwave';
+	// The whole log does not fit in an issue URL; Copy details carries all of it.
+	const URL_LOG_LINES = 60;
 
 	let current = $derived(errorStore.current);
 
@@ -14,7 +16,7 @@
 		if (current) loadAppInfo().catch(() => {});
 	});
 
-	function buildDetails(): string {
+	function buildDetails(maxLogLines = Infinity): string {
 		if (!current) return '';
 		const info = getCachedAppInfo();
 		const lines = [
@@ -31,6 +33,10 @@
 		];
 		if (current.stack) {
 			lines.push('', '**Stack:**', '```', current.stack, '```');
+		}
+		if (current.logs) {
+			const log = current.logs.split('\n').slice(-maxLogLines).join('\n');
+			lines.push('', '<details><summary>Session log</summary>', '', '```', log, '```', '', '</details>');
 		}
 		lines.push(
 			'',
@@ -54,7 +60,7 @@
 		if (!current) return;
 		await loadAppInfo().catch(() => {});
 		const title = `[crash] ${current.message.split('\n')[0].slice(0, 80)}`;
-		const details = buildDetails();
+		const details = buildDetails(URL_LOG_LINES);
 		const url = `https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&details=${encodeURIComponent(details)}`;
 		try {
 			await openUrl(url);
@@ -73,6 +79,8 @@
 				return 'Native crash';
 			case 'unexpectedExit':
 				return 'Unexpected exit';
+			case 'hang':
+				return 'Not responding';
 			case 'jsError':
 				return 'JS error';
 			case 'unhandledRejection':
@@ -125,11 +133,18 @@
 						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.stack}</pre>
 				</details>
 			{/if}
+			{#if current.logs}
+				<details class="group">
+					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Session log</summary>
+					<pre
+						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.logs}</pre>
+				</details>
+			{/if}
 		</div>
 
 		{#snippet footer()}
 			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
-			<CopyButton text={buildDetails} label="Copy details" class="button-main primary gap-3 rounded-lg" />
+			<CopyButton text={() => buildDetails()} label="Copy details" class="button-main primary gap-3 rounded-lg" />
 			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}> Report on GitHub </button>
 		{/snippet}
 	</ModalShell>

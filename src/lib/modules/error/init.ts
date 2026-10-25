@@ -5,16 +5,21 @@ import { errorStore } from './stores.svelte';
 const PANIC_EVENT = 'error://panic';
 
 interface CrashPayload {
-	kind?: 'rustPanic' | 'nativeCrash' | 'unexpectedExit';
+	kind?: 'rustPanic' | 'nativeCrash' | 'unexpectedExit' | 'hang';
 	message: string;
 	backtrace: string;
 	thread: string;
 	version: string;
 	ts?: number;
+	logs?: string;
 }
 
 let installed = false;
 let unlistenPanic: UnlistenFn | undefined;
+
+function logToBackend(message: string, stack?: string): void {
+	invoke('log_frontend', { message: stack ? `${message}\n${stack}` : message }).catch(() => {});
+}
 
 export async function installErrorHandlers(): Promise<void> {
 	if (installed) return;
@@ -41,6 +46,7 @@ export async function installErrorHandlers(): Promise<void> {
 				stack: r.backtrace,
 				thread: r.thread,
 				at: r.ts ?? Date.now(),
+				logs: r.logs,
 				previousRun: true
 			});
 		}
@@ -48,23 +54,18 @@ export async function installErrorHandlers(): Promise<void> {
 
 	window.addEventListener('error', (e) => {
 		if (e.message?.startsWith('ResizeObserver loop')) return;
-		errorStore.report({
-			source: 'jsError',
-			message: e.message || String(e.error),
-			stack: e.error instanceof Error ? e.error.stack : undefined,
-			at: Date.now()
-		});
+		const message = e.message || String(e.error);
+		const stack = e.error instanceof Error ? e.error.stack : undefined;
+		logToBackend(message, stack);
+		errorStore.report({ source: 'jsError', message, stack, at: Date.now() });
 	});
 
 	window.addEventListener('unhandledrejection', (e) => {
 		const reason = e.reason;
 		const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : JSON.stringify(reason);
-		errorStore.report({
-			source: 'unhandledRejection',
-			message,
-			stack: reason instanceof Error ? reason.stack : undefined,
-			at: Date.now()
-		});
+		const stack = reason instanceof Error ? reason.stack : undefined;
+		logToBackend(`unhandled rejection: ${message}`, stack);
+		errorStore.report({ source: 'unhandledRejection', message, stack, at: Date.now() });
 	});
 }
 

@@ -103,6 +103,15 @@
 		if (!ctx) ctx = canvas.getContext('2d');
 		if (!ctx) return;
 
+		const dpr = window.devicePixelRatio || 1;
+		const bw = Math.max(1, Math.round(W * dpr));
+		const bh = Math.max(1, Math.round(Hpx * dpr));
+		if (canvas.width !== bw) canvas.width = bw;
+		if (canvas.height !== bh) canvas.height = bh;
+		if (canvas.style.width !== `${W}px`) canvas.style.width = `${W}px`;
+		if (canvas.style.height !== `${Hpx}px`) canvas.style.height = `${Hpx}px`;
+
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, W, Hpx);
 		if (!hasSignal) return;
 
@@ -193,9 +202,8 @@
 			<!-- Flat canvas for high-perf 60 FPS spectrum bars without DOM nodes -->
 			<canvas
 				bind:this={canvas}
-				width={W}
-				height={Hpx}
-				class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]"></canvas>
+				class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]"
+				aria-hidden="true"></canvas>
 
 			<!-- Crisp vector overlay for scales, axes and grid -->
 			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" class="pointer-events-none relative z-10" aria-hidden="true">

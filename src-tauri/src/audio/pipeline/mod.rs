@@ -41,6 +41,7 @@ mod output;
 #[cfg(target_os = "linux")]
 pub(crate) use worker::RtThread;
 mod sig;
+pub(crate) mod spectrum;
 mod worker;
 
 use dag::{build_output_graph, ring_capacity_frames, OutputGraph, OutputMeta, SourceMeta};

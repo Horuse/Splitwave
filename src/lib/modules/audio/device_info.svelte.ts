@@ -28,8 +28,18 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 	let isLoading = $state(true);
 	let requestId = 0;
 	let currentKey: string | null = null;
+	let inFlight = 0;
 
 	async function query(): Promise<void> {
+		inFlight++;
+		try {
+			await run();
+		} finally {
+			inFlight--;
+		}
+	}
+
+	async function run(): Promise<void> {
 		const id = ++requestId;
 		if ('deviceId' in target) {
 			const deviceId = target.deviceId();
@@ -99,8 +109,9 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	onMount(() => {
+		// A stalled device query must not stack a new one every tick.
 		const onRefresh = () => {
-			void query();
+			if (!inFlight) void query();
 		};
 
 		if (typeof window !== 'undefined') {
@@ -110,7 +121,7 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 			document.addEventListener('visibilitychange', onRefresh);
 			timer = setInterval(() => {
 				if (document.visibilityState === 'visible') {
-					void query();
+					onRefresh();
 				}
 			}, 2500);
 		}

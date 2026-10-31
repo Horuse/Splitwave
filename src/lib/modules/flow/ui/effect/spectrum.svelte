@@ -23,24 +23,16 @@
 		flow.updateNodeData(id, { smoothing: v });
 	}
 
-	// The engine ships one contiguous 4096-frame window per spectrum node
-	// (SPECTRUM_FRAMES) so the low end resolves (~11.7 Hz/bin at 48 kHz) without
-	// the discontinuities that concatenating separate 1024 snapshots would cause.
-	const FFT_SIZE = 4096;
-	const BINS = FFT_SIZE / 2;
-	const MAX_CH = 8; // per-channel FFTs beyond this cost more than they reveal
+	const BARS = 80;
 	const F_MIN = 20;
-	const BARS = 80; // log-spaced across the audible range
 	const DB_FLOOR = -96;
 
-	// Monitors run at the max input rate, not always 48 kHz; the scope event
-	// carries the real rate so the frequency axis stays honest.
 	let sampleRate = $state(48_000);
 	let fMax = $derived(sampleRate / 2);
 
 	const SCALE_W = 28;
-	const RIGHT_PAD = 12; // mirrors the gap the dB rail leaves on the left
-	const TOP_PAD = 9; // headroom so the 0 dB line and its label aren't clipped
+	const RIGHT_PAD = 12;
+	const TOP_PAD = 9;
 	const AXIS_H = 12;
 
 	const DB_TICKS = [0, -12, -24, -36, -48, -60, -72, -84, -96];
@@ -48,6 +40,8 @@
 	let W = $state(260);
 	let Hpx = $state(140);
 	let plotWrap: HTMLDivElement;
+	let canvas: HTMLCanvasElement;
+	let ctx: CanvasRenderingContext2D | null = null;
 
 	$effect(() => {
 		if (!plotWrap) return;
@@ -67,21 +61,6 @@
 	let plotW = $derived(Math.max(1, W - SCALE_W - RIGHT_PAD));
 	let plotH = $derived(Math.max(1, Hpx - AXIS_H));
 
-	// Bar band edges in bin space, log-spaced. Recomputed if the monitor rate
-	// changes (a graph rebuild), else stable.
-	let bandBins = $derived.by<[number, number][]>(() => {
-		const out: [number, number][] = [];
-		for (let b = 0; b < BARS; b++) {
-			const f0 = F_MIN * Math.pow(fMax / F_MIN, b / BARS);
-			const f1 = F_MIN * Math.pow(fMax / F_MIN, (b + 1) / BARS);
-			const lo = Math.max(1, Math.floor((f0 / fMax) * BINS));
-			const hi = Math.max(lo + 1, Math.ceil((f1 / fMax) * BINS));
-			out.push([lo, Math.min(hi, BINS)]);
-		}
-		return out;
-	});
-
-	// Log-spaced 1-2-5 frequency ticks over the audible range.
 	let freqTicks = $derived.by<{ f: number; label: string; major: boolean }[]>(() => {
 		const out: { f: number; label: string; major: boolean }[] = [];
 		for (let d = 10; d <= fMax; d *= 10) {
@@ -94,97 +73,8 @@
 		return out;
 	});
 
-	const hann = new Float32Array(FFT_SIZE);
-	for (let i = 0; i < FFT_SIZE; i++) {
-		hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1)));
-	}
-
-	const re = new Float32Array(FFT_SIZE);
-	const im = new Float32Array(FFT_SIZE);
-	const bandPeak = new Float32Array(BARS);
 	const barDb = new Float32Array(BARS).fill(DB_FLOOR);
 	let hasSignal = false;
-
-	// In-place iterative radix-2 FFT.
-	function fft(reBuf: Float32Array, imBuf: Float32Array) {
-		const n = reBuf.length;
-		for (let i = 1, j = 0; i < n; i++) {
-			let bit = n >> 1;
-			for (; j & bit; bit >>= 1) j ^= bit;
-			j ^= bit;
-			if (i < j) {
-				[reBuf[i], reBuf[j]] = [reBuf[j], reBuf[i]];
-				[imBuf[i], imBuf[j]] = [imBuf[j], imBuf[i]];
-			}
-		}
-		for (let len = 2; len <= n; len <<= 1) {
-			const ang = (-2 * Math.PI) / len;
-			const wr = Math.cos(ang);
-			const wi = Math.sin(ang);
-			const half = len >> 1;
-			for (let i = 0; i < n; i += len) {
-				let cr = 1;
-				let ci = 0;
-				for (let k = 0; k < half; k++) {
-					const ar = reBuf[i + k];
-					const ai = imBuf[i + k];
-					const br = reBuf[i + k + half] * cr - imBuf[i + k + half] * ci;
-					const bi = reBuf[i + k + half] * ci + imBuf[i + k + half] * cr;
-					reBuf[i + k] = ar + br;
-					imBuf[i + k] = ai + bi;
-					reBuf[i + k + half] = ar - br;
-					imBuf[i + k + half] = ai - bi;
-					const ncr = cr * wr - ci * wi;
-					ci = cr * wi + ci * wr;
-					cr = ncr;
-				}
-			}
-		}
-	}
-
-	function analyze(chans: number[][], sr: number) {
-		const ch = chans.length;
-		if (ch === 0) return;
-		if (sr > 0) sampleRate = sr;
-		const cap = Math.min(ch, MAX_CH);
-		const n = Math.min(FFT_SIZE, chans[0].length);
-		const bands = bandBins;
-		bandPeak.fill(0);
-		// Per-channel FFT combined by max: a summed mono downmix would cancel
-		// out-of-phase content and hide real energy.
-		for (let c = 0; c < cap; c++) {
-			const src = chans[c];
-			for (let i = 0; i < n; i++) {
-				re[i] = (src[i] ?? 0) * hann[i];
-				im[i] = 0;
-			}
-			for (let i = n; i < FFT_SIZE; i++) {
-				re[i] = 0;
-				im[i] = 0;
-			}
-			fft(re, im);
-			for (let b = 0; b < BARS; b++) {
-				const [lo, hi] = bands[b];
-				let peak = bandPeak[b];
-				for (let k = lo; k < hi; k++) {
-					const mag = Math.hypot(re[k], im[k]);
-					if (mag > peak) peak = mag;
-				}
-				bandPeak[b] = peak;
-			}
-		}
-		// Higher smoothing → smaller step toward target, so bars glide instead of
-		// jittering. Rise faster than fall so transients still read.
-		const rise = 1 - 0.85 * smoothing;
-		const fall = 0.4 - 0.37 * smoothing;
-		for (let b = 0; b < BARS; b++) {
-			const norm = bandPeak[b] / BINS;
-			const target = norm > 1e-7 ? Math.max(DB_FLOOR, 20 * Math.log10(norm)) : DB_FLOOR;
-			const cur = barDb[b];
-			barDb[b] = cur + (target - cur) * (target > cur ? rise : fall);
-		}
-		hasSignal = true;
-	}
 
 	function dbToY(db: number): number {
 		const t = (db - DB_FLOOR) / -DB_FLOOR; // 0 at floor, 1 at 0 dB
@@ -196,47 +86,70 @@
 		return SCALE_W + plotW * Math.max(0, Math.min(1, t));
 	}
 
-	let bars = $state<{ x: number; w: number; y: number; h: number; hue: number }[]>([]);
+	function updateBars(bars: number[], sr: number) {
+		if (sr > 0) sampleRate = sr;
+		const rise = 1 - 0.85 * smoothing;
+		const fall = 0.4 - 0.37 * smoothing;
+		for (let b = 0; b < BARS; b++) {
+			const target = bars[b] ?? DB_FLOOR;
+			const cur = barDb[b];
+			barDb[b] = cur + (target - cur) * (target > cur ? rise : fall);
+		}
+		hasSignal = true;
+	}
 
-	function buildFrame() {
+	function renderCanvas() {
+		if (!canvas) return;
+		if (!ctx) ctx = canvas.getContext('2d');
+		if (!ctx) return;
+
+		const dpr = window.devicePixelRatio || 1;
+		const bw = Math.max(1, Math.round(W * dpr));
+		const bh = Math.max(1, Math.round(Hpx * dpr));
+		if (canvas.width !== bw) canvas.width = bw;
+		if (canvas.height !== bh) canvas.height = bh;
+		if (canvas.style.width !== `${W}px`) canvas.style.width = `${W}px`;
+		if (canvas.style.height !== `${Hpx}px`) canvas.style.height = `${Hpx}px`;
+
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.clearRect(0, 0, W, Hpx);
+		if (!hasSignal) return;
+
 		const step = plotW / BARS;
-		const out = new Array(BARS);
 		for (let b = 0; b < BARS; b++) {
 			const y = dbToY(barDb[b]);
-			out[b] = {
-				x: SCALE_W + b * step,
-				w: Math.max(1, step - 1),
-				y,
-				h: plotH - y,
-				hue: 210 - (b / BARS) * 210
-			};
+			const h = plotH - y;
+			if (h > 0) {
+				ctx.fillStyle = `hsl(${210 - (b / BARS) * 210} 85% 55%)`;
+				ctx.fillRect(SCALE_W + b * step, y, Math.max(1, step - 1), h);
+			}
 		}
-		bars = out;
 	}
 
 	let rafId: number | undefined;
 	function frame() {
-		if (hasSignal) buildFrame();
+		if (hasSignal) renderCanvas();
 		rafId = requestAnimationFrame(frame);
 	}
 
-	interface ScopeTick {
+	interface SpectrumTick {
 		nodeId: string;
-		channels: number;
-		data: number[][];
+		bars: number[];
 		sampleRate: number;
 	}
 
-	tauriListen<ScopeTick>('audio://scope', (p) => {
-		if (p.nodeId !== id) return;
-		analyze(p.data, p.sampleRate);
-	});
+	let unlisten: (() => void) | undefined;
 
 	onMount(() => {
+		unlisten = tauriListen<SpectrumTick>('audio://spectrum', (p) => {
+			if (p.nodeId !== id) return;
+			updateBars(p.bars, p.sampleRate);
+		});
 		rafId = requestAnimationFrame(frame);
 	});
 
 	onDestroy(() => {
+		unlisten?.();
 		if (rafId !== undefined) cancelAnimationFrame(rafId);
 	});
 </script>
@@ -285,10 +198,15 @@
 		{#if !isPreview}
 			<ChannelHandles nodeId={id} side="target" />
 		{/if}
-		<div bind:this={plotWrap} class="nowheel min-w-0 flex-1 self-stretch overflow-hidden">
-			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" aria-hidden="true">
-				<rect width={W} height={Hpx} fill="#111" rx="10" />
+		<div bind:this={plotWrap} class="nowheel relative min-w-0 flex-1 self-stretch overflow-hidden rounded-[10px]">
+			<!-- Flat canvas for high-perf 60 FPS spectrum bars without DOM nodes -->
+			<canvas
+				bind:this={canvas}
+				class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]"
+				aria-hidden="true"></canvas>
 
+			<!-- Crisp vector overlay for scales, axes and grid -->
+			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" class="pointer-events-none relative z-10" aria-hidden="true">
 				<!-- dB grid + scale rail -->
 				{#each DB_TICKS as db (db)}
 					{@const y = dbToY(db)}
@@ -326,10 +244,6 @@
 					stroke="rgba(255,255,255,0.12)"
 					stroke-width="1"
 					shape-rendering="crispEdges" />
-
-				{#each bars as bar, b (b)}
-					<rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={`hsl(${bar.hue} 85% 55%)`} rx="1" />
-				{/each}
 			</svg>
 		</div>
 		{#if !isPreview}

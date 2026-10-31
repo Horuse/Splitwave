@@ -12,11 +12,13 @@ use crate::audio::health;
 
 use super::dag::{OutputMeta, SourceMeta, DSP_BLOCK_FRAMES};
 use super::output::LIVE_SPEAKER_STREAMS;
+use super::spectrum::SpectrumCalculator;
 
 const METER_EVENT: &str = "audio://meter";
 const LUFS_EVENT: &str = "audio://lufs";
 const GR_EVENT: &str = "audio://gr";
 const SCOPE_EVENT: &str = "audio://scope";
+const SPECTRUM_EVENT: &str = "audio://spectrum";
 const METER_TICK: Duration = Duration::from_millis(33);
 
 const XRUN_TICK: Duration = Duration::from_millis(1000);
@@ -347,6 +349,7 @@ pub(super) fn spawn_meter_thread(
     let join = thread::Builder::new()
         .name("meter-tick".into())
         .spawn(move || {
+            let mut spectrum_calc = SpectrumCalculator::new();
             while !stop_thread.load(Ordering::SeqCst) {
                 thread::sleep(METER_TICK);
                 for m in &meters {
@@ -387,15 +390,22 @@ pub(super) fn spawn_meter_thread(
                     let _ = app.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
                 }
                 for s in &scopes {
-                    // Scopes emit a delta since the last tick; spectrum emits the
-                    // full contiguous window it needs for its FFT.
-                    let (start_frame, interleaved, ch) = if s.is_spectrum() {
-                        let (v, ch) = s.snapshot();
-                        (None, v, ch)
-                    } else {
-                        let (start, v, ch) = s.drain();
-                        (Some(start), v, ch)
-                    };
+                    if s.is_spectrum() {
+                        let (interleaved, ch) = s.snapshot();
+                        let bars = spectrum_calc.calculate_bars(&interleaved, ch, s.sample_rate);
+                        let _ = app.emit(
+                            SPECTRUM_EVENT,
+                            json!({
+                                "nodeId": s.node_id,
+                                "bars": bars,
+                                "sampleRate": s.sample_rate,
+                            }),
+                        );
+                        continue;
+                    }
+
+                    // Scopes emit a delta since the last tick (waveform / recording)
+                    let (start, interleaved, ch) = s.drain();
                     let frames = interleaved.len() / ch;
                     if frames == 0 {
                         continue;
@@ -407,23 +417,15 @@ pub(super) fn spawn_meter_thread(
                             chans[c].push(interleaved[base + c]);
                         }
                     }
-                    let payload = match start_frame {
-                        Some(start) => json!({
-                            "nodeId": s.node_id,
-                            "channels": ch,
-                            "data": chans,
-                            "sampleRate": s.sample_rate,
-                            "startFrame": start,
-                            "session": s.session,
-                            "baseFrames": s.base_frames,
-                        }),
-                        None => json!({
-                            "nodeId": s.node_id,
-                            "channels": ch,
-                            "data": chans,
-                            "sampleRate": s.sample_rate,
-                        }),
-                    };
+                    let payload = json!({
+                        "nodeId": s.node_id,
+                        "channels": ch,
+                        "data": chans,
+                        "sampleRate": s.sample_rate,
+                        "startFrame": start,
+                        "session": s.session,
+                        "baseFrames": s.base_frames,
+                    });
                     let _ = app.emit(SCOPE_EVENT, payload);
                 }
             }

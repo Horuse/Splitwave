@@ -7,8 +7,9 @@
 	import CopyButton from '$lib/components/copy_button.svelte';
 
 	const REPO = 'Horuse/Splitwave';
-	// The whole log does not fit in an issue URL; Copy details carries all of it.
-	const URL_LOG_LINES = 60;
+	// Longer issue URLs are cut off or rejected, so the GitHub link carries only
+	// the newest log lines that fit; Copy details carries all of it.
+	const MAX_URL_LENGTH = 8000;
 
 	let current = $derived(errorStore.current);
 
@@ -16,7 +17,7 @@
 		if (current) loadAppInfo().catch(() => {});
 	});
 
-	function buildDetails(maxLogLines = Infinity): string {
+	function buildDetails(log = current?.logs): string {
 		if (!current) return '';
 		const info = getCachedAppInfo();
 		const lines = [
@@ -34,8 +35,7 @@
 		if (current.stack) {
 			lines.push('', '**Stack:**', '```', current.stack, '```');
 		}
-		if (current.logs) {
-			const log = current.logs.split('\n').slice(-maxLogLines).join('\n');
+		if (log !== undefined) {
 			lines.push('', '<details><summary>Session log</summary>', '', '```', log, '```', '', '</details>');
 		}
 		lines.push(
@@ -60,11 +60,27 @@
 		if (!current) return;
 		await loadAppInfo().catch(() => {});
 		const title = `[crash] ${current.message.split('\n')[0].slice(0, 80)}`;
-		const details = buildDetails(URL_LOG_LINES);
-		const url = `https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&details=${encodeURIComponent(details)}`;
+		const issueUrl = (details: string) =>
+			`https://github.com/${REPO}/issues/new?template=crash.yml&title=${encodeURIComponent(title)}&details=${encodeURIComponent(details)}`;
+		const url = issueUrl(buildDetails(fittingLog(issueUrl(buildDetails('')).length)));
 		try {
 			await openUrl(url);
 		} catch {}
+	}
+
+	/** Newest log lines whose encoded length fits next to a URL of `baseLength`. */
+	function fittingLog(baseLength: number): string | undefined {
+		if (!current?.logs) return undefined;
+		const lines = current.logs.split('\n');
+		let length = baseLength;
+		let start = lines.length;
+		while (start > 0) {
+			length += encodeURIComponent(lines[start - 1] + '\n').length;
+			if (length > MAX_URL_LENGTH) break;
+			start -= 1;
+		}
+		if (start === lines.length) return undefined;
+		return lines.slice(start).join('\n');
 	}
 
 	function dismiss() {

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
@@ -22,6 +22,7 @@ const MARKER: &str = "hang.json";
 
 static MARKER_PATH: OnceLock<PathBuf> = OnceLock::new();
 static MAIN_COMMAND: Mutex<Option<String>> = Mutex::new(None);
+static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
 pub struct CommandGuard;
 
@@ -34,12 +35,17 @@ impl Drop for CommandGuard {
 }
 
 /// Wraps every IPC dispatch. Sync commands run inline on the main thread, so
-/// while one is stuck its name is what this holds.
-pub fn enter_command(name: &str) -> CommandGuard {
+/// while one is stuck its name is what this holds. Dispatches on any other
+/// thread are skipped: they cannot block the main thread and would overwrite
+/// the name of the one that does.
+pub fn enter_command(name: &str) -> Option<CommandGuard> {
+    if MAIN_THREAD.get() != Some(&thread::current().id()) {
+        return None;
+    }
     if let Ok(mut current) = MAIN_COMMAND.lock() {
         *current = Some(name.to_string());
     }
-    CommandGuard
+    Some(CommandGuard)
 }
 
 /// The hang the previous session was stuck in when it died, if any.
@@ -56,7 +62,9 @@ pub fn clear_marker() {
     }
 }
 
+/// Call from the main thread; it is the thread the watchdog then probes.
 pub fn start(app: AppHandle, dir: &Path) {
+    let _ = MAIN_THREAD.set(thread::current().id());
     let marker = dir.join(MARKER);
     let _ = MARKER_PATH.set(marker.clone());
     let beat = Arc::new(Mutex::new(Instant::now()));

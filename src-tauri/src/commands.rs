@@ -193,8 +193,9 @@ pub fn clear_logs() {
 }
 
 /// Webview errors, so the session log on disk shows both sides of a crash.
+/// Async so a JS error repeating every frame does not queue on the main thread.
 #[tauri::command]
-pub fn log_frontend(message: String) {
+pub async fn log_frontend(message: String) {
     error!(target: "webview", "{message}");
 }
 

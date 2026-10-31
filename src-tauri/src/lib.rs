@@ -28,6 +28,7 @@ static CRASH_FILE: OnceLock<PathBuf> = OnceLock::new();
 static SESSION_FILE: OnceLock<PathBuf> = OnceLock::new();
 /// Tail of the log of a session that ended uncleanly, attached to its reports.
 static PREVIOUS_LOGS: Mutex<Option<String>> = Mutex::new(None);
+static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 fn append_report(path: &std::path::Path, payload: &serde_json::Value) {
     if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -105,12 +106,26 @@ fn with_watchdog(
     }
 }
 
+fn session_header() -> String {
+    let build = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    format!(
+        "Splitwave {} ({build}) on {} {} {}",
+        env!("CARGO_PKG_VERSION"),
+        tauri_plugin_os::platform(),
+        tauri_plugin_os::version(),
+        tauri_plugin_os::arch(),
+    )
+}
+
 fn mark_clean_exit() {
     if let Some(path) = SESSION_FILE.get() {
         let _ = std::fs::remove_file(path);
     }
     watchdog::clear_marker();
-    logs::flush_file_sink();
 }
 
 #[cfg(target_os = "windows")]
@@ -137,18 +152,29 @@ pub fn take_crash_reports() -> Vec<serde_json::Value> {
     if let Some(session) = SESSION_FILE.get() {
         let _ = std::fs::write(session, "0");
     }
-    let logs = PREVIOUS_LOGS.lock().ok().and_then(|mut l| l.take());
-    contents
+    let home = HOME_DIR.get().map(PathBuf::as_path);
+    let mut reports: Vec<serde_json::Value> = contents
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .map(|mut report| {
-            if let (Some(logs), Some(fields)) = (&logs, report.as_object_mut()) {
-                fields.insert("logs".into(), json!(logs));
+        .collect();
+    // Message and stack carry paths too, and the report may become a public issue.
+    for report in &mut reports {
+        for key in ["message", "backtrace"] {
+            if let Some(text) = report[key].as_str() {
+                report[key] = json!(logs::redact(text, home));
             }
-            report
-        })
-        .collect()
+        }
+    }
+    // The previous log belongs to the run that died last, whose report is the
+    // newest; older reports came from runs whose logs are gone.
+    let previous = PREVIOUS_LOGS.lock().ok().and_then(|mut l| l.take());
+    if let (Some(previous), Some(fields)) =
+        (previous, reports.last_mut().and_then(|r| r.as_object_mut()))
+    {
+        fields.insert("logs".into(), json!(previous));
+    }
+    reports
 }
 
 #[cfg(target_os = "macos")]
@@ -234,6 +260,7 @@ fn install_panic_hook() {
                 "version": env!("CARGO_PKG_VERSION"),
                 "ts": ts,
             });
+            logs::record_panic(&info.to_string());
             // Persist first: a main-thread panic tears the app down before the
             // live event can be delivered, so the file is the only reliable path.
             if let Some(path) = CRASH_FILE.get() {
@@ -295,8 +322,11 @@ pub fn run() {
 
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);
-                logs::start_file_sink(&dir);
+                logs::start_file_sink(&dir, &session_header());
                 let home = handle.path().home_dir().ok();
+                if let Some(home) = &home {
+                    let _ = HOME_DIR.set(home.clone());
+                }
                 initialize_crash_reporting(&dir, home.as_deref());
                 watchdog::start(handle.clone(), &dir);
                 if let Some(file) = CRASH_FILE.get() {

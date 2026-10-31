@@ -1,4 +1,4 @@
-export type ErrorSource = 'rustPanic' | 'nativeCrash' | 'unexpectedExit' | 'jsError' | 'unhandledRejection';
+export type ErrorSource = 'rustPanic' | 'nativeCrash' | 'unexpectedExit' | 'hang' | 'jsError' | 'unhandledRejection';
 
 export interface ErrorEntry {
 	source: ErrorSource;
@@ -6,6 +6,8 @@ export interface ErrorEntry {
 	stack?: string;
 	thread?: string;
 	at: number;
+	/** Tail of the session log of the run that crashed. */
+	logs?: string;
 	/** True when replayed from a crash that killed a previous run, not live. */
 	previousRun?: boolean;
 }

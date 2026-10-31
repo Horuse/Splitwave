@@ -35,6 +35,10 @@
 		invoke('debug_unexpected_exit').catch(() => {});
 	}
 
+	function mainThreadHang() {
+		invoke('debug_hang').catch(() => {});
+	}
+
 	function fakeJsError() {
 		errorStore.report({
 			source: 'jsError',
@@ -244,6 +248,7 @@
 				<MenuItem label="Real crash (panic)" onclick={realRustCrash} />
 				<MenuItem label="Native crash (process)" onclick={nativeCrash} />
 				<MenuItem label="Unexpected exit (process)" onclick={unexpectedExit} />
+				<MenuItem label="Main thread hang (20 s)" onclick={mainThreadHang} />
 				<MenuItem label="JS error" onclick={fakeJsError} />
 				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
 				<MenuItem label="Safe Mode (simulate)" onclick={fakeSafeMode} />

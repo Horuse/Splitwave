@@ -204,6 +204,13 @@ pub fn clear_logs() {
     crate::logs::clear();
 }
 
+/// Webview errors, so the session log on disk shows both sides of a crash.
+/// Async so a JS error repeating every frame does not queue on the main thread.
+#[tauri::command]
+pub async fn log_frontend(message: String) {
+    error!(target: "webview", "{message}");
+}
+
 /// Dev-only: panics on the main thread to exercise the crash-persistence path
 /// (a real panic, not a faked event). Crashes the app on purpose.
 #[tauri::command]
@@ -230,6 +237,14 @@ pub fn debug_native_crash() {
 pub fn debug_unexpected_exit() {
     #[cfg(debug_assertions)]
     std::process::exit(86);
+}
+
+/// Dev-only: blocks the main thread to exercise the hang watchdog. Kill the app
+/// while it is stuck to get the next-launch hang report.
+#[tauri::command]
+pub fn debug_hang() {
+    #[cfg(debug_assertions)]
+    std::thread::sleep(Duration::from_secs(20));
 }
 
 #[tauri::command]

@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-beta.1] - 2026-11-01
+
+### Added
+
+- **Low-latency engine** - speakers render the graph in the device callback at the configured buffer size (32 to 2048 frames), so latency follows the buffer setting instead of a fixed internal ring by @Horuse in (#59).
+- **Buffer size setting** with a round-trip latency readout and a working-block badge by @Horuse in (#59).
+- **Adaptive buffering** - each live queue is sized from measured jitter; silence from a quiet source no longer deepens any buffer by @Horuse in (#59).
+
+### Changed
+
+- Inputs on a different clock than the speaker are absorbed by a drift-steered resampler instead of splices by @Horuse in (#59).
+- Graph edits apply immediately and keep unchanged nodes running; a swap that changes what is heard fades out and in instead of stepping by @Horuse in (#59).
+- Network streams send one engine block per packet (Opus from 2.5 ms) and the receive buffer is sized from the link, with no 20 ms floor or 60 ms start by @Horuse in (#59).
+- WebRTC send graphs run at 48 kHz; joining gives up on a silent signaling server by @Horuse in (#59).
+- Gain and mute ramps, fades and splices are set in time rather than blocks; delay time glides like tape; spectrum keeps the same resolution at any sample rate by @Horuse in (#59).
+- Mono sources fill both sides of a stereo pair, so linked detectors hear them at their own level by @Horuse in (#59).
+- macOS virtual driver updated to version 6: ring sized in time, stale reads refused by @Horuse in (#59).
+
+### Fixed
+
+- Fixed audio dropouts caused by allocations on the audio thread (input staging, network receive, LUFS history, noise suppressor) by @Horuse in (#59).
+- Fixed a stalled speaker keeping piled-up input as permanent latency after a device overload by @Horuse in (#59).
+- Fixed file seeks briefly playing the old position; seeks are now sample-accurate and the playhead shows what is heard by @Horuse in (#59).
+- Fixed the monitor graph running at a fraction of real time and starving speakers fed by the same file by @Horuse in (#59).
+- Fixed device xruns ending a stream (cpal 0.18.2) by @Horuse in (#59).
+- Fixed slow plugin loads not being waited for by @Horuse in (#59).
+
 ## [1.5.0] - 2026-11-01
 
 ### Added

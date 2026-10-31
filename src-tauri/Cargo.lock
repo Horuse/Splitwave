@@ -6224,7 +6224,7 @@ dependencies = [
 
 [[package]]
 name = "splitwave"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "audio_thread_priority",
  "base64 0.22.1",

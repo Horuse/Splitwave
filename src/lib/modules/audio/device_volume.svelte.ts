@@ -29,6 +29,28 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 	let unsynced = $state(false);
 	let settleUntil = 0;
 
+	// Concurrent writes can reach the device out of order and leave a stale
+	// value, so one runs at a time and only the latest queued value is sent.
+	let queued: { id: string; scalar: number } | null = null;
+	let writer: Promise<void> | null = null;
+
+	async function flush() {
+		while (queued) {
+			const { id, scalar: value } = queued;
+			queued = null;
+			try {
+				await methods.setDeviceVolume(kind, id, value);
+			} catch {
+				queued = null;
+				unsupported = true;
+				return;
+			}
+			if (queued) continue;
+			await load(id, true);
+			settleUntil = Date.now() + SETTLE_MS;
+		}
+	}
+
 	async function load(id: string, force = false) {
 		try {
 			const v = await methods.getDeviceVolume(kind, id);
@@ -55,7 +77,7 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 		let unlisten: UnlistenFn | undefined;
 		let stopped = false;
 		void load(id);
-		void methods
+		const watched = methods
 			.watchDeviceVolume(kind, id)
 			.then(async () => {
 				unsynced = false;
@@ -68,13 +90,22 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 				if (stopped) un();
 				else unlisten = un;
 			})
-			.catch(() => {
-				unsynced = true;
-			});
+			.then(
+				() => true,
+				() => {
+					unsynced = true;
+					return false;
+				}
+			);
 		return () => {
 			stopped = true;
 			unlisten?.();
-			void methods.unwatchDeviceVolume(kind, id);
+			// Commands run concurrently in the backend; an unwatch that overtakes
+			// its watch finds nothing and leaks the listener, and one after a failed
+			// watch would drop another node's reference.
+			void watched.then((ok) => {
+				if (ok) void methods.unwatchDeviceVolume(kind, id);
+			});
 		};
 	});
 
@@ -97,14 +128,9 @@ export function deviceVolume(kind: DeviceKind, deviceId: () => string | null): D
 			const clamped = Math.max(0, Math.min(1, next));
 			settleUntil = Date.now() + SETTLE_MS;
 			scalar = clamped;
-			try {
-				await methods.setDeviceVolume(kind, id, clamped);
-			} catch {
-				unsupported = true;
-				return;
-			}
-			await load(id, true);
-			settleUntil = Date.now() + SETTLE_MS;
+			queued = { id, scalar: clamped };
+			writer ??= flush().finally(() => (writer = null));
+			return writer;
 		}
 	};
 }

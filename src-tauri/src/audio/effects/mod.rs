@@ -471,6 +471,8 @@ pub struct EffectRegistry {
     controls: std::collections::HashMap<String, EffectControl>,
     bypasses: std::collections::HashMap<String, Arc<AtomicBool>>,
     meters: std::collections::HashMap<String, MeterHandle>,
+    /// Level of what each effect sends on, which the editor draws on its cables.
+    output_levels: std::collections::HashMap<String, MeterHandle>,
     lufs: std::collections::HashMap<String, LufsHandle>,
     gr_atomics: std::collections::HashMap<String, Arc<AtomicU32>>,
     scopes: std::collections::HashMap<String, WaveformHandle>,
@@ -487,6 +489,18 @@ pub struct EffectRegistry {
 impl EffectRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The output level meter of `node_id`, kept across rebuilds. A level meter
+    /// node passes its input through, so its own meter already reads it.
+    pub fn output_level(&mut self, node_id: &str) -> MeterHandle {
+        if let Some(m) = self.meters.get(node_id) {
+            return m.clone();
+        }
+        self.output_levels
+            .entry(node_id.to_string())
+            .or_insert_with(|| MeterHandle::new(node_id.to_string()))
+            .clone()
     }
 
     /// Clears per-reconcile scratch. Call once before rebuilding the graphs so

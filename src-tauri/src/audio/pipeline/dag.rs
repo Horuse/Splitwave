@@ -946,6 +946,8 @@ struct EffectState {
     pair_main: Vec<f32>,
     pair_side: Vec<f32>,
     handle_bufs: Taps,
+    /// Level of `out_buf` for the editor's cables.
+    out_level: MeterHandle,
     // When this node fans out to several outputs it is computed once (here, in
     // its owning output's graph) and its `out_buf` is published each block into
     // one ring per other consuming output, which reads it via a ring-source.
@@ -1731,6 +1733,7 @@ impl OutputGraph {
                 eff.process(frames);
                 let w = eff.out_buf.len() / frames;
                 fill_taps(&mut eff.handle_bufs, &eff.out_buf, w, frames);
+                update_meter(&eff.out_level, &eff.out_buf, w);
                 // Publish the processed block to every consuming output's ring.
                 for (prod, clock) in eff.taps.iter_mut() {
                     clock.record(eff.out_buf.len(), now);
@@ -2261,6 +2264,10 @@ pub(super) fn build_output_graph(
                 }
             };
             meters.extend(this_effect.meter.clone());
+            let out_level = registry.output_level(id);
+            if this_effect.meter.is_none() {
+                meters.push(out_level.clone());
+            }
             lufs.extend(this_effect.lufs.clone());
             gr_handles.extend(this_effect.gr.clone());
             scopes.extend(this_effect.scope.clone());
@@ -2334,6 +2341,7 @@ pub(super) fn build_output_graph(
                 pair_main: vec![0.0; block_frames * 2],
                 pair_side: vec![0.0; block_frames * 2],
                 handle_bufs,
+                out_level,
                 taps: Vec::new(),
             }));
             node_meta.insert(
@@ -5468,6 +5476,33 @@ pub(super) mod graph_tests {
         built.graph.process_block(&mut out);
         // st3 asks for channels 2-3 of a 2-wide output → clamped to nothing.
         assert_eq!(out, vec![0.0; TIMER_BLOCK_FRAMES * 2]);
+    }
+
+    #[test]
+    fn effects_report_their_output_level() {
+        let valid = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
+            edges: vec![
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+            ],
+        }
+        .validate()
+        .expect("valid");
+        let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
+        push_all(producers.get_mut("m").unwrap(), &stereo_ramp(4096, 0.5));
+        let mut out = vec![0.0; TIMER_BLOCK_FRAMES * 2];
+        for _ in 0..4 {
+            built.graph.process_block(&mut out);
+        }
+        let level = built
+            .meters
+            .iter()
+            .find(|m| m.node_id == "g")
+            .expect("the gain reports a level");
+        assert!(level.snapshot_and_decay().peaks[0] > 0.1);
     }
 
     #[test]

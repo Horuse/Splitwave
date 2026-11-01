@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { BaseEdge, getBezierPath, getSmoothStepPath, getStraightPath, type EdgeProps } from '@xyflow/svelte';
+	import { untrack } from 'svelte';
 	import { prefersReducedMotion } from 'svelte/motion';
 	import { CONTROL_DASH, darken, handleColor, signalOf } from '$lib/modules/flow/utils';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { controlSignals } from '../control.svelte';
+	import { cableLevel } from '../levels.svelte';
 
 	let { id, source, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, sourceHandleId, selected, markerEnd }: EdgeProps = $props();
 
@@ -14,6 +16,47 @@
 	let color = $derived(handleColor(sourceHandleId));
 	let control = $derived(signalOf(sourceHandleId) === 'control');
 	let live = $derived(control && !!sourceHandleId && controlSignals.read(source, sourceHandleId));
+	let level = $derived(control ? 0 : cableLevel(source, sourceHandleId));
+
+	// The cable's recent levels, newest at the source: each meter tick enters
+	// there and the older ones ride toward the target, so the audio is seen
+	// travelling along the cable as a waveform envelope.
+	const SAMPLES = 64;
+	const MAX_SWING = 6;
+	let history = $state<number[]>(Array(SAMPLES).fill(0));
+	$effect(() => {
+		const l = level;
+		untrack(() => (history = [l, ...history.slice(0, SAMPLES - 1)]));
+	});
+	let audible = $derived(history.some((l) => l > 0));
+
+	let wire = $state<SVGPathElement>();
+	let envelope = $state('');
+	$effect(() => {
+		const el = wire;
+		path;
+		const h = history;
+		if (!el || control || !audible) {
+			envelope = '';
+			return;
+		}
+		const len = el.getTotalLength();
+		const top: string[] = [];
+		const bottom: string[] = [];
+		for (let i = 0; i < SAMPLES; i++) {
+			const at = (i / (SAMPLES - 1)) * len;
+			const p = el.getPointAtLength(at);
+			const q = el.getPointAtLength(Math.min(len, at + 1));
+			const r = el.getPointAtLength(Math.max(0, at - 1));
+			const dx = q.x - r.x;
+			const dy = q.y - r.y;
+			const n = Math.hypot(dx, dy) || 1;
+			const swing = 1 + h[i] * MAX_SWING;
+			top.push(`${p.x - (dy / n) * swing} ${p.y + (dx / n) * swing}`);
+			bottom.push(`${p.x + (dy / n) * swing} ${p.y - (dx / n) * swing}`);
+		}
+		envelope = `M${top.join('L')}L${bottom.reverse().join('L')}Z`;
+	});
 
 	let path = $derived.by(() => {
 		const p = { sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition };
@@ -70,7 +113,10 @@
 <!-- BaseEdge stays underneath for xyflow's hit area and selection styling. -->
 <BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
 <g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
-	<path d={path} fill="none" stroke={color} stroke-width="2" stroke-dasharray={control ? CONTROL_DASH : undefined} />
+	{#if envelope}
+		<path d={envelope} fill={color} class="envelope" />
+	{/if}
+	<path bind:this={wire} d={path} fill="none" stroke={color} stroke-width="2" stroke-dasharray={control ? CONTROL_DASH : undefined} />
 	{#if live || draining}
 		<path bind:this={charge} d={path} fill="none" stroke-width="2" class="charge" />
 	{/if}
@@ -101,5 +147,8 @@
 		to {
 			stroke-dashoffset: -14;
 		}
+	}
+	.envelope {
+		opacity: 0.45;
 	}
 </style>

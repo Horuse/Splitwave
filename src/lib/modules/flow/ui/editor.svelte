@@ -26,6 +26,7 @@
 	import Sidebar from './sidebar.svelte';
 	import ChannelEdge from './_channel_edge.svelte';
 	import ConnectionLine from './_connection_line.svelte';
+	import { listenCableLevels } from '../levels.svelte';
 	import EdgeRectSelect from './_edge_rect_select.svelte';
 	import OrphanEdges from './_orphan_edges.svelte';
 	const edgeTypes = { channel: ChannelEdge };
@@ -36,6 +37,8 @@
 	import type { Component } from 'svelte';
 
 	let { pipeline }: { pipeline: Pipeline } = $props();
+
+	listenCableLevels();
 
 	const flow = useSvelteFlow();
 

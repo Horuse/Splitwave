@@ -22,7 +22,7 @@
 	// there and the older ones ride toward the target, so the cable swells
 	// where the audio is and the swell travels along it.
 	const SAMPLES = 64;
-	const MAX_SWELL = 5;
+	const MAX_SWELL = 7;
 	const DASH = 5;
 	const GAP = 5;
 	let history = $state<number[]>(Array(SAMPLES).fill(0));
@@ -33,7 +33,7 @@
 	let audible = $derived(history.some((l) => l > 0));
 
 	let wire = $state<SVGPathElement>();
-	type Dash = { x1: number; y1: number; x2: number; y2: number; w: number };
+	type Dash = { x1: number; y1: number; x2: number; y2: number; w: number; o: number };
 	let dashes = $state<Dash[]>([]);
 	// One dash per meter tick, spaced along the cable: its thickness is the
 	// peak of that moment, so loud stretches read as fat dashes in transit.
@@ -52,7 +52,7 @@
 			const a = el.getPointAtLength(at);
 			const b = el.getPointAtLength(at + DASH);
 			const peak = h[Math.min(SAMPLES - 1, Math.floor((at / len) * SAMPLES))];
-			next.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 2 + peak * MAX_SWELL });
+			next.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 2 + peak * MAX_SWELL, o: 0.25 + 0.75 * peak });
 		}
 		dashes = next;
 	});
@@ -113,7 +113,7 @@
 <BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
 <g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
 	{#each dashes as d, i (i)}
-		<line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke={color} stroke-width={d.w} class="dash" />
+		<line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke={color} stroke-width={d.w} opacity={d.o} class="dash" />
 	{/each}
 	<path
 		bind:this={wire}

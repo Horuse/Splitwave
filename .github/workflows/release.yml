@@ -49,6 +49,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
                   projectPath: src-tauri
+                  tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true
@@ -103,6 +104,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
                   projectPath: src-tauri
+                  tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true
@@ -126,6 +128,7 @@ jobs:
                     https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
                   chmod +x /tmp/appimagetool
                   rm -f "$app"
+                  chmod -R a+rX squashfs-root
                   ARCH=x86_64 /tmp/appimagetool squashfs-root "$app"
                   rm -rf squashfs-root
 
@@ -208,6 +211,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
                   projectPath: src-tauri
+                  tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
                   releaseDraft: true

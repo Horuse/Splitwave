@@ -3,7 +3,8 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SwitchNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import InputColumn from './_input_column.svelte';
 	import { ChevronDoubleRight } from '$lib/components/icons';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import ControlPort from './_control_port.svelte';
@@ -59,19 +60,25 @@
 </script>
 
 <Wrapper label="Switch" icon={ChevronDoubleRight} accent="condition">
-	<div class="flex flex-col gap-2">
-		<div class="nodrag nopan flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-900">
-			Outputs
+	<div class="flex w-52 flex-col gap-3">
+		<div class="nodrag nopan flex items-center justify-between gap-2">
+			<span class="font-mono text-[9px] text-neutral-500">Outputs</span>
 			<NumberStepper value={data.outputs} min={MIN_OUTPUTS} max={MAX_OUTPUTS} label="Outputs" onchange={setOutputs} />
 		</div>
-		{#if !isPreview}
-			<ChannelHandles {nodeId} side="target" />
-		{/if}
-		{#each outputs as k (k)}
-			<div class="flex items-start justify-between gap-4">
-				<ControlPort id={selectHandle(k)} side="target" label={`select ${k}`} high={triggers[k - 1]?.current ?? false} />
-				<OutputRow {nodeId} branch={k} label={`out ${k}`} open={data.selected === k} onSelect={() => select(k)} live={!isPreview} />
-			</div>
-		{/each}
+		<SegmentedButtons
+			label="Open"
+			options={outputs.map((k) => ({ label: String(k), value: k }))}
+			columns={Math.min(outputs.length, 4)}
+			value={data.selected}
+			onSelect={select} />
+		<InputColumn {nodeId} live={!isPreview} />
+		<div class="flex flex-col gap-2">
+			{#each outputs as k (k)}
+				<div class="flex items-start justify-between gap-4">
+					<ControlPort id={selectHandle(k)} side="target" label={`select ${k}`} high={triggers[k - 1]?.current ?? false} />
+					<OutputRow {nodeId} branch={k} label={`Out ${k}`} open={data.selected === k} live={!isPreview} />
+				</div>
+			{/each}
+		</div>
 	</div>
 </Wrapper>

@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { branchHandle, channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { branchHandle, channelColor, channelLabel, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
@@ -14,8 +14,10 @@
 		selfGrowing?: boolean;
 		/** Output of an If or Switch these sources belong to, 1-based. */
 		branch?: number;
+		/** Names each socket (L / R / chN) beside it. */
+		labelled?: boolean;
 	}
-	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch }: Props = $props();
+	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch, labelled = false }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
@@ -31,6 +33,7 @@
 			? outgoing.current.map((c) => c.sourceHandle).filter((h): h is string => !!h)
 			: incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
 	);
+	let fed = $derived(occupied.length);
 	let slots = $derived(deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied));
 
 	$effect(() => {
@@ -60,6 +63,9 @@
 		{@const color = channelColor(slot.ch - 1)}
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
 		<div class="relative flex min-h-4 items-center" class:justify-end={isSource} onmousedowncapture={(e) => onArm(e, slot.ch)}>
+			{#if labelled && slot.occupied}
+				<span class="font-mono text-[9px] leading-none" style="color:{color}">{channelLabel(slot.ch - 1, fed)}</span>
+			{/if}
 			<Handle
 				type={side}
 				id={branch === undefined ? slot.id : branchHandle(branch, slot.ch)}

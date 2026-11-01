@@ -3,7 +3,8 @@
 	import type { Node, NodeProps } from '@xyflow/svelte';
 	import type { IfNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
+	import InputColumn from './_input_column.svelte';
 	import { ArrowRight } from '$lib/components/icons';
 	import ControlPort from './_control_port.svelte';
 	import OutputRow from './_output_row.svelte';
@@ -20,8 +21,8 @@
 	const select = useSelectOutput(nodeId);
 
 	const OUTPUTS = [
-		{ branch: 1, label: 'true' },
-		{ branch: 2, label: 'false' }
+		{ branch: 1, label: 'True' },
+		{ branch: 2, label: 'False' }
 	];
 
 	let wired = $derived(cond?.current != null);
@@ -34,23 +35,21 @@
 </script>
 
 <Wrapper label="If" icon={ArrowRight} accent="condition">
-	<div class="flex items-start gap-4">
-		<div class="flex flex-col gap-2">
-			<ControlPort id={COND_HANDLE} side="target" label="if" high={cond?.current ?? false} />
-			{#if !isPreview}
-				<ChannelHandles {nodeId} side="target" />
-			{/if}
-		</div>
-		<div class="flex flex-1 flex-col gap-2">
-			{#each OUTPUTS as o (o.branch)}
-				<OutputRow
-					{nodeId}
-					branch={o.branch}
-					label={o.label}
-					open={data.selected === o.branch}
-					onSelect={wired ? null : () => select(o.branch)}
-					live={!isPreview} />
-			{/each}
+	<div class="flex w-48 flex-col gap-3">
+		<ControlPort id={COND_HANDLE} side="target" label="condition" high={cond?.current ?? false} />
+		<SegmentedButtons
+			label="Route to"
+			note={wired ? 'follows condition' : undefined}
+			options={OUTPUTS.map((o) => ({ label: o.label, value: o.branch, disabled: wired }))}
+			value={data.selected}
+			onSelect={select} />
+		<div class="flex items-start justify-between gap-4">
+			<InputColumn {nodeId} live={!isPreview} />
+			<div class="flex flex-col gap-2">
+				{#each OUTPUTS as o (o.branch)}
+					<OutputRow {nodeId} branch={o.branch} label={o.label} open={data.selected === o.branch} live={!isPreview} />
+				{/each}
+			</div>
 		</div>
 	</div>
 </Wrapper>

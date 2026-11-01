@@ -2,7 +2,7 @@
 	import { getContext, untrack, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX, controlHandleStyle } from '../utils';
+	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX, controlEdgeStyle } from '../utils';
 	import { useControlInput } from '../control.svelte';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
@@ -102,7 +102,11 @@
 </script>
 
 <div class={['node-shell min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm', !wide && 'max-w-80']}>
-	<div class="mb-2 flex items-center justify-between gap-2">
+	<div class="relative mb-2 flex items-center justify-between gap-2">
+		{#if power}
+			<!-- Level with the title, clear of the channel sockets below. -->
+			<Handle type="target" id={POWER_HANDLE} class="handle" position={Position.Left} style={controlEdgeStyle('target')} />
+		{/if}
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{#if NodeIcon}
 				<NodeIcon class={['size-3 shrink-0', CATEGORY_TEXT[accent]]} />
@@ -166,12 +170,6 @@
 				{/if}
 			</Handle>
 		{/each}
-	{/if}
-
-	{#if power}
-		<Handle type="target" id={POWER_HANDLE} class="handle" position={Position.Top} style={controlHandleStyle()}>
-			<span class={labelClasses('top')}>power</span>
-		</Handle>
 	{/if}
 
 	{#if !isPreview && !chExpanded}

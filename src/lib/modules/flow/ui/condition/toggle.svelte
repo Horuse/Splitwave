@@ -4,6 +4,7 @@
 	import type { ToggleNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { Loop } from '$lib/components/icons';
+	import Toggle from '$lib/components/toggle.svelte';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_IN, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
@@ -42,19 +43,9 @@
 </script>
 
 <Wrapper label="Toggle" icon={Loop} accent="condition">
-	<div class="flex items-center gap-3">
+	<div class="flex w-40 flex-col gap-2">
 		<ControlPort id={CONTROL_IN} side="target" label="flip" high={input?.current ?? false} />
-		<button
-			class={[
-				'nodrag nopan rounded-md border px-3 py-1 font-mono text-xs transition-colors',
-				on
-					? 'border-yellow-500/60 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-					: 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
-			]}
-			title="Flip"
-			onclick={flip}>
-			{on ? 'ON' : 'OFF'}
-		</button>
+		<Toggle size="sm" checked={on} label={on ? 'On' : 'Off'} onChange={flip} />
 		<ControlPort id={CONTROL_OUT} side="source" label="out" high={on} />
 	</div>
 </Wrapper>

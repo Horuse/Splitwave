@@ -22,7 +22,7 @@
 	// there and the older ones ride toward the target, so the cable swells
 	// where the audio is and the swell travels along it.
 	const SAMPLES = 64;
-	const MAX_SWELL = 7;
+	const MAX_SWELL = 8;
 	const DASH = 5;
 	const GAP = 5;
 	let history = $state<number[]>(Array(SAMPLES).fill(0));
@@ -52,7 +52,7 @@
 			const a = el.getPointAtLength(at);
 			const b = el.getPointAtLength(at + DASH);
 			const peak = h[Math.min(SAMPLES - 1, Math.floor((at / len) * SAMPLES))];
-			next.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 2 + peak * MAX_SWELL });
+			next.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 1 + peak * MAX_SWELL });
 		}
 		dashes = next;
 	});

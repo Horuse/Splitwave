@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { platform } from '@tauri-apps/plugin-os';
 	import { Dismiss } from '$lib/components/icons';
 	import { accelerator, formatAccelerator } from './_accelerator';
 
@@ -6,8 +7,8 @@
 		hotkey?: string;
 		error?: string;
 		onChange: (hotkey: string | undefined) => void;
-		/** Draws the binding as laptop keys set in a keyboard well; they sink and
-		 * backlight while held. Delete clears it while binding. */
+		/** Draws the binding as one chip per key, lit while held. Delete clears
+		 * it while binding. */
 		keycap?: boolean;
 		held?: boolean;
 	}
@@ -16,18 +17,21 @@
 	let binding = $state(false);
 	let legend = $derived(binding ? 'Press a key...' : hotkey ? formatAccelerator(hotkey) : 'Bind key');
 
-	// Modifier caps carry a glyph and a word, the way a Mac keyboard prints them.
-	const MODIFIERS: Record<string, { glyph: string; word: string }> = {
-		Command: { glyph: '⌘', word: 'command' },
-		Control: { glyph: '⌃', word: 'control' },
-		Alt: { glyph: '⌥', word: 'option' },
-		Shift: { glyph: '⇧', word: 'shift' }
+	// Modifiers are named the way this platform's keyboard prints them.
+	const os = platform();
+	const MODIFIERS: Record<string, string> = {
+		Command: os === 'macos' ? 'Cmd' : os === 'windows' ? 'Win' : 'Super',
+		Control: 'Ctrl',
+		Alt: os === 'macos' ? 'Option' : 'Alt',
+		Shift: 'Shift'
 	};
 
-	type Cap = { glyph: string; word?: string };
+	type Cap = { label: string; modifier: boolean };
 	let caps = $derived.by((): Cap[] => {
 		if (!hotkey) return [];
-		return hotkey.split('+').map((part) => MODIFIERS[part] ?? { glyph: formatAccelerator(part) });
+		return hotkey
+			.split('+')
+			.map((part) => (part in MODIFIERS ? { label: MODIFIERS[part], modifier: true } : { label: formatAccelerator(part), modifier: false }));
 	});
 
 	function capture(e: KeyboardEvent) {
@@ -57,11 +61,7 @@
 			<span class="cap prompt">{binding ? 'press a key' : 'bind key'}</span>
 		{:else}
 			{#each caps as cap, i (i)}
-				{#if cap.word}
-					<span class="cap mod"><span class="glyph">{cap.glyph}</span><span class="word">{cap.word}</span></span>
-				{:else}
-					<span class="cap">{cap.glyph}</span>
-				{/if}
+				<span class={['cap', cap.modifier && 'mod']}>{cap.label}</span>
 			{/each}
 		{/if}
 	</button>
@@ -94,100 +94,49 @@
 <svelte:window onkeydown={binding ? capture : undefined} />
 
 <style>
-	/* The keyboard well: a recessed slot of the laptop deck the keys sit in. */
 	.well {
 		display: flex;
-		gap: 5px;
-		padding: 5px;
-		border-radius: 9px;
-		background: #0e0e10;
-		box-shadow:
-			inset 0 1px 3px rgb(0 0 0 / 0.8),
-			inset 0 0 0 1px rgb(255 255 255 / 0.04),
-			0 1px 0 rgb(255 255 255 / 0.06);
-		transition: box-shadow 160ms;
+		gap: 4px;
 		cursor: pointer;
 	}
-	.well.held {
-		box-shadow:
-			inset 0 1px 3px rgb(0 0 0 / 0.8),
-			inset 0 0 14px color-mix(in oklch, var(--color-signal) 30%, transparent),
-			0 1px 0 rgb(255 255 255 / 0.06);
-	}
-	.well.binding {
-		box-shadow:
-			inset 0 1px 3px rgb(0 0 0 / 0.8),
-			inset 0 0 0 1px rgb(96 165 250 / 0.6);
-	}
-
 	.cap {
-		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		min-width: 34px;
-		height: 32px;
+		min-width: 28px;
+		height: 26px;
 		padding: 0 8px;
-		border-radius: 5px;
-		background: linear-gradient(to bottom, #2a2a2c 0%, #1f1f21 100%);
-		color: #f2f2f4;
+		border-radius: 6px;
+		border: 1px solid var(--color-neutral-400);
+		background: var(--color-neutral-100);
+		color: var(--color-neutral-1200);
 		font:
-			400 13px -apple-system,
-			BlinkMacSystemFont,
-			'SF Pro Text',
-			system-ui,
+			500 12px system-ui,
 			sans-serif;
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 0.07),
-			inset 0 -1px 0 rgb(0 0 0 / 0.4),
-			0 1px 1px rgb(0 0 0 / 0.6);
 		transition:
-			transform 70ms ease-out,
-			color 120ms,
-			text-shadow 120ms,
-			box-shadow 120ms;
+			background-color 120ms,
+			border-color 120ms,
+			color 120ms;
 	}
-	/* Mac modifier caps: glyph top right, word bottom left. */
 	.cap.mod {
-		min-width: 52px;
-		padding: 0;
-	}
-	.mod .glyph {
-		position: absolute;
-		top: 3px;
-		right: 5px;
 		font-size: 10px;
-	}
-	.mod .word {
-		position: absolute;
-		bottom: 3px;
-		left: 5px;
-		font-size: 8px;
-		letter-spacing: 0.01em;
+		color: var(--color-neutral-1000);
 	}
 	.cap.prompt {
 		min-width: 96px;
 		font-size: 10px;
-		color: #8e8e93;
+		color: var(--color-neutral-900);
 	}
 	.well:hover .cap {
-		background: linear-gradient(to bottom, #303033 0%, #232325 100%);
+		background: var(--color-neutral-200);
 	}
 	.well.held .cap {
-		transform: translateY(1px);
+		border-color: var(--color-signal);
+		background: color-mix(in oklch, var(--color-signal) 18%, var(--color-neutral-100));
 		color: var(--color-signal);
-		text-shadow: 0 0 6px var(--color-signal);
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 0.03),
-			inset 0 -1px 0 rgb(0 0 0 / 0.4),
-			0 0 8px color-mix(in oklch, var(--color-signal) 40%, transparent);
 	}
 	.well.binding .cap.prompt {
-		color: #60a5fa;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.well.held .cap {
-			transform: none;
-		}
+		border-color: var(--color-primary);
+		color: var(--color-primary);
 	}
 </style>

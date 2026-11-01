@@ -21,7 +21,7 @@
 	// The cable's recent levels, newest at the source: each meter tick enters
 	// there and the older ones ride toward the target, so the audio is seen
 	// travelling along the cable as a waveform envelope.
-	const SAMPLES = 64;
+	const SAMPLES = 96;
 	const MAX_SWING = 6;
 	let history = $state<number[]>(Array(SAMPLES).fill(0));
 	$effect(() => {
@@ -41,8 +41,7 @@
 			return;
 		}
 		const len = el.getTotalLength();
-		const top: string[] = [];
-		const bottom: string[] = [];
+		const points: string[] = [];
 		for (let i = 0; i < SAMPLES; i++) {
 			const at = (i / (SAMPLES - 1)) * len;
 			const p = el.getPointAtLength(at);
@@ -51,11 +50,12 @@
 			const dx = q.x - r.x;
 			const dy = q.y - r.y;
 			const n = Math.hypot(dx, dy) || 1;
-			const swing = 1 + h[i] * MAX_SWING;
-			top.push(`${p.x - (dy / n) * swing} ${p.y + (dx / n) * swing}`);
-			bottom.push(`${p.x + (dy / n) * swing} ${p.y - (dx / n) * swing}`);
+			// Alternate sides each sample: the trace swings across the cable
+			// the way a waveform crosses zero, as far as the level reaches.
+			const swing = (i % 2 === 0 ? 1 : -1) * h[i] * MAX_SWING;
+			points.push(`${p.x - (dy / n) * swing} ${p.y + (dx / n) * swing}`);
 		}
-		envelope = `M${top.join('L')}L${bottom.reverse().join('L')}Z`;
+		envelope = `M${points.join('L')}`;
 	});
 
 	let path = $derived.by(() => {
@@ -114,7 +114,7 @@
 <BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
 <g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
 	{#if envelope}
-		<path d={envelope} fill={color} class="envelope" />
+		<path d={envelope} fill="none" stroke={color} stroke-width="1.5" stroke-linejoin="round" class="envelope" />
 	{/if}
 	<path bind:this={wire} d={path} fill="none" stroke={color} stroke-width="2" stroke-dasharray={control ? CONTROL_DASH : undefined} />
 	{#if live || draining}
@@ -149,6 +149,6 @@
 		}
 	}
 	.envelope {
-		opacity: 0.45;
+		opacity: 0.85;
 	}
 </style>

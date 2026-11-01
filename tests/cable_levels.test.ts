@@ -5,13 +5,13 @@ describe('cableLevel', () => {
 	it('reads the channel a cable carries, or the loudest for a bus', () => {
 		recordLevels('mic', [1, 0.001]);
 		expect(cableLevel('mic', 'audio:ch1')).toBe(1);
-		expect(cableLevel('mic', 'audio:ch2')).toBeCloseTo(0, 5);
+		expect(cableLevel('mic', 'audio:ch2')).toBeCloseTo(0.001 ** 0.7, 5);
 		expect(cableLevel('mic', 'audio:main')).toBe(1);
 	});
 
-	it('maps on a dB scale with a -60 dB floor', () => {
+	it('maps linear peaks with a gentle lift', () => {
 		recordLevels('g', [0.1]);
-		expect(cableLevel('g', 'audio:ch1')).toBeCloseTo(2 / 3, 5);
+		expect(cableLevel('g', 'audio:ch1')).toBeCloseTo(0.1 ** 0.7, 5);
 	});
 
 	it('meters a branch output on its gate', () => {

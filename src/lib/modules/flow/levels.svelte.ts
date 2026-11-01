@@ -7,9 +7,6 @@ interface MeterTick {
 	peaks: number[];
 }
 
-/** Below this a cable reads as silent. */
-const FLOOR_DB = -60;
-
 // Linear peaks per node and channel, as the engine's meter tick reports them.
 const peaks = new SvelteMap<string, number[]>();
 
@@ -22,11 +19,10 @@ export function listenCableLevels(): void {
 	tauriListen<MeterTick>('audio://meter', (p) => recordLevels(p.nodeId, p.peaks));
 }
 
-/** 0 at the floor, 1 at full scale, on a dB scale so quiet audio still shows. */
+/** Linear, slightly lifted so speech-level audio is still visible: a dB scale
+ * would draw most program material near full width all the time. */
 function normalize(linear: number): number {
-	if (linear <= 0) return 0;
-	const db = 20 * Math.log10(linear);
-	return Math.min(1, Math.max(0, (db - FLOOR_DB) / -FLOOR_DB));
+	return Math.min(1, Math.max(0, linear) ** 0.7);
 }
 
 /** How loud the audio on a cable is, 0..1. A channel cable reads that channel;

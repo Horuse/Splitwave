@@ -2,7 +2,8 @@
 	import { getContext, untrack, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX, controlEdgeStyle } from '../utils';
+	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX } from '../utils';
+	import ControlSocket from './_control_socket.svelte';
 	import { useControlInput } from '../control.svelte';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
@@ -105,7 +106,7 @@
 	<div class="relative mb-2 flex items-center justify-between gap-2">
 		{#if power}
 			<!-- Level with the title, clear of the channel sockets below. -->
-			<Handle type="target" id={POWER_HANDLE} class="handle" position={Position.Left} style={controlEdgeStyle('target')} />
+			<ControlSocket id={POWER_HANDLE} side="target" high={power.current ?? false} />
 		{/if}
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{#if NodeIcon}

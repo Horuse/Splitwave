@@ -39,6 +39,7 @@ export type { RecordingMode } from './generated/RecordingMode';
 export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';
+import type { LogicOp } from '$lib/modules/flow/logic';
 
 export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'condition';
 
@@ -92,7 +93,8 @@ export type NetSenderNodeData = XyData<NetSenderData>;
 // Condition nodes run in the editor only; the engine drops them with their cables.
 export type KeyInputNodeData = XyData<{ hotkey?: string }>;
 export type ToggleNodeData = XyData<{ on: boolean }>;
-export type IfNodeData = XyData<IfData>;
+// `op` combines the A and B inputs in the editor; the engine only sees `selected`.
+export type IfNodeData = XyData<IfData & { op?: LogicOp }>;
 export type SwitchNodeData = XyData<SwitchData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the

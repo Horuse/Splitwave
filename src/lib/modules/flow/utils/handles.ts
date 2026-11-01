@@ -41,8 +41,9 @@ export const CONTROL_IN = controlHandle('in');
 export const CONTROL_OUT = controlHandle('out');
 /** High runs the node, low bypasses it. */
 export const POWER_HANDLE = controlHandle('power');
-/** An If's condition. */
-export const COND_HANDLE = controlHandle('cond');
+/** The inputs an If's logic operator reads. */
+export const A_HANDLE = controlHandle('a');
+export const B_HANDLE = controlHandle('b');
 
 /** Rising edge picks output `k` of a Switch. */
 export function selectHandle(k: number): string {

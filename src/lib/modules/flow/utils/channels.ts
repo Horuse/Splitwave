@@ -64,13 +64,14 @@ export function handleEdgeStyle(color: string, side: 'source' | 'target'): strin
 	return `${handleStyle(color)};${PIN_SHAPE}${edgeOffset(side)}`;
 }
 
-// Control sockets are diamonds and their cables dashed, so the signal reads
-// from the shape alone: colour already means "which channel".
+// Control cables are dashed while idle and their sockets round jacks, so the
+// signal reads from the shape alone: colour already means "which channel".
 export const CONTROL_DASH = '4 3';
-const DIAMOND_SHAPE = 'width:10px !important;height:10px !important;border-radius:0 !important;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);';
+const JACK_SHAPE =
+	'width:12px !important;height:12px !important;border-radius:9999px !important;background:var(--color-neutral-100) !important;border:2px solid var(--color-neutral-750) !important;';
 
 export function controlEdgeStyle(side: 'source' | 'target'): string {
-	return `${handleStyle(NEUTRAL)};${DIAMOND_SHAPE}${edgeOffset(side)}`;
+	return `${JACK_SHAPE}${edgeOffset(side)}`;
 }
 
 export interface Slot {

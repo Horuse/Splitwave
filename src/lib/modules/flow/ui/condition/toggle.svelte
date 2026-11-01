@@ -5,7 +5,7 @@
 	import Wrapper from '../node.svelte';
 	import { Loop } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
-	import ControlPort from './_control_port.svelte';
+	import ControlSocket from '../_control_socket.svelte';
 	import { CONTROL_IN, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
 
@@ -43,9 +43,9 @@
 </script>
 
 <Wrapper label="Toggle" icon={Loop} accent="condition">
-	<div class="flex w-40 flex-col gap-2">
-		<ControlPort id={CONTROL_IN} side="target" label="flip" high={input?.current ?? false} />
+	<div class="relative flex items-center justify-center">
+		<ControlSocket id={CONTROL_IN} side="target" high={input?.current ?? false} />
 		<Toggle size="sm" checked={on} label={on ? 'On' : 'Off'} onChange={flip} />
-		<ControlPort id={CONTROL_OUT} side="source" label="out" high={on} />
+		<ControlSocket id={CONTROL_OUT} side="source" high={on} />
 	</div>
 </Wrapper>

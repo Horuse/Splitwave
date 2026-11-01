@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	branchHandle,
 	canConnect,
 	channelHandle,
 	channelOf,
@@ -19,6 +20,7 @@ describe('handle builders', () => {
 		expect(peerHandle('p')).toBe('audio:peer:p');
 		expect(peerHandle('p', 0)).toBe('audio:peer:p:0');
 		expect(controlHandle('power')).toBe('control:power');
+		expect(branchHandle(2, 1)).toBe('audio:branch2:ch1');
 	});
 });
 
@@ -31,6 +33,10 @@ describe('parsePort', () => {
 		expect(parsePort(peerHandle('p'))).toEqual({ signal: 'audio', port: { kind: 'peer', peer: 'p', ch: null } });
 		expect(parsePort(peerHandle('p', 0))).toEqual({ signal: 'audio', port: { kind: 'peer', peer: 'p', ch: 0 } });
 		expect(parsePort(controlHandle('power'))).toEqual({ signal: 'control', name: 'power' });
+		expect(parsePort(branchHandle(2, 1))).toEqual({
+			signal: 'audio',
+			port: { kind: 'branch', branch: 2, port: { kind: 'channel', ch: 1 } }
+		});
 	});
 
 	it('rejects malformed handles', () => {
@@ -44,6 +50,9 @@ describe('parsePort', () => {
 			'audio:peer:',
 			'audio:peer:p:x',
 			'control:',
+			'audio:branch0:ch1',
+			'audio:branch1',
+			'audio:branch1:branch2:ch1',
 			'video:main',
 			'',
 			null,
@@ -61,6 +70,7 @@ describe('channelOf', () => {
 		expect(channelOf(peerHandle('p', 1))).toBeNull();
 		expect(channelOf(controlHandle('ch1'))).toBeNull();
 		expect(channelOf('ch1')).toBeNull();
+		expect(channelOf(branchHandle(1, 1))).toBeNull();
 	});
 });
 

@@ -88,9 +88,10 @@ export interface Slot {
 export function handleColor(handle: string | null | undefined): string {
 	const p = parsePort(handle);
 	if (p?.signal !== 'audio') return NEUTRAL;
-	if (p.port.kind === 'channel') return channelColor(p.port.ch - 1);
+	const port = p.port.kind === 'branch' ? p.port.port : p.port;
+	if (port.kind === 'channel') return channelColor(port.ch - 1);
 	// A peer's channels count from zero.
-	if (p.port.kind === 'peer' && p.port.ch !== null) return channelColor(p.port.ch);
+	if (port.kind === 'peer' && port.ch !== null) return channelColor(port.ch);
 	return NEUTRAL;
 }
 

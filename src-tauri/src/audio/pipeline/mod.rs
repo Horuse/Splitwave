@@ -22,7 +22,9 @@ use tracing::{info, warn};
 use crate::audio::effects::{
     EffectControl, EffectRegistry, GrHandle, LufsHandle, MeterHandle, WaveformHandle,
 };
-use crate::audio::graph::{InputSpec, OutputSpec, RecordingFormat, ValidGraph};
+use crate::audio::graph::{
+    branch_gate_id, InputSpec, OutputSpec, RecordingFormat, ValidGraph, MAX_SWITCH_OUTPUTS,
+};
 use crate::audio::input_bridge::{broadcast_channel, BroadcastTx, CaptureStats, WriteClock};
 use crate::error::{AppError, AppResult};
 
@@ -319,6 +321,17 @@ impl ActivePipeline {
     pub fn update_effect(&self, node_id: &str, data: &serde_json::Value) {
         if let Some(control) = self.effect_controls.get(node_id) {
             control.apply_update(data);
+        }
+        // A branching node lives on as one gate per output; unwired gates are
+        // pruned, so every output index is tried.
+        if let Some(selected) = data.get("selected").and_then(serde_json::Value::as_u64) {
+            for k in 1..=MAX_SWITCH_OUTPUTS as usize {
+                if let Some(EffectControl::Mute { muted }) =
+                    self.effect_controls.get(&branch_gate_id(node_id, k))
+                {
+                    muted.store(k as u64 != selected, Ordering::Relaxed);
+                }
+            }
         }
         // Some formats' editors only redraw when the host says a parameter
         // moved; doing it here keeps the notification (which locks) off the DSP
@@ -1840,6 +1853,25 @@ mod tests {
         p.set_audio_file_loop("ghost", true);
         p.set_audio_file_paused("ghost", false);
         p.set_input_volume("ghost", 0.5);
+    }
+
+    #[test]
+    fn selected_output_opens_only_its_gate() {
+        let mut p = ActivePipeline::new();
+        let gates: Vec<Arc<AtomicBool>> =
+            (1..=3).map(|_| Arc::new(AtomicBool::new(true))).collect();
+        for (k, muted) in gates.iter().enumerate() {
+            p.effect_controls.insert(
+                branch_gate_id("sw", k + 1),
+                EffectControl::Mute {
+                    muted: muted.clone(),
+                },
+            );
+        }
+
+        p.update_effect("sw", &serde_json::json!({ "selected": 2 }));
+        let muted: Vec<bool> = gates.iter().map(|g| g.load(Ordering::Relaxed)).collect();
+        assert_eq!(muted, [true, false, true]);
     }
 
     #[test]

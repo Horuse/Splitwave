@@ -7,6 +7,8 @@ import {
 	ArrowDownload as ArrowDownloadIcon,
 	Backspace as BackspaceIcon,
 	ArrowUpload as ArrowUploadIcon,
+	ArrowRight as ArrowRightIcon,
+	ChevronDoubleRight as ChevronDoubleRightIcon,
 	Balance as BalanceIcon,
 	Compressor as CompressorIcon,
 	DataBar as DataBarIcon,
@@ -61,6 +63,8 @@ import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
 import KeyInput from '../ui/condition/key_input.svelte';
 import Toggle from '../ui/condition/toggle.svelte';
+import If from '../ui/condition/if.svelte';
+import Switch from '../ui/condition/switch.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -345,6 +349,24 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Toggle,
 		icon: LoopIcon,
 		defaultData: DEFAULT_NODE_DATA['toggle']
+	}),
+	if: entry<'if'>({
+		kind: 'if',
+		category: 'condition',
+		label: 'If',
+		description: 'Sends its input to the true output while the condition is high, to the false output otherwise, crossfading between them.',
+		component: If,
+		icon: ArrowRightIcon,
+		defaultData: DEFAULT_NODE_DATA['if']
+	}),
+	switch: entry<'switch'>({
+		kind: 'switch',
+		category: 'condition',
+		label: 'Switch',
+		description: 'Sends its input to one of 2-8 outputs; each output has its own trigger, so one key per branch picks it.',
+		component: Switch,
+		icon: ChevronDoubleRightIcon,
+		defaultData: DEFAULT_NODE_DATA['switch']
 	})
 };
 

@@ -27,6 +27,9 @@ pub enum AudioPort {
     },
     /// An effect's sidechain key input.
     Sidechain,
+    /// `port` on one output of a branching node, 1-based. Graph validation
+    /// resolves it to a port of that output's own node; the engine never sees it.
+    Branch { branch: usize, port: Box<AudioPort> },
 }
 
 impl Port {
@@ -89,6 +92,17 @@ impl FromStr for AudioPort {
             "sidechain" => return Ok(AudioPort::Sidechain),
             _ => {}
         }
+        if let Some(rest) = s.strip_prefix("branch") {
+            let (branch, port) = rest.split_once(':').ok_or_else(bad)?;
+            let port: AudioPort = port.parse()?;
+            if matches!(port, AudioPort::Branch { .. }) {
+                return Err(bad());
+            }
+            return Ok(AudioPort::Branch {
+                branch: index(branch)?,
+                port: Box::new(port),
+            });
+        }
         if let Some(rest) = s.strip_prefix("peer:") {
             let (peer, channel) = match rest.split_once(':') {
                 Some((peer, c)) => (peer, Some(c.parse::<usize>().map_err(|_| bad())?)),
@@ -146,6 +160,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_branch_ports() {
+        assert_eq!(
+            audio("audio:branch2:ch1"),
+            AudioPort::Branch {
+                branch: 2,
+                port: Box::new(AudioPort::Channel(1))
+            }
+        );
+    }
+
+    #[test]
     fn parses_control_ports() {
         assert_eq!(
             "control:power".parse::<Port>(),
@@ -165,6 +190,9 @@ mod tests {
             "audio:mix",
             "audio:peer:",
             "audio:peer:p:x",
+            "audio:branch0:ch1",
+            "audio:branch1",
+            "audio:branch1:branch2:ch1",
             "control:",
             "video:main",
         ] {

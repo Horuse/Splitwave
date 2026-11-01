@@ -9,7 +9,8 @@ export type AudioPort =
 	| { kind: 'channel'; ch: number }
 	| { kind: 'stereo'; ch: number }
 	| { kind: 'peer'; peer: string; ch: number | null }
-	| { kind: 'sidechain' };
+	| { kind: 'sidechain' }
+	| { kind: 'branch'; branch: number; port: AudioPort };
 
 export type Port = { signal: 'audio'; port: AudioPort } | { signal: 'control'; name: string };
 
@@ -27,6 +28,11 @@ export function peerHandle(peer: string, ch?: number): string {
 	return ch === undefined ? `audio:peer:${peer}` : `audio:peer:${peer}:${ch}`;
 }
 
+/** Channel `ch` of output `branch` on an If or Switch, both 1-based. */
+export function branchHandle(branch: number, ch: number): string {
+	return `audio:branch${branch}:ch${ch}`;
+}
+
 export function controlHandle(name: string): string {
 	return `control:${name}`;
 }
@@ -35,12 +41,25 @@ export const CONTROL_IN = controlHandle('in');
 export const CONTROL_OUT = controlHandle('out');
 /** High runs the node, low bypasses it. */
 export const POWER_HANDLE = controlHandle('power');
+/** An If's condition. */
+export const COND_HANDLE = controlHandle('cond');
+
+/** Rising edge picks output `k` of a Switch. */
+export function selectHandle(k: number): string {
+	return controlHandle(`select${k}`);
+}
 
 const INDEX = /^[1-9]\d*$/;
 
 function parseAudioPort(port: string): AudioPort | null {
 	if (port === 'main') return { kind: 'main' };
 	if (port === 'sidechain') return { kind: 'sidechain' };
+	const branch = /^branch([^:]*):(.*)$/.exec(port);
+	if (branch) {
+		const inner = parseAudioPort(branch[2]);
+		if (!INDEX.test(branch[1]) || !inner || inner.kind === 'branch') return null;
+		return { kind: 'branch', branch: Number(branch[1]), port: inner };
+	}
 	const peer = /^peer:([^:]+)(?::(\d+))?$/.exec(port);
 	if (peer) return { kind: 'peer', peer: peer[1], ch: peer[2] === undefined ? null : Number(peer[2]) };
 	const indexed = /^(ch|st)(.*)$/.exec(port);

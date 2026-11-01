@@ -52,6 +52,7 @@ describe('channel colours and labels', () => {
 		expect(handleColor('audio:main')).toBe(handleColor(null));
 		expect(handleColor(undefined)).toBe(handleColor('audio:sidechain'));
 		expect(handleColor('control:power')).toBe(handleColor(null));
+		expect(handleColor('audio:branch2:ch2')).toBe(channelColor(1));
 	});
 
 	it('darkens hex colours', () => {

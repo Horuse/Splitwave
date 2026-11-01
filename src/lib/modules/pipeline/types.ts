@@ -6,6 +6,7 @@ import type { DelayData } from './generated/DelayData';
 import type { EqData } from './generated/EqData';
 import type { FileRecordingData } from './generated/FileRecordingData';
 import type { GainData } from './generated/GainData';
+import type { IfData } from './generated/IfData';
 import type { LevelMeterData } from './generated/LevelMeterData';
 import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
@@ -23,6 +24,7 @@ import type { PluginData } from './generated/PluginData';
 import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
+import type { SwitchData } from './generated/SwitchData';
 import type { SystemAudioData } from './generated/SystemAudioData';
 import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData';
 
@@ -90,6 +92,8 @@ export type NetSenderNodeData = XyData<NetSenderData>;
 // Condition nodes run in the editor only; the engine drops them with their cables.
 export type KeyInputNodeData = XyData<{ hotkey?: string }>;
 export type ToggleNodeData = XyData<{ on: boolean }>;
+export type IfNodeData = XyData<IfData>;
+export type SwitchNodeData = XyData<SwitchData>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -125,6 +129,8 @@ export type NodeDataMap = {
 	netSender: NetSenderNodeData;
 	keyInput: KeyInputNodeData;
 	toggle: ToggleNodeData;
+	if: IfNodeData;
+	switch: SwitchNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

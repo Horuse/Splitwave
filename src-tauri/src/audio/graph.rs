@@ -60,6 +60,11 @@ impl EdgeSpec {
     /// The engine routes audio only; a control cable has no audio ends.
     fn audio_ports(&self) -> AppResult<(&AudioPort, &AudioPort)> {
         match (&self.source_handle, &self.target_handle) {
+            (Port::Audio(AudioPort::Branch { .. }), _)
+            | (_, Port::Audio(AudioPort::Branch { .. })) => Err(AppError::Validation(format!(
+                "edge {} uses a branch output of a node that has none",
+                self.id
+            ))),
             (Port::Audio(s), Port::Audio(t)) => Ok((s, t)),
             _ => Err(AppError::Validation(format!(
                 "edge {} is not an audio cable",
@@ -102,6 +107,8 @@ pub enum NodeKind {
     Plugin,
     KeyInput,
     Toggle,
+    If,
+    Switch,
 }
 
 impl NodeKind {
@@ -132,7 +139,9 @@ impl NodeKind {
             | NodeKind::NoiseSuppressor
             | NodeKind::Declick
             | NodeKind::DeEsser
-            | NodeKind::Plugin => NodeCategory::Effect,
+            | NodeKind::Plugin
+            | NodeKind::If
+            | NodeKind::Switch => NodeCategory::Effect,
             NodeKind::KeyInput | NodeKind::Toggle => NodeCategory::Control,
             // Two destinations in one UI node: it sends to peers and emits what
             // they send back. `expand_roles` splits it into an output half and
@@ -350,6 +359,24 @@ pub struct GainData {
     #[serde(default)]
     pub bypassed: bool,
 }
+
+/// Output open on an If: 1 while the condition holds, 2 otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct IfData {
+    pub selected: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SwitchData {
+    pub outputs: u32,
+    pub selected: u32,
+}
+
+pub const MAX_SWITCH_OUTPUTS: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -763,11 +790,37 @@ struct RoleNode<'a> {
     kind: NodeKind,
     role: NodeCategory,
     data: &'a serde_json::Value,
+    /// Set on the gates a branching node expands into: whether this one is open.
+    gate_open: Option<bool>,
 }
 
 /// Marks the receive half of a split dual-role node. Node ids are cuid2
 /// (alphanumeric), so this can never collide with one.
 const RECV_SUFFIX: &str = "#recv";
+
+/// The gate carrying output `k` (1-based) of a branching node.
+pub fn branch_gate_id(node_id: &str, k: usize) -> String {
+    format!("{node_id}#b{k}")
+}
+
+/// `(outputs, selected)` of an If or Switch; `None` for any other node.
+fn branches(n: &NodeSpec) -> AppResult<Option<(usize, usize)>> {
+    let (outputs, selected) = match n.kind {
+        NodeKind::If => (2, parse::<IfData>(&n.data, "If")?.selected),
+        NodeKind::Switch => {
+            let d: SwitchData = parse(&n.data, "Switch")?;
+            if !(2..=MAX_SWITCH_OUTPUTS).contains(&d.outputs) {
+                return Err(miss(&n.id, "Switch needs 2 to 8 outputs"));
+            }
+            (d.outputs, d.selected)
+        }
+        _ => return Ok(None),
+    };
+    if !(1..=outputs).contains(&selected) {
+        return Err(miss(&n.id, "selected output does not exist"));
+    }
+    Ok(Some((outputs as usize, selected as usize)))
+}
 
 /// A node audio may end at besides an output: an analyzer renders telemetry,
 /// and a plugin can be an end point of its own (one that sends its input over
@@ -787,10 +840,26 @@ impl GraphSpec {
     /// Splits dual-role nodes so that every node below plays exactly one role.
     /// Each half of a WebRTC collaborator exists only if something is wired to
     /// that side: a send-only node opens no receive tap, and a receive-only node
-    /// never clocks silence onto the wire.
-    fn expand_roles(&self) -> (Vec<RoleNode<'_>>, Vec<EdgeSpec>) {
+    /// never clocks silence onto the wire. A branching node becomes one gate per
+    /// output, all fed the node's input, only the selected one open; the rest of
+    /// the engine then routes them as plain effects.
+    fn expand_roles(&self) -> AppResult<(Vec<RoleNode<'_>>, Vec<EdgeSpec>)> {
         let mut nodes: Vec<RoleNode<'_>> = Vec::with_capacity(self.nodes.len());
+        let mut branching: HashMap<&str, usize> = HashMap::new();
         for n in &self.nodes {
+            if let Some((outputs, selected)) = branches(n)? {
+                branching.insert(n.id.as_str(), outputs);
+                for k in 1..=outputs {
+                    nodes.push(RoleNode {
+                        id: branch_gate_id(&n.id, k),
+                        kind: n.kind,
+                        role: NodeCategory::Effect,
+                        data: &n.data,
+                        gate_open: Some(k == selected),
+                    });
+                }
+                continue;
+            }
             if n.kind != NodeKind::WebRtcCollaborator {
                 if n.kind.category() == NodeCategory::Control {
                     continue;
@@ -800,6 +869,7 @@ impl GraphSpec {
                     kind: n.kind,
                     role: n.kind.category(),
                     data: &n.data,
+                    gate_open: None,
                 });
                 continue;
             }
@@ -809,6 +879,7 @@ impl GraphSpec {
                     kind: n.kind,
                     role: NodeCategory::Output,
                     data: &n.data,
+                    gate_open: None,
                 });
             }
             if self.edges.iter().any(|e| e.source == n.id) {
@@ -817,6 +888,7 @@ impl GraphSpec {
                     kind: n.kind,
                     role: NodeCategory::Input,
                     data: &n.data,
+                    gate_open: None,
                 });
             }
         }
@@ -829,23 +901,43 @@ impl GraphSpec {
             .filter(|n| n.kind == NodeKind::WebRtcCollaborator)
             .map(|n| n.id.as_str())
             .collect();
-        let edges = self
-            .edges
-            .iter()
-            .filter(|e| !e.is_control())
-            .map(|e| EdgeSpec {
-                id: e.id.clone(),
-                source: if split.contains(e.source.as_str()) {
-                    format!("{}{RECV_SUFFIX}", e.source)
-                } else {
-                    e.source.clone()
+        let mut edges = Vec::with_capacity(self.edges.len());
+        for e in self.edges.iter().filter(|e| !e.is_control()) {
+            let (source, source_handle) = match branching.get(e.source.as_str()) {
+                Some(&outputs) => match &e.source_handle {
+                    Port::Audio(AudioPort::Branch { branch, port }) if *branch <= outputs => (
+                        branch_gate_id(&e.source, *branch),
+                        Port::Audio((**port).clone()),
+                    ),
+                    _ => {
+                        return Err(AppError::Validation(format!(
+                            "edge {} leaves {} from no output of it",
+                            e.id, e.source
+                        )))
+                    }
                 },
-                source_handle: e.source_handle.clone(),
-                target: e.target.clone(),
+                None if split.contains(e.source.as_str()) => (
+                    format!("{}{RECV_SUFFIX}", e.source),
+                    e.source_handle.clone(),
+                ),
+                None => (e.source.clone(), e.source_handle.clone()),
+            };
+            let edge = |id: String, target: String| EdgeSpec {
+                id,
+                source: source.clone(),
+                source_handle: source_handle.clone(),
+                target,
                 target_handle: e.target_handle.clone(),
-            })
-            .collect();
-        (nodes, edges)
+            };
+            match branching.get(e.target.as_str()) {
+                Some(&outputs) => edges.extend(
+                    (1..=outputs)
+                        .map(|k| edge(branch_gate_id(&e.id, k), branch_gate_id(&e.target, k))),
+                ),
+                None => edges.push(edge(e.id.clone(), e.target.clone())),
+            }
+        }
+        Ok((nodes, edges))
     }
 
     /// Rules:
@@ -873,7 +965,7 @@ impl GraphSpec {
                 )));
             }
         }
-        let (nodes, edges) = self.expand_roles();
+        let (nodes, edges) = self.expand_roles()?;
         let nodes_by_id: HashMap<&str, &RoleNode> =
             nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
@@ -1287,6 +1379,12 @@ fn bfs_backward_pred<'a>(
 }
 
 fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
+    if let Some(open) = n.gate_open {
+        return Ok(EffectSpec::Mute(MuteData {
+            muted: !open,
+            bypassed: false,
+        }));
+    }
     Ok(match n.kind {
         NodeKind::Gain => EffectSpec::Gain(parse(n.data, "Gain")?),
         NodeKind::Mute => EffectSpec::Mute(parse(n.data, "Mute")?),
@@ -1500,6 +1598,87 @@ mod tests {
         let v = g.validate().expect("control nodes are ignored");
         assert_eq!(v.effects.len(), 1);
         assert_eq!(v.edges.len(), 2);
+    }
+
+    fn switch(id: &str, outputs: u32, selected: u32) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Switch,
+            serde_json::json!({ "outputs": outputs, "selected": selected }),
+        )
+    }
+
+    #[test]
+    fn branching_node_becomes_one_gate_per_output() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), switch("sw", 3, 2), gain_node("g"), speaker("s")],
+            edges: vec![
+                edge("in", "m", "audio:ch1", "sw", "audio:ch1"),
+                edge("b1", "sw", "audio:branch1:ch1", "s", "audio:ch1"),
+                edge("b2", "sw", "audio:branch2:ch1", "g", "audio:ch1"),
+                edge("out", "g", "audio:ch1", "s", "audio:ch1"),
+            ],
+        };
+        let v = g.validate().expect("valid");
+        let gate = |k| v.effects.iter().find(|e| e.id == branch_gate_id("sw", k));
+        assert!(matches!(
+            gate(1).map(|e| &e.spec),
+            Some(EffectSpec::Mute(MuteData { muted: true, .. }))
+        ));
+        assert!(matches!(
+            gate(2).map(|e| &e.spec),
+            Some(EffectSpec::Mute(MuteData { muted: false, .. }))
+        ));
+        assert!(gate(3).is_none(), "an unwired output is pruned");
+        assert!(v.edges.iter().any(|e| e.from == branch_gate_id("sw", 2)
+            && e.to == "g"
+            && e.source_handle == AudioPort::Channel(1)));
+        assert!(v
+            .edges
+            .iter()
+            .any(|e| e.from == "m" && e.to == branch_gate_id("sw", 1)));
+    }
+
+    #[test]
+    fn branching_node_rejects_a_missing_output() {
+        for handle in ["audio:branch4:ch1", "audio:ch1"] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), switch("sw", 3, 1), speaker("s")],
+                edges: vec![
+                    edge("in", "m", "audio:ch1", "sw", "audio:ch1"),
+                    edge("out", "sw", handle, "s", "audio:ch1"),
+                ],
+            };
+            assert!(g.validate().is_err(), "{handle}");
+        }
+    }
+
+    #[test]
+    fn branching_node_rejects_bad_data() {
+        for (outputs, selected) in [(1, 1), (9, 1), (3, 0), (3, 4)] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), switch("sw", outputs, selected), speaker("s")],
+                edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
+            };
+            assert!(g.validate().is_err(), "{outputs}/{selected}");
+        }
+    }
+
+    #[test]
+    fn branch_port_on_a_plain_node_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e", "m", "audio:branch1:ch1", "s", "audio:ch1")],
+        };
+        assert!(g.validate().is_err());
     }
 
     #[test]

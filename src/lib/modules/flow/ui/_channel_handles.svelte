@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { branchHandle, channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
@@ -12,8 +12,10 @@
 		min?: number;
 		/** Sources with nothing upstream (a net receiver) grow on their own cables. */
 		selfGrowing?: boolean;
+		/** Output of an If or Switch these sources belong to, 1-based. */
+		branch?: number;
 	}
-	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false }: Props = $props();
+	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
@@ -44,8 +46,9 @@
 	});
 
 	// Capture beats xyflow's mousedown, which would otherwise start a drag.
+	// A multi-channel drag fans out plain channel handles, so branch outputs opt out.
 	function onArm(event: MouseEvent, ch: number) {
-		if (!event.altKey || !isSource) return;
+		if (!event.altKey || !isSource || branch !== undefined) return;
 		event.stopPropagation();
 		event.preventDefault();
 		channelSelection.toggle(nodeId, ch);
@@ -59,7 +62,7 @@
 		<div class="relative flex min-h-4 items-center" class:justify-end={isSource} onmousedowncapture={(e) => onArm(e, slot.ch)}>
 			<Handle
 				type={side}
-				id={slot.id}
+				id={branch === undefined ? slot.id : branchHandle(branch, slot.ch)}
 				position={isSource ? Position.Right : Position.Left}
 				class={['handle', armed && 'handle-armed']}
 				style={handleEdgeStyle(color, side)} />

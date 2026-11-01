@@ -5471,6 +5471,47 @@ pub(super) mod graph_tests {
     }
 
     #[test]
+    fn only_the_selected_branch_is_heard() {
+        let peak = |selected: u32, branch: u32| {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![
+                    mic("m"),
+                    node(
+                        "sw",
+                        NodeKind::Switch,
+                        serde_json::json!({ "outputs": 2, "selected": selected }),
+                    ),
+                    speaker("s"),
+                ],
+                edges: vec![
+                    edge("e1", "m", "audio:main", "sw", "audio:main"),
+                    edge(
+                        "e2",
+                        "sw",
+                        &format!("audio:branch{branch}:main"),
+                        "s",
+                        "audio:main",
+                    ),
+                ],
+            };
+            let valid = g.validate().expect("valid");
+            let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
+            push_all(producers.get_mut("m").unwrap(), &stereo_ramp(4096, 0.5));
+            let mut out = vec![0.0; TIMER_BLOCK_FRAMES * 2];
+            let mut peak = 0.0f32;
+            for _ in 0..4 {
+                built.graph.process_block(&mut out);
+                peak = out.iter().fold(peak, |p, s| p.max(s.abs()));
+            }
+            peak
+        };
+        assert!(peak(1, 1) > 0.1, "the open output carries the input");
+        assert_eq!(peak(2, 1), 0.0, "a closed output is silent");
+    }
+
+    #[test]
     fn sidechain_edge_feeds_the_detector_not_the_mix() {
         let graph = |with_sidechain: bool| GraphSpec {
             sample_rate: None,

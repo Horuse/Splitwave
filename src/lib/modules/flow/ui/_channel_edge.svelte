@@ -22,7 +22,9 @@
 	// there and the older ones ride toward the target, so the cable swells
 	// where the audio is and the swell travels along it.
 	const SAMPLES = 64;
-	const MAX_SWING = 4;
+	const MAX_SWELL = 5;
+	const DASH = 5;
+	const GAP = 5;
 	let history = $state<number[]>(Array(SAMPLES).fill(0));
 	$effect(() => {
 		const l = level;
@@ -31,31 +33,28 @@
 	let audible = $derived(history.some((l) => l > 0));
 
 	let wire = $state<SVGPathElement>();
-	let envelope = $state('');
+	type Dash = { x1: number; y1: number; x2: number; y2: number; w: number };
+	let dashes = $state<Dash[]>([]);
+	// One dash per meter tick, spaced along the cable: its thickness is the
+	// peak of that moment, so loud stretches read as fat dashes in transit.
 	$effect(() => {
 		const el = wire;
 		path;
 		const h = history;
 		if (!el || control || !audible) {
-			envelope = '';
+			dashes = [];
 			return;
 		}
 		const len = el.getTotalLength();
-		const top: string[] = [];
-		const bottom: string[] = [];
-		for (let i = 0; i < SAMPLES; i++) {
-			const at = (i / (SAMPLES - 1)) * len;
-			const p = el.getPointAtLength(at);
-			const q = el.getPointAtLength(Math.min(len, at + 1));
-			const r = el.getPointAtLength(Math.max(0, at - 1));
-			const dx = q.x - r.x;
-			const dy = q.y - r.y;
-			const n = Math.hypot(dx, dy) || 1;
-			const swing = 1 + h[i] * MAX_SWING;
-			top.push(`${p.x - (dy / n) * swing} ${p.y + (dx / n) * swing}`);
-			bottom.push(`${p.x + (dy / n) * swing} ${p.y - (dx / n) * swing}`);
+		const next: Dash[] = [];
+		// xyflow's own dash rhythm: a fixed dash and gap, whatever the length.
+		for (let at = 0; at + DASH <= len; at += DASH + GAP) {
+			const a = el.getPointAtLength(at);
+			const b = el.getPointAtLength(at + DASH);
+			const peak = h[Math.min(SAMPLES - 1, Math.floor((at / len) * SAMPLES))];
+			next.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: 2 + peak * MAX_SWELL });
 		}
-		envelope = `M${top.join('L')}L${bottom.reverse().join('L')}Z`;
+		dashes = next;
 	});
 
 	let path = $derived.by(() => {
@@ -113,10 +112,17 @@
 <!-- BaseEdge stays underneath for xyflow's hit area and selection styling. -->
 <BaseEdge {id} {path} style="stroke:transparent;stroke-width:6px" {markerEnd} />
 <g class="pointer-events-none" opacity={selected ? 0.4 : 1}>
-	{#if envelope}
-		<path d={envelope} fill={color} stroke="none" class="envelope" />
-	{/if}
-	<path bind:this={wire} d={path} fill="none" stroke={color} stroke-width="2" stroke-dasharray={control ? CONTROL_DASH : undefined} />
+	{#each dashes as d, i (i)}
+		<line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke={color} stroke-width={d.w} class="dash" />
+	{/each}
+	<path
+		bind:this={wire}
+		d={path}
+		fill="none"
+		stroke={color}
+		stroke-width="2"
+		stroke-dasharray={control ? CONTROL_DASH : undefined}
+		opacity={dashes.length > 0 ? 0 : 1} />
 	{#if live || draining}
 		<path bind:this={charge} d={path} fill="none" stroke-width="2" class="charge" />
 	{/if}
@@ -148,9 +154,9 @@
 			stroke-dashoffset: -14;
 		}
 	}
-	/* Fill only: xyflow dashes every stroke of an animated edge. */
-	.envelope {
-		opacity: 0.55;
+	/* xyflow dashes every stroke of an animated edge; these are dashes already. */
+	.dash {
+		stroke-linecap: butt;
 		stroke-dasharray: none !important;
 		animation: none !important;
 	}

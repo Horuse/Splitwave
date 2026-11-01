@@ -22,17 +22,11 @@
 		position: absolute;
 		inset: 2.5px;
 		rotate: 45deg;
-		border-radius: 2.5px;
 		border: 1.5px solid var(--color-neutral-750);
 		background: var(--color-neutral-100);
-		transition:
-			background-color 150ms,
-			border-color 150ms,
-			box-shadow 150ms;
 	}
 	.socket.high {
 		border-color: var(--color-signal);
 		background: var(--color-signal);
-		box-shadow: 0 0 6px var(--color-signal);
 	}
 </style>

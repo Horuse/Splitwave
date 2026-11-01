@@ -90,20 +90,15 @@
 		stroke: var(--idle);
 		stroke-width: 2;
 		stroke-linecap: round;
-		transition: stroke 150ms;
 	}
 	.gate-wire.lit {
 		stroke: var(--glow);
-		filter: drop-shadow(0 0 3px var(--glow));
 	}
 	.gate-shape {
 		fill: var(--color-neutral-100);
 		stroke: var(--idle);
 		stroke-width: 2;
 		stroke-linejoin: round;
-		transition:
-			fill 150ms,
-			stroke 150ms;
 	}
 	.gate-shape.hot {
 		fill: color-mix(in oklch, var(--glow) 18%, var(--color-neutral-100));
@@ -120,7 +115,6 @@
 			9px ui-monospace,
 			monospace;
 		fill: var(--color-neutral-900);
-		transition: fill 150ms;
 	}
 	.branch-label.on {
 		fill: var(--glow);

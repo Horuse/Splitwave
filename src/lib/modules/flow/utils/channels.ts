@@ -64,14 +64,14 @@ export function handleEdgeStyle(color: string, side: 'source' | 'target'): strin
 	return `${handleStyle(color)};${PIN_SHAPE}${edgeOffset(side)}`;
 }
 
-// Control cables are dashed while idle and their sockets round jacks, so the
+// Control cables are dashed while idle and their sockets diamonds, so the
 // signal reads from the shape alone: colour already means "which channel".
+// The handle itself is a bare hit area; `_control_socket.svelte` draws the diamond.
 export const CONTROL_DASH = '4 3';
-const JACK_SHAPE =
-	'width:12px !important;height:12px !important;border-radius:9999px !important;background:var(--color-neutral-100) !important;border:2px solid var(--color-neutral-750) !important;';
+const SOCKET_AREA = 'width:14px !important;height:14px !important;background:transparent !important;border:none !important;';
 
 export function controlEdgeStyle(side: 'source' | 'target'): string {
-	return `${JACK_SHAPE}${edgeOffset(side)}`;
+	return `${SOCKET_AREA}${edgeOffset(side)}`;
 }
 
 export interface Slot {

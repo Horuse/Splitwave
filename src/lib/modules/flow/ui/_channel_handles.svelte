@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { branchHandle, channelColor, channelLabel, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { branchChannelOf, branchHandle, channelColor, channelHandle, channelLabel, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
@@ -12,7 +12,8 @@
 		min?: number;
 		/** Sources with nothing upstream (a net receiver) grow on their own cables. */
 		selfGrowing?: boolean;
-		/** Output of an If or Switch these sources belong to, 1-based. */
+		/** Branch these sockets belong to, 1-based: an output of an If or Switch,
+		 * or an input of a Select. */
 		branch?: number;
 		/** Names each socket (L / R / chN) beside it. */
 		labelled?: boolean;
@@ -28,10 +29,15 @@
 	let isSource = $derived(side === 'source');
 	let grows = $derived(selfGrowing ? isSource : !isSource);
 	// A channel only has an output once something feeds it, unless it is a source.
+	// Cables into a branch count as that channel; a branched input counts only
+	// its own branch's cables.
 	let occupied = $derived(
 		selfGrowing
 			? outgoing.current.map((c) => c.sourceHandle).filter((h): h is string => !!h)
-			: incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
+			: incoming.current
+					.map((c) => branchChannelOf(c.targetHandle, isSource ? undefined : branch) ?? null)
+					.filter((ch): ch is number => ch !== null)
+					.map(channelHandle)
 	);
 	let fed = $derived(occupied.length);
 	let slots = $derived(deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied));

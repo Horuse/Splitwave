@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	branchChannelOf,
 	branchHandle,
 	canConnect,
 	channelHandle,
@@ -71,6 +72,17 @@ describe('channelOf', () => {
 		expect(channelOf(controlHandle('ch1'))).toBeNull();
 		expect(channelOf('ch1')).toBeNull();
 		expect(channelOf(branchHandle(1, 1))).toBeNull();
+	});
+});
+
+describe('branchChannelOf', () => {
+	it('looks through a branch, or only at one when named', () => {
+		expect(branchChannelOf(channelHandle(2))).toBe(2);
+		expect(branchChannelOf(branchHandle(3, 1))).toBe(1);
+		expect(branchChannelOf(branchHandle(3, 1), 3)).toBe(1);
+		expect(branchChannelOf(branchHandle(3, 1), 2)).toBeNull();
+		expect(branchChannelOf(channelHandle(1), 2)).toBeNull();
+		expect(branchChannelOf(SIDECHAIN_HANDLE)).toBeNull();
 	});
 });
 

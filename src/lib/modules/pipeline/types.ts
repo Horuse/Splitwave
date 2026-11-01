@@ -25,6 +25,7 @@ import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
 import type { SwitchData } from './generated/SwitchData';
+import type { SelectData } from './generated/SelectData';
 import type { SystemAudioData } from './generated/SystemAudioData';
 import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData';
 
@@ -93,6 +94,10 @@ export type ToggleNodeData = XyData<{ on: boolean }>;
 // `op` combines the A and B inputs in the editor; the engine only sees `selected`.
 export type IfNodeData = XyData<IfData & { op?: LogicOp }>;
 export type SwitchNodeData = XyData<SwitchData>;
+export type SelectNodeData = XyData<SelectData>;
+// The engine only meters a Level Trigger's input; threshold and hold turn that
+// level into a control signal in the editor.
+export type LevelTriggerNodeData = XyData<{ thresholdDb: number; holdMs: number }>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -130,6 +135,8 @@ export type NodeDataMap = {
 	toggle: ToggleNodeData;
 	if: IfNodeData;
 	switch: SwitchNodeData;
+	select: SelectNodeData;
+	levelTrigger: LevelTriggerNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

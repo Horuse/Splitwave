@@ -99,6 +99,19 @@ export function channelOf(handle: string | null | undefined): number | null {
 	return p?.signal === 'audio' && p.port.kind === 'channel' ? p.port.ch : null;
 }
 
+/** The 1-based channel a channel handle addresses, looking through a branch;
+ * with `branch` given, only that branch's handles count. */
+export function branchChannelOf(handle: string | null | undefined, branch?: number): number | null {
+	const p = parsePort(handle);
+	if (p?.signal !== 'audio') return null;
+	let port = p.port;
+	if (port.kind === 'branch') {
+		if (branch !== undefined && port.branch !== branch) return null;
+		port = port.port;
+	} else if (branch !== undefined) return null;
+	return port.kind === 'channel' ? port.ch : null;
+}
+
 /** A cable joins two sockets of the same signal; audio never lands on a control input. */
 export function canConnect(source: string | null | undefined, target: string | null | undefined): boolean {
 	const signal = signalOf(source);

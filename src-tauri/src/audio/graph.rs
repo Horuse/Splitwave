@@ -109,6 +109,8 @@ pub enum NodeKind {
     Toggle,
     If,
     Switch,
+    Select,
+    LevelTrigger,
 }
 
 impl NodeKind {
@@ -128,6 +130,7 @@ impl NodeKind {
             | NodeKind::Saturator
             | NodeKind::Eq
             | NodeKind::LevelMeter
+            | NodeKind::LevelTrigger
             | NodeKind::LufsMeter
             | NodeKind::Waveform
             | NodeKind::Spectrum
@@ -141,7 +144,8 @@ impl NodeKind {
             | NodeKind::DeEsser
             | NodeKind::Plugin
             | NodeKind::If
-            | NodeKind::Switch => NodeCategory::Effect,
+            | NodeKind::Switch
+            | NodeKind::Select => NodeCategory::Effect,
             NodeKind::KeyInput | NodeKind::Toggle => NodeCategory::Control,
             // Two destinations in one UI node: it sends to peers and emits what
             // they send back. `expand_roles` splits it into an output half and
@@ -376,6 +380,16 @@ pub struct SwitchData {
     pub selected: u32,
 }
 
+/// Input heard through a Select, 1-based.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SelectData {
+    pub inputs: u32,
+    pub selected: u32,
+}
+
+/// Most outputs a Switch, or inputs a Select, can have.
 pub const MAX_SWITCH_OUTPUTS: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
@@ -803,23 +817,55 @@ pub fn branch_gate_id(node_id: &str, k: usize) -> String {
     format!("{node_id}#b{k}")
 }
 
-/// `(outputs, selected)` of an If or Switch; `None` for any other node.
-fn branches(n: &NodeSpec) -> AppResult<Option<(usize, usize)>> {
-    let (outputs, selected) = match n.kind {
-        NodeKind::If => (2, parse::<IfData>(&n.data, "If")?.selected),
+/// How a branching node splits into gates: a fork feeds one input to every
+/// gate and sends each gate out its own output; a join takes each input through
+/// its own gate and sums the gates into one output.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    Fork,
+    Join,
+}
+
+#[derive(Clone, Copy)]
+struct Branching {
+    shape: Shape,
+    count: usize,
+    selected: usize,
+}
+
+/// Where a join's gates are summed; its output is the node's.
+fn join_mix_id(node_id: &str) -> String {
+    format!("{node_id}#mix")
+}
+
+fn branching(n: &NodeSpec) -> AppResult<Option<Branching>> {
+    let ranged = |count: u32, what: &str| {
+        if (2..=MAX_SWITCH_OUTPUTS).contains(&count) {
+            Ok(count)
+        } else {
+            Err(miss(&n.id, &format!("needs 2 to 8 {what}")))
+        }
+    };
+    let (shape, count, selected) = match n.kind {
+        NodeKind::If => (Shape::Fork, 2, parse::<IfData>(&n.data, "If")?.selected),
         NodeKind::Switch => {
             let d: SwitchData = parse(&n.data, "Switch")?;
-            if !(2..=MAX_SWITCH_OUTPUTS).contains(&d.outputs) {
-                return Err(miss(&n.id, "Switch needs 2 to 8 outputs"));
-            }
-            (d.outputs, d.selected)
+            (Shape::Fork, ranged(d.outputs, "outputs")?, d.selected)
+        }
+        NodeKind::Select => {
+            let d: SelectData = parse(&n.data, "Select")?;
+            (Shape::Join, ranged(d.inputs, "inputs")?, d.selected)
         }
         _ => return Ok(None),
     };
-    if !(1..=outputs).contains(&selected) {
-        return Err(miss(&n.id, "selected output does not exist"));
+    if !(1..=count).contains(&selected) {
+        return Err(miss(&n.id, "selected branch does not exist"));
     }
-    Ok(Some((outputs as usize, selected as usize)))
+    Ok(Some(Branching {
+        shape,
+        count: count as usize,
+        selected: selected as usize,
+    }))
 }
 
 /// A node audio may end at besides an output: an analyzer renders telemetry,
@@ -829,6 +875,7 @@ fn is_end_point_kind(kind: NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::LevelMeter
+            | NodeKind::LevelTrigger
             | NodeKind::LufsMeter
             | NodeKind::Waveform
             | NodeKind::Spectrum
@@ -845,17 +892,26 @@ impl GraphSpec {
     /// the engine then routes them as plain effects.
     fn expand_roles(&self) -> AppResult<(Vec<RoleNode<'_>>, Vec<EdgeSpec>)> {
         let mut nodes: Vec<RoleNode<'_>> = Vec::with_capacity(self.nodes.len());
-        let mut branching: HashMap<&str, usize> = HashMap::new();
+        let mut branched: HashMap<&str, Branching> = HashMap::new();
         for n in &self.nodes {
-            if let Some((outputs, selected)) = branches(n)? {
-                branching.insert(n.id.as_str(), outputs);
-                for k in 1..=outputs {
+            if let Some(b) = branching(n)? {
+                branched.insert(n.id.as_str(), b);
+                for k in 1..=b.count {
                     nodes.push(RoleNode {
                         id: branch_gate_id(&n.id, k),
                         kind: n.kind,
                         role: NodeCategory::Effect,
                         data: &n.data,
-                        gate_open: Some(k == selected),
+                        gate_open: Some(k == b.selected),
+                    });
+                }
+                if b.shape == Shape::Join {
+                    nodes.push(RoleNode {
+                        id: join_mix_id(&n.id),
+                        kind: n.kind,
+                        role: NodeCategory::Effect,
+                        data: &n.data,
+                        gate_open: None,
                     });
                 }
                 continue;
@@ -901,20 +957,25 @@ impl GraphSpec {
             .filter(|n| n.kind == NodeKind::WebRtcCollaborator)
             .map(|n| n.id.as_str())
             .collect();
+        let unrouted = |e: &EdgeSpec, node: &str| {
+            AppError::Validation(format!("edge {} meets {node} on no branch of it", e.id))
+        };
         let mut edges = Vec::with_capacity(self.edges.len());
         for e in self.edges.iter().filter(|e| !e.is_control()) {
-            let (source, source_handle) = match branching.get(e.source.as_str()) {
-                Some(&outputs) => match &e.source_handle {
-                    Port::Audio(AudioPort::Branch { branch, port }) if *branch <= outputs => (
-                        branch_gate_id(&e.source, *branch),
-                        Port::Audio((**port).clone()),
-                    ),
-                    _ => {
-                        return Err(AppError::Validation(format!(
-                            "edge {} leaves {} from no output of it",
-                            e.id, e.source
-                        )))
+            let (source, source_handle) = match branched.get(e.source.as_str()) {
+                Some(b) => match (&e.source_handle, b.shape) {
+                    (Port::Audio(AudioPort::Branch { branch, port }), Shape::Fork)
+                        if *branch <= b.count =>
+                    {
+                        (
+                            branch_gate_id(&e.source, *branch),
+                            Port::Audio((**port).clone()),
+                        )
                     }
+                    (Port::Audio(AudioPort::Branch { .. }), _) | (_, Shape::Fork) => {
+                        return Err(unrouted(e, &e.source))
+                    }
+                    (handle, Shape::Join) => (join_mix_id(&e.source), handle.clone()),
                 },
                 None if split.contains(e.source.as_str()) => (
                     format!("{}{RECV_SUFFIX}", e.source),
@@ -922,19 +983,47 @@ impl GraphSpec {
                 ),
                 None => (e.source.clone(), e.source_handle.clone()),
             };
-            let edge = |id: String, target: String| EdgeSpec {
+            let edge = |id: String, target: String, target_handle: Port| EdgeSpec {
                 id,
                 source: source.clone(),
                 source_handle: source_handle.clone(),
                 target,
-                target_handle: e.target_handle.clone(),
+                target_handle,
             };
-            match branching.get(e.target.as_str()) {
-                Some(&outputs) => edges.extend(
-                    (1..=outputs)
-                        .map(|k| edge(branch_gate_id(&e.id, k), branch_gate_id(&e.target, k))),
-                ),
-                None => edges.push(edge(e.id.clone(), e.target.clone())),
+            match branched.get(e.target.as_str()) {
+                Some(b) if b.shape == Shape::Fork => edges.extend((1..=b.count).map(|k| {
+                    edge(
+                        branch_gate_id(&e.id, k),
+                        branch_gate_id(&e.target, k),
+                        e.target_handle.clone(),
+                    )
+                })),
+                Some(b) => match &e.target_handle {
+                    Port::Audio(AudioPort::Branch { branch, port }) if *branch <= b.count => edges
+                        .push(edge(
+                            e.id.clone(),
+                            branch_gate_id(&e.target, *branch),
+                            Port::Audio((**port).clone()),
+                        )),
+                    _ => return Err(unrouted(e, &e.target)),
+                },
+                None => edges.push(edge(
+                    e.id.clone(),
+                    e.target.clone(),
+                    e.target_handle.clone(),
+                )),
+            }
+        }
+        // A join's gates all sum into its mix.
+        for (id, b) in branched.iter().filter(|(_, b)| b.shape == Shape::Join) {
+            for k in 1..=b.count {
+                edges.push(EdgeSpec {
+                    id: format!("{}#m{k}", join_mix_id(id)),
+                    source: branch_gate_id(id, k),
+                    source_handle: Port::MAIN,
+                    target: join_mix_id(id),
+                    target_handle: Port::MAIN,
+                });
             }
         }
         Ok((nodes, edges))
@@ -1385,6 +1474,13 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
             bypassed: false,
         }));
     }
+    // The only non-gate node a Select expands into is its unity-gain mix.
+    if n.kind == NodeKind::Select {
+        return Ok(EffectSpec::Gain(GainData {
+            gain_db: 0.0,
+            bypassed: false,
+        }));
+    }
     Ok(match n.kind {
         NodeKind::Gain => EffectSpec::Gain(parse(n.data, "Gain")?),
         NodeKind::Mute => EffectSpec::Mute(parse(n.data, "Mute")?),
@@ -1392,6 +1488,9 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
         NodeKind::Saturator => EffectSpec::Saturator(parse(n.data, "Saturator")?),
         NodeKind::Eq => EffectSpec::Eq(parse(n.data, "Eq")?),
         NodeKind::LevelMeter => EffectSpec::LevelMeter(parse(n.data, "LevelMeter")?),
+        // Meters its input like a level meter; the editor turns the level into
+        // a control signal against its threshold.
+        NodeKind::LevelTrigger => EffectSpec::LevelMeter(LevelMeterData {}),
         NodeKind::LufsMeter => EffectSpec::LufsMeter(parse(n.data, "LufsMeter")?),
         NodeKind::Waveform => EffectSpec::Waveform(parse(n.data, "Waveform")?),
         NodeKind::Spectrum => EffectSpec::Spectrum(parse(n.data, "Spectrum")?),
@@ -1639,6 +1738,89 @@ mod tests {
             .edges
             .iter()
             .any(|e| e.from == "m" && e.to == branch_gate_id("sw", 1)));
+    }
+
+    #[test]
+    fn select_joins_its_gates_into_one_mix() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("a"),
+                mic("b"),
+                node(
+                    "sel",
+                    NodeKind::Select,
+                    serde_json::json!({ "inputs": 2, "selected": 2 }),
+                ),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("ea", "a", "audio:main", "sel", "audio:branch1:main"),
+                edge("eb", "b", "audio:main", "sel", "audio:branch2:main"),
+                edge("out", "sel", "audio:main", "s", "audio:main"),
+            ],
+        };
+        let v = g.validate().expect("valid");
+        let gate = |k| {
+            v.effects
+                .iter()
+                .find(|e| e.id == branch_gate_id("sel", k))
+                .map(|e| &e.spec)
+        };
+        assert!(matches!(
+            gate(1),
+            Some(EffectSpec::Mute(MuteData { muted: true, .. }))
+        ));
+        assert!(matches!(
+            gate(2),
+            Some(EffectSpec::Mute(MuteData { muted: false, .. }))
+        ));
+        let has = |from: &str, to: &str| v.edges.iter().any(|e| e.from == from && e.to == to);
+        assert!(has("a", &branch_gate_id("sel", 1)));
+        assert!(has("b", &branch_gate_id("sel", 2)));
+        assert!(has(&branch_gate_id("sel", 1), "sel#mix"));
+        assert!(has(&branch_gate_id("sel", 2), "sel#mix"));
+        assert!(has("sel#mix", "s"));
+    }
+
+    #[test]
+    fn level_trigger_is_an_end_point_metering_its_input() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                node("lt", NodeKind::LevelTrigger, serde_json::json!({})),
+            ],
+            edges: vec![edge("e", "m", "audio:main", "lt", "audio:main")],
+        };
+        let v = g
+            .validate()
+            .expect("a level trigger alone is a destination");
+        assert!(matches!(v.effects[0].spec, EffectSpec::LevelMeter(_)));
+    }
+
+    #[test]
+    fn select_rejects_an_input_on_no_branch() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("a"),
+                node(
+                    "sel",
+                    NodeKind::Select,
+                    serde_json::json!({ "inputs": 2, "selected": 1 }),
+                ),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("ea", "a", "audio:main", "sel", "audio:main"),
+                edge("out", "sel", "audio:main", "s", "audio:main"),
+            ],
+        };
+        assert!(g.validate().is_err());
     }
 
     #[test]

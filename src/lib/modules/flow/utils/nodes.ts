@@ -8,6 +8,7 @@ import {
 	Backspace as BackspaceIcon,
 	ArrowUpload as ArrowUploadIcon,
 	ArrowRight as ArrowRightIcon,
+	ArrowSwap as ArrowSwapIcon,
 	ChevronDoubleRight as ChevronDoubleRightIcon,
 	Balance as BalanceIcon,
 	Compressor as CompressorIcon,
@@ -65,6 +66,8 @@ import KeyInput from '../ui/condition/key_input.svelte';
 import Toggle from '../ui/condition/toggle.svelte';
 import If from '../ui/condition/if.svelte';
 import Switch from '../ui/condition/switch.svelte';
+import Select from '../ui/condition/select.svelte';
+import LevelTrigger from '../ui/condition/level_trigger.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -367,6 +370,24 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Switch,
 		icon: ChevronDoubleRightIcon,
 		defaultData: DEFAULT_NODE_DATA['switch']
+	}),
+	select: entry<'select'>({
+		kind: 'select',
+		category: 'condition',
+		label: 'Select',
+		description: 'Hears one of 2-8 inputs; each input has its own trigger, so one key per source picks it.',
+		component: Select,
+		icon: ArrowSwapIcon,
+		defaultData: DEFAULT_NODE_DATA['select']
+	}),
+	levelTrigger: entry<'levelTrigger'>({
+		kind: 'levelTrigger',
+		category: 'condition',
+		label: 'Level Trigger',
+		description: 'High while its input is louder than the threshold, held a moment after it drops so speech does not flicker.',
+		component: LevelTrigger,
+		icon: GaugeIcon,
+		defaultData: DEFAULT_NODE_DATA['levelTrigger']
 	})
 };
 

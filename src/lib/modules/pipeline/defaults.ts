@@ -76,7 +76,9 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	keyInput: {},
 	toggle: { on: false },
 	if: { selected: 1, op: 'a' },
-	switch: { outputs: 2, selected: 1 }
+	switch: { outputs: 2, selected: 1 },
+	select: { inputs: 2, selected: 1 },
+	levelTrigger: { thresholdDb: -40, holdMs: 300 }
 };
 
 function recordingFormatWithDefaults(stored: unknown): NodeDataMap['fileRecording']['format'] {

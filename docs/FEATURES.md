@@ -17,13 +17,14 @@ If a feature is genuinely useful but niche, make it a plugin. We do not host plu
 
 ## Node categories
 
-A node is exactly one of five things:
+A node is exactly one of six things:
 
 - **Input** — brings audio in: device, system capture, per-app capture, file.
 - **Effect** — transforms audio: gain, EQ, compression, reverb. One or more inputs on the left, processed output on the right.
 - **Output** — consumes audio: speakers, recording, virtual device.
 - **Monitor** — observes audio, does not transform it: Level Meter, EBU R128 LUFS Meter, Waveform, Spectrum.
 - **Network** — moves audio over the network: WebRTC collaborator, net receiver/sender.
+- **Condition** — carries control signals, not audio: Key Input, Toggle. Its cables are dashed and its sockets diamonds; it drives other nodes through their control inputs (such as `power`).
 
 If a node produces a transformed mono signal from several sources, it is an **effect**, not an input. A node that does "input" things and "effect" things at once is a design smell — split it or pick the dominant category.
 
@@ -59,7 +60,7 @@ A platform that cannot support the feature returns a real error from that backen
 ## Feature lifecycle
 
 1. Describe the feature in one paragraph and check it against the [one-question test](#the-one-question-test).
-2. Confirm the category: input, effect, output, monitor, or network.
+2. Confirm the category: input, effect, output, monitor, network, or condition.
 3. Sketch the node's inline parameters — every one must fit in the node.
 4. Check which per-OS files the change reaches.
 5. Build the node from existing Storybook components and add its stories, per [UI.md](UI.md).

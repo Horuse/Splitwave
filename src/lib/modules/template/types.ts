@@ -11,7 +11,7 @@ export interface TemplateNode {
 export interface TemplateEdge {
 	from: string;
 	to: string;
-	/** 1-based channel, matching the `chN` handle ids. */
+	/** 1-based channel, as `channelHandle` takes it. */
 	fromCh?: number;
 	toCh?: number;
 	/** Named target (a compressor sidechain) instead of a channel. */

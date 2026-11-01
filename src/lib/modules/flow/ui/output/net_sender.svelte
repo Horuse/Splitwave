@@ -4,7 +4,7 @@
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { formatHz, formatRate, formatKhzValue } from '$lib/components/format';
-	import { parseHandle } from '$lib/modules/flow/utils';
+	import { channelOf } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import { ArrowUpload } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
@@ -69,7 +69,7 @@
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'target' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
-			const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+			const ch = c.targetHandle ? channelOf(c.targetHandle) : null;
 			return ch === null ? n : Math.max(n, ch);
 		}, 0)
 	);

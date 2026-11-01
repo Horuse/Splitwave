@@ -202,6 +202,7 @@ fn edge_kind_ord(k: EdgeKind) -> u8 {
 mod tests {
     use super::*;
     use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec};
+    use crate::audio::port::Port;
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
         NodeSpec {
@@ -235,9 +236,9 @@ mod tests {
         EdgeSpec {
             id: id.to_string(),
             source: from.to_string(),
-            source_handle: None,
+            source_handle: Port::MAIN,
             target: to.to_string(),
-            target_handle: None,
+            target_handle: Port::MAIN,
         }
     }
 

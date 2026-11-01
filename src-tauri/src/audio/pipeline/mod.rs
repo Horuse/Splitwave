@@ -1743,6 +1743,7 @@ impl ActivePipeline {
 mod tests {
     use super::*;
     use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+    use crate::audio::port::Port;
     use std::time::{Duration, Instant};
 
     fn node(id: &str, kind: NodeKind, data: serde_json::Value) -> NodeSpec {
@@ -1777,9 +1778,9 @@ mod tests {
         EdgeSpec {
             id: id.to_string(),
             source: from.to_string(),
-            source_handle: None,
+            source_handle: Port::MAIN,
             target: to.to_string(),
-            target_handle: None,
+            target_handle: Port::MAIN,
         }
     }
 

@@ -1,3 +1,5 @@
+import { channelHandle, channelOf, parsePort } from './handles';
+
 // Curated categorical palette — vibrant mid-tones that stay legible on both
 // light and dark backgrounds. ch1/ch2 keep the DAW-familiar red/blue; the rest
 // are distinct hues, cycling for wide channel counts.
@@ -68,34 +70,29 @@ const NEUTRAL = '#a3a3a3';
 /** Edge colour for a source handle: per-channel handles take their channel's
  * colour, bus and per-peer mixes stay neutral. */
 export function handleColor(handle: string | null | undefined): string {
-	if (!handle) return NEUTRAL;
-	const ch = parseHandle(handle);
-	if (ch !== null) return channelColor(ch - 1);
-	// `peer:<id>:<c>` is one channel of a peer, counted from zero.
-	const peer = /^peer:.+:(\d+)$/.exec(handle);
-	return peer ? channelColor(Number(peer[1])) : NEUTRAL;
-}
-
-export function parseHandle(handle: string): number | null {
-	const m = /^ch(\d+)$/.exec(handle);
-	return m ? Number(m[1]) : null;
+	const p = parsePort(handle);
+	if (p?.signal !== 'audio') return NEUTRAL;
+	if (p.port.kind === 'channel') return channelColor(p.port.ch - 1);
+	// A peer's channels count from zero.
+	if (p.port.kind === 'peer' && p.port.ch !== null) return channelColor(p.port.ch);
+	return NEUTRAL;
 }
 
 // A removed cable frees its slot in place; renumbering would reroute live audio.
 export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = Infinity, min = 0): Slot[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
-		const ch = parseHandle(h);
+		const ch = channelOf(h);
 		if (ch !== null) taken.add(ch);
 	}
 
 	const end = Math.min(Math.max(taken.size === 0 ? 0 : Math.max(...taken), min), max);
 	const slots: Slot[] = [];
 	for (let ch = 1; ch <= end; ch++) {
-		slots.push({ id: `ch${ch}`, ch, occupied: taken.has(ch) });
+		slots.push({ id: channelHandle(ch), ch, occupied: taken.has(ch) });
 	}
 	if (trailing && end < max) {
-		slots.push({ id: `ch${end + 1}`, ch: end + 1, occupied: false });
+		slots.push({ id: channelHandle(end + 1), ch: end + 1, occupied: false });
 	}
 	return slots;
 }
@@ -103,7 +100,7 @@ export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = 
 export function freeRunFrom(occupiedHandles: string[], start: number, count: number): number[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
-		const ch = parseHandle(h);
+		const ch = channelOf(h);
 		if (ch !== null) taken.add(ch);
 	}
 	const run: number[] = [];

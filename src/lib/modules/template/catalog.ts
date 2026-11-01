@@ -1,4 +1,5 @@
 import type { Template } from './types';
+import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils/handles';
 
 const COL = 300;
 const ROW = 280;
@@ -57,7 +58,7 @@ export const TEMPLATES: Template[] = [
 			{ from: 'mic', to: 'mute' },
 			{ from: 'mute', to: 'spk', fromCh: 1, toCh: 1 },
 			{ from: 'mute', to: 'spk', fromCh: 1, toCh: 2 },
-			{ from: 'mic', to: 'comp', toHandle: 'sidechain' },
+			{ from: 'mic', to: 'comp', toHandle: SIDECHAIN_HANDLE },
 
 			{ from: 'app', to: 'comp', fromCh: 1, toCh: 1 },
 			{ from: 'app', to: 'comp', fromCh: 2, toCh: 2 },
@@ -117,7 +118,7 @@ export const TEMPLATES: Template[] = [
 			{ from: 'ns', to: 'comp' },
 			{ from: 'comp', to: 'spk', fromCh: 1, toCh: 1 },
 			{ from: 'comp', to: 'spk', fromCh: 1, toCh: 2 },
-			{ from: 'app', to: 'comp', toHandle: 'sidechain' },
+			{ from: 'app', to: 'comp', toHandle: SIDECHAIN_HANDLE },
 
 			{ from: 'app', to: 'lim', fromCh: 1, toCh: 1 },
 			{ from: 'app', to: 'lim', fromCh: 2, toCh: 2 },

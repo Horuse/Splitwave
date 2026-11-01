@@ -7,7 +7,7 @@
 	import { formatHz, formatRate, formatPct, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 	import { ArrowDownload } from '$lib/components/icons';
-	import { parseHandle } from '$lib/modules/flow/utils';
+	import { channelOf } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 
@@ -112,7 +112,7 @@
 	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
-			const ch = c.sourceHandle ? parseHandle(c.sourceHandle) : null;
+			const ch = c.sourceHandle ? channelOf(c.sourceHandle) : null;
 			return ch === null ? n : Math.max(n, ch);
 		}, 0)
 	);

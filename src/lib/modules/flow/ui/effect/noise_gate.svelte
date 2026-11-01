@@ -6,6 +6,7 @@
 	import type { NoiseGateNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
+	import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils';
 	import { NoiseGate } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
@@ -83,7 +84,7 @@
 	hasOutput
 	channelIo
 	nodeId={id}
-	inputs={[{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }]}
+	inputs={[{ id: SIDECHAIN_HANDLE, label: 'Sidechain', position: 'bottom' }]}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">

@@ -24,7 +24,7 @@
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
-	import { onNodeAction, parseHandle } from '$lib/modules/flow/utils';
+	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
@@ -201,7 +201,7 @@
 			.getEdges()
 			.filter((e) => {
 				if (e.target !== id) return false;
-				const ch = e.targetHandle ? parseHandle(e.targetHandle) : null;
+				const ch = e.targetHandle ? channelOf(e.targetHandle) : null;
 				return ch !== null && ch > cap;
 			})
 			.map((e) => ({ id: e.id }));
@@ -210,7 +210,7 @@
 	const wired = useNodeConnections({ id, handleType: 'target' });
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
-			const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+			const ch = c.targetHandle ? channelOf(c.targetHandle) : null;
 			return ch === null ? n : Math.max(n, ch);
 		}, 0)
 	);

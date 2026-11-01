@@ -2,7 +2,7 @@
 	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { PREVIEW_CTX } from '../utils';
+	import { MAIN_HANDLE, PREVIEW_CTX } from '../utils';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import { ArrowSwap, Hourglass } from '$lib/components/icons';
@@ -157,10 +157,10 @@
 
 	{#if !isPreview && !chExpanded}
 		{#if !inputs && hasInput}
-			<Handle type="target" class="handle" position={Position.Left} />
+			<Handle type="target" id={MAIN_HANDLE} class="handle" position={Position.Left} />
 		{/if}
 		{#if hasOutput}
-			<Handle type="source" class="handle" position={Position.Right}>
+			<Handle type="source" id={MAIN_HANDLE} class="handle" position={Position.Right}>
 				{#if outputLabel}
 					<span
 						class="pointer-events-none absolute top-1/2 right-full mr-0.5 -translate-y-1/2 px-1 font-mono text-[9px] leading-none text-neutral-700 [writing-mode:vertical-rl]">

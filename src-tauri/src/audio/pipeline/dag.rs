@@ -18,6 +18,7 @@ use crate::audio::graph::{EdgeKind, EffectSpec, InputSpec, NetCodec, OutputSpec,
 use crate::audio::health;
 use crate::audio::input_bridge::{now_secs, CaptureStats, WriteClock};
 use crate::audio::netaudio::packet::Format;
+use crate::audio::port::AudioPort;
 use crate::audio::resample::MultiResampler;
 use crate::audio::stream_recv::ChannelReceiver;
 use crate::audio::streams::bulk_push_counted;
@@ -220,22 +221,18 @@ impl DagNode {
         }
     }
 
-    /// Unknown or absent handles fall back to the node's main `out_buf`.
-    fn out_buf_for_handle(&self, handle: Option<&str>) -> &[f32] {
+    /// The main port, or one with no tap on this node, reads the main `out_buf`.
+    fn out_buf_for_handle(&self, port: &AudioPort) -> &[f32] {
         let (handle_bufs, out_buf) = match self {
             DagNode::Effect(e) => (&e.handle_bufs, &e.out_buf),
             DagNode::Producer(p) => (&p.handle_bufs, &p.out_buf),
             DagNode::Source(s) => (&s.handle_bufs, &s.out_buf),
             DagNode::Consumer(_) => return self.out_buf(),
         };
-        match handle {
-            Some(h) => handle_bufs
-                .iter()
-                .find(|(id, _)| id == h)
-                .map(|(_, buf)| buf.as_slice())
-                .unwrap_or(out_buf),
-            None => out_buf,
-        }
+        handle_bufs
+            .iter()
+            .find(|(p, _)| p == port)
+            .map_or(out_buf, |(_, buf)| buf.as_slice())
     }
 }
 
@@ -377,8 +374,8 @@ struct SourceState {
     /// Flushes asked for that this source has yet to answer.
     flushes_owed: u64,
     meter: Option<MeterHandle>,
-    // Per-channel taps ("chK") drawn off this source.
-    handle_bufs: Vec<(String, Vec<f32>)>,
+    // Per-channel taps drawn off this source.
+    handle_bufs: Taps,
     stats: SourceStats,
     /// Built empty, to take over the running source it replaces (its ring,
     /// queue and resamplers) when the graph swaps in.
@@ -582,24 +579,12 @@ impl SourceState {
         if let Some(m) = &self.meter {
             update_meter(m, &self.out_buf, self.channels);
         }
-        if !self.handle_bufs.is_empty() {
-            let w = self.channels;
-            for (h, buf) in self.handle_bufs.iter_mut() {
-                if let Some(a) = parse_stereo(h) {
-                    let c0 = (a - 1).min(w - 1);
-                    let c1 = a.min(w - 1);
-                    for f in 0..self.frames {
-                        buf[f * 2] = self.out_buf[f * w + c0];
-                        buf[f * 2 + 1] = self.out_buf[f * w + c1];
-                    }
-                } else {
-                    let c = parse_ch(h).map(|k| (k - 1).min(w - 1)).unwrap_or(0);
-                    for f in 0..self.frames {
-                        buf[f] = self.out_buf[f * w + c];
-                    }
-                }
-            }
-        }
+        fill_taps(
+            &mut self.handle_bufs,
+            &self.out_buf,
+            self.channels,
+            self.frames,
+        );
         self.stats
             .level
             .store(self.consumer.slots() as u64, Ordering::Relaxed);
@@ -960,7 +945,7 @@ struct EffectState {
     // Scratch for deinterleaving one pair out of a >2-wide buffer.
     pair_main: Vec<f32>,
     pair_side: Vec<f32>,
-    handle_bufs: Vec<(String, Vec<f32>)>,
+    handle_bufs: Taps,
     // When this node fans out to several outputs it is computed once (here, in
     // its owning output's graph) and its `out_buf` is published each block into
     // one ring per other consuming output, which reads it via a ring-source.
@@ -1061,11 +1046,11 @@ impl EffectState {
 
 /// A source with no graph inputs that emits network-received audio: `out_buf`
 /// is the mix of every channel, `handle_bufs` are the per-channel outputs (keyed
-/// by the source handle id, which matches the tap key).
+/// by source port).
 struct ProducerState {
     receiver: ChannelReceiver,
     out_buf: Vec<f32>,
-    handle_bufs: Vec<(String, Vec<f32>)>,
+    handle_bufs: Taps,
     /// What each `handle_bufs` entry draws from the tap map, which is keyed by
     /// what the sender stamped rather than by the handle the UI draws.
     wire_keys: Vec<TapKey>,
@@ -1090,12 +1075,12 @@ impl ProducerState {
     }
 }
 
-/// A terminal sink that consumes per-channel inputs (summed by target handle
-/// into `channel_bufs`, keyed "ch1".."chN") and pushes each channel into its
+/// A terminal sink that consumes per-channel inputs (summed by target port
+/// into `channel_bufs`, one per channel) and pushes each channel into its
 /// send ring for a background transmitter (direct-IP NetSender).
 struct ConsumerState {
     incoming: Vec<IncomingEdge>,
-    channel_bufs: Vec<(String, Vec<f32>)>,
+    channel_bufs: Taps,
     send_producers: Vec<Producer<f32>>,
     /// Wakes the thread that sends what the rings hold.
     bell: Arc<crate::audio::wake::Doorbell>,
@@ -1105,90 +1090,88 @@ struct ConsumerState {
 /// same mixing point -- pads it for sample-alignment before summing.
 struct IncomingEdge {
     src_idx: usize,
-    source_handle: Option<String>,
-    target_handle: Option<String>,
+    source_handle: AudioPort,
+    target_handle: AudioPort,
     delay: Option<DelayLine>,
 }
 
 struct TerminalEdge {
     src_idx: usize,
-    source_handle: Option<String>,
+    source_handle: AudioPort,
     /// `Some((off, width))` routes this edge to a physical output block: width 1
-    /// (`chK`) downmixes to mono at `off`, width 2 (`stA`) places a stereo pair.
+    /// downmixes to mono at `off`, width 2 places a stereo pair.
     route: Option<(usize, usize)>,
     delay: Option<DelayLine>,
 }
 
-/// Parse a `chK` handle into its 1-based channel number.
-#[inline]
-fn parse_ch(handle: &str) -> Option<usize> {
-    handle
-        .strip_prefix("ch")
-        .and_then(|s| s.parse::<usize>().ok())
+/// Per-port output buffers a node exposes besides its main `out_buf`.
+type Taps = Vec<(AudioPort, Vec<f32>)>;
+
+/// The per-channel taps `id`'s outgoing edges draw, each sized to its port.
+fn alloc_taps(valid: &ValidGraph, id: &str, block_frames: usize) -> Taps {
+    let mut ports: Vec<(AudioPort, usize)> = valid
+        .edges
+        .iter()
+        .filter(|e| e.from == id)
+        .filter_map(|e| {
+            e.source_handle
+                .tap_width()
+                .map(|w| (e.source_handle.clone(), w))
+        })
+        .collect();
+    ports.sort();
+    ports.dedup();
+    ports
+        .into_iter()
+        .map(|(p, w)| (p, vec![0.0; block_frames * w]))
+        .collect()
 }
 
-/// What a network producer's source handle reads from the tap map. `chN` is the
-/// direct-IP wire index (0-based on the wire, 1-based in the UI); `peer:<id>:<ch>`
-/// is a WebRTC tap key verbatim, and `peer:<id>` sums that peer's channels.
-fn tap_key(handle: &str) -> Option<TapKey> {
-    if let Some(rest) = handle.strip_prefix("peer:") {
-        return Some(if rest.contains(':') {
-            TapKey::Channel(rest.to_string())
-        } else {
-            TapKey::PrefixMix(format!("{rest}:"))
-        });
+/// Copies each tap's channels out of a node's interleaved `out`, `w` wide.
+#[inline]
+fn fill_taps(taps: &mut Taps, out: &[f32], w: usize, frames: usize) {
+    for (port, buf) in taps.iter_mut() {
+        let Some((off, width)) = port.route() else {
+            continue;
+        };
+        for f in 0..frames {
+            for c in 0..width {
+                buf[f * width + c] = out[f * w + (off + c).min(w - 1)];
+            }
+        }
     }
-    parse_ch(handle).map(|ch| TapKey::Channel((ch - 1).to_string()))
 }
 
-/// Parse an `stA` stereo-group handle into its 1-based lower channel; the group
-/// carries channels A and A+1.
-#[inline]
-fn parse_stereo(handle: &str) -> Option<usize> {
-    handle
-        .strip_prefix("st")
-        .and_then(|s| s.parse::<usize>().ok())
+/// What a network producer's source port reads from the tap map. A channel is
+/// the direct-IP wire index (0-based on the wire, 1-based in the UI); a peer
+/// channel is a WebRTC tap key verbatim, and a peer alone sums its channels.
+fn tap_key(port: &AudioPort) -> Option<TapKey> {
+    match port {
+        AudioPort::Peer {
+            peer,
+            channel: Some(c),
+        } => Some(TapKey::Channel(format!("{peer}:{c}"))),
+        AudioPort::Peer {
+            peer,
+            channel: None,
+        } => Some(TapKey::PrefixMix(format!("{peer}:"))),
+        AudioPort::Channel(k) => Some(TapKey::Channel((k - 1).to_string())),
+        _ => None,
+    }
 }
 
-/// Channel width an edge actually carries. A `chK`/`stA` source handle taps a
+/// Channel width an edge actually carries. A per-channel source port taps a
 /// slice of its node, so the node's own width would be wrong.
 fn edge_channels(
     nodes: &[DagNode],
     node_channels: &[usize],
     idx: usize,
-    source_handle: Option<&str>,
+    source: &AudioPort,
     frames: usize,
 ) -> usize {
-    match source_handle {
-        Some(h) if tap_handle_width(h).is_some() => {
-            nodes[idx].out_buf_for_handle(Some(h)).len() / frames
-        }
-        _ => node_channels[idx],
-    }
-}
-
-/// A per-channel tap handle (`chK` mono or `stA` stereo) and its channel width.
-#[inline]
-fn tap_handle_width(handle: &str) -> Option<usize> {
-    if parse_stereo(handle).is_some() {
-        Some(2)
-    } else if parse_ch(handle).is_some() {
-        Some(1)
-    } else {
-        None
-    }
-}
-
-/// Route a target handle to a `(physical channel offset, width)` block: `chK`
-/// lands on one channel, `stA` on the pair starting at A.
-#[inline]
-fn target_route(handle: &str) -> Option<(usize, usize)> {
-    if let Some(a) = parse_stereo(handle) {
-        Some((a - 1, 2))
-    } else if let Some(k) = parse_ch(handle) {
-        Some((k - 1, 1))
-    } else {
-        None
+    match source.tap_width() {
+        Some(_) => nodes[idx].out_buf_for_handle(source).len() / frames,
+        None => node_channels[idx],
     }
 }
 
@@ -1491,7 +1474,7 @@ impl OutputGraph {
                 Some((offset, width)) => offset + width,
                 None => {
                     self.nodes[terminal.src_idx]
-                        .out_buf_for_handle(terminal.source_handle.as_deref())
+                        .out_buf_for_handle(&terminal.source_handle)
                         .len()
                         / self.block_frames
                 }
@@ -1695,16 +1678,13 @@ impl OutputGraph {
                     }
                 }
                 for edge in &mut cons.incoming {
-                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                    let target = edge.target_handle.as_deref();
+                    let src = head[edge.src_idx].out_buf_for_handle(&edge.source_handle);
+                    let target = &edge.target_handle;
                     let src = match &mut edge.delay {
                         Some(d) => d.delayed(src),
                         None => src,
                     };
-                    let Some((_, buf)) = cons
-                        .channel_bufs
-                        .iter_mut()
-                        .find(|(h, _)| Some(h.as_str()) == target)
+                    let Some((_, buf)) = cons.channel_bufs.iter_mut().find(|(p, _)| p == target)
                     else {
                         continue;
                     };
@@ -1723,8 +1703,8 @@ impl OutputGraph {
                     *s = 0.0;
                 }
                 for edge in &mut eff.incoming {
-                    let src = head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
-                    let route = edge.target_handle.as_deref().and_then(target_route);
+                    let src = head[edge.src_idx].out_buf_for_handle(&edge.source_handle);
+                    let route = edge.target_handle.route();
                     let src = match &mut edge.delay {
                         Some(d) => d.delayed(src),
                         None => src,
@@ -1740,8 +1720,7 @@ impl OutputGraph {
                         *s = 0.0;
                     }
                     for edge in &mut eff.sidechain {
-                        let src =
-                            head[edge.src_idx].out_buf_for_handle(edge.source_handle.as_deref());
+                        let src = head[edge.src_idx].out_buf_for_handle(&edge.source_handle);
                         let src = match &mut edge.delay {
                             Some(d) => d.delayed(src),
                             None => src,
@@ -1751,21 +1730,7 @@ impl OutputGraph {
                 }
                 eff.process(frames);
                 let w = eff.out_buf.len() / frames;
-                for (h, buf) in eff.handle_bufs.iter_mut() {
-                    if let Some(a) = parse_stereo(h) {
-                        let c0 = (a - 1).min(w - 1);
-                        let c1 = a.min(w - 1);
-                        for f in 0..frames {
-                            buf[f * 2] = eff.out_buf[f * w + c0];
-                            buf[f * 2 + 1] = eff.out_buf[f * w + c1];
-                        }
-                    } else if let Some(k) = parse_ch(h) {
-                        let c = (k - 1).min(w - 1);
-                        for f in 0..frames {
-                            buf[f] = eff.out_buf[f * w + c];
-                        }
-                    }
-                }
+                fill_taps(&mut eff.handle_bufs, &eff.out_buf, w, frames);
                 // Publish the processed block to every consuming output's ring.
                 for (prod, clock) in eff.taps.iter_mut() {
                     clock.record(eff.out_buf.len(), now);
@@ -1777,8 +1742,7 @@ impl OutputGraph {
             *s = 0.0;
         }
         for terminal in &mut self.terminals {
-            let src =
-                self.nodes[terminal.src_idx].out_buf_for_handle(terminal.source_handle.as_deref());
+            let src = self.nodes[terminal.src_idx].out_buf_for_handle(&terminal.source_handle);
             let src = match &mut terminal.delay {
                 Some(d) => d.delayed(src),
                 None => src,
@@ -2022,21 +1986,21 @@ pub(super) fn build_output_graph(
             };
             if let Some(receiver) = network {
                 receive_buffers.push(receiver.fill_gauge());
-                let mut handles: Vec<String> = valid
+                let mut ports: Vec<AudioPort> = valid
                     .edges
                     .iter()
                     .filter(|e| &e.from == id)
-                    .filter_map(|e| e.source_handle.clone())
+                    .map(|e| e.source_handle.clone())
                     .collect();
-                handles.sort();
-                handles.dedup();
+                ports.sort();
+                ports.dedup();
                 let pw = 2;
-                let mut handle_bufs = Vec::with_capacity(handles.len());
-                let mut wire_keys = Vec::with_capacity(handles.len());
-                for h in handles {
-                    let Some(key) = tap_key(&h) else { continue };
+                let mut handle_bufs = Vec::with_capacity(ports.len());
+                let mut wire_keys = Vec::with_capacity(ports.len());
+                for p in ports {
+                    let Some(key) = tap_key(&p) else { continue };
                     wire_keys.push(key);
-                    handle_bufs.push((h, vec![0.0; block_frames]));
+                    handle_bufs.push((p, vec![0.0; block_frames]));
                 }
                 id_to_index.insert(id.clone(), nodes.len());
                 nodes.push(DagNode::Producer(ProducerState {
@@ -2072,22 +2036,7 @@ pub(super) fn build_output_graph(
                 producer_pairs.push((id.clone(), producer));
                 consumer
             };
-            let mut ch_handles: Vec<String> = valid
-                .edges
-                .iter()
-                .filter(|e| &e.from == id)
-                .filter_map(|e| e.source_handle.clone())
-                .filter(|h| tap_handle_width(h).is_some())
-                .collect();
-            ch_handles.sort();
-            ch_handles.dedup();
-            let source_handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
-                .into_iter()
-                .map(|h| {
-                    let w = tap_handle_width(&h).unwrap_or(1);
-                    (h, vec![0.0; block_frames * w])
-                })
-                .collect();
+            let source_handle_bufs = alloc_taps(valid, id, block_frames);
             let resampler = if input_sr == output_sr {
                 None
             } else {
@@ -2189,7 +2138,7 @@ pub(super) fn build_output_graph(
             // The cut plan builds each node in exactly one graph (its owner --
             // a real output, or the monitor for analyzer-only nodes), so this
             // build is the sole plugin instance and always the editor target.
-            type Upstream = (usize, Option<String>, Option<String>);
+            type Upstream = (usize, AudioPort, AudioPort);
             let mut main_upstream: Vec<Upstream> = Vec::new();
             let mut side_upstream: Vec<Upstream> = Vec::new();
             for e in &valid.edges {
@@ -2214,23 +2163,19 @@ pub(super) fn build_output_graph(
             // the edge width is the tap buffer's, not the source node's full width.
             let upstream_w = main_upstream
                 .iter()
-                .map(|(i, sh, _)| {
-                    edge_channels(&nodes, &node_channels, *i, sh.as_deref(), block_frames)
-                })
+                .map(|(i, sh, _)| edge_channels(&nodes, &node_channels, *i, sh, block_frames))
                 .max()
                 .unwrap_or(2);
             let target_w = main_upstream
                 .iter()
-                .filter_map(|(_, _, t)| t.as_deref().and_then(target_route))
-                .map(|(off, w)| off + w)
+                .filter_map(|(_, _, t)| t.channel_span())
                 .max()
                 .unwrap_or(0);
             let tap_w = valid
                 .edges
                 .iter()
                 .filter(|e| &e.from == id)
-                .filter_map(|e| e.source_handle.as_deref())
-                .filter_map(|h| parse_stereo(h).map(|a| a + 1).or_else(|| parse_ch(h)))
+                .filter_map(|e| e.source_handle.channel_span())
                 .max()
                 .unwrap_or(0);
             let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
@@ -2327,27 +2272,26 @@ pub(super) fn build_output_graph(
                 block_frames,
                 output_sr,
             );
-            let make_edge =
-                |src_idx: usize, source_handle: Option<String>, target_handle: Option<String>| {
-                    let pad = max_upstream - node_latencies[src_idx];
-                    let width = edge_channels(
-                        &nodes,
-                        &node_channels,
-                        src_idx,
-                        source_handle.as_deref(),
-                        block_frames,
-                    );
-                    IncomingEdge {
-                        src_idx,
-                        source_handle,
-                        target_handle,
-                        delay: if pad > 0 {
-                            Some(DelayLine::new(pad, width, block_frames))
-                        } else {
-                            None
-                        },
-                    }
-                };
+            let make_edge = |src_idx: usize, source_handle: AudioPort, target_handle: AudioPort| {
+                let pad = max_upstream - node_latencies[src_idx];
+                let width = edge_channels(
+                    &nodes,
+                    &node_channels,
+                    src_idx,
+                    &source_handle,
+                    block_frames,
+                );
+                IncomingEdge {
+                    src_idx,
+                    source_handle,
+                    target_handle,
+                    delay: if pad > 0 {
+                        Some(DelayLine::new(pad, width, block_frames))
+                    } else {
+                        None
+                    },
+                }
+            };
             let incoming: Vec<IncomingEdge> = main_upstream
                 .into_iter()
                 .map(|(i, s, t)| make_edge(i, s, t))
@@ -2361,24 +2305,9 @@ pub(super) fn build_output_graph(
             } else {
                 Some(vec![0.0; block_frames * eff_channels])
             };
-            // Generic `chK` per-channel taps drawn off this effect. A stale
-            // handle just yields silence.
-            let mut handle_ids: Vec<String> = valid
-                .edges
-                .iter()
-                .filter(|e| &e.from == id)
-                .filter_map(|e| e.source_handle.clone())
-                .filter(|h| tap_handle_width(h).is_some())
-                .collect();
-            handle_ids.sort();
-            handle_ids.dedup();
-            let handle_bufs: Vec<(String, Vec<f32>)> = handle_ids
-                .into_iter()
-                .map(|h| {
-                    let w = tap_handle_width(&h).unwrap_or(2);
-                    (h, vec![0.0; block_frames * w])
-                })
-                .collect();
+            // Per-channel taps drawn off this effect. A stale port just yields
+            // silence.
+            let handle_bufs = alloc_taps(valid, id, block_frames);
             node_timings.push(NodeTiming {
                 node_id: id.clone(),
                 latency_frames: own as u32,
@@ -2433,7 +2362,7 @@ pub(super) fn build_output_graph(
         });
     if let Some(spec) = wire_sender {
         let oid = output_id.unwrap();
-        let mut up: Vec<(usize, Option<String>, Option<String>)> = Vec::new();
+        let mut up: Vec<(usize, AudioPort, AudioPort)> = Vec::new();
         for e in &valid.edges {
             if e.to == oid && reachable.contains(&e.from) {
                 let idx = id_to_index[&e.from];
@@ -2449,13 +2378,8 @@ pub(super) fn build_output_graph(
             .into_iter()
             .map(|(idx, source_handle, target_handle)| {
                 let pad = max_up - node_latencies[idx];
-                let width = edge_channels(
-                    &nodes,
-                    &node_channels,
-                    idx,
-                    source_handle.as_deref(),
-                    block_frames,
-                );
+                let width =
+                    edge_channels(&nodes, &node_channels, idx, &source_handle, block_frames);
                 IncomingEdge {
                     src_idx: idx,
                     source_handle,
@@ -2476,11 +2400,11 @@ pub(super) fn build_output_graph(
             _ => unreachable!("wire sender spec"),
         };
         let n = channels.clamp(1, MAX_NET_CH) as usize;
-        let mut channel_bufs: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
+        let mut channel_bufs: Taps = Vec::with_capacity(n);
         let mut send_producers: Vec<Producer<f32>> = Vec::with_capacity(n);
         let mut send_consumers: Vec<Consumer<f32>> = Vec::with_capacity(n);
         for c in 1..=n {
-            channel_bufs.push((format!("ch{c}"), vec![0.0; block_frames]));
+            channel_bufs.push((AudioPort::Channel(c), vec![0.0; block_frames]));
             let (prod, cons) = RingBuffer::<f32>::new(crate::audio::netaudio::SEND_RING);
             send_producers.push(prod);
             send_consumers.push(cons);
@@ -2576,13 +2500,13 @@ pub(super) fn build_output_graph(
 
     let terminals: Vec<TerminalEdge> = match output_id {
         Some(id) => {
-            let upstream: Vec<(usize, Option<String>, Option<(usize, usize)>)> = valid
+            let upstream: Vec<(usize, AudioPort, Option<(usize, usize)>)> = valid
                 .edges
                 .iter()
                 .filter(|e| e.to == id)
                 .filter_map(|e| {
                     id_to_index.get(&e.from).copied().map(|idx| {
-                        let route = e.target_handle.as_deref().and_then(target_route);
+                        let route = e.target_handle.route();
                         (idx, e.source_handle.clone(), route)
                     })
                 })
@@ -2600,7 +2524,7 @@ pub(super) fn build_output_graph(
                         &nodes,
                         &node_channels,
                         src_idx,
-                        source_handle.as_deref(),
+                        &source_handle,
                         block_frames,
                     );
                     TerminalEdge {
@@ -2759,22 +2683,7 @@ fn ring_source(
         (block_frames as u64 * owner_sr as u64 + output_sr as u64 - 1) / output_sr as u64;
     let input_samples_per_block = input_frames_per_block as usize * channels;
 
-    let mut ch_handles: Vec<String> = valid
-        .edges
-        .iter()
-        .filter(|e| e.from == id)
-        .filter_map(|e| e.source_handle.clone())
-        .filter(|h| tap_handle_width(h).is_some())
-        .collect();
-    ch_handles.sort();
-    ch_handles.dedup();
-    let handle_bufs: Vec<(String, Vec<f32>)> = ch_handles
-        .into_iter()
-        .map(|h| {
-            let w = tap_handle_width(&h).unwrap_or(1);
-            (h, vec![0.0; block_frames * w])
-        })
-        .collect();
+    let handle_bufs = alloc_taps(valid, id, block_frames);
 
     let asrc = if realtime {
         let mut asrc = Asrc::new(owner_sr, output_sr, block_frames, channels)?;
@@ -3196,13 +3105,13 @@ pub(super) mod graph_tests {
         )
     }
 
-    fn edge(id: &str, from: &str, sh: Option<&str>, to: &str, th: Option<&str>) -> EdgeSpec {
+    fn edge(id: &str, from: &str, sh: &str, to: &str, th: &str) -> EdgeSpec {
         EdgeSpec {
             id: id.to_string(),
             source: from.to_string(),
-            source_handle: sh.map(str::to_string),
+            source_handle: sh.parse().unwrap(),
             target: to.to_string(),
-            target_handle: th.map(str::to_string),
+            target_handle: th.parse().unwrap(),
         }
     }
 
@@ -3231,8 +3140,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
             ],
         };
         (g.validate().expect("valid"), "s".to_string())
@@ -3601,18 +3510,18 @@ pub(super) mod graph_tests {
         ];
         let meet = if mix { "x" } else { "s" };
         let mut edges = vec![
-            edge("e1", "m", None, "g", None),
-            edge("e2", "m", None, "l", None),
-            edge("e3", "g", None, meet, None),
-            edge("e4", "l", None, meet, None),
+            edge("e1", "m", "audio:main", "g", "audio:main"),
+            edge("e2", "m", "audio:main", "l", "audio:main"),
+            edge("e3", "g", "audio:main", meet, "audio:main"),
+            edge("e4", "l", "audio:main", meet, "audio:main"),
         ];
         if mix {
             nodes.push(gain_node("x", 0.0));
-            edges.push(edge("e6", "x", None, "s", None));
+            edges.push(edge("e6", "x", "audio:main", "s", "audio:main"));
         }
         if meter {
             nodes.push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
-            edges.push(edge("e5", "m", None, "lm", None));
+            edges.push(edge("e5", "m", "audio:main", "lm", "audio:main"));
         }
         let mut valid = GraphSpec {
             sample_rate: None,
@@ -3769,9 +3678,9 @@ pub(super) mod graph_tests {
                 node("lm", NodeKind::LevelMeter, serde_json::json!({})),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "s", None),
-                edge("e3", "m", None, "lm", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+                edge("e3", "m", "audio:main", "lm", "audio:main"),
             ],
         }
         .validate()
@@ -3827,9 +3736,9 @@ pub(super) mod graph_tests {
                 node("lm", NodeKind::LevelMeter, serde_json::json!({})),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "s", None),
-                edge("e3", "m", None, "lm", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+                edge("e3", "m", "audio:main", "lm", "audio:main"),
             ],
         }
         .validate()
@@ -3858,9 +3767,9 @@ pub(super) mod graph_tests {
                 speaker("s"),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "g2", None),
-                edge("e3", "g2", None, "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "g2", "audio:main"),
+                edge("e3", "g2", "audio:main", "s", "audio:main"),
             ],
         }
         .validate()
@@ -4124,14 +4033,14 @@ pub(super) mod graph_tests {
             speaker("s"),
         ];
         let mut edges = vec![
-            edge("e1", "m", None, "e", None),
-            edge("e2", "e", None, "mu", None),
-            edge("e3", "mu", None, "g", None),
-            edge("e4", "g", None, "s", None),
+            edge("e1", "m", "audio:main", "e", "audio:main"),
+            edge("e2", "e", "audio:main", "mu", "audio:main"),
+            edge("e3", "mu", "audio:main", "g", "audio:main"),
+            edge("e4", "g", "audio:main", "s", "audio:main"),
         ];
         if meter {
             nodes.push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
-            edges.push(edge("e5", "mu", None, "lm", None));
+            edges.push(edge("e5", "mu", "audio:main", "lm", "audio:main"));
         }
         GraphSpec {
             sample_rate: None,
@@ -4222,7 +4131,7 @@ pub(super) mod graph_tests {
                 mic("m"),
                 node("lm", NodeKind::LevelMeter, serde_json::json!({})),
             ],
-            edges: vec![edge("e1", "m", None, "lm", None)],
+            edges: vec![edge("e1", "m", "audio:main", "lm", "audio:main")],
         };
         let valid = g.validate().expect("valid");
         let (built, _) = build(None, SR, &valid, SR, true);
@@ -4243,10 +4152,10 @@ pub(super) mod graph_tests {
                 speaker("s"),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "m", None, "l", None),
-                edge("e3", "g", None, "s", None),
-                edge("e4", "l", None, "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "m", "audio:main", "l", "audio:main"),
+                edge("e3", "g", "audio:main", "s", "audio:main"),
+                edge("e4", "l", "audio:main", "s", "audio:main"),
             ],
         };
         // Replace one gain with a limiter spec by editing its node kind.
@@ -4313,10 +4222,10 @@ pub(super) mod graph_tests {
                 speaker("s"),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "m", None, "l", None),
-                edge("e3", "g", None, "s", None),
-                edge("e4", "l", None, "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "m", "audio:main", "l", "audio:main"),
+                edge("e3", "g", "audio:main", "s", "audio:main"),
+                edge("e4", "l", "audio:main", "s", "audio:main"),
             ],
         };
         let mut valid = g.validate().expect("valid");
@@ -4923,7 +4832,7 @@ pub(super) mod graph_tests {
                 mic("m"),
                 node("lm", NodeKind::LevelMeter, serde_json::json!({})),
             ],
-            edges: vec![edge("e1", "m", None, "lm", None)],
+            edges: vec![edge("e1", "m", "audio:main", "lm", "audio:main")],
         };
         let valid = g.validate().expect("valid");
         let native = HashMap::from([("m".to_string(), SR)]);
@@ -4966,7 +4875,7 @@ pub(super) mod graph_tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
-            edges: vec![edge("e1", "m", None, "s", None)],
+            edges: vec![edge("e1", "m", "audio:main", "s", "audio:main")],
         };
         let valid = g.validate().expect("valid");
         let mut producer_pairs = Vec::new();
@@ -5001,12 +4910,13 @@ pub(super) mod graph_tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
-            edges: vec![edge("e1", "m", None, "s", None)],
+            edges: vec![edge("e1", "m", "audio:main", "s", "audio:main")],
         };
         // An analyzer is a monitor-only node.
         g.nodes
             .push(node("lm", NodeKind::LevelMeter, serde_json::json!({})));
-        g.edges.push(edge("e2", "m", None, "lm", None));
+        g.edges
+            .push(edge("e2", "m", "audio:main", "lm", "audio:main"));
         let valid = g.validate().expect("valid");
         let (mut built, mut producers) = build(None, SR, &valid, SR, false);
         let prod = producers.get_mut("m").unwrap();
@@ -5032,9 +4942,9 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("a"), speaker("b")],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "a", None),
-                edge("e3", "g", None, "b", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "a", "audio:main"),
+                edge("e3", "g", "audio:main", "b", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5128,7 +5038,7 @@ pub(super) mod graph_tests {
                     }),
                 ),
             ],
-            edges: vec![edge("e1", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e1", "m", "audio:main", "net", "audio:ch1")],
         };
         let valid = g.validate().expect("send graph valid");
         assert_eq!(valid.outputs.len(), 1);
@@ -5169,8 +5079,8 @@ pub(super) mod graph_tests {
                 ),
             ],
             edges: vec![
-                edge("e1", "m", Some("ch1"), "loop-tx", Some("ch1")),
-                edge("e2", "m", Some("ch2"), "loop-tx", Some("ch2")),
+                edge("e1", "m", "audio:ch1", "loop-tx", "audio:ch1"),
+                edge("e2", "m", "audio:ch2", "loop-tx", "audio:ch2"),
             ],
         };
         let valid = g.validate().expect("send graph valid");
@@ -5211,7 +5121,7 @@ pub(super) mod graph_tests {
                     }),
                 ),
             ],
-            edges: vec![edge("e1", "m", None, "rec", None)],
+            edges: vec![edge("e1", "m", "audio:main", "rec", "audio:main")],
         };
         let valid = g.validate().expect("recording graph valid");
         let (mut built, _) = build(Some("rec"), SR, &valid, SR, false);
@@ -5227,8 +5137,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m1"), mic("m2"), speaker("s")],
             edges: vec![
-                edge("e1", "m1", None, "s", None),
-                edge("e2", "m2", None, "s", None),
+                edge("e1", "m1", "audio:main", "s", "audio:main"),
+                edge("e2", "m2", "audio:main", "s", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5344,39 +5254,25 @@ pub(super) mod graph_tests {
         }
 
         #[test]
-        fn handle_parsing() {
-            assert_eq!(parse_ch("ch3"), Some(3));
-            assert_eq!(parse_ch("ch"), None);
-            assert_eq!(parse_ch("st2"), None);
-            assert_eq!(parse_stereo("st2"), Some(2));
-            assert_eq!(parse_stereo("ch3"), None);
-            assert_eq!(tap_handle_width("ch3"), Some(1));
-            assert_eq!(tap_handle_width("st2"), Some(2));
-            assert_eq!(tap_handle_width("mix"), None);
-            assert_eq!(target_route("ch4"), Some((3, 1)));
-            assert_eq!(target_route("st2"), Some((1, 2)));
-            assert_eq!(target_route("other"), None);
-        }
-
-        #[test]
         fn tap_keys_map_wire_names() {
-            let TapKey::Channel(k) = tap_key("ch1").expect("ch1") else {
+            let key = |s: &str| tap_key(&s.parse().expect(s));
+            let TapKey::Channel(k) = key("ch1").expect("ch1") else {
                 panic!("variant")
             };
             assert_eq!(k, "0", "direct-IP wire channels are 0-based");
-            let TapKey::Channel(k) = tap_key("ch12").expect("ch12") else {
+            let TapKey::Channel(k) = key("ch12").expect("ch12") else {
                 panic!("variant")
             };
             assert_eq!(k, "11");
-            let TapKey::Channel(k) = tap_key("peer:p:0").expect("peer channel") else {
+            let TapKey::Channel(k) = key("peer:p:0").expect("peer channel") else {
                 panic!("variant")
             };
             assert_eq!(k, "p:0", "peer channel keys drop the peer: prefix");
-            let TapKey::PrefixMix(p) = tap_key("peer:p").expect("peer mix") else {
+            let TapKey::PrefixMix(p) = key("peer:p").expect("peer mix") else {
                 panic!("variant")
             };
             assert_eq!(p, "p:");
-            assert!(tap_key("noise").is_none());
+            assert!(key("main").is_none());
         }
 
         #[test]
@@ -5531,7 +5427,7 @@ pub(super) mod graph_tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
-            edges: vec![edge("e1", "m", Some("ch1"), "s", None)],
+            edges: vec![edge("e1", "m", "audio:ch1", "s", "audio:main")],
         };
         let valid = g.validate().expect("valid");
         let (mut built, mut producers) = build(Some("s"), SR, &valid, SR, false);
@@ -5560,8 +5456,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", Some("st3"), "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:st3", "s", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5594,14 +5490,14 @@ pub(super) mod graph_tests {
             ],
             edges: if with_sidechain {
                 vec![
-                    edge("e1", "main", None, "c", None),
-                    edge("e2", "key", None, "c", Some("sidechain")),
-                    edge("e3", "c", None, "s", None),
+                    edge("e1", "main", "audio:main", "c", "audio:main"),
+                    edge("e2", "key", "audio:main", "c", "audio:sidechain"),
+                    edge("e3", "c", "audio:main", "s", "audio:main"),
                 ]
             } else {
                 vec![
-                    edge("e1", "main", None, "c", None),
-                    edge("e3", "c", None, "s", None),
+                    edge("e1", "main", "audio:main", "c", "audio:main"),
+                    edge("e3", "c", "audio:main", "s", "audio:main"),
                 ]
             },
         };
@@ -5660,8 +5556,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s"), plugin_node("p")],
             edges: vec![
-                edge("e1", "m", None, "s", None),
-                edge("e2", "m", None, "p", None),
+                edge("e1", "m", "audio:main", "s", "audio:main"),
+                edge("e2", "m", "audio:main", "p", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5686,8 +5582,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), plugin_node("p"), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "p", None),
-                edge("e2", "p", None, "s", None),
+                edge("e1", "m", "audio:main", "p", "audio:main"),
+                edge("e2", "p", "audio:main", "s", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5721,9 +5617,9 @@ pub(super) mod graph_tests {
                 speaker("s"),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "rec", None),
-                edge("e3", "g", None, "s", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "rec", "audio:main"),
+                edge("e3", "g", "audio:main", "s", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5745,9 +5641,9 @@ pub(super) mod graph_tests {
                 node("lm", NodeKind::LevelMeter, serde_json::json!({})),
             ],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "s", None),
-                edge("e3", "g", None, "lm", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+                edge("e3", "g", "audio:main", "lm", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5768,7 +5664,7 @@ pub(super) mod graph_tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
-            edges: vec![edge("e1", "m", None, "s", None)],
+            edges: vec![edge("e1", "m", "audio:main", "s", "audio:main")],
         };
         let valid = g.validate().expect("valid");
         let plan = plan_cuts(&valid, None);
@@ -5796,9 +5692,9 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g", 0.0), speaker("a"), speaker("b")],
             edges: vec![
-                edge("e1", "m", None, "g", None),
-                edge("e2", "g", None, "a", None),
-                edge("e3", "g", None, "b", None),
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "a", "audio:main"),
+                edge("e3", "g", "audio:main", "b", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");
@@ -5949,8 +5845,8 @@ pub(super) mod graph_tests {
             buffer_frames: None,
             nodes: vec![mic("m"), node("fx", kind, data.clone()), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "fx", None),
-                edge("e2", "fx", None, "s", None),
+                edge("e1", "m", "audio:main", "fx", "audio:main"),
+                edge("e2", "fx", "audio:main", "s", "audio:main"),
             ],
         };
         let valid = g.validate().expect("valid");

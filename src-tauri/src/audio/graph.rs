@@ -4,6 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use serde::Deserialize;
 use ts_rs::TS;
 
+use crate::audio::port::{AudioPort, Port};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Deserialize)]
@@ -41,14 +42,24 @@ pub struct NodeSpec {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EdgeSpec {
-    #[allow(dead_code)]
     pub id: String,
     pub source: String,
-    /// `Some("peer:<id>")` selects a WebRTC per-peer output; `None` is the main out.
-    pub source_handle: Option<String>,
+    pub source_handle: Port,
     pub target: String,
-    /// `Some("sidechain")` routes to an effect's sidechain key input.
-    pub target_handle: Option<String>,
+    pub target_handle: Port,
+}
+
+impl EdgeSpec {
+    /// The engine routes audio only; a control cable has no audio ends.
+    fn audio_ports(&self) -> AppResult<(&AudioPort, &AudioPort)> {
+        match (&self.source_handle, &self.target_handle) {
+            (Port::Audio(s), Port::Audio(t)) => Ok((s, t)),
+            _ => Err(AppError::Validation(format!(
+                "edge {} is not an audio cable",
+                self.id
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash, TS)]
@@ -713,10 +724,9 @@ pub enum EdgeKind {
 #[derive(Debug, Clone)]
 pub struct ValidEdge {
     pub from: String,
-    pub source_handle: Option<String>,
+    pub source_handle: AudioPort,
     pub to: String,
-    /// Target-side handle, e.g. `Some("ch1")` for a WebRTC bridge channel input.
-    pub target_handle: Option<String>,
+    pub target_handle: AudioPort,
     pub kind: EdgeKind,
 }
 
@@ -854,6 +864,7 @@ impl GraphSpec {
         let mut outgoing: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut incoming: HashMap<&str, Vec<&str>> = HashMap::new();
         for edge in &edges {
+            edge.audio_ports()?;
             if !nodes_by_id.contains_key(edge.source.as_str())
                 || !nodes_by_id.contains_key(edge.target.as_str())
             {
@@ -930,17 +941,20 @@ impl GraphSpec {
         let edges: Vec<ValidEdge> = edges
             .iter()
             .filter(|e| keep.contains(e.source.as_str()) && keep.contains(e.target.as_str()))
-            .map(|e| ValidEdge {
-                from: e.source.clone(),
-                source_handle: e.source_handle.clone(),
-                to: e.target.clone(),
-                target_handle: e.target_handle.clone(),
-                kind: match e.target_handle.as_deref() {
-                    Some("sidechain") => EdgeKind::Sidechain,
-                    _ => EdgeKind::Main,
-                },
+            .map(|e| {
+                let (source, target) = e.audio_ports()?;
+                Ok(ValidEdge {
+                    from: e.source.clone(),
+                    source_handle: source.clone(),
+                    to: e.target.clone(),
+                    target_handle: target.clone(),
+                    kind: match target {
+                        AudioPort::Sidechain => EdgeKind::Sidechain,
+                        _ => EdgeKind::Main,
+                    },
+                })
             })
-            .collect();
+            .collect::<AppResult<_>>()?;
 
         let sample_rate = match self.sample_rate {
             Some(sr) if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sr) => {
@@ -1419,17 +1433,40 @@ mod tests {
     fn edge(
         id: &str,
         source: &str,
-        source_handle: Option<&str>,
+        source_handle: &str,
         target: &str,
-        target_handle: Option<&str>,
+        target_handle: &str,
     ) -> EdgeSpec {
         EdgeSpec {
             id: id.to_string(),
             source: source.to_string(),
-            source_handle: source_handle.map(str::to_string),
+            source_handle: source_handle.parse().unwrap(),
             target: target.to_string(),
-            target_handle: target_handle.map(str::to_string),
+            target_handle: target_handle.parse().unwrap(),
         }
+    }
+
+    #[test]
+    fn control_cables_are_not_audio_edges() {
+        for (sh, th) in [
+            ("control:power", "audio:main"),
+            ("audio:main", "control:power"),
+            ("control:power", "control:power"),
+        ] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), speaker("s")],
+                edges: vec![edge("e", "m", sh, "s", th)],
+            };
+            assert!(g.validate().is_err(), "{sh} -> {th}");
+        }
+    }
+
+    #[test]
+    fn handle_without_signal_prefix_is_rejected() {
+        let json = r#"{"nodes":[],"edges":[{"id":"e","source":"a","sourceHandle":"ch1","target":"b","targetHandle":"audio:main"}]}"#;
+        assert!(serde_json::from_str::<GraphSpec>(json).is_err());
     }
 
     #[test]
@@ -1438,7 +1475,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), collab("w")],
-            edges: vec![edge("e", "m", None, "w", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "w", "audio:ch1")],
         };
         let v = g.validate().expect("send-only graph is valid");
         // The send half is a destination in its own right: no speaker, no meter,
@@ -1462,7 +1499,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![collab("w"), speaker("s")],
-            edges: vec![edge("e", "w", Some("peer:p:0"), "s", None)],
+            edges: vec![edge("e", "w", "audio:peer:p:0", "s", "audio:main")],
         };
         let v = g.validate().expect("recv-only graph is valid");
         assert_eq!(v.inputs.len(), 1);
@@ -1485,8 +1522,8 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), collab("w"), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "w", Some("ch1")),
-                edge("e2", "w", Some("peer:p:0"), "s", None),
+                edge("e1", "m", "audio:main", "w", "audio:ch1"),
+                edge("e2", "w", "audio:peer:p:0", "s", "audio:main"),
             ],
         };
         let v = g.validate().expect("duplex graph is valid");
@@ -1535,7 +1572,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![gain("g"), speaker("s")],
-            edges: vec![edge("e", "g", None, "s", None)],
+            edges: vec![edge("e", "g", "audio:main", "s", "audio:main")],
         };
         let v = g
             .validate()
@@ -1648,7 +1685,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m")],
-            edges: vec![edge("e", "m", None, "ghost", None)],
+            edges: vec![edge("e", "m", "audio:main", "ghost", "audio:main")],
         };
         assert!(g.validate().is_err());
     }
@@ -1669,8 +1706,8 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
             edges: vec![
-                edge("same", "m", None, "s", Some("ch1")),
-                edge("same", "m", None, "s", Some("ch2")),
+                edge("same", "m", "audio:main", "s", "audio:ch1"),
+                edge("same", "m", "audio:main", "s", "audio:ch2"),
             ],
         };
         let error = duplicate_edges.validate().expect_err("duplicate edge id");
@@ -1683,7 +1720,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), mic("m2")],
-            edges: vec![edge("e", "m", None, "m2", None)],
+            edges: vec![edge("e", "m", "audio:main", "m2", "audio:main")],
         };
         let err = g.validate().expect_err("edges into inputs are nonsense");
         assert!(format!("{err}").contains("points into input"));
@@ -1695,7 +1732,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![speaker("s"), speaker("s2")],
-            edges: vec![edge("e", "s", None, "s2", None)],
+            edges: vec![edge("e", "s", "audio:main", "s2", "audio:main")],
         };
         // An output feeding an output trips the output-source check (targets
         // aren't inputs, so the input-role rule doesn't fire first).
@@ -1709,7 +1746,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g")],
-            edges: vec![edge("e", "m", None, "g", None)],
+            edges: vec![edge("e", "m", "audio:main", "g", "audio:main")],
         };
         let err = g.validate().expect_err("no output, no meter");
         assert!(format!("{err}").contains("no routing"));
@@ -1722,10 +1759,10 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g1"), gain_node("g2"), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "g1", None),
-                edge("e2", "g1", None, "g2", None),
-                edge("e3", "g2", None, "g1", None),
-                edge("e4", "g2", None, "s", None),
+                edge("e1", "m", "audio:main", "g1", "audio:main"),
+                edge("e2", "g1", "audio:main", "g2", "audio:main"),
+                edge("e3", "g2", "audio:main", "g1", "audio:main"),
+                edge("e4", "g2", "audio:main", "s", "audio:main"),
             ],
         };
         let err = g.validate().expect_err("cycle");
@@ -1740,7 +1777,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic_node, speaker("s")],
-            edges: vec![edge("e", "m", None, "s", None)],
+            edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("routed mic without device");
         assert!(format!("{err}").contains("no device selected"));
@@ -1754,7 +1791,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic_node, mic("m2"), speaker("s")],
-            edges: vec![edge("e1", "m2", None, "s", None)],
+            edges: vec![edge("e1", "m2", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("unrouted mic is kept but not resolved");
         assert_eq!(v.inputs.len(), 1);
@@ -1769,7 +1806,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), sp, speaker("s2")],
-            edges: vec![edge("e2", "m", None, "s2", None)],
+            edges: vec![edge("e2", "m", "audio:main", "s2", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert_eq!(v.outputs.len(), 1);
@@ -1784,7 +1821,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), sp],
-            edges: vec![edge("e", "m", None, "s", None)],
+            edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("routed speaker without device");
         assert!(format!("{err}").contains("Speaker has no device"));
@@ -1797,7 +1834,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![sys, speaker("s")],
-            edges: vec![edge("e", "sys", None, "s", None)],
+            edges: vec![edge("e", "sys", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert_eq!(v.inputs[0].volume, 1.0);
@@ -1825,7 +1862,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("new mode + existing file");
         assert!(format!("{err}").contains("already exists"));
@@ -1848,7 +1885,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("missing dir");
         assert!(format!("{err}").contains("choose-file"));
@@ -1870,7 +1907,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("append flac");
         assert!(format!("{err}").contains("WAV/AIFF"), "actual: {err}");
@@ -1894,7 +1931,7 @@ mod tests {
                 sample_rate: None,
                 buffer_frames: None,
                 nodes: vec![mic("m"), rec],
-                edges: vec![edge("e", "m", None, "rec", None)],
+                edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
             };
             assert!(g.validate().is_err(), "channels {channels}");
         }
@@ -1913,7 +1950,7 @@ mod tests {
                 sample_rate: None,
                 buffer_frames: None,
                 nodes: vec![mic("m"), rec],
-                edges: vec![edge("e", "m", None, "rec", None)],
+                edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
             };
             assert!(g.validate().is_err(), "channels {channels}");
         }
@@ -1936,7 +1973,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         assert!(g.validate().is_err());
     }
@@ -1959,7 +1996,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), bad],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let err = g.validate().expect_err("bad ip");
         assert!(format!("{err}").contains("invalid target IP"));
@@ -1980,7 +2017,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), good],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let v = g.validate().expect("valid");
         assert!(matches!(
@@ -2008,7 +2045,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), good],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let v = g.validate().expect("valid");
         assert!(matches!(
@@ -2027,7 +2064,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![bad_gain, speaker("s")],
-            edges: vec![edge("e", "g", None, "s", None)],
+            edges: vec![edge("e", "g", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("gain with string db");
         assert!(format!("{err}").contains("invalid Gain data"));
@@ -2049,7 +2086,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![plugin, speaker("s")],
-            edges: vec![edge("e", "p", None, "s", None)],
+            edges: vec![edge("e", "p", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert!(v.effects.iter().any(|e| matches!(

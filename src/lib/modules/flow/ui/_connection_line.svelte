@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getBezierPath, getSmoothStepPath, getStraightPath, useConnection } from '@xyflow/svelte';
-	import { channelColor, parseHandle } from '$lib/modules/flow/utils';
+	import { channelColor, channelHandle, channelOf } from '$lib/modules/flow/utils';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 
@@ -26,7 +26,7 @@
 		if (!c.inProgress) return [];
 
 		const dragged = {
-			ch: c.fromHandle?.id ? parseHandle(c.fromHandle.id) : null,
+			ch: c.fromHandle?.id ? channelOf(c.fromHandle.id) : null,
 			x: c.from.x,
 			y: c.from.y
 		};
@@ -38,7 +38,7 @@
 			const origin = c.fromNode.internals.positionAbsolute;
 			for (const ch of armed) {
 				if (ch === dragged.ch) continue;
-				const h = bounds.find((b) => b.id === `ch${ch}`);
+				const h = bounds.find((b) => b.id === channelHandle(ch));
 				if (!h) continue;
 				points.push({
 					ch,

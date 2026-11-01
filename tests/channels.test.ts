@@ -1,46 +1,36 @@
 import { describe, expect, it } from 'bun:test';
-import { channelColor, channelLabel, darken, deriveSlots, freeRunFrom, handleColor, parseHandle } from '../src/lib/modules/flow/utils/channels';
-
-describe('parseHandle', () => {
-	it('reads channel handles and rejects everything else', () => {
-		expect(parseHandle('ch1')).toBe(1);
-		expect(parseHandle('ch12')).toBe(12);
-		expect(parseHandle('sidechain')).toBeNull();
-		expect(parseHandle('ch')).toBeNull();
-		expect(parseHandle('xch1')).toBeNull();
-	});
-});
+import { channelColor, channelLabel, darken, deriveSlots, freeRunFrom, handleColor } from '../src/lib/modules/flow/utils/channels';
 
 describe('deriveSlots', () => {
 	it('keeps freed slots in place instead of renumbering', () => {
-		expect(deriveSlots(['ch1', 'ch3'], false)).toEqual([
-			{ id: 'ch1', ch: 1, occupied: true },
-			{ id: 'ch2', ch: 2, occupied: false },
-			{ id: 'ch3', ch: 3, occupied: true }
+		expect(deriveSlots(['audio:ch1', 'audio:ch3'], false)).toEqual([
+			{ id: 'audio:ch1', ch: 1, occupied: true },
+			{ id: 'audio:ch2', ch: 2, occupied: false },
+			{ id: 'audio:ch3', ch: 3, occupied: true }
 		]);
 	});
 
 	it('appends one trailing free slot', () => {
-		expect(deriveSlots(['ch1'], true).map((s) => s.id)).toEqual(['ch1', 'ch2']);
-		expect(deriveSlots([], true)).toEqual([{ id: 'ch1', ch: 1, occupied: false }]);
+		expect(deriveSlots(['audio:ch1'], true).map((s) => s.id)).toEqual(['audio:ch1', 'audio:ch2']);
+		expect(deriveSlots([], true)).toEqual([{ id: 'audio:ch1', ch: 1, occupied: false }]);
 	});
 
 	it('honours min and max', () => {
-		expect(deriveSlots([], false, Infinity, 2).map((s) => s.id)).toEqual(['ch1', 'ch2']);
-		expect(deriveSlots(['ch1', 'ch2'], true, 2).map((s) => s.id)).toEqual(['ch1', 'ch2']);
-		expect(deriveSlots(['ch5'], true, 3).map((s) => s.id)).toEqual(['ch1', 'ch2', 'ch3']);
+		expect(deriveSlots([], false, Infinity, 2).map((s) => s.id)).toEqual(['audio:ch1', 'audio:ch2']);
+		expect(deriveSlots(['audio:ch1', 'audio:ch2'], true, 2).map((s) => s.id)).toEqual(['audio:ch1', 'audio:ch2']);
+		expect(deriveSlots(['audio:ch5'], true, 3).map((s) => s.id)).toEqual(['audio:ch1', 'audio:ch2', 'audio:ch3']);
 	});
 
 	it('ignores non-channel handles', () => {
-		expect(deriveSlots(['sidechain', 'peer:a:0'], false)).toEqual([]);
+		expect(deriveSlots(['audio:sidechain', 'audio:peer:a:0'], false)).toEqual([]);
 	});
 });
 
 describe('freeRunFrom', () => {
 	it('skips taken channels', () => {
-		expect(freeRunFrom(['ch2'], 1, 3)).toEqual([1, 3, 4]);
+		expect(freeRunFrom(['audio:ch2'], 1, 3)).toEqual([1, 3, 4]);
 		expect(freeRunFrom([], 5, 2)).toEqual([5, 6]);
-		expect(freeRunFrom(['ch1'], 1, 0)).toEqual([]);
+		expect(freeRunFrom(['audio:ch1'], 1, 0)).toEqual([]);
 	});
 });
 
@@ -57,10 +47,11 @@ describe('channel colours and labels', () => {
 	});
 
 	it('colours channel and peer handles, neutral otherwise', () => {
-		expect(handleColor('ch1')).toBe(channelColor(0));
-		expect(handleColor('peer:abc:1')).toBe(channelColor(1));
-		expect(handleColor('bus')).toBe(handleColor(null));
-		expect(handleColor(undefined)).toBe(handleColor('sidechain'));
+		expect(handleColor('audio:ch1')).toBe(channelColor(0));
+		expect(handleColor('audio:peer:abc:1')).toBe(channelColor(1));
+		expect(handleColor('audio:main')).toBe(handleColor(null));
+		expect(handleColor(undefined)).toBe(handleColor('audio:sidechain'));
+		expect(handleColor('control:power')).toBe(handleColor(null));
 	});
 
 	it('darkens hex colours', () => {

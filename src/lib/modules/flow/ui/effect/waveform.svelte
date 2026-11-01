@@ -3,7 +3,7 @@
 	import { NodeResizer, useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
 	import { Pulse } from '$lib/components/icons';
-	import { parseHandle, PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { channelOf, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
@@ -19,7 +19,7 @@
 	const incoming = useNodeConnections({ id: nodeId, handleType: 'target' });
 	let displayedChannels = $derived(
 		incoming.current.reduce((count, connection) => {
-			const channel = connection.targetHandle ? parseHandle(connection.targetHandle) : null;
+			const channel = connection.targetHandle ? channelOf(connection.targetHandle) : null;
 			return channel === null ? count : Math.max(count, channel);
 		}, 1)
 	);

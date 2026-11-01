@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, untrack } from 'svelte';
-	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { IfNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { ArrowRight } from '$lib/components/icons';
@@ -31,6 +31,14 @@
 
 	let op = $derived<LogicOp>(data.op ?? 'a');
 	let two = $derived(usesB(op));
+
+	// A and B move when B comes or goes; xyflow remeasures sockets only on a
+	// resize, which this may not cause, so cables would stay at the old spot.
+	const updateNodeInternals = useUpdateNodeInternals();
+	$effect(() => {
+		two;
+		updateNodeInternals(nodeId);
+	});
 	let a = $derived(inA?.current ?? false);
 	let b = $derived(inB?.current ?? false);
 	let wired = $derived(inA?.current != null || (two && inB?.current != null));

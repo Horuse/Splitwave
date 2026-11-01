@@ -41,6 +41,8 @@ export const CONTROL_IN = controlHandle('in');
 export const CONTROL_OUT = controlHandle('out');
 /** High runs the node, low bypasses it. */
 export const POWER_HANDLE = controlHandle('power');
+/** High lets a Mute's audio through, low silences it. */
+export const OPEN_HANDLE = controlHandle('open');
 /** The inputs an If's logic operator reads. */
 export const A_HANDLE = controlHandle('a');
 export const B_HANDLE = controlHandle('b');

@@ -35,7 +35,7 @@
 
 <Wrapper label="Key Input" icon={KeyCommand} accent="condition">
 	<div class="relative flex items-center pb-1">
-		<HotkeyBinder {hotkey} error={shortcut.error} onChange={setHotkey} keycap {held} />
+		<HotkeyBinder {hotkey} error={shortcut.error} onChange={setHotkey} {held} />
 		<ControlSocket id={CONTROL_OUT} side="source" high={held} />
 	</div>
 </Wrapper>

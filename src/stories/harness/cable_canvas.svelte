@@ -5,7 +5,6 @@
 	import ConnectionLine from '$lib/modules/flow/ui/_connection_line.svelte';
 	import { canConnect, channelHandle, controlHandle } from '$lib/modules/flow/utils';
 	import StubSockets from './stub_sockets.svelte';
-	import { recordLevels } from '$lib/modules/flow/levels.svelte';
 
 	interface Props {
 		audio: number;
@@ -29,18 +28,6 @@
 			edges: handles.map((h) => ({ id: h, type: 'channel', source: 'from', sourceHandle: h, target: 'to', targetHandle: h }))
 		};
 	}
-
-	// A swelling level on the source, the way the engine's meter tick feeds it.
-	$effect(() => {
-		const timer = setInterval(() => {
-			const t = performance.now() / 1000;
-			// Syllable-like bursts: a slow phrase envelope times fast jitter.
-			const phrase = Math.max(0, Math.sin(t * 1.7));
-			const voice = () => phrase * (0.2 + 0.8 * Math.random());
-			recordLevels('from', [0.01 + 0.9 * voice(), 0.01 + 0.9 * voice()]);
-		}, 33);
-		return () => clearInterval(timer);
-	});
 
 	let graph = $derived(build());
 	let nodes = $state.raw<Node[]>(untrack(() => graph.nodes));

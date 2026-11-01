@@ -31,6 +31,11 @@ export function controlHandle(name: string): string {
 	return `control:${name}`;
 }
 
+export const CONTROL_IN = controlHandle('in');
+export const CONTROL_OUT = controlHandle('out');
+/** High runs the node, low bypasses it. */
+export const POWER_HANDLE = controlHandle('power');
+
 const INDEX = /^[1-9]\d*$/;
 
 function parseAudioPort(port: string): AudioPort | null {

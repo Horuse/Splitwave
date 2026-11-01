@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { getContext, type Component, type Snippet } from 'svelte';
+	import { getContext, untrack, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { MAIN_HANDLE, PREVIEW_CTX } from '../utils';
+	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX, controlHandleStyle } from '../utils';
+	import { useControlInput } from '../control.svelte';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import { ArrowSwap, Hourglass } from '$lib/components/icons';
@@ -66,6 +67,17 @@
 
 	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
 
+	// Fixed for the mount: a node either can be bypassed or it cannot.
+	const power = untrack(() => (!isPreview && nodeId && onBypass ? useControlInput(nodeId, POWER_HANDLE) : null));
+	let powerWired = $derived(power?.current != null);
+
+	// A wired power input owns the bypass state; a click on the button is undone.
+	$effect(() => {
+		const on = power?.current;
+		if (on == null || bypassed === !on) return;
+		onBypass?.();
+	});
+
 	// A node that cannot keep up with the engine buffer runs at a larger block
 	// of its own; say so, the way the resampling icon flags a rate change.
 	let timing = $derived(nodeId ? latencyStore.node(nodeId) : undefined);
@@ -122,7 +134,8 @@
 							? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
 							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
 					]}
-					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+					title={powerWired ? 'Driven by the power input' : bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+					disabled={powerWired}
 					onclick={onBypass}>
 					{bypassed ? 'BYP' : 'ON'}
 				</button>
@@ -153,6 +166,12 @@
 				{/if}
 			</Handle>
 		{/each}
+	{/if}
+
+	{#if power}
+		<Handle type="target" id={POWER_HANDLE} class="handle" position={Position.Top} style={controlHandleStyle()}>
+			<span class={labelClasses('top')}>power</span>
+		</Handle>
 	{/if}
 
 	{#if !isPreview && !chExpanded}

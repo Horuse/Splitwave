@@ -38,7 +38,7 @@ export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';
 
-export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect';
+export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'condition';
 
 // xyflow requires node data to satisfy `Record<string, unknown>`; intersecting
 // gives generated types that constraint without us redeclaring fields.
@@ -87,6 +87,9 @@ export type PluginNodeData = XyData<PluginData & { name?: string; vendor?: strin
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
 export type NetReceiverNodeData = XyData<NetReceiverData>;
 export type NetSenderNodeData = XyData<NetSenderData>;
+// Condition nodes run in the editor only; the engine drops them with their cables.
+export type KeyInputNodeData = XyData<{ hotkey?: string }>;
+export type ToggleNodeData = XyData<{ on: boolean }>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -120,6 +123,8 @@ export type NodeDataMap = {
 	webRtcCollaborator: WebRtcCollaboratorNodeData;
 	netReceiver: NetReceiverNodeData;
 	netSender: NetSenderNodeData;
+	keyInput: KeyInputNodeData;
+	toggle: ToggleNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

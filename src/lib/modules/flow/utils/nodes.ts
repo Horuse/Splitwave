@@ -20,6 +20,8 @@ import {
 	Plug as PlugIcon,
 	Pulse as PulseIcon,
 	FileRecord as FileRecordIcon,
+	KeyCommand as KeyCommandIcon,
+	Loop as LoopIcon,
 	Reverb as ReverbIcon,
 	Saturator as SaturatorIcon,
 	Sliders as SlidersIcon,
@@ -57,6 +59,8 @@ import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
+import KeyInput from '../ui/condition/key_input.svelte';
+import Toggle from '../ui/condition/toggle.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -323,6 +327,24 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: NetSender,
 		icon: ArrowUploadIcon,
 		defaultData: DEFAULT_NODE_DATA['netSender']
+	}),
+	keyInput: entry<'keyInput'>({
+		kind: 'keyInput',
+		category: 'condition',
+		label: 'Key Input',
+		description: 'A global shortcut as a control signal: high while the key is held, even with the app in the background.',
+		component: KeyInput,
+		icon: KeyCommandIcon,
+		defaultData: DEFAULT_NODE_DATA['keyInput']
+	}),
+	toggle: entry<'toggle'>({
+		kind: 'toggle',
+		category: 'condition',
+		label: 'Toggle',
+		description: 'Flips its output each time the input goes high, and keeps it until the next press.',
+		component: Toggle,
+		icon: LoopIcon,
+		defaultData: DEFAULT_NODE_DATA['toggle']
 	})
 };
 
@@ -330,14 +352,15 @@ export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'condition'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
 	output: 'Outputs',
 	monitor: 'Monitors',
 	network: 'Network',
-	effect: 'Effects'
+	effect: 'Effects',
+	condition: 'Conditions'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

@@ -50,6 +50,13 @@ pub struct EdgeSpec {
 }
 
 impl EdgeSpec {
+    fn is_control(&self) -> bool {
+        matches!(
+            (&self.source_handle, &self.target_handle),
+            (Port::Control(_), Port::Control(_))
+        )
+    }
+
     /// The engine routes audio only; a control cable has no audio ends.
     fn audio_ports(&self) -> AppResult<(&AudioPort, &AudioPort)> {
         match (&self.source_handle, &self.target_handle) {
@@ -93,6 +100,8 @@ pub enum NodeKind {
     NetReceiver,
     NetSender,
     Plugin,
+    KeyInput,
+    Toggle,
 }
 
 impl NodeKind {
@@ -124,6 +133,7 @@ impl NodeKind {
             | NodeKind::Declick
             | NodeKind::DeEsser
             | NodeKind::Plugin => NodeCategory::Effect,
+            NodeKind::KeyInput | NodeKind::Toggle => NodeCategory::Control,
             // Two destinations in one UI node: it sends to peers and emits what
             // they send back. `expand_roles` splits it into an output half and
             // an input half, so no single category is ever asked for.
@@ -139,6 +149,8 @@ pub enum NodeCategory {
     Input,
     Output,
     Effect,
+    /// Evaluated by the frontend; the engine never sees these nodes.
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -780,6 +792,9 @@ impl GraphSpec {
         let mut nodes: Vec<RoleNode<'_>> = Vec::with_capacity(self.nodes.len());
         for n in &self.nodes {
             if n.kind != NodeKind::WebRtcCollaborator {
+                if n.kind.category() == NodeCategory::Control {
+                    continue;
+                }
                 nodes.push(RoleNode {
                     id: n.id.clone(),
                     kind: n.kind,
@@ -817,6 +832,7 @@ impl GraphSpec {
         let edges = self
             .edges
             .iter()
+            .filter(|e| !e.is_control())
             .map(|e| EdgeSpec {
                 id: e.id.clone(),
                 source: if split.contains(e.source.as_str()) {
@@ -1447,11 +1463,10 @@ mod tests {
     }
 
     #[test]
-    fn control_cables_are_not_audio_edges() {
+    fn mixed_signal_cables_are_rejected() {
         for (sh, th) in [
             ("control:power", "audio:main"),
             ("audio:main", "control:power"),
-            ("control:power", "control:power"),
         ] {
             let g = GraphSpec {
                 sample_rate: None,
@@ -1461,6 +1476,48 @@ mod tests {
             };
             assert!(g.validate().is_err(), "{sh} -> {th}");
         }
+    }
+
+    #[test]
+    fn control_layer_stays_out_of_the_audio_graph() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g"),
+                speaker("s"),
+                node("k", NodeKind::KeyInput, serde_json::json!({})),
+                node("t", NodeKind::Toggle, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+                edge("c1", "k", "control:out", "t", "control:in"),
+                edge("c2", "t", "control:out", "g", "control:power"),
+            ],
+        };
+        let v = g.validate().expect("control nodes are ignored");
+        assert_eq!(v.effects.len(), 1);
+        assert_eq!(v.edges.len(), 2);
+    }
+
+    #[test]
+    fn audio_cable_into_a_control_node_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                speaker("s"),
+                node("t", NodeKind::Toggle, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", "audio:main", "s", "audio:main"),
+                edge("e2", "m", "audio:main", "t", "audio:main"),
+            ],
+        };
+        assert!(g.validate().is_err());
     }
 
     #[test]

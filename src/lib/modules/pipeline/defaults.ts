@@ -72,7 +72,9 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 		opusBitrate: 96000,
 		opusApplication: 'audio',
 		sampleRate: null
-	}
+	},
+	keyInput: {},
+	toggle: { on: false }
 };
 
 function recordingFormatWithDefaults(stored: unknown): NodeDataMap['fileRecording']['format'] {

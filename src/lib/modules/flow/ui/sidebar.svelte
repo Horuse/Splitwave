@@ -2,7 +2,7 @@
 	import type { NodeCategory, NodeKind } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
-	import { Add, DataBar, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
+	import { Add, DataBar, KeyCommand, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
 	import { CATEGORY_TEXT } from '../utils/accents';
 
 	const CATEGORY_ICON = {
@@ -10,7 +10,8 @@
 		output: Speaker,
 		monitor: DataBar,
 		network: Plug,
-		effect: Sliders
+		effect: Sliders,
+		condition: KeyCommand
 	};
 
 	let sections: Partial<Record<NodeCategory, HTMLElement>> = {};

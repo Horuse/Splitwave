@@ -69,8 +69,12 @@ export function handleEdgeStyle(color: string, side: 'source' | 'target'): strin
 export const CONTROL_DASH = '4 3';
 const DIAMOND_SHAPE = 'width:10px !important;height:10px !important;border-radius:0 !important;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);';
 
+export function controlHandleStyle(): string {
+	return `${handleStyle(NEUTRAL)};${DIAMOND_SHAPE}`;
+}
+
 export function controlEdgeStyle(side: 'source' | 'target'): string {
-	return `${handleStyle(NEUTRAL)};${DIAMOND_SHAPE}${edgeOffset(side)}`;
+	return `${controlHandleStyle()}${edgeOffset(side)}`;
 }
 
 export interface Slot {

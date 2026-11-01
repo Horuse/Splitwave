@@ -3,10 +3,10 @@
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { SpeakerMute, Dismiss } from '$lib/components/icons';
+	import { SpeakerMute } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
-	import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
-	import { accelerator, formatAccelerator } from './_accelerator';
+	import HotkeyBinder from '../_hotkey_binder.svelte';
+	import { useGlobalHotkey } from '../_hotkey.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { onMount } from 'svelte';
@@ -19,9 +19,6 @@
 	const flow = useSvelteFlow();
 
 	const CUE_VOLUME_DEFAULT = 40;
-
-	let binding = $state(false);
-	let bindError = $state('');
 
 	// Reads through the live node store rather than the `data` snapshot: the
 	// shortcut handler is registered once per accelerator and would otherwise
@@ -49,57 +46,21 @@
 		if (enabled) setMuted(true, true);
 	}
 
-	// Deriving the primitives keeps the effect from re-registering on every
+	// Deriving the primitives keeps the shortcut from re-registering on every
 	// `muted` write: xyflow replaces the whole `data` object on each update.
 	let hotkey = $derived(data.hotkey);
 	let pushToTalk = $derived(data.pushToTalk ?? false);
 
-	$effect(() => {
-		if (!hotkey) return;
-		const key = hotkey;
-		const ptt = pushToTalk;
-
-		let live = true;
-		// A leftover registration from a previous mount (HMR, node re-render)
-		// makes `register` fail with "already registered"; clear it first.
-		unregister(key)
-			.catch(() => {})
-			.then(() => {
-				if (!live) return;
-				return register(key, (e) => {
-					if (!live) return;
-					if (ptt) {
-						setMuted(e.state === 'Released', true);
-					} else if (e.state === 'Pressed') {
-						toggle();
-					}
-				});
-			})
-			.then(() => {
-				if (live) bindError = '';
-			})
-			.catch((err) => {
-				if (live) bindError = String(err);
-			});
-
-		return () => {
-			live = false;
-			unregister(key).catch(() => {});
-		};
-	});
-
-	function capture(e: KeyboardEvent) {
-		e.preventDefault();
-		if (e.key === 'Escape') {
-			binding = false;
-			return;
+	const shortcut = useGlobalHotkey(
+		() => hotkey,
+		(state) => {
+			if (pushToTalk) {
+				setMuted(state === 'Released', true);
+			} else if (state === 'Pressed') {
+				toggle();
+			}
 		}
-		const combo = accelerator(e);
-		if (!combo) return;
-		bindError = '';
-		binding = false;
-		flow.updateNodeData(id, { hotkey: combo });
-	}
+	);
 
 	let cueOptions = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
 	let cueMissing = $derived(!!data.cueDeviceId && !audioStore.outputDevices.some((d) => d.id === data.cueDeviceId));
@@ -120,9 +81,8 @@
 		flow.updateNodeData(id, { cueVolume: v });
 	}
 
-	function clearHotkey() {
-		bindError = '';
-		flow.updateNodeData(id, { hotkey: undefined });
+	function setHotkey(hotkey: string | undefined) {
+		flow.updateNodeData(id, { hotkey });
 	}
 
 	function toggleBypass() {
@@ -155,29 +115,9 @@
 		</span>
 	</button>
 
-	<div class="nodrag nopan mt-3 flex w-40 items-center gap-1">
-		<button
-			title={binding ? 'Press any key, Esc to cancel' : 'Bind a global shortcut'}
-			class={[
-				'flex-1 truncate rounded-md border px-2 py-1 font-mono text-xs tabular-nums transition-colors',
-				binding ? 'border-blue-500/60 bg-blue-500/10 text-blue-500' : 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
-			]}
-			onclick={() => (binding = !binding)}>
-			{binding ? 'Press a key...' : data.hotkey ? formatAccelerator(data.hotkey) : 'Bind key'}
-		</button>
-		{#if data.hotkey && !binding}
-			<button
-				title="Clear shortcut"
-				class="rounded-md border border-neutral-400 bg-neutral-100 p-1 text-neutral-900 hover:bg-neutral-200"
-				onclick={clearHotkey}>
-				<Dismiss class="size-3" />
-			</button>
-		{/if}
+	<div class="mt-3">
+		<HotkeyBinder hotkey={data.hotkey} error={shortcut.error} onChange={setHotkey} />
 	</div>
-
-	{#if bindError}
-		<p class="mt-1 w-40 text-[10px] break-words text-red-500">{bindError}</p>
-	{/if}
 
 	{#if data.hotkey}
 		<div class="nodrag nopan mt-2 w-40">
@@ -215,5 +155,3 @@
 		{/if}
 	</div>
 </Wrapper>
-
-<svelte:window onkeydown={binding ? capture : undefined} />

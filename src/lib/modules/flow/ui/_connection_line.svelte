@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getBezierPath, getSmoothStepPath, getStraightPath, useConnection } from '@xyflow/svelte';
-	import { channelColor, channelHandle, channelOf } from '$lib/modules/flow/utils';
+	import { CONTROL_DASH, channelColor, channelHandle, channelOf, signalOf } from '$lib/modules/flow/utils';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 
@@ -19,6 +19,8 @@
 				return getBezierPath(p)[0];
 		}
 	}
+
+	let dash = $derived(signalOf(connection.current.fromHandle?.id) === 'control' ? CONTROL_DASH : undefined);
 
 	// A custom line replaces xyflow's default path, so the dragged one is drawn here too.
 	let lines = $derived.by(() => {
@@ -64,5 +66,5 @@
 </script>
 
 {#each lines as line (line.ch)}
-	<path d={line.path} fill="none" stroke={line.color} stroke-width="2" />
+	<path d={line.path} fill="none" stroke={line.color} stroke-width="2" stroke-dasharray={dash} />
 {/each}

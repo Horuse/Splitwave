@@ -22,6 +22,8 @@ const CHANNEL_PALETTE = [
 	'#eab308' // yellow
 ];
 
+const NEUTRAL = '#a3a3a3';
+
 export function channelColor(index: number): string {
 	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
 }
@@ -54,9 +56,21 @@ const PIN_SHAPE = 'width:5px !important;height:10px !important;border-radius:2px
 // Nudge a handle from the padded content edge onto the node's outer border
 // (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
 // desynced the visible dot from its clickable connection target.
+function edgeOffset(side: 'source' | 'target'): string {
+	return side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
+}
+
 export function handleEdgeStyle(color: string, side: 'source' | 'target'): string {
-	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
-	return `${handleStyle(color)};${PIN_SHAPE}${edge}`;
+	return `${handleStyle(color)};${PIN_SHAPE}${edgeOffset(side)}`;
+}
+
+// Control sockets are diamonds and their cables dashed, so the signal reads
+// from the shape alone: colour already means "which channel".
+export const CONTROL_DASH = '4 3';
+const DIAMOND_SHAPE = 'width:10px !important;height:10px !important;border-radius:0 !important;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);';
+
+export function controlEdgeStyle(side: 'source' | 'target'): string {
+	return `${handleStyle(NEUTRAL)};${DIAMOND_SHAPE}${edgeOffset(side)}`;
 }
 
 export interface Slot {
@@ -64,8 +78,6 @@ export interface Slot {
 	ch: number;
 	occupied: boolean;
 }
-
-const NEUTRAL = '#a3a3a3';
 
 /** Edge colour for a source handle: per-channel handles take their channel's
  * colour, bus and per-peer mixes stay neutral. */

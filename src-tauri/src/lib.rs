@@ -2,6 +2,7 @@ mod audio;
 pub mod commands;
 mod error;
 mod logs;
+mod midi;
 mod native_crash;
 mod state;
 mod watchdog;
@@ -321,6 +322,8 @@ pub fn run() {
 
             #[cfg(target_os = "linux")]
             pipewire::init();
+
+            midi::start(handle.clone());
 
             if let Ok(dir) = handle.path().app_log_dir() {
                 let _ = std::fs::create_dir_all(&dir);

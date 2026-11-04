@@ -10,6 +10,7 @@ import type { IfData } from './generated/IfData';
 import type { LevelMeterData } from './generated/LevelMeterData';
 import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
+import type { MidiKind } from './generated/MidiKind';
 import type { WaveformData } from './generated/WaveformData';
 import type { SpectrumData } from './generated/SpectrumData';
 import type { DeclickData } from './generated/DeclickData';
@@ -89,7 +90,15 @@ export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?
 export type NetReceiverNodeData = XyData<NetReceiverData>;
 export type NetSenderNodeData = XyData<NetSenderData>;
 // Condition nodes run in the editor only; the engine drops them with their cables.
-export type KeyInputNodeData = XyData<{ hotkey?: string }>;
+export type KeyInputSource = 'keyboard' | 'midi';
+/** A learned MIDI control: one note or CC on one channel of one device. */
+export interface MidiBinding {
+	device: string;
+	channel: number;
+	kind: MidiKind;
+	number: number;
+}
+export type KeyInputNodeData = XyData<{ source?: KeyInputSource; hotkey?: string; midi?: MidiBinding }>;
 export type ToggleNodeData = XyData<{ on: boolean }>;
 // `op` combines the A and B inputs in the editor; the engine only sees `selected`.
 export type IfNodeData = XyData<IfData & { op?: LogicOp }>;

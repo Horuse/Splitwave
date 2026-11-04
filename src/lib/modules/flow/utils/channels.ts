@@ -74,6 +74,12 @@ export function controlEdgeStyle(side: 'source' | 'target'): string {
 	return `${SOCKET_AREA}${edgeOffset(side)}`;
 }
 
+/** An action input sits on the node's top border, `lift` px above the
+ * button it presses, so its cable never runs under the node. */
+export function controlTopStyle(lift: number): string {
+	return `${SOCKET_AREA}top:${-lift - 7}px !important;`;
+}
+
 export interface Slot {
 	id: string;
 	ch: number;

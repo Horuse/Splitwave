@@ -8,6 +8,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Slider from '../effect/_slider.svelte';
+	import ActionSocket from '../_action_socket.svelte';
 	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
@@ -244,35 +245,50 @@
 		<div class="flex items-center justify-between font-mono text-[11px]">
 			<span class="text-neutral-900 tabular-nums">{formatDuration(currentSec, 1)}</span>
 			<div class="flex items-center justify-center gap-1">
-				<Tooltip text="Stop and rewind to start">
-					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={stop}>
-						<Stop class="size-3" />
-					</button>
-				</Tooltip>
-				<Tooltip text="Skip back 5 seconds">
-					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipBack}>
-						<SkipBack5 class="size-3" />
-					</button>
-				</Tooltip>
-				<Tooltip text={playing ? 'Pause playback' : 'Play'}>
-					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={togglePlayPause}>
-						{#if playing}
-							<Pause class="size-3" />
-						{:else}
-							<Play class="size-3" />
-						{/if}
-					</button>
-				</Tooltip>
-				<Tooltip text="Skip forward 5 seconds">
-					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipForward}>
-						<SkipForward5 class="size-3" />
-					</button>
-				</Tooltip>
-				<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
-					<button type="button" class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']} onclick={toggleLoop}>
-						<Loop class="size-3" />
-					</button>
-				</Tooltip>
+				<span class="relative flex">
+					<Tooltip text="Stop and rewind to start">
+						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={stop}>
+							<Stop class="size-3" />
+						</button>
+					</Tooltip>
+					<ActionSocket nodeId={id} action="stop" onTrigger={stop} />
+				</span>
+				<span class="relative flex">
+					<Tooltip text="Skip back 5 seconds">
+						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipBack}>
+							<SkipBack5 class="size-3" />
+						</button>
+					</Tooltip>
+					<ActionSocket nodeId={id} action="back" onTrigger={skipBack} />
+				</span>
+				<span class="relative flex">
+					<Tooltip text={playing ? 'Pause playback' : 'Play'}>
+						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={togglePlayPause}>
+							{#if playing}
+								<Pause class="size-3" />
+							{:else}
+								<Play class="size-3" />
+							{/if}
+						</button>
+					</Tooltip>
+					<ActionSocket nodeId={id} action="play" onTrigger={togglePlayPause} />
+				</span>
+				<span class="relative flex">
+					<Tooltip text="Skip forward 5 seconds">
+						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipForward}>
+							<SkipForward5 class="size-3" />
+						</button>
+					</Tooltip>
+					<ActionSocket nodeId={id} action="forward" onTrigger={skipForward} />
+				</span>
+				<span class="relative flex">
+					<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
+						<button type="button" class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']} onclick={toggleLoop}>
+							<Loop class="size-3" />
+						</button>
+					</Tooltip>
+					<ActionSocket nodeId={id} action="loop" onTrigger={toggleLoop} />
+				</span>
 			</div>
 			<span class="text-neutral-900 tabular-nums">{formatDuration(totalSec, 1)}</span>
 		</div>

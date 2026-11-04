@@ -16,7 +16,12 @@
 
 	const handle = untrack(() => controlHandle(action));
 	const isPreview = getContext(PREVIEW_CTX) === true;
-	const input = isPreview ? null : useControlInput(untrack(() => nodeId), handle);
+	const input = isPreview
+		? null
+		: useControlInput(
+				untrack(() => nodeId),
+				handle
+			);
 	const connection = useConnection();
 	const updateNodeInternals = useUpdateNodeInternals();
 

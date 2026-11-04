@@ -5,9 +5,9 @@ mod logs;
 mod midi;
 mod native_crash;
 mod state;
-mod watchdog;
 #[doc(hidden)]
 pub mod testkit;
+mod watchdog;
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};

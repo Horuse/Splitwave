@@ -44,7 +44,15 @@
 <Wrapper label="Toggle" icon={Loop} accent="condition">
 	<div class="relative flex items-center justify-center gap-3">
 		<ControlSocket id={CONTROL_IN} side="target" high={input?.current ?? false} />
-		<button type="button" role="switch" aria-checked={on} aria-label="Toggle" class={['nodrag nopan relative flex h-[26px] w-[72px] cursor-pointer rounded-md border bg-neutral-100', on ? 'border-signal' : 'border-neutral-400']}
+		<button
+			type="button"
+			role="switch"
+			aria-checked={on}
+			aria-label="Toggle"
+			class={[
+				'nodrag nopan relative flex h-[26px] w-[72px] cursor-pointer rounded-md border bg-neutral-100',
+				on ? 'border-signal' : 'border-neutral-400'
+			]}
 			onclick={flip}>
 			<!-- The knob covers the state the switch is not in. -->
 			<span class="flex flex-1 items-center justify-center font-mono text-[10px] font-semibold text-neutral-1000">OFF</span>

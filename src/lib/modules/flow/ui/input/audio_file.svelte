@@ -283,7 +283,10 @@
 				</span>
 				<span class="relative flex">
 					<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
-						<button type="button" class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']} onclick={toggleLoop}>
+						<button
+							type="button"
+							class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']}
+							onclick={toggleLoop}>
 							<Loop class="size-3" />
 						</button>
 					</Tooltip>

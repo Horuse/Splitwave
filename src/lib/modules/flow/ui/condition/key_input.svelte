@@ -58,12 +58,7 @@
 			{#if source === 'keyboard'}
 				<HotkeyBinder {hotkey} error={shortcut.error} onChange={(next) => set({ hotkey: next })} {held} />
 			{:else}
-				<MidiBinder
-					binding={data.midi}
-					{learning}
-					onLearn={(next) => (learning = next)}
-					onClear={() => set({ midi: undefined })}
-					{held} />
+				<MidiBinder binding={data.midi} {learning} onLearn={(next) => (learning = next)} onClear={() => set({ midi: undefined })} {held} />
 			{/if}
 			<ControlSocket id={CONTROL_OUT} side="source" high={held} />
 		</div>

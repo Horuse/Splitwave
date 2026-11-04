@@ -19,5 +19,7 @@
 
 <Handle type={side} {id} {position} class="handle" style={placement === 'top' ? controlTopStyle(lift) : controlEdgeStyle(side)}>
 	<!-- Rotated inside the handle: xyflow owns the handle's own transform. -->
-	<span class={['pointer-events-none absolute inset-[2.5px] rotate-45 border-[1.5px]', high ? 'border-signal bg-signal' : 'border-neutral-750 bg-neutral-100']}></span>
+	<span
+		class={['pointer-events-none absolute inset-[2.5px] rotate-45 border-[1.5px]', high ? 'border-signal bg-signal' : 'border-neutral-750 bg-neutral-100']}
+	></span>
 </Handle>

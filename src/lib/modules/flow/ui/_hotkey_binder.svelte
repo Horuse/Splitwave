@@ -56,10 +56,12 @@
 	class="group nodrag nopan flex cursor-pointer gap-1"
 	onclick={() => (binding = !binding)}>
 	{#if binding || caps.length === 0}
-		<span class={[CAP, 'min-w-24 text-[10px]', binding ? 'border-primary text-primary' : 'border-neutral-400 text-neutral-900']}>{binding ? 'press a key' : 'bind key'}</span>
+		<span class={[CAP, 'min-w-24 text-[10px]', binding ? 'border-primary text-primary' : 'border-neutral-400 text-neutral-900']}
+			>{binding ? 'press a key' : 'bind key'}</span>
 	{:else}
 		{#each caps as cap, i (i)}
-			<span class={[CAP, cap.modifier && 'text-[10px]', held ? HELD : ['border-neutral-400', cap.modifier ? 'text-neutral-1000' : 'text-neutral-1200']]}>{cap.label}</span>
+			<span class={[CAP, cap.modifier && 'text-[10px]', held ? HELD : ['border-neutral-400', cap.modifier ? 'text-neutral-1000' : 'text-neutral-1200']]}
+				>{cap.label}</span>
 		{/each}
 	{/if}
 </button>

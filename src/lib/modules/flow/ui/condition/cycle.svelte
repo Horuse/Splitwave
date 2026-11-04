@@ -96,7 +96,10 @@
 						<button
 							type="button"
 							aria-label={`Go to step ${k}`}
-							class={['nodrag nopan size-2.5 cursor-pointer rounded-full border', data.step === k ? 'border-signal bg-signal' : 'border-neutral-500 hover:bg-neutral-300']}
+							class={[
+								'nodrag nopan size-2.5 cursor-pointer rounded-full border',
+								data.step === k ? 'border-signal bg-signal' : 'border-neutral-500 hover:bg-neutral-300'
+							]}
 							onclick={() => goTo(k)}></button>
 						<ControlPort id={stepHandle(k)} side="source" label={String(k)} high={data.step === k} />
 					</div>

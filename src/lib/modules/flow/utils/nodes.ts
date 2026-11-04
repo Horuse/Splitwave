@@ -25,6 +25,7 @@ import {
 	FileRecord as FileRecordIcon,
 	KeyCommand as KeyCommandIcon,
 	Loop as LoopIcon,
+	ArrowRedo as ArrowRedoIcon,
 	Reverb as ReverbIcon,
 	Saturator as SaturatorIcon,
 	Sliders as SlidersIcon,
@@ -64,6 +65,7 @@ import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
 import KeyInput from '../ui/condition/key_input.svelte';
 import Toggle from '../ui/condition/toggle.svelte';
+import Cycle from '../ui/condition/cycle.svelte';
 import If from '../ui/condition/if.svelte';
 import Switch from '../ui/condition/switch.svelte';
 import Select from '../ui/condition/select.svelte';
@@ -352,6 +354,15 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Toggle,
 		icon: LoopIcon,
 		defaultData: DEFAULT_NODE_DATA['toggle']
+	}),
+	cycle: entry<'cycle'>({
+		kind: 'cycle',
+		category: 'condition',
+		label: 'Cycle',
+		description: 'Steps through its outputs one press at a time and wraps around; only the current step is high.',
+		component: Cycle,
+		icon: ArrowRedoIcon,
+		defaultData: DEFAULT_NODE_DATA['cycle']
 	}),
 	if: entry<'if'>({
 		kind: 'if',

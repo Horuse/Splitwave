@@ -100,6 +100,7 @@ export interface MidiBinding {
 }
 export type KeyInputNodeData = XyData<{ source?: KeyInputSource; hotkey?: string; midi?: MidiBinding }>;
 export type ToggleNodeData = XyData<{ on: boolean }>;
+export type CycleNodeData = XyData<{ steps: number; step: number }>;
 // `op` combines the A and B inputs in the editor; the engine only sees `selected`.
 export type IfNodeData = XyData<IfData & { op?: LogicOp }>;
 export type SwitchNodeData = XyData<SwitchData>;
@@ -142,6 +143,7 @@ export type NodeDataMap = {
 	netSender: NetSenderNodeData;
 	keyInput: KeyInputNodeData;
 	toggle: ToggleNodeData;
+	cycle: CycleNodeData;
 	if: IfNodeData;
 	switch: SwitchNodeData;
 	select: SelectNodeData;

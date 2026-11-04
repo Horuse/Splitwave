@@ -75,6 +75,7 @@ export const DEFAULT_NODE_DATA: { [K in NodeKind]: NodeDataMap[K] } = {
 	},
 	keyInput: {},
 	toggle: { on: false },
+	cycle: { steps: 3, step: 1 },
 	if: { selected: 1, op: 'a' },
 	switch: { outputs: 2, selected: 1 },
 	select: { inputs: 2, selected: 1 },

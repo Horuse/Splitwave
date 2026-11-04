@@ -24,7 +24,7 @@ A node is exactly one of six things:
 - **Output** — consumes audio: speakers, recording, virtual device.
 - **Monitor** — observes audio, does not transform it: Level Meter, EBU R128 LUFS Meter, Waveform, Spectrum.
 - **Network** — moves audio over the network: WebRTC collaborator, net receiver/sender.
-- **Condition** — carries control signals, not audio: Key Input, Toggle. Its cables are dashed and its sockets diamonds; it drives other nodes through their control inputs (such as `power`).
+- **Condition** — carries control signals, not audio: Key Input, Toggle, Cycle. Its cables are dashed and its sockets diamonds; it drives other nodes through their control inputs (such as `power`).
 
 If a node produces a transformed mono signal from several sources, it is an **effect**, not an input. A node that does "input" things and "effect" things at once is a design smell — split it or pick the dominant category.
 

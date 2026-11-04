@@ -47,6 +47,15 @@ export const OPEN_HANDLE = controlHandle('open');
 export const A_HANDLE = controlHandle('a');
 export const B_HANDLE = controlHandle('b');
 
+/** Rising edge moves a Cycle one step on, or back to its first step. */
+export const NEXT_HANDLE = controlHandle('next');
+export const RESET_HANDLE = controlHandle('reset');
+
+/** High while a Cycle sits on step `k`. */
+export function stepHandle(k: number): string {
+	return controlHandle(`step${k}`);
+}
+
 /** Rising edge picks output `k` of a Switch. */
 export function selectHandle(k: number): string {
 	return controlHandle(`select${k}`);

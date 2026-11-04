@@ -107,6 +107,7 @@ pub enum NodeKind {
     Plugin,
     KeyInput,
     Toggle,
+    Cycle,
     If,
     Switch,
     Select,
@@ -146,7 +147,7 @@ impl NodeKind {
             | NodeKind::If
             | NodeKind::Switch
             | NodeKind::Select => NodeCategory::Effect,
-            NodeKind::KeyInput | NodeKind::Toggle => NodeCategory::Control,
+            NodeKind::KeyInput | NodeKind::Toggle | NodeKind::Cycle => NodeCategory::Control,
             // Two destinations in one UI node: it sends to peers and emits what
             // they send back. `expand_roles` splits it into an output half and
             // an input half, so no single category is ever asked for.

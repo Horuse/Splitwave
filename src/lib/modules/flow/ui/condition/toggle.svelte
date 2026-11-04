@@ -44,64 +44,13 @@
 <Wrapper label="Toggle" icon={Loop} accent="condition">
 	<div class="relative flex items-center justify-center gap-3">
 		<ControlSocket id={CONTROL_IN} side="target" high={input?.current ?? false} />
-		<button type="button" role="switch" aria-checked={on} aria-label="Toggle" class={['switch nodrag nopan', on && 'on']} onclick={flip}>
-			<span class="label off">OFF</span>
-			<span class="label on">ON</span>
-			<span class="knob"></span>
+		<button type="button" role="switch" aria-checked={on} aria-label="Toggle" class={['nodrag nopan relative flex h-[26px] w-[72px] cursor-pointer rounded-md border bg-neutral-100', on ? 'border-signal' : 'border-neutral-400']}
+			onclick={flip}>
+			<!-- The knob covers the state the switch is not in. -->
+			<span class="flex flex-1 items-center justify-center font-mono text-[10px] font-semibold text-neutral-1000">OFF</span>
+			<span class={['flex flex-1 items-center justify-center font-mono text-[10px] font-semibold', on ? 'text-signal' : 'text-neutral-1000']}>ON</span>
+			<span class={['absolute inset-y-0.5 w-[calc(50%-3px)] rounded', on ? 'left-0.5 bg-signal' : 'left-[calc(50%+1px)] bg-neutral-400']}></span>
 		</button>
 		<ControlSocket id={CONTROL_OUT} side="source" high={on} />
 	</div>
 </Wrapper>
-
-<style>
-	/* A two-position switch: the knob covers the state it is not in, so the
-	   word left showing is the one the switch holds. */
-	.switch {
-		position: relative;
-		display: flex;
-		width: 72px;
-		height: 26px;
-		border-radius: 6px;
-		border: 1px solid var(--color-neutral-400);
-		background: var(--color-neutral-100);
-		cursor: pointer;
-		transition: border-color 140ms;
-	}
-	.switch.on {
-		border-color: var(--color-signal);
-	}
-	.label {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font:
-			600 10px ui-monospace,
-			monospace;
-		color: var(--color-neutral-1000);
-	}
-	.switch.on .label.on {
-		color: var(--color-signal);
-	}
-	.knob {
-		position: absolute;
-		top: 2px;
-		bottom: 2px;
-		left: calc(50% + 1px);
-		width: calc(50% - 3px);
-		border-radius: 4px;
-		background: var(--color-neutral-400);
-		transition:
-			left 160ms ease-out,
-			background-color 140ms;
-	}
-	.switch.on .knob {
-		left: 2px;
-		background: var(--color-signal);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.knob {
-			transition: none;
-		}
-	}
-</style>

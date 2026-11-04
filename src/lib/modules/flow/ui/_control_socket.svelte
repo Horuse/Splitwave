@@ -18,21 +18,6 @@
 </script>
 
 <Handle type={side} {id} {position} class="handle" style={placement === 'top' ? controlTopStyle(lift) : controlEdgeStyle(side)}>
-	<span class={['socket', high && 'high']}></span>
+	<!-- Rotated inside the handle: xyflow owns the handle's own transform. -->
+	<span class={['pointer-events-none absolute inset-[2.5px] rotate-45 border-[1.5px]', high ? 'border-signal bg-signal' : 'border-neutral-750 bg-neutral-100']}></span>
 </Handle>
-
-<style>
-	/* Rotated inside the handle: xyflow owns the handle's own transform. */
-	.socket {
-		pointer-events: none;
-		position: absolute;
-		inset: 2.5px;
-		rotate: 45deg;
-		border: 1.5px solid var(--color-neutral-750);
-		background: var(--color-neutral-100);
-	}
-	.socket.high {
-		border-color: var(--color-signal);
-		background: var(--color-signal);
-	}
-</style>

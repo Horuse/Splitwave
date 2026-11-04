@@ -13,6 +13,9 @@
 
 	let binding = $state(false);
 
+	const CAP = 'flex h-[26px] min-w-7 items-center justify-center rounded-md border bg-neutral-100 px-2 text-xs font-medium group-hover:bg-neutral-200';
+	const HELD = 'border-signal bg-signal/18 text-signal';
+
 	// Modifiers are named the way this platform's keyboard prints them.
 	const os = platform();
 	const MODIFIERS: Record<string, string> = {
@@ -50,13 +53,13 @@
 
 <button
 	title={binding ? 'Press a key. Esc cancels, Delete clears' : 'Click to bind a global shortcut'}
-	class={['well nodrag nopan', held && 'held', binding && 'binding']}
+	class="group nodrag nopan flex cursor-pointer gap-1"
 	onclick={() => (binding = !binding)}>
 	{#if binding || caps.length === 0}
-		<span class="cap prompt">{binding ? 'press a key' : 'bind key'}</span>
+		<span class={[CAP, 'min-w-24 text-[10px]', binding ? 'border-primary text-primary' : 'border-neutral-400 text-neutral-900']}>{binding ? 'press a key' : 'bind key'}</span>
 	{:else}
 		{#each caps as cap, i (i)}
-			<span class={['cap', cap.modifier && 'mod']}>{cap.label}</span>
+			<span class={[CAP, cap.modifier && 'text-[10px]', held ? HELD : ['border-neutral-400', cap.modifier ? 'text-neutral-1000' : 'text-neutral-1200']]}>{cap.label}</span>
 		{/each}
 	{/if}
 </button>
@@ -66,51 +69,3 @@
 {/if}
 
 <svelte:window onkeydown={binding ? capture : undefined} />
-
-<style>
-	.well {
-		display: flex;
-		gap: 4px;
-		cursor: pointer;
-	}
-	.cap {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 28px;
-		height: 26px;
-		padding: 0 8px;
-		border-radius: 6px;
-		border: 1px solid var(--color-neutral-400);
-		background: var(--color-neutral-100);
-		color: var(--color-neutral-1200);
-		font:
-			500 12px system-ui,
-			sans-serif;
-		transition:
-			background-color 120ms,
-			border-color 120ms,
-			color 120ms;
-	}
-	.cap.mod {
-		font-size: 10px;
-		color: var(--color-neutral-1000);
-	}
-	.cap.prompt {
-		min-width: 96px;
-		font-size: 10px;
-		color: var(--color-neutral-900);
-	}
-	.well:hover .cap {
-		background: var(--color-neutral-200);
-	}
-	.well.held .cap {
-		border-color: var(--color-signal);
-		background: color-mix(in oklch, var(--color-signal) 18%, var(--color-neutral-100));
-		color: var(--color-signal);
-	}
-	.well.binding .cap.prompt {
-		border-color: var(--color-primary);
-		color: var(--color-primary);
-	}
-</style>

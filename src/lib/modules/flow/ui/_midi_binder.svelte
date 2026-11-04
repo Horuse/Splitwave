@@ -27,7 +27,7 @@
 <button
 	title={learning ? 'Press a note or move a control. Esc cancels, Delete clears' : 'Click to learn a MIDI control'}
 	class={[
-		'nodrag nopan flex h-[26px] min-w-24 cursor-pointer items-center justify-center rounded-md border px-2 text-[11px] font-medium transition-colors',
+		'nodrag nopan flex h-[26px] min-w-24 cursor-pointer items-center justify-center rounded-md border px-2 text-[11px] font-medium',
 		held
 			? 'border-signal bg-signal/18 text-signal'
 			: learning

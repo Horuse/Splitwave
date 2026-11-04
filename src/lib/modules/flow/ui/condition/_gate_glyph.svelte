@@ -41,31 +41,31 @@
 </script>
 
 {#snippet branch(br: (typeof BRANCHES)[number])}
-	<path d={br.d} class={['gate-wire', route === br.branch && 'lit']} fill="none" />
-	<text x="160" y={br.y + (br.branch === 1 ? -4 : 11)} text-anchor="end" class={['branch-label', route === br.branch && 'on']}>{br.label}</text>
-	<path d={br.d} class="hit" fill="none" />
+	<path d={br.d} class={['wire', route === br.branch && 'lit']} />
+	<text x="160" y={br.y + (br.branch === 1 ? -4 : 11)} text-anchor="end" class={['label', route === br.branch && 'lit']}>{br.label}</text>
+	<path d={br.d} class="hit" />
 {/snippet}
 
-<svg viewBox="0 0 160 64" class="gate h-14 w-36 overflow-visible" aria-label="Logic gate and route">
+<svg viewBox="0 0 160 64" class="h-14 w-36 overflow-visible" aria-label="Logic gate and route">
 	{#if two}
-		<line x1="0" y1="16" x2="40" y2="16" class={['gate-wire', a && 'lit']} />
-		<line x1="0" y1="48" x2="40" y2="48" class={['gate-wire', b && 'lit']} />
+		<line x1="0" y1="16" x2="40" y2="16" class={['wire', a && 'lit']} />
+		<line x1="0" y1="48" x2="40" y2="48" class={['wire', b && 'lit']} />
 	{:else}
-		<line x1="0" y1="32" x2="40" y2="32" class={['gate-wire', a && 'lit']} />
+		<line x1="0" y1="32" x2="40" y2="32" class={['wire', a && 'lit']} />
 	{/if}
 	{#if exclusive}
-		<path d="M18 4 Q34 32 18 60" class="gate-line" fill="none" />
+		<path d="M18 4 Q34 32 18 60" class="wire" />
 	{/if}
-	<path d={shape} class={['gate-shape', out && 'hot']} />
+	<path d={shape} class={['shape', out && 'lit']} />
 	{#if inverted}
-		<circle cx={tip + 4} cy="32" r="4" class={['gate-shape', out && 'hot']} />
+		<circle cx={tip + 4} cy="32" r="4" class={['shape', out && 'lit']} />
 	{/if}
-	<line x1={outStart} y1="32" x2={FORK} y2="32" class={['gate-wire', out && 'lit']} />
+	<line x1={outStart} y1="32" x2={FORK} y2="32" class={['wire', out && 'lit']} />
 
 	{#each BRANCHES as br (br.branch)}
 		{#if onRoute}
 			<g
-				class="branch nodrag nopan pickable"
+				class="group nodrag nopan cursor-pointer outline-none"
 				role="button"
 				tabindex="0"
 				aria-label={`Route to ${br.label}`}
@@ -74,65 +74,42 @@
 				{@render branch(br)}
 			</g>
 		{:else}
-			<g class="branch">{@render branch(br)}</g>
+			<g>{@render branch(br)}</g>
 		{/if}
 	{/each}
 	<circle cx={FORK} cy="32" r="2.5" class={['joint', out && 'lit']} />
 </svg>
 
-<style>
-	.gate {
-		--idle: var(--color-neutral-600);
-		--glow: var(--color-signal);
+<style lang="postcss">
+	@reference '../../../../../app.css';
+
+	.wire {
+		@apply fill-none stroke-neutral-600 stroke-2 [stroke-linecap:round];
 	}
-	.gate-wire,
-	.gate-line {
-		stroke: var(--idle);
-		stroke-width: 2;
-		stroke-linecap: round;
+	.group:hover .wire:not(.lit) {
+		@apply stroke-neutral-900;
 	}
-	.gate-wire.lit {
-		stroke: var(--glow);
+	.shape {
+		@apply fill-neutral-100 stroke-neutral-600 stroke-2 [stroke-linejoin:round];
 	}
-	.gate-shape {
-		fill: var(--color-neutral-100);
-		stroke: var(--idle);
-		stroke-width: 2;
-		stroke-linejoin: round;
-	}
-	.gate-shape.hot {
-		fill: color-mix(in oklch, var(--glow) 18%, var(--color-neutral-100));
-		stroke: var(--glow);
+	.shape.lit {
+		@apply fill-[color-mix(in_srgb,var(--color-signal)_18%,var(--color-neutral-100))];
 	}
 	.joint {
-		fill: var(--idle);
+		@apply fill-neutral-600;
 	}
-	.joint.lit {
-		fill: var(--glow);
+	.label {
+		@apply fill-neutral-900 font-mono text-[9px] group-focus-visible:underline;
 	}
-	.branch-label {
-		font:
-			9px ui-monospace,
-			monospace;
-		fill: var(--color-neutral-900);
+	.wire.lit,
+	.shape.lit {
+		@apply stroke-signal;
 	}
-	.branch-label.on {
-		fill: var(--glow);
+	.joint.lit,
+	.label.lit {
+		@apply fill-signal;
 	}
 	.hit {
-		stroke: transparent;
-		stroke-width: 14;
-	}
-	.pickable {
-		cursor: pointer;
-	}
-	.pickable:hover .gate-wire:not(.lit) {
-		stroke: var(--color-neutral-900);
-	}
-	.pickable:focus-visible {
-		outline: none;
-	}
-	.pickable:focus-visible .branch-label {
-		text-decoration: underline;
+		@apply fill-none stroke-transparent stroke-[14];
 	}
 </style>

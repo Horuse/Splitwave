@@ -80,8 +80,8 @@
 	<circle cx={FORK} cy="32" r="2.5" class={['joint', out && 'lit']} />
 </svg>
 
-<style lang="postcss">
-	@reference '../../../../../app.css';
+<style>
+	@reference "#app.css";
 
 	.wire {
 		@apply fill-none stroke-neutral-600 stroke-2 [stroke-linecap:round];

@@ -26,6 +26,7 @@ import {
 	KeyCommand as KeyCommandIcon,
 	Loop as LoopIcon,
 	ArrowRedo as ArrowRedoIcon,
+	Hourglass as HourglassIcon,
 	Reverb as ReverbIcon,
 	Saturator as SaturatorIcon,
 	Sliders as SlidersIcon,
@@ -66,6 +67,7 @@ import NetSender from '../ui/output/net_sender.svelte';
 import KeyInput from '../ui/condition/key_input.svelte';
 import Toggle from '../ui/condition/toggle.svelte';
 import Cycle from '../ui/condition/cycle.svelte';
+import Timer from '../ui/condition/timer.svelte';
 import If from '../ui/condition/if.svelte';
 import Switch from '../ui/condition/switch.svelte';
 import Select from '../ui/condition/select.svelte';
@@ -363,6 +365,15 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: Cycle,
 		icon: ArrowRedoIcon,
 		defaultData: DEFAULT_NODE_DATA['cycle']
+	}),
+	timer: entry<'timer'>({
+		kind: 'timer',
+		category: 'condition',
+		label: 'Timer',
+		description: 'Delay turns its output on a set time after start goes high; Repeat pulses it at that interval while start stays high.',
+		component: Timer,
+		icon: HourglassIcon,
+		defaultData: DEFAULT_NODE_DATA['timer']
 	}),
 	if: entry<'if'>({
 		kind: 'if',

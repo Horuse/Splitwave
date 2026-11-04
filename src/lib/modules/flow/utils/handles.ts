@@ -50,6 +50,8 @@ export const B_HANDLE = controlHandle('b');
 /** Rising edge moves a Cycle one step on, or back to its first step. */
 export const NEXT_HANDLE = controlHandle('next');
 export const RESET_HANDLE = controlHandle('reset');
+/** A Timer runs while this is high. */
+export const START_HANDLE = controlHandle('start');
 
 /** High while a Cycle sits on step `k`. */
 export function stepHandle(k: number): string {

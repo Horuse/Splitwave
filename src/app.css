@@ -23,6 +23,9 @@
     --color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
     --color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
     --color-neutral-1200: color-mix(in oklch, var(--color-contrast) 80%, var(--color-background));
+
+    /* A live control signal: lit sockets, gates and cables. */
+    --color-signal: oklch(0.82 0.17 85);
 }
 
 .dark {

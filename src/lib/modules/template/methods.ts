@@ -2,6 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Pipeline, PipelineEdge, PipelineNode } from '$lib/modules/pipeline/types';
 import { withDefaults } from '$lib/modules/pipeline/defaults';
 import { PIPELINE_VERSION } from '$lib/modules/pipeline/version';
+import { channelHandle } from '$lib/modules/flow/utils/handles';
 import type { Template } from './types';
 
 export function instantiate(template: Template, name: string): Pipeline {
@@ -20,8 +21,8 @@ export function instantiate(template: Template, name: string): Pipeline {
 	const edges: PipelineEdge[] = template.edges.map((e) => {
 		const source = ids.get(e.from)!;
 		const target = ids.get(e.to)!;
-		const sourceHandle = `ch${e.fromCh ?? 1}`;
-		const targetHandle = e.toHandle ?? `ch${e.toCh ?? 1}`;
+		const sourceHandle = channelHandle(e.fromCh ?? 1);
+		const targetHandle = e.toHandle ?? channelHandle(e.toCh ?? 1);
 		return {
 			id: `${source}-${sourceHandle}-${target}-${targetHandle}`,
 			source,

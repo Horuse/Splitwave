@@ -2,6 +2,8 @@ import type { Pipeline } from '../types';
 import { PIPELINE_VERSION, versionOf } from '../version';
 import { migrateChannelRouting } from './v1_channel_routing';
 import { migrateFileRecordingMode } from './v2_file_recording_mode';
+import { migrateTypedHandles } from './v3_typed_handles';
+import { migrateMuteKeyInput } from './v3_mute_key_input';
 
 export interface Migration {
 	/** Version this step produces; steps run in ascending order. */
@@ -11,7 +13,8 @@ export interface Migration {
 
 export const MIGRATIONS: Migration[] = [
 	{ to: 1, migrate: migrateChannelRouting },
-	{ to: 2, migrate: migrateFileRecordingMode }
+	{ to: 2, migrate: migrateFileRecordingMode },
+	{ to: 3, migrate: (p) => migrateMuteKeyInput(migrateTypedHandles(p)) }
 ];
 
 /** Runs every step above the pipeline's own version. Additive field changes

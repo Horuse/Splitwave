@@ -17,6 +17,7 @@ pub mod pipeline;
 #[cfg(target_os = "linux")]
 pub mod playback;
 pub mod plugins;
+pub mod port;
 #[cfg(target_os = "linux")]
 pub mod pw_enum;
 pub mod resample;

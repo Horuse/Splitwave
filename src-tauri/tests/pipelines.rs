@@ -405,8 +405,8 @@ fn network_loopback(port: u16, codec: &str) {
         )
         .node("rx", "netReceiver", json!({ "port": port, "channels": 1 }))
         .node("s", "speaker", speaker("out"))
-        .edge_handles("m", None, "tx", Some("ch1"))
-        .edge_handles("rx", Some("ch1"), "s", None);
+        .edge_handles("m", "audio:main", "tx", "audio:ch1")
+        .edge_handles("rx", "audio:ch1", "s", "audio:main");
     let mut rig = splitwave_lib::testkit::Rig::new(devices());
     rig.apply(graph.json()).expect("graph starts");
     // The receiver primes from the first packets before playing.

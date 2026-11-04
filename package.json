@@ -3,6 +3,9 @@
 	"version": "2.0.0-beta.1",
 	"description": "",
 	"type": "module",
+	"imports": {
+		"#app.css": "./src/app.css"
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",

@@ -200,10 +200,7 @@
 		{/if}
 		<div bind:this={plotWrap} class="nowheel relative min-w-0 flex-1 self-stretch overflow-hidden rounded-[10px]">
 			<!-- Flat canvas for high-perf 60 FPS spectrum bars without DOM nodes -->
-			<canvas
-				bind:this={canvas}
-				class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]"
-				aria-hidden="true"></canvas>
+			<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]" aria-hidden="true"></canvas>
 
 			<!-- Crisp vector overlay for scales, axes and grid -->
 			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" class="pointer-events-none relative z-10" aria-hidden="true">

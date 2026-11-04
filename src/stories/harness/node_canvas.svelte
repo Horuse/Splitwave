@@ -2,7 +2,7 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteFlow, SvelteFlowProvider, type Edge, type Node } from '@xyflow/svelte';
 	import type { NodeKind } from '$lib/modules/pipeline/types';
-	import { nodeTypes, registry } from '$lib/modules/flow/utils';
+	import { channelHandle, nodeTypes, registry } from '$lib/modules/flow/utils';
 	import ChannelEdge from '$lib/modules/flow/ui/_channel_edge.svelte';
 	import StubSource from './stub_source.svelte';
 	import EnvScope from './env_scope.svelte';
@@ -41,9 +41,9 @@
 			id: `wire-${i + 1}`,
 			type: 'channel',
 			source: STUB_ID,
-			sourceHandle: `ch${i + 1}`,
+			sourceHandle: channelHandle(i + 1),
 			target: NODE_ID,
-			targetHandle: `ch${i + 1}`
+			targetHandle: channelHandle(i + 1)
 		}));
 		return { nodes: [stub, node], edges };
 	}

@@ -3,6 +3,8 @@ import { withDefaults } from '../src/lib/modules/pipeline/defaults';
 import { isFromFuture, migrate, migrateSnapshot, MIGRATIONS } from '../src/lib/modules/pipeline/migrations';
 import { migrateChannelRouting } from '../src/lib/modules/pipeline/migrations/v1_channel_routing';
 import { migrateFileRecordingMode } from '../src/lib/modules/pipeline/migrations/v2_file_recording_mode';
+import { migrateTypedHandles } from '../src/lib/modules/pipeline/migrations/v3_typed_handles';
+import { migrateMuteKeyInput } from '../src/lib/modules/pipeline/migrations/v3_mute_key_input';
 import type { Pipeline } from '../src/lib/modules/pipeline/types';
 import { PIPELINE_VERSION } from '../src/lib/modules/pipeline/version';
 
@@ -129,6 +131,66 @@ describe('v1 file-recording migration', () => {
 	});
 });
 
+describe('v2 typed-handle migration', () => {
+	it('prefixes every audio handle and names unnamed ends as the main bus', () => {
+		const source = pipeline({
+			version: 2,
+			edges: [
+				{ id: 'channel', source: 'a', target: 'b', sourceHandle: 'ch1', targetHandle: 'ch2' },
+				{ id: 'bus', source: 'a', target: 'b' },
+				{ id: 'side', source: 'a', target: 'comp', sourceHandle: 'ch1', targetHandle: 'sidechain' },
+				{ id: 'peer', source: 'rtc', target: 'b', sourceHandle: 'peer:p', targetHandle: 'ch1' },
+				{ id: 'peer-ch', source: 'rtc', target: 'b', sourceHandle: 'peer:p:0', targetHandle: 'ch1' },
+				{ id: 'mixed', source: 'rtc', target: 'b', sourceHandle: 'mixed', targetHandle: 'ch1' }
+			]
+		});
+
+		expect(migrateTypedHandles(source).edges.map((e) => [e.sourceHandle, e.targetHandle])).toEqual([
+			['audio:ch1', 'audio:ch2'],
+			['audio:main', 'audio:main'],
+			['audio:ch1', 'audio:sidechain'],
+			['audio:peer:p', 'audio:ch1'],
+			['audio:peer:p:0', 'audio:ch1'],
+			['audio:main', 'audio:ch1']
+		]);
+		expect(source.edges[1]).toEqual({ id: 'bus', source: 'a', target: 'b' });
+	});
+});
+
+describe('v2 mute shortcut migration', () => {
+	const mute = (data: Record<string, unknown>) =>
+		pipeline({
+			version: 2,
+			nodes: [{ id: 'mute', kind: 'mute', data: { muted: true, bypassed: false, ...data }, position: { x: 500, y: 40 } }] as Pipeline['nodes']
+		});
+
+	it('wires a push-to-talk key straight into open', () => {
+		const migrated = migrateMuteKeyInput(mute({ hotkey: 'F13', pushToTalk: true }));
+		const key = migrated.nodes.find((n) => n.kind === 'keyInput')!;
+		expect(key.data).toEqual({ hotkey: 'F13' });
+		expect(key.position).toEqual({ x: 60, y: 40 });
+		expect(migrated.edges).toMatchObject([{ source: key.id, sourceHandle: 'control:out', target: 'mute', targetHandle: 'control:open' }]);
+		expect(migrated.nodes.find((n) => n.id === 'mute')!.data).toEqual({ muted: true, bypassed: false });
+	});
+
+	it('wires a toggle key through a Toggle that starts where the mute was', () => {
+		const migrated = migrateMuteKeyInput(mute({ hotkey: 'Command+KeyM', pushToTalk: false }));
+		const key = migrated.nodes.find((n) => n.kind === 'keyInput')!;
+		const toggle = migrated.nodes.find((n) => n.kind === 'toggle')!;
+		expect(toggle.data).toEqual({ on: false });
+		expect(migrated.edges).toMatchObject([
+			{ source: key.id, sourceHandle: 'control:out', target: toggle.id, targetHandle: 'control:in' },
+			{ source: toggle.id, sourceHandle: 'control:out', target: 'mute', targetHandle: 'control:open' }
+		]);
+	});
+
+	it('leaves an unbound mute alone apart from the dropped fields', () => {
+		const migrated = migrateMuteKeyInput(mute({ pushToTalk: false }));
+		expect(migrated.nodes).toHaveLength(1);
+		expect(migrated.edges).toEqual([]);
+	});
+});
+
 describe('complete pipeline migration', () => {
 	it('applies v0 through v2 exactly once and preserves pipeline metadata', () => {
 		const source = pipeline({
@@ -178,7 +240,7 @@ describe('complete pipeline migration', () => {
 		});
 
 		const migrated = migrate(v1);
-		expect(migrated.edges).toEqual(v1.edges);
+		expect(migrated.edges).toEqual([{ ...v1.edges[0], sourceHandle: 'audio:ch1', targetHandle: 'audio:ch1' }]);
 		expect(migrated.nodes[0].data).toMatchObject({ mode: 'new', allowOverwrite: false });
 	});
 

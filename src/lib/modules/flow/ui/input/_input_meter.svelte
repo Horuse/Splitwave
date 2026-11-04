@@ -2,7 +2,7 @@
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { Position } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
-	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { channelColor, channelHandle, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 	import MeterBar from '$lib/components/meter_bar.svelte';
 
@@ -117,13 +117,18 @@
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="right:-1rem; width:1rem; color:{channelColor(i)}"></div>
 					<Handle
 						type="source"
-						id={`ch${i + 1}`}
+						id={channelHandle(i + 1)}
 						position={Position.Right}
 						class={['handle', channelSelection.has(nodeId, i + 1) && 'handle-armed']}
 						style={handleEdgeStyle(channelColor(i), 'source')} />
 				{:else}
 					<div class="wire pointer-events-none absolute top-1/2 -translate-y-1/2" style="left:-1rem; width:1rem; color:{channelColor(i)}"></div>
-					<Handle type="target" id={`ch${i + 1}`} position={Position.Left} class="handle" style={handleEdgeStyle(channelColor(i), 'target')} />
+					<Handle
+						type="target"
+						id={channelHandle(i + 1)}
+						position={Position.Left}
+						class="handle"
+						style={handleEdgeStyle(channelColor(i), 'target')} />
 				{/if}
 			</div>
 			{#if !isSource}

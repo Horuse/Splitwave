@@ -6,9 +6,11 @@ import type { DelayData } from './generated/DelayData';
 import type { EqData } from './generated/EqData';
 import type { FileRecordingData } from './generated/FileRecordingData';
 import type { GainData } from './generated/GainData';
+import type { IfData } from './generated/IfData';
 import type { LevelMeterData } from './generated/LevelMeterData';
 import type { LimiterData } from './generated/LimiterData';
 import type { LufsMeterData } from './generated/LufsMeterData';
+import type { MidiKind } from './generated/MidiKind';
 import type { WaveformData } from './generated/WaveformData';
 import type { SpectrumData } from './generated/SpectrumData';
 import type { DeclickData } from './generated/DeclickData';
@@ -23,6 +25,8 @@ import type { PluginData } from './generated/PluginData';
 import type { ReverbData } from './generated/ReverbData';
 import type { SaturatorData } from './generated/SaturatorData';
 import type { SpeakerData } from './generated/SpeakerData';
+import type { SwitchData } from './generated/SwitchData';
+import type { SelectData } from './generated/SelectData';
 import type { SystemAudioData } from './generated/SystemAudioData';
 import type { WebRtcCollaboratorData } from './generated/WebRtcCollaboratorData';
 
@@ -37,8 +41,9 @@ export type { RecordingMode } from './generated/RecordingMode';
 export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';
+import type { LogicOp } from '$lib/modules/flow/logic';
 
-export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect';
+export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'condition';
 
 // xyflow requires node data to satisfy `Record<string, unknown>`; intersecting
 // gives generated types that constraint without us redeclaring fields.
@@ -51,16 +56,13 @@ export type AudioFileNodeData = XyData<AudioFileData>;
 export type SpeakerNodeData = XyData<SpeakerData>;
 export type FileRecordingNodeData = XyData<FileRecordingData>;
 export type GainNodeData = XyData<GainData>;
-// FE-only, invisible to the engine: `hotkey` is a Tauri accelerator that toggles
-// `muted`, the `cue*` pair configures the spoken confirmation on toggle.
-// `pushToTalk` swaps the hotkey from a toggle to hold-to-unmute.
+// FE-only, invisible to the engine: the `cue*` fields configure the spoken
+// confirmation on toggle.
 export type MuteNodeData = XyData<
 	MuteData & {
-		hotkey?: string;
 		cueEnabled?: boolean;
 		cueDeviceId?: string;
 		cueVolume?: number;
-		pushToTalk?: boolean;
 	}
 >;
 export type ChannelBalanceNodeData = XyData<ChannelBalanceData>;
@@ -87,6 +89,27 @@ export type PluginNodeData = XyData<PluginData & { name?: string; vendor?: strin
 export type WebRtcCollaboratorNodeData = XyData<WebRtcCollaboratorData & { name?: string }>;
 export type NetReceiverNodeData = XyData<NetReceiverData>;
 export type NetSenderNodeData = XyData<NetSenderData>;
+// Condition nodes run in the editor only; the engine drops them with their cables.
+export type KeyInputSource = 'keyboard' | 'midi';
+/** A learned MIDI control: one note or CC on one channel of one device. */
+export interface MidiBinding {
+	device: string;
+	channel: number;
+	kind: MidiKind;
+	number: number;
+}
+export type KeyInputNodeData = XyData<{ source?: KeyInputSource; hotkey?: string; midi?: MidiBinding }>;
+export type ToggleNodeData = XyData<{ on: boolean }>;
+export type CycleNodeData = XyData<{ steps: number; step: number }>;
+export type TimerMode = 'delay' | 'repeat';
+export type TimerNodeData = XyData<{ mode: TimerMode; ms: number }>;
+// `op` combines the A and B inputs in the editor; the engine only sees `selected`.
+export type IfNodeData = XyData<IfData & { op?: LogicOp }>;
+export type SwitchNodeData = XyData<SwitchData>;
+export type SelectNodeData = XyData<SelectData>;
+// The engine only meters a Level Trigger's input; threshold and hold turn that
+// level into a control signal in the editor.
+export type LevelTriggerNodeData = XyData<{ thresholdDb: number; holdMs: number }>;
 
 // Compliance target is a FE-only UI hint (colours the Integrated readout) — the
 // engine has no use for it, so it lives outside the Rust LufsMeterData struct.
@@ -120,6 +143,14 @@ export type NodeDataMap = {
 	webRtcCollaborator: WebRtcCollaboratorNodeData;
 	netReceiver: NetReceiverNodeData;
 	netSender: NetSenderNodeData;
+	keyInput: KeyInputNodeData;
+	toggle: ToggleNodeData;
+	cycle: CycleNodeData;
+	timer: TimerNodeData;
+	if: IfNodeData;
+	switch: SwitchNodeData;
+	select: SelectNodeData;
+	levelTrigger: LevelTriggerNodeData;
 };
 
 export type AnyNodeData = NodeDataMap[NodeKind];

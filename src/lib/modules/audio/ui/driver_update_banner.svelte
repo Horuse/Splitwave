@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { methods } from '$lib/modules/audio/methods';
 	import type { VirtualDriverStatus } from '$lib/modules/audio/types';
+	import { t } from '$lib/modules/i18n';
 
 	let { onUpdated }: { onUpdated?: (status: VirtualDriverStatus) => void } = $props();
 
@@ -35,14 +36,11 @@
 {#if status?.needsUpdate}
 	<div class="warning-block flex flex-row items-end justify-between">
 		<div class="flex flex-col gap-3">
-			<span class="text-base font-bold">Driver update required</span>
-			<p>
-				An older audio driver is installed and may cause audio glitches. Reinstall to update (requires your password once, then restarts the audio
-				service). Your virtual devices are kept.
-			</p>
+			<span class="text-base font-bold">{t('audio.driverUpdateTitle')}</span>
+			<p>{t('audio.driverUpdateMessage')}</p>
 		</div>
 		<button class="btn-warning h-full py-1.5" onclick={update} disabled={updating}>
-			{updating ? 'Updating...' : 'Update'}
+			{updating ? t('common.updating') : t('common.update')}
 		</button>
 	</div>
 {/if}

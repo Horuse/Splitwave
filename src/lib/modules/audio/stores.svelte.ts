@@ -10,6 +10,7 @@ import { isFromFuture } from '$lib/modules/pipeline/migrations';
 import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '$lib/modules/pipeline/types';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { errorStore } from '$lib/modules/error';
+import { t } from '$lib/modules/i18n';
 
 // Mirrors `extension()` in the File Recording node: the dialog filter must
 // match the encoder the node will actually write.
@@ -101,7 +102,7 @@ class AudioStore {
 			.onInputError(async (payload) => {
 				if (this.inputRecovering || !this.isRunning) return;
 				this.inputRecovering = true;
-				const msg = payload.error || 'Input device disconnected';
+				const msg = payload.error || t('audio.inputDisconnected');
 				try {
 					if (!appSettings.keepRunningOnDisconnect) {
 						this.stopPendingReconnectLoop();
@@ -148,7 +149,7 @@ class AudioStore {
 			.onSpeakerError(async (payload) => {
 				if (this.speakerRecovering || !this.isRunning) return;
 				this.speakerRecovering = true;
-				const msg = payload?.error || 'Speaker device disconnected';
+				const msg = payload?.error || t('audio.speakerDisconnected');
 				try {
 					if (!appSettings.keepRunningOnDisconnect) {
 						this.stopPendingReconnectLoop();
@@ -254,13 +255,13 @@ class AudioStore {
 		let path: string | null;
 		if (append) {
 			const picked = await open({
-				title: 'Choose recording to append to',
+				title: t('node.recording.chooseAppendTitle'),
 				multiple: false,
 				filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
 			});
 			path = typeof picked === 'string' ? picked : null;
 		} else {
-			path = await save({ title: 'Save recording', filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+			path = await save({ title: t('node.recording.saveTitle'), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
 		}
 		if (!path) return null;
 		// A fresh path can be written unconditionally; only append keeps the
@@ -300,7 +301,7 @@ class AudioStore {
 		if (errorStore.hadPreviousCrash || crashGuard) {
 			this.safeMode = true;
 			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
-			this.reportError(new Error('Safe Mode: Auto-starting previous pipeline was skipped because Splitwave crashed last time.'));
+			this.reportError(new Error(t('audio.safeModeSkipped')));
 			return;
 		}
 

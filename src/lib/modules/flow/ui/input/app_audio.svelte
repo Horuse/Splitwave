@@ -12,6 +12,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -66,14 +67,14 @@
 	});
 </script>
 
-<Wrapper label="App Audio" accent="input" icon={Apps} {srcTooltip}>
+<Wrapper label={t('node.appAudio.label')} accent="input" icon={Apps} {srcTooltip}>
 	<div class="flex w-64 flex-col gap-2">
 		<Combobox
 			class="w-full"
 			{options}
 			value={data.bundleId ?? null}
-			placeholder="— Select application —"
-			emptyHint="No audible apps"
+			placeholder={t('node.appAudio.select')}
+			emptyHint={t('node.appAudio.noApps')}
 			onChange={setApp}
 			onOpen={() => refresh()}>
 			{#snippet footer()}
@@ -81,15 +82,24 @@
 			{/snippet}
 		</Combobox>
 		{#if missing}
-			<span class="text-[10px] text-red-500">App no longer running</span>
+			<span class="text-[10px] text-red-500">{t('node.appAudio.notRunning')}</span>
 		{:else if data.bundleId && devInfo.info}
 			<span class="node-spec">{devInfo.specText}</span>
 		{:else if data.bundleId}
 			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
-				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+				{devInfo.isLoading ? t('node.device.detecting') : t('node.device.detectFailed')}
 			</span>
 		{/if}
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider
+			label={t('node.slider.volume')}
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
 		{#if data.bundleId && !missing}
 			<InputMeter nodeId={id} {channelCount} />
 		{/if}

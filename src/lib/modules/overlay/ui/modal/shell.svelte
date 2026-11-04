@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	import { t } from '$lib/modules/i18n';
 
 	export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -70,7 +71,7 @@
 						<button
 							type="button"
 							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-neutral-300"
-							aria-label="Close"
+							aria-label={t('common.closeAria')}
 							onclick={() => onClose?.()}>
 							<svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
 								<path

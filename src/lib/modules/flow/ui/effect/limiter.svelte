@@ -8,6 +8,7 @@
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type LimiterNodeType = Node<LimiterNodeData, 'limiter'>;
 	let { id, data }: NodeProps<LimiterNodeType> = $props();
@@ -55,7 +56,16 @@
 	let ceilingSvgX = $derived(toSvg(data.ceilingDb));
 </script>
 
-<Wrapper label="Limiter" icon={Limiter} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label={t('node.limiter.label')}
+	icon={Limiter}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="limiter" {data} onApply={applyPreset} />
 
@@ -82,7 +92,7 @@
 
 		<div class="flex w-50 flex-col gap-1.5">
 			<Slider
-				label="Ceiling"
+				label={t('node.limiter.ceiling')}
 				value={data.ceilingDb}
 				min={-12}
 				max={0}
@@ -92,7 +102,7 @@
 				ticks={[-6, -3, -1, 0]}
 				onChange={setCeiling} />
 			<Slider
-				label="Lookahead"
+				label={t('node.limiter.lookahead')}
 				value={data.lookaheadMs}
 				min={1}
 				max={20}
@@ -102,7 +112,7 @@
 				ticks={[2, 5, 10]}
 				onChange={setLookahead} />
 			<Slider
-				label="Release"
+				label={t('node.limiter.release')}
 				value={data.releaseMs}
 				min={10}
 				max={500}
@@ -111,7 +121,7 @@
 				defaultValue={50}
 				ticks={[50, 100, 250]}
 				onChange={setRelease} />
-			<p class="text-[9px] text-neutral-500">Lookahead change rebuilds the pipeline.</p>
+			<p class="text-[9px] text-neutral-500">{t('node.limiter.lookaheadHint')}</p>
 		</div>
 	</div>
 </Wrapper>

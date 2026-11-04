@@ -32,6 +32,7 @@
 	import { platform } from '@tauri-apps/plugin-os';
 	import { getContext } from 'svelte';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { t } from '$lib/modules/i18n';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 	const isMac = isPreview || platform() === 'macos';
@@ -156,11 +157,11 @@
 		}
 	});
 
-	const MODES = [
-		{ value: 'new' as const, label: 'New' },
-		{ value: 'overwrite' as const, label: 'Overwrite' },
-		{ value: 'append' as const, label: 'Append' }
-	];
+	const MODES = $derived([
+		{ value: 'new' as const, label: t('node.recording.modeNew') },
+		{ value: 'overwrite' as const, label: t('node.recording.modeOverwrite') },
+		{ value: 'append' as const, label: t('node.recording.modeAppend') }
+	]);
 
 	let appendable = $derived(isAppendable(data.format));
 	let modeOptions = $derived(MODES.map((m) => (m.value === 'append' ? { ...m, disabled: !appendable } : m)));
@@ -173,18 +174,24 @@
 	let maxChannels = $derived(cfg.maxChannels);
 
 	let CHANNEL_MODES = $derived([
-		{ value: 'mono' as const, label: 'Mono', disabled: locked },
-		{ value: 'stereo' as const, label: 'Stereo', disabled: locked },
-		{ value: 'multi' as const, label: 'Multi', disabled: maxChannels <= 2 || locked }
+		{ value: 'mono' as const, label: t('node.recording.mono'), disabled: locked },
+		{ value: 'stereo' as const, label: t('node.recording.stereo'), disabled: locked },
+		{ value: 'multi' as const, label: t('node.recording.multi'), disabled: maxChannels <= 2 || locked }
 	]);
 
 	type ChannelMode = 'mono' | 'stereo' | 'multi';
 	let channelMode = $derived<ChannelMode>(data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : 'multi');
 
-	let channelLabel = $derived(data.channels <= 1 ? 'mono' : data.channels === 2 ? 'stereo' : `${data.channels} ch`);
+	let channelLabel = $derived(
+		data.channels <= 1
+			? t('node.recording.mono')
+			: data.channels === 2
+				? t('node.recording.stereo')
+				: t('node.recording.channelCount', { n: data.channels })
+	);
 
 	async function setChannelMode(m: ChannelMode) {
-		if (!(await confirmOverwriteChange('changing the channel layout'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatChannels')))) return;
 		const target = m === 'mono' ? 1 : m === 'stereo' ? 2 : Math.max(3, data.channels);
 		const channels = Math.min(target, maxChannels);
 		dropEdgesAbove(channels);
@@ -236,7 +243,7 @@
 		const ext = extension(data.format);
 		if (mode === 'append') {
 			const path = await open({
-				title: 'Choose recording to append to',
+				title: t('node.recording.chooseAppendTitle'),
 				multiple: false,
 				filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
 			});
@@ -245,7 +252,7 @@
 			return true;
 		}
 		const path = await save({
-			title: 'Save recording',
+			title: t('node.recording.saveTitle'),
 			filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
 		});
 		if (!path) return false;
@@ -263,7 +270,7 @@
 	}
 
 	async function setFormatKind(kind: 'wav' | 'flac' | 'opus' | 'mp3' | 'aac' | 'aiff') {
-		if (!(await confirmOverwriteChange('changing the format'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatFormat')))) return;
 		if (data.format.kind === kind) return;
 		let next: RecordingFormat;
 		if (kind === 'wav') next = { kind: 'wav', bitDepth: 'f32' };
@@ -322,14 +329,12 @@
 		const path = data.filePath;
 		if (mode !== 'overwrite' || !path) return true;
 		if (overwriteSkip.has(path)) return true;
-		const res = await modalManager.open<boolean | { ok: boolean; dontAskAgain: boolean }>('Recording will be erased', ConfirmModal, {
-			message: `In Overwrite mode, ${what} erases "${basename(path)}" the next time you record.`,
-			confirmLabel: 'Change anyway',
+		const res = await modalManager.open<boolean | { ok: boolean; dontAskAgain: boolean }>(t('node.recording.eraseTitle'), ConfirmModal, {
+			message: t('node.recording.eraseMessage', { what, file: basename(path) }),
+			confirmLabel: t('node.recording.changeAnyway'),
 			danger: true,
-			checkboxLabel: "Don't ask again for this file",
-			warning: audioStore.isRunning
-				? 'The pipeline is running right now — confirming restarts this recording immediately and the existing file is erased at once.'
-				: undefined
+			checkboxLabel: t('node.recording.dontAskAgain'),
+			warning: audioStore.isRunning ? t('node.recording.eraseRunningWarning') : undefined
 		});
 		if (typeof res === 'object') {
 			if (res.ok && res.dontAskAgain) {
@@ -348,20 +353,20 @@
 	// existing path in Overwrite is confirmed by the native save dialog.
 	async function confirmModeSwitch(m: RecordingMode): Promise<void> {
 		if (mode === 'append' && m === 'overwrite' && data.filePath) {
-			const ok = await confirmOverwriteChange('switching to Overwrite');
+			const ok = await confirmOverwriteChange(t('node.recording.whatModeOverwrite'));
 			if (!ok) return;
 		}
 		flow.updateNodeData(id, { mode: m });
 	}
 
 	async function setWavBitDepth(bd: WavBitDepth) {
-		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitDepth')))) return;
 		if (data.format.kind !== 'wav') return;
 		flow.updateNodeData(id, { format: { kind: 'wav', bitDepth: bd } });
 	}
 
 	async function setFlacBitDepth(bd: FlacBitDepth) {
-		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitDepth')))) return;
 		if (data.format.kind !== 'flac') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'flac', bitDepth: bd, compression: data.format.compression }
@@ -369,7 +374,7 @@
 	}
 
 	async function setFlacCompression(c: FlacCompression) {
-		if (!(await confirmOverwriteChange('changing the compression'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatCompression')))) return;
 		if (data.format.kind !== 'flac') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'flac', bitDepth: data.format.bitDepth, compression: c }
@@ -381,7 +386,7 @@
 			customBitrateSelected = true;
 			return;
 		}
-		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitrate')))) return;
 		if (data.format.kind !== 'opus') return;
 		customBitrateSelected = false;
 		flow.updateNodeData(id, {
@@ -390,7 +395,7 @@
 	}
 
 	async function setOpusApplication(a: OpusApplication) {
-		if (!(await confirmOverwriteChange('changing the application mode'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatApplication')))) return;
 		if (data.format.kind !== 'opus') return;
 		flow.updateNodeData(id, {
 			format: { kind: 'opus', bitrate: data.format.bitrate, application: a }
@@ -402,7 +407,7 @@
 			customBitrateSelected = true;
 			return;
 		}
-		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitrate')))) return;
 		if (data.format.kind !== 'mp3') return;
 		customBitrateSelected = false;
 		flow.updateNodeData(id, { format: { ...data.format, bitrateKbps: kbps } });
@@ -413,14 +418,14 @@
 			customBitrateSelected = true;
 			return;
 		}
-		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitrate')))) return;
 		if (data.format.kind !== 'aac') return;
 		customBitrateSelected = false;
 		flow.updateNodeData(id, { format: { ...data.format, bitrate: bps } });
 	}
 
 	async function setAiffBitDepth(bd: AiffBitDepth) {
-		if (!(await confirmOverwriteChange('changing the bit depth'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitDepth')))) return;
 		if (data.format.kind !== 'aiff') return;
 		flow.updateNodeData(id, { format: { kind: 'aiff', bitDepth: bd } });
 	}
@@ -431,38 +436,38 @@
 	}
 
 	function basename(p: string | null): string {
-		if (!p) return 'No file selected';
+		if (!p) return t('common.noFileSelected');
 		const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
 		return idx >= 0 ? p.slice(idx + 1) : p;
 	}
 
-	const WAV_BIT_DEPTHS: { value: WavBitDepth; label: string; sub: string }[] = [
-		{ value: 'i16', label: '16-bit', sub: 'PCM' },
-		{ value: 'i24', label: '24-bit', sub: 'PCM' },
-		{ value: 'f32', label: '32-bit', sub: 'float' }
-	];
+	const WAV_BIT_DEPTHS = $derived<{ value: WavBitDepth; label: string; sub: string }[]>([
+		{ value: 'i16', label: t('node.recording.bitDepth16'), sub: 'PCM' },
+		{ value: 'i24', label: t('node.recording.bitDepth24'), sub: 'PCM' },
+		{ value: 'f32', label: t('node.recording.bitDepth32f'), sub: t('node.recording.float') }
+	]);
 
-	const FLAC_BIT_DEPTHS: { value: FlacBitDepth; label: string }[] = [
-		{ value: 'i16', label: '16-bit' },
-		{ value: 'i24', label: '24-bit' }
-	];
+	const FLAC_BIT_DEPTHS = $derived<{ value: FlacBitDepth; label: string }[]>([
+		{ value: 'i16', label: t('node.recording.bitDepth16') },
+		{ value: 'i24', label: t('node.recording.bitDepth24') }
+	]);
 
-	const FLAC_COMPRESSIONS: { value: FlacCompression; label: string }[] = [
-		{ value: 'fast', label: 'Fast' },
-		{ value: 'default', label: 'Default' },
-		{ value: 'best', label: 'Best' }
-	];
+	const FLAC_COMPRESSIONS = $derived<{ value: FlacCompression; label: string }[]>([
+		{ value: 'fast', label: t('node.recording.fast') },
+		{ value: 'default', label: t('node.recording.defaultCompression') },
+		{ value: 'best', label: t('node.recording.best') }
+	]);
 
-	const OPUS_APPLICATIONS: { value: OpusApplication; label: string; sub: string }[] = [
-		{ value: 'audio', label: 'Audio', sub: 'music' },
-		{ value: 'voip', label: 'VoIP', sub: 'voice' },
-		{ value: 'low-delay', label: 'Low', sub: 'delay' }
-	];
+	const OPUS_APPLICATIONS = $derived<{ value: OpusApplication; label: string; sub: string }[]>([
+		{ value: 'audio', label: t('node.recording.audioApp'), sub: t('node.recording.music') },
+		{ value: 'voip', label: t('node.recording.voip'), sub: t('node.recording.voice') },
+		{ value: 'low-delay', label: t('node.recording.lowDelay'), sub: t('node.recording.delay') }
+	]);
 
-	const AIFF_BIT_DEPTHS: { value: AiffBitDepth; label: string }[] = [
-		{ value: 'i16', label: '16-bit' },
-		{ value: 'i24', label: '24-bit' }
-	];
+	const AIFF_BIT_DEPTHS = $derived<{ value: AiffBitDepth; label: string }[]>([
+		{ value: 'i16', label: t('node.recording.bitDepth16') },
+		{ value: 'i24', label: t('node.recording.bitDepth24') }
+	]);
 
 	// Custom is a UI choice that only reveals the numeric input, so it cannot
 	// be derived from `sampleRate` alone.
@@ -474,7 +479,7 @@
 	let rateOptions = $derived(
 		(cfg.rate.rates ?? [])
 			.map((r) => ({ value: String(r), label: formatKhzValue(r) }))
-			.concat(cfg.rate.mode === 'grid+custom' ? [{ value: 'custom', label: 'Custom' }] : [])
+			.concat(cfg.rate.mode === 'grid+custom' ? [{ value: 'custom', label: t('common.custom') }] : [])
 			.map((r) => ({ ...r, disabled: locked }))
 	);
 
@@ -530,7 +535,7 @@
 			label: String(k),
 			disabled: locked
 		}));
-		return opts.concat([{ value: 'custom', label: 'Custom', disabled: locked }]);
+		return opts.concat([{ value: 'custom', label: t('common.custom'), disabled: locked }]);
 	}
 
 	function bitrateIsPreset(): boolean {
@@ -546,7 +551,7 @@
 	async function setCustomBitrate(kbps: number) {
 		const b = cfg.bitrate;
 		if (locked || !b) return;
-		if (!(await confirmOverwriteChange('changing the bitrate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatBitrate')))) return;
 		const [min, max] = bitrateBounds();
 		const v = Math.min(max, Math.max(min, kbps));
 		const value = b.storedUnit === 'kbps' ? v : v * 1000;
@@ -564,7 +569,7 @@
 			customRateSelected = true;
 			return;
 		}
-		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatSampleRate')))) return;
 		customRateSelected = false;
 		const rate = Number(sel);
 		// A lower rate tier narrows the bitrate bounds (AAC at 32 kHz).
@@ -576,7 +581,7 @@
 
 	async function setCustomRate(n: number) {
 		if (locked) return;
-		if (!(await confirmOverwriteChange('changing the sample rate'))) return;
+		if (!(await confirmOverwriteChange(t('node.recording.whatSampleRate')))) return;
 		flow.updateNodeData(id, { sampleRate: Math.min(cfg.rate.max ?? 384_000, Math.max(cfg.rate.min ?? 8_000, n)) });
 	}
 
@@ -611,13 +616,13 @@
 	function formatLabelFor(fmt: RecordingFormat): string {
 		if (fmt.kind === 'wav') {
 			const bd = fmt.bitDepth;
-			return bd === 'i16' ? 'WAV 16-bit' : bd === 'i24' ? 'WAV 24-bit' : 'WAV 32-bit float';
+			return bd === 'i16' ? t('node.recording.formatWav16') : bd === 'i24' ? t('node.recording.formatWav24') : t('node.recording.formatWav32f');
 		}
 		if (fmt.kind === 'flac') {
-			return `FLAC ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
+			return `FLAC ${fmt.bitDepth === 'i24' ? t('node.recording.bitDepth24') : t('node.recording.bitDepth16')}`;
 		}
 		if (fmt.kind === 'opus') {
-			const app = fmt.application === 'audio' ? '' : ` · ${fmt.application}`;
+			const app = fmt.application === 'audio' ? '' : ` · ${fmt.application === 'voip' ? t('node.recording.voip') : t('node.recording.lowDelay')}`;
 			return `Opus ${Math.round(fmt.bitrate / 1000)} kbps${app}`;
 		}
 		if (fmt.kind === 'mp3') {
@@ -626,7 +631,7 @@
 		if (fmt.kind === 'aac') {
 			return `AAC ${Math.round(fmt.bitrate / 1000)} kbps`;
 		}
-		return `AIFF ${fmt.bitDepth === 'i24' ? '24-bit' : '16-bit'}`;
+		return `AIFF ${fmt.bitDepth === 'i24' ? t('node.recording.bitDepth24') : t('node.recording.bitDepth16')}`;
 	}
 
 	let estSize = $derived(estimatedSize());
@@ -646,11 +651,11 @@
 	let targetSampleRate = $derived(data.format.kind === 'opus' || data.format.kind === 'mp3' ? 48_000 : (data.sampleRate ?? 48_000));
 	let srcTooltip = $derived.by(() => {
 		if (targetSampleRate === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(targetSampleRate)}`;
+		return t('node.source.resampling', { from: formatHz(appSettings.pipelineSampleRate), to: formatHz(targetSampleRate) });
 	});
 </script>
 
-<Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
+<Wrapper label={t('node.fileRecording.label')} icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
 		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
 			{basename(data.filePath)}
@@ -661,30 +666,29 @@
 				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
 				onclick={chooseFile}>
 				<Folder class="size-3.5" />
-				Choose file
+				{t('node.recording.choose')}
 			</button>
-			<Tooltip
-				text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
+			<Tooltip text={isMac ? t('node.recording.revealFinder') : isWindows ? t('node.recording.revealExplorer') : t('node.recording.revealFileManager')}>
 				<button type="button" class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
 				</button>
 			</Tooltip>
 		</div>
 
-		<SegmentedButtons options={modeOptions} value={mode} onSelect={setMode} label="Mode" columns={3} />
+		<SegmentedButtons options={modeOptions} value={mode} onSelect={setMode} label={t('node.recording.mode')} columns={3} />
 
 		<SegmentedButtons options={FORMATS.map((f) => ({ ...f, disabled: locked }))} value={data.format.kind} onSelect={setFormatKind} columns={3} />
 
 		<SegmentedButtons
-			label="Channels"
-			note={maxChannels >= 512 ? 'no limit' : `max ${maxChannels}`}
+			label={t('node.recording.channels')}
+			note={maxChannels >= 512 ? t('node.recording.noLimit') : t('node.recording.maxChannels', { n: maxChannels })}
 			options={CHANNEL_MODES}
 			value={channelMode}
 			onSelect={setChannelMode} />
 
 		{#if cfg.rate.mode !== 'fixed'}
 			<SegmentedButtons
-				label="Sample rate"
+				label={t('node.recording.sampleRate')}
 				note="kHz"
 				options={rateOptions}
 				value={rateSelection}
@@ -699,7 +703,7 @@
 						max={cfg.rate.max ?? 384000}
 						step={100}
 						disabled={locked}
-						label="Sample rate"
+						label={t('node.recording.sampleRate')}
 						onchange={setCustomRate} />
 				</div>
 			{/if}
@@ -718,7 +722,7 @@
 				onSelect={setFlacCompression} />
 		{:else if data.format.kind === 'opus'}
 			<SegmentedButtons
-				label="Bitrate"
+				label={t('node.recording.bitrate')}
 				note="kbps"
 				options={bitrateOptions()}
 				value={customBitrateSelected ? 'custom' : data.format.bitrate}
@@ -732,7 +736,7 @@
 						max={bitrateBounds()[1]}
 						step={cfg.bitrate?.step}
 						disabled={locked}
-						label="Bitrate"
+						label={t('node.recording.bitrate')}
 						onchange={setCustomBitrate} />
 				</div>
 			{/if}
@@ -742,7 +746,7 @@
 				onSelect={setOpusApplication} />
 		{:else if data.format.kind === 'mp3'}
 			<SegmentedButtons
-				label="Bitrate"
+				label={t('node.recording.bitrate')}
 				note="kbps"
 				options={bitrateOptions()}
 				value={customBitrateSelected ? 'custom' : data.format.bitrateKbps}
@@ -756,13 +760,13 @@
 						max={bitrateBounds()[1]}
 						step={cfg.bitrate?.step}
 						disabled={locked}
-						label="Bitrate"
+						label={t('node.recording.bitrate')}
 						onchange={setCustomBitrate} />
 				</div>
 			{/if}
 		{:else if data.format.kind === 'aac'}
 			<SegmentedButtons
-				label="Bitrate"
+				label={t('node.recording.bitrate')}
 				note="kbps"
 				options={bitrateOptions()}
 				value={customBitrateSelected ? 'custom' : data.format.bitrate}
@@ -776,7 +780,7 @@
 						max={bitrateBounds()[1]}
 						step={cfg.bitrate?.step}
 						disabled={locked}
-						label="Bitrate"
+						label={t('node.recording.bitrate')}
 						onchange={setCustomBitrate} />
 				</div>
 			{/if}
@@ -786,7 +790,7 @@
 
 		<div class="flex items-baseline justify-between font-mono text-[11px]">
 			<span class={recording ? 'text-red-500' : 'text-neutral-900'}>
-				{recording ? '● REC' : '○'}
+				{recording ? `● ${t('node.recording.rec')}` : '○'}
 			</span>
 			<div class="flex items-baseline gap-1.5 tabular-nums">
 				<span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
@@ -805,20 +809,20 @@
 			</span>
 		</div>
 		{#if dirty}
-			<div class="text-[9px] text-amber-600">changes pending - restart or choose new file</div>
+			<div class="text-[9px] text-amber-600">{t('node.recording.pending')}</div>
 		{/if}
 
 		<div class="flex items-center justify-between border-t border-neutral-200 pt-1">
 			<span class="node-spec flex items-center gap-1">
 				<Pulse class="size-3" />
-				Waveform
+				{t('node.recording.waveform')}
 				{#if !isAppendable(data.format)}
 					<!-- Non-PCM formats have no disk peak source: the scope shows
 					only the live tail, no browsable history. -->
-					<span class="text-neutral-400">· realtime, no history</span>
+					<span class="text-neutral-400">{t('node.recording.realtimeNoHistory')}</span>
 				{/if}
 			</span>
-			<Tooltip text={waveVisible ? 'Hide waveform' : 'Show waveform'}>
+			<Tooltip text={waveVisible ? t('node.recording.hideWaveform') : t('node.recording.showWaveform')}>
 				<button type="button" class="nodrag nopan button-main primary size-4 p-0" onclick={toggleWaveform}>
 					{#if waveVisible}
 						<EyeOff class="size-2.5" />

@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { ChevronDown } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	interface Option {
 		value: string;
@@ -30,7 +31,9 @@
 		onOpen?: () => void;
 	}
 
-	let { options, value, placeholder = '— Select —', emptyHint = 'No matches', onChange, size = 'md', class: ClassName, footer, onOpen }: Props = $props();
+	let { options, value, placeholder, emptyHint, onChange, size = 'md', class: ClassName, footer, onOpen }: Props = $props();
+
+	let placeholderText = $derived(placeholder ?? t('common.select'));
 
 	let open = $state(false);
 	let search = $state('');
@@ -111,7 +114,7 @@
 				</span>
 			{/if}
 			<span class="truncate {selected ? '' : 'text-neutral-900'}">
-				{selected?.label ?? placeholder}
+				{selected?.label ?? placeholderText}
 			</span>
 		</span>
 		<ChevronDown class="h-3 w-3 shrink-0 opacity-60" />
@@ -126,13 +129,13 @@
 				bind:value={search}
 				type="text"
 				class="nodrag nopan w-full border-b border-neutral-300 bg-neutral-100 px-2 py-1 text-sm outline-none"
-				placeholder="Filter…"
+				placeholder={t('common.filter')}
 				onkeydown={onKeyDown} />
 			<ul class="nodrag nopan nowheel max-h-48 overflow-y-auto">
 				{#if value !== null}
 					<li>
 						<button type="button" class="block w-full px-2 py-1 text-left text-xs text-neutral-900 hover:bg-neutral-200" onclick={() => pick(null)}>
-							— Clear selection —
+							{t('common.clearSelection')}
 						</button>
 					</li>
 				{/if}
@@ -165,7 +168,7 @@
 					</li>
 				{/each}
 				{#if filtered.length === 0}
-					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint}</li>
+					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint ?? t('common.noMatches')}</li>
 				{/if}
 			</ul>
 			{#if footer}

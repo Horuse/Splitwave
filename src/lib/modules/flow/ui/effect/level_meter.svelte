@@ -8,6 +8,7 @@
 	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { formatDb } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
 	let { id, data }: NodeProps<LevelMeterNodeType> = $props();
@@ -146,7 +147,7 @@
 	});
 </script>
 
-<Wrapper label="Level Meter" accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide>
+<Wrapper label={t('node.levelMeter.label')} accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide>
 	<div class="flex w-fit flex-col gap-1">
 		<div class="flex gap-1.5">
 			<div class="flex flex-col gap-0.5">
@@ -159,7 +160,7 @@
 								? 'border-l border-neutral-300'
 								: ''}"
 							onclick={resetPeaks}
-							aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"></button>
+							aria-label={t('node.meter.clipAria', { channel: channelLabel(i, channelCount) })}></button>
 					{/each}
 				</div>
 
@@ -171,7 +172,7 @@
 					onkeydown={handleBarKey}
 					role="button"
 					tabindex="0"
-					aria-label="Level meter — click to reset peaks, hover to read level">
+					aria-label={t('node.meter.meterAria')}>
 					{#each barVals as p, i (i)}
 						<MeterBar
 							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
@@ -196,10 +197,10 @@
 
 			<!-- dB scale -->
 			<div class="relative h-72 w-8 font-mono text-[9px] text-neutral-900 select-none" style="margin-top: 10px;">
-				{#each minorTickPos as t (t.db)}
-					<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
-						<div class="shrink-0 bg-neutral-700 {t.major ? 'w-2' : 'w-1'}" style="height: 1px;"></div>
-						{#if t.major}<span class="mb-px ml-0.5 leading-none">{t.db}</span>{/if}
+				{#each minorTickPos as tk (tk.db)}
+					<div class="absolute left-0 flex items-center" style="bottom: {tk.pct}%; height: 1px;">
+						<div class="shrink-0 bg-neutral-700 {tk.major ? 'w-2' : 'w-1'}" style="height: 1px;"></div>
+						{#if tk.major}<span class="mb-px ml-0.5 leading-none">{tk.db}</span>{/if}
 					</div>
 				{/each}
 				<div class="absolute bottom-0 left-2.5 leading-none">dB</div>
@@ -220,7 +221,7 @@
 		<button
 			type="button"
 			onclick={resetPeaks}
-			title="Reset peaks"
+			title={t('node.meter.resetPeaks')}
 			class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-200 transition-colors hover:opacity-80"
 			style="width: {channelCount * BAR_W}px;">
 			{#each maxVals as db, i (i)}

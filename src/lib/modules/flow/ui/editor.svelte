@@ -21,6 +21,7 @@
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
+	import { t as translate } from '$lib/modules/i18n';
 
 	let { pipeline }: { pipeline: Pipeline } = $props();
 
@@ -232,18 +233,18 @@
 		switch (kind) {
 			case 'audioFile':
 				items.push({
-					label: 'Choose file...',
+					label: translate('flow.menu.chooseFile'),
 					icon: Folder,
 					action: () => emitNodeAction(id, 'chooseFile')
 				});
 				items.push({
-					label: 'Rewind',
+					label: translate('flow.menu.rewind'),
 					icon: Rewind,
 					disabled: !audioStore.isRunning || !data.filePath,
 					action: () => audioMethods.seekAudioFile(id, 0).catch(() => {})
 				});
 				items.push({
-					label: data.loopEnabled ? 'Loop off' : 'Loop on',
+					label: data.loopEnabled ? translate('flow.menu.loopOff') : translate('flow.menu.loopOn'),
 					icon: Loop,
 					action: () => patchNodeData(id, { loopEnabled: !data.loopEnabled })
 				});
@@ -252,21 +253,21 @@
 			case 'appAudio':
 			case 'speaker':
 				items.push({
-					label: 'Refresh',
+					label: translate('flow.menu.refresh'),
 					icon: Refresh,
 					action: () => emitNodeAction(id, 'refresh')
 				});
 				break;
 			case 'fileRecording':
 				items.push({
-					label: 'Choose file...',
+					label: translate('flow.menu.chooseFile'),
 					icon: Folder,
 					action: () => emitNodeAction(id, 'chooseFile')
 				});
 				break;
 			case 'mute':
 				items.push({
-					label: data.muted ? 'Unmute' : 'Mute',
+					label: data.muted ? translate('flow.menu.unmute') : translate('flow.menu.mute'),
 					action: () => {
 						const patch = { muted: !data.muted };
 						patchNodeData(id, patch);
@@ -276,7 +277,7 @@
 				break;
 			case 'levelMeter':
 				items.push({
-					label: 'Reset peaks',
+					label: translate('flow.menu.resetPeaks'),
 					action: () => emitNodeAction(id, 'resetPeaks')
 				});
 				break;
@@ -291,7 +292,7 @@
 			case 'reverb':
 			case 'noiseSuppressor':
 				items.push({
-					label: data.bypassed ? 'Engage' : 'Bypass',
+					label: data.bypassed ? translate('flow.menu.engage') : translate('flow.menu.bypass'),
 					action: () => {
 						const patch = { bypassed: !data.bypassed };
 						patchNodeData(id, patch);
@@ -302,13 +303,13 @@
 		}
 
 		items.push({
-			label: 'Copy',
+			label: translate('flow.menu.copy'),
 			icon: Copy,
 			shortcut: '⌘C',
 			action: () => copyNodes(node.selected ? nodes.filter((n) => n.selected) : [node])
 		});
 		items.push({
-			label: 'Delete',
+			label: translate('flow.menu.delete'),
 			icon: Delete,
 			shortcut: '⌫',
 			danger: true,
@@ -320,7 +321,7 @@
 	function paneMenuItems(flowX: number, flowY: number): MenuItem[] {
 		return [
 			{
-				label: 'Paste',
+				label: translate('flow.menu.paste'),
 				icon: ClipboardPaste,
 				shortcut: '⌘V',
 				disabled: pipelineStore.clipboard === null,
@@ -349,7 +350,7 @@
 			y: event.clientY,
 			items: [
 				{
-					label: 'Delete',
+					label: translate('flow.menu.delete'),
 					icon: Delete,
 					shortcut: '⌫',
 					danger: true,
@@ -631,7 +632,7 @@
 <svelte:window onmousedown={closeContextMenu} />
 
 <div class="flex h-full w-full">
-	<div class="relative flex-1" role="region" aria-label="Flow editor" ondragover={onDragOver} ondrop={onDrop}>
+	<div class="relative flex-1" role="region" aria-label={translate('flow.editor')} ondragover={onDragOver} ondrop={onDrop}>
 		<SvelteFlow
 			proOptions={{ hideAttribution: true }}
 			class="!bg-background"
@@ -661,7 +662,7 @@
 			<div
 				class="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm">
 				<span class="font-mono tabular-nums">{channelSelection.channels.length}</span>
-				channels armed &mdash; drag any one to connect them all, Esc to clear
+				{translate('flow.channelsArmed')}
 			</div>
 		{/if}
 	</div>

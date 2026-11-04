@@ -9,6 +9,7 @@
 	import { ArrowDownload } from '$lib/components/icons';
 	import { parseHandle } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type NetReceiverNodeType = Node<NetReceiverNodeData, 'netReceiver'>;
 	let { id, data }: NodeProps<NetReceiverNodeType> = $props();
@@ -32,13 +33,21 @@
 		if (detectedFormat !== 'opus') return null;
 		const parts: string[] = [];
 		if (detectedOpusBitrate) parts.push(`${Math.round(detectedOpusBitrate / 1000)} kbps`);
-		if (detectedOpusApp) parts.push(detectedOpusApp);
+		if (detectedOpusApp) {
+			parts.push(
+				detectedOpusApp === 'voip'
+					? t('node.receiver.appVoip')
+					: detectedOpusApp === 'audio'
+						? t('node.receiver.appAudio')
+						: t('node.receiver.appLowDelay')
+			);
+		}
 		return parts.length > 0 ? parts.join(' · ') : null;
 	});
 
 	let srcTooltip = $derived.by(() => {
 		if (!detectedSampleRate || detectedSampleRate === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatHz(detectedSampleRate)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+		return t('node.source.resampling', { from: formatHz(detectedSampleRate), to: formatHz(appSettings.pipelineSampleRate) });
 	});
 
 	let loss = $state<number | null>(null);
@@ -120,7 +129,7 @@
 </script>
 
 <Wrapper
-	label="Net Receiver"
+	label={t('node.netReceiver.label')}
 	icon={ArrowDownload}
 	accent="network"
 	{srcTooltip}
@@ -133,7 +142,7 @@
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- port -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.receiver.udpPort')}</span>
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800"
 				type="number"
@@ -146,23 +155,23 @@
 		<!-- stream info -->
 		<div class="node-spec flex flex-col gap-1">
 			<div class="flex items-center justify-between">
-				<span>codec</span>
+				<span>{t('node.receiver.codec')}</span>
 				<span>
-					{codecLabel ?? 'waiting...'}
+					{codecLabel ?? t('node.receiver.waiting')}
 				</span>
 			</div>
 			{#if opusModeLabel}
 				<div class="flex items-center justify-between">
-					<span>mode</span>
+					<span>{t('node.receiver.mode')}</span>
 					<span>
 						{opusModeLabel}
 					</span>
 				</div>
 			{/if}
 			<div class="flex items-center justify-between">
-				<span>stream</span>
+				<span>{t('node.receiver.stream')}</span>
 				<span class="tabular-nums">
-					{detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${received} ch` : ''}` : '--'}
+					{detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${t('node.receiver.channels', { n: received })}` : ''}` : '--'}
 				</span>
 			</div>
 		</div>
@@ -180,7 +189,7 @@
 
 		<!-- added latency -->
 		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">delay</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.receiver.delay')}</span>
 			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
 				{bufferMs ? `${bufferMs}ms` : '--'}
 			</span>

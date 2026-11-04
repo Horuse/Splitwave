@@ -15,9 +15,10 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	const isWindows = platform() === 'windows';
-	const virtualDevicesLabel = isWindows ? 'Use virtual microphone' : 'Add virtual device';
+	let virtualDevicesLabel = $derived(isWindows ? t('node.output.useVirtualMic') : t('node.mic.addVirtual'));
 
 	type SpeakerNodeType = Node<SpeakerNodeData, 'speaker'>;
 	let { id, data }: NodeProps<SpeakerNodeType> = $props();
@@ -74,9 +75,9 @@
 	});
 </script>
 
-<Wrapper label="Speaker" accent="output" icon={Speaker} {srcTooltip}>
+<Wrapper label={t('node.speaker.label')} accent="output" icon={Speaker} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-1">
-		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
+		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder={t('node.output.select')} onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				<ComboboxAction
@@ -89,29 +90,37 @@
 			{/snippet}
 		</Combobox>
 		{#if missing}
-			<span class="text-[10px] text-red-500">Selected device not available</span>
+			<span class="text-[10px] text-red-500">{t('node.device.missing')}</span>
 		{:else if devInfo.info}
 			<span class="node-spec">
 				{devInfo.specText}
 			</span>
 		{:else if data.deviceId}
 			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
-				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+				{devInfo.isLoading ? t('node.device.detecting') : t('node.device.detectFailed')}
 			</span>
 		{/if}
 
 		{#if data.deviceId && !missing}
 			{#if volume.unsupported}
-				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
+				<span class="text-[10px] text-neutral-900"> {t('node.output.volumeUnsupported')} </span>
 			{:else if volume.scalar !== null}
-				<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
+				<Slider
+					label={t('node.slider.volume')}
+					value={volumePct}
+					min={0}
+					max={100}
+					step={1}
+					format={formatPct}
+					ticks={[25, 50, 75]}
+					onChange={setVolumePct} />
 				{#if volume.unsynced}
-					<span class="text-[10px] text-neutral-900">Volume changed elsewhere won't show here</span>
+					<span class="text-[10px] text-neutral-900">{t('node.output.volumeUnsynced')}</span>
 				{/if}
 			{/if}
 			<InputMeter nodeId={id} side="target" {channelCount} dbOffset={meterOffsetDb} />
 			{#if volume.scalar !== null && volume.db === null}
-				<span class="text-[10px] text-neutral-900">Meter is pre-volume</span>
+				<span class="text-[10px] text-neutral-900">{t('node.output.meterPreVolume')}</span>
 			{/if}
 		{/if}
 	</div>

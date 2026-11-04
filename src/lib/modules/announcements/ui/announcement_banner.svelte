@@ -2,12 +2,13 @@
 	import { slide } from 'svelte/transition';
 	import { announcementStore } from '../stores.svelte';
 	import { handleAnnouncementAction, openAnnouncementDetails } from '../methods';
+	import { t } from '$lib/modules/i18n';
 
 	let active = $derived(announcementStore.activeBanner);
 	let count = $derived(announcementStore.bannerCount);
 	let currentIndex = $derived(announcementStore.currentBannerIndex);
 
-	let badgeText = $derived(active?.badge ?? active?.severity.toUpperCase() ?? 'NOTICE');
+	let badgeText = $derived(active?.badge ?? (active ? t(`announcement.severity.${active.severity}`) : t('announcement.notice')));
 
 	let containerClass = $derived.by(() => {
 		switch (active?.severity) {
@@ -67,13 +68,13 @@
 					<button
 						type="button"
 						class="rounded px-1 hover:bg-black/10 dark:hover:bg-white/15"
-						title="Previous notice"
+						title={t('announcement.previous')}
 						onclick={() => announcementStore.prevBanner()}>&lt;</button>
 					<span>{currentIndex + 1}/{count}</span>
 					<button
 						type="button"
 						class="rounded px-1 hover:bg-black/10 dark:hover:bg-white/15"
-						title="Next notice"
+						title={t('announcement.next')}
 						onclick={() => announcementStore.nextBanner()}>&gt;</button>
 				</div>
 			{/if}
@@ -90,7 +91,7 @@
 					type="button"
 					class="rounded px-2.5 py-0.5 text-xs font-medium transition-colors {buttonClass}"
 					onclick={() => active && openAnnouncementDetails(active)}>
-					Details
+					{t('common.details')}
 				</button>
 			{/if}
 
@@ -104,7 +105,9 @@
 			{/if}
 
 			{#if active.dismissible !== false}
-				<button type="button" class="rounded px-2 py-0.5 text-xs opacity-75 transition-opacity hover:opacity-100" onclick={onDismiss}> Dismiss </button>
+				<button type="button" class="rounded px-2 py-0.5 text-xs opacity-75 transition-opacity hover:opacity-100" onclick={onDismiss}>
+					{t('common.dismiss')}
+				</button>
 			{/if}
 		</div>
 	</div>

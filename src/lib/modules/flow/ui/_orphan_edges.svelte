@@ -3,6 +3,7 @@
 	import { Delete } from '$lib/components/icons';
 	import { registry } from '$lib/modules/flow/utils';
 	import type { NodeKind } from '$lib/modules/pipeline/types';
+	import { t } from '$lib/modules/i18n';
 
 	interface Props {
 		onDelete: (edgeId: string) => void;
@@ -19,8 +20,8 @@
 	// moment an edge becomes orphaned. Poll instead of missing the transition.
 	let tick = $state(0);
 	$effect(() => {
-		const t = setInterval(() => tick++, 200);
-		return () => clearInterval(t);
+		const id = setInterval(() => tick++, 200);
+		return () => clearInterval(id);
 	});
 
 	let active = $state<string | null>(null);
@@ -142,7 +143,7 @@
 				style="pointer-events:stroke;cursor:pointer"
 				role="button"
 				tabindex="-1"
-				aria-label="Broken connection"
+				aria-label={t('flow.brokenConnection')}
 				onmouseenter={() => hold(o.id)}
 				onmouseleave={release}
 				onclick={() => hold(o.id)}
@@ -181,13 +182,11 @@
 		<div
 			class="pointer-events-none absolute rounded-lg border border-amber-500/60 bg-amber-500/15 px-2 py-1 text-[10px] leading-snug text-amber-700 dark:text-amber-300"
 			style="left:{n.rect.x}px;top:{n.rect.y + n.rect.h + 8}px;width:{n.rect.w}px">
-			{n.count === 1 ? 'A cable is' : `${n.count} cables are`} still plugged in here, but there is nowhere to take {n.count === 1 ? 'it' : 'them'} right now.
+			{t(n.count === 1 ? 'flow.orphanSingle' : 'flow.orphanMany', { count: n.count })}
 			{#if n.device}
-				Pick a device with enough channels, or remove the {n.count === 1 ? 'cable' : 'cables'}.
+				{t(n.count === 1 ? 'flow.orphanPickDevice' : 'flow.orphanPickDeviceMany')}
 			{:else}
-				This node passes channels through, so its outputs disappear once its input is disconnected. Feed it again, or remove the {n.count === 1
-					? 'cable'
-					: 'cables'}.
+				{t(n.count === 1 ? 'flow.orphanPassThrough' : 'flow.orphanPassThroughMany')}
 			{/if}
 		</div>
 	{/each}
@@ -198,7 +197,7 @@
 				type="button"
 				class="nodrag nopan pointer-events-auto absolute z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-500 bg-amber-500 text-white shadow-sm hover:bg-amber-600"
 				style="left:{o.mid.x}px;top:{o.mid.y}px"
-				title="Remove this connection"
+				title={t('flow.removeConnection')}
 				onmouseenter={() => hold(o.id)}
 				onmouseleave={release}
 				onclick={() => onDelete(o.id)}>

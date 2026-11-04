@@ -9,6 +9,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
+	import { t } from '$lib/modules/i18n';
 
 	type LufsMeterNodeType = Node<LufsMeterNodeData, 'lufsMeter'>;
 	let { id, data }: NodeProps<LufsMeterNodeType> = $props();
@@ -36,8 +37,8 @@
 		noiseFloorMax?: number;
 	}
 
-	const PROFILES: Profile[] = [
-		{ id: 'free', label: 'Free', note: 'No target' },
+	const PROFILES = $derived<Profile[]>([
+		{ id: 'free', label: t('node.loudness.profileFree'), note: t('node.loudness.profileFreeNote') },
 		{
 			id: 'ebu',
 			label: 'EBU R128',
@@ -83,12 +84,12 @@
 		{
 			id: 'acx',
 			label: 'ACX',
-			note: 'RMS -23..-18, peak -3, floor -60',
+			note: t('node.loudness.noteAcx'),
 			rmsRange: [-23, -18],
 			truePeakMax: -3,
 			noiseFloorMax: -60
 		}
-	];
+	]);
 
 	const LUFS_GRADIENT = `linear-gradient(to top,
         #22c55e 0%, #22c55e 55%,
@@ -181,28 +182,31 @@
 	// Only the checks the active profile actually specifies; a LUFS profile has
 	// nothing to say about a noise floor.
 	let checks = $derived.by(() => {
-		const out: { label: string; ok: boolean; want: string }[] = [];
+		const out: { id: string; label: string; ok: boolean; want: string }[] = [];
 		if (profile.rmsRange) {
 			const [lo, hi] = profile.rmsRange;
-			out.push({ label: 'RMS', ok: rms > lo && rms < hi, want: `${lo}..${hi}` });
+			out.push({ id: 'rms', label: t('node.loudness.checkRms'), ok: rms > lo && rms < hi, want: `${lo}..${hi}` });
 		}
 		if (profile.target != null) {
 			out.push({
-				label: 'Integrated',
+				id: 'integrated',
+				label: t('node.loudness.checkIntegrated'),
 				ok: integrated > LUFS_SILENT && Math.abs(integrated - profile.target) <= 1,
 				want: `${profile.target} ±1`
 			});
 		}
 		if (profile.truePeakMax != null) {
 			out.push({
-				label: 'True Peak',
+				id: 'truePeak',
+				label: t('node.loudness.checkTruePeak'),
 				ok: tpMax > LUFS_SILENT && tpMax <= profile.truePeakMax,
 				want: `≤ ${profile.truePeakMax}`
 			});
 		}
 		if (profile.noiseFloorMax != null) {
 			out.push({
-				label: 'Noise Floor',
+				id: 'noiseFloor',
+				label: t('node.loudness.checkNoiseFloor'),
 				ok: noiseFloor > LUFS_SILENT && noiseFloor <= profile.noiseFloorMax,
 				want: `≤ ${profile.noiseFloorMax}`
 			});
@@ -214,14 +218,14 @@
 
 	// Both families are always on screen; the profile only draws lines over them.
 	let lufsBars = $derived([
-		{ label: 'M', val: momentary, hold: holdM as number | null },
-		{ label: 'S', val: shortterm, hold: holdS as number | null },
-		{ label: 'I', val: integrated, hold: holdI as number | null }
+		{ id: 'momentary', label: 'M', val: momentary, hold: holdM as number | null },
+		{ id: 'shortterm', label: 'S', val: shortterm, hold: holdS as number | null },
+		{ id: 'integrated', label: 'I', val: integrated, hold: holdI as number | null }
 	]);
 
 	let rmsBars = $derived([
-		{ label: 'RMS', val: rms, hold: null as number | null },
-		{ label: 'Floor', val: noiseFloor, hold: null as number | null }
+		{ id: 'rms', label: t('node.loudness.statRms'), val: rms, hold: null as number | null },
+		{ id: 'floor', label: t('node.loudness.floor'), val: noiseFloor, hold: null as number | null }
 	]);
 
 	function resetPeaks() {
@@ -257,11 +261,11 @@
 	});
 </script>
 
-<Wrapper label="Loudness" icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide>
+<Wrapper label={t('node.lufsMeter.label')} icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide>
 	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			{#snippet group(
-				bars: { label: string; val: number; hold: number | null }[],
+				bars: { id: string; label: string; val: number; hold: number | null }[],
 				floor: number,
 				ticks: number[],
 				target: number | null,
@@ -277,7 +281,7 @@
 							{title}
 							class="nodrag nopan relative flex items-stretch overflow-hidden rounded-sm border border-neutral-300"
 							style="width: {BAR_W * bars.length}px; height: {BAR_H}px;">
-							{#each bars as bar, i (bar.label)}
+							{#each bars as bar, i (bar.id)}
 								<MeterBar
 									class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
 									orientation="vertical"
@@ -312,7 +316,7 @@
 					</div>
 
 					<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {BAR_W * bars.length}px;">
-						{#each bars as bar, i (bar.label)}
+						{#each bars as bar, i (bar.id)}
 							<div class={['flex flex-1 flex-col items-center py-0.5', i > 0 && 'border-l border-neutral-300']}>
 								<span class="text-[7px] leading-none text-neutral-500">{bar.label}</span>
 								<span class="text-[8px] leading-tight tabular-nums">{format(bar.val)}</span>
@@ -324,17 +328,17 @@
 			{/snippet}
 
 			<div class="flex flex-col gap-0.5">
-				{@render group(lufsBars, LUFS_FLOOR, LUFS_TICKS, profile.target ?? null, null, 'Reset peaks', 'LUFS')}
+				{@render group(lufsBars, LUFS_FLOOR, LUFS_TICKS, profile.target ?? null, null, t('node.meter.resetPeaks'), 'LUFS')}
 				<div class="h-3 text-center text-[8px] leading-3 font-semibold {targetClass(integrated, profile.target)}" style="width: {BAR_W * 3}px;">
 					{targetDelta(integrated, profile.target) ?? ''}
 				</div>
 			</div>
 
-			{@render group(rmsBars, RMS_FLOOR, RMS_TICKS, null, profile.rmsRange ?? null, 'Reset peaks', 'dBFS')}
+			{@render group(rmsBars, RMS_FLOOR, RMS_TICKS, null, profile.rmsRange ?? null, t('node.meter.resetPeaks'), 'dBFS')}
 
 			<!-- Program stats -->
 			<div class="flex flex-col gap-1" style="width: {BAR_W * 2}px;">
-				{#each [{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) }, { label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) }, { label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) }, { label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }, { label: 'Sample Peak', unit: 'dBFS', val: format(samplePeak) }, { label: 'DC Offset', unit: 'dBFS', val: formatDc(dcOffset) }, { label: 'Correlation', unit: '', val: correlation.toFixed(2) }, { label: 'Clipped', unit: 'smp', val: String(clips) }] as stat (stat.label)}
+				{#each [{ label: t('node.loudness.statTruePeak'), unit: 'dBTP', val: format(tpMax) }, { label: t('node.loudness.statLoudnessRange'), unit: 'LU', val: lra.toFixed(1) }, { label: t('node.loudness.statPeakLoudness'), unit: 'LU', val: ratio(tpMax, integrated) }, { label: t('node.loudness.statDynamicRange'), unit: 'LU', val: ratio(tpMax, shortterm) }, { label: t('node.loudness.statSamplePeak'), unit: 'dBFS', val: format(samplePeak) }, { label: t('node.loudness.statDcOffset'), unit: 'dBFS', val: formatDc(dcOffset) }, { label: t('node.loudness.statCorrelation'), unit: '', val: correlation.toFixed(2) }, { label: t('node.loudness.statClipped'), unit: 'smp', val: String(clips) }] as stat, i (i)}
 					<div class="flex flex-col rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
 						<span class="text-[7px] leading-none text-neutral-500">{stat.label}</span>
 						<span class="text-[11px] leading-tight font-semibold text-neutral-900 tabular-nums">
@@ -349,9 +353,9 @@
 			type="button"
 			onclick={resetPeaks}
 			class="nodrag nopan flex items-center justify-center gap-1 rounded-sm border border-neutral-300 bg-neutral-100 py-1 text-[8px] text-neutral-900 transition-colors hover:bg-neutral-200 hover:text-theme"
-			title="Clear held peaks and the true-peak maximum">
+			title={t('node.meter.clearPeaksHint')}>
 			<Refresh class="size-2.5" />
-			Reset peaks
+			{t('node.meter.resetPeaks')}
 		</button>
 
 		<!-- delivery profile -->
@@ -362,7 +366,7 @@
 
 		{#if checks.length > 0}
 			<div class="flex flex-col gap-0.5">
-				{#each checks as c (c.label)}
+				{#each checks as c (c.id)}
 					<div class="flex items-center gap-1.5 rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
 						<span class={['size-1.5 shrink-0 rounded-full', !measured ? 'bg-neutral-400' : c.ok ? 'bg-green-500' : 'bg-red-500']}></span>
 						<span class="flex-1 text-[8px] text-neutral-900">{c.label}</span>

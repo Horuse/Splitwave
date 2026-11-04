@@ -19,12 +19,19 @@
 	import { LogsModal } from '$lib/modules/logs/ui';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { initAnnouncements } from '$lib/modules/announcements';
+	import { applyDocumentLocale } from '$lib/modules/i18n';
 
 	const isDev = import.meta.env.DEV;
 
 	let { children } = $props();
 
 	let unlistenMenu: UnlistenFn | undefined;
+
+	// Keeps the <html lang> attribute in sync; `applyDocumentLocale` reads the
+	// setting, so the effect re-runs when the language changes.
+	$effect(() => {
+		applyDocumentLocale();
+	});
 
 	function focusedField(): HTMLInputElement | HTMLTextAreaElement | null {
 		const el = document.activeElement;

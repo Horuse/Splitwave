@@ -7,6 +7,7 @@
 	import { Checkmark } from '$lib/components/icons';
 	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import { formatBytes } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	let info = $derived(getCachedAppInfo());
 
@@ -19,12 +20,12 @@
 	let s = $derived(updaterStore.state);
 
 	let title = $derived.by(() => {
-		if (s.phase === 'up_to_date') return 'Up to date';
-		if (s.phase === 'available') return 'Update available';
-		if (s.phase === 'downloading') return 'Downloading update';
-		if (s.phase === 'installing') return 'Installing update';
-		if (s.phase === 'unsupported') return 'No build available';
-		return 'Update failed';
+		if (s.phase === 'up_to_date') return t('updater.upToDate');
+		if (s.phase === 'available') return t('updater.available');
+		if (s.phase === 'downloading') return t('updater.downloading');
+		if (s.phase === 'installing') return t('updater.installing');
+		if (s.phase === 'unsupported') return t('updater.unsupported');
+		return t('updater.failed');
 	});
 
 	let titleClass = $derived(s.phase === 'error' ? 'text-sm font-semibold text-red-500' : 'text-sm font-semibold text-theme');
@@ -54,7 +55,7 @@
 					</span>
 					{#if /-(rc|beta|alpha)/i.test(s.update.version)}
 						<span class="rounded-md bg-amber-500/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-							PRE-RELEASE
+							{t('updater.preRelease')}
 						</span>
 					{/if}
 				</div>
@@ -68,15 +69,15 @@
 						<Checkmark class="size-5" />
 					</div>
 					<div class="flex flex-col items-center gap-1.5">
-						<p class="text-lg font-semibold text-theme">You're on the latest version</p>
+						<p class="text-lg font-semibold text-theme">{t('updater.latestBody')}</p>
 						<span class="rounded-full bg-neutral-200 px-2.5 py-0.5 font-mono text-[11px] text-neutral-1000 tabular-nums">
 							v{info?.appVersion ?? '?'}
 						</span>
 					</div>
-					<p class="text-xs text-neutral-900">Splitwave checks for updates on launch.</p>
+					<p class="text-xs text-neutral-900">{t('updater.checksOnLaunch')}</p>
 				</div>
 			{:else if s.phase === 'available'}
-				<p class="mb-3 text-xs text-neutral-900">A new version is ready to install. Your work will be saved before restarting.</p>
+				<p class="mb-3 text-xs text-neutral-900">{t('updater.readyBody')}</p>
 				{#if s.notes}
 					<Markdown
 						source={s.notes}
@@ -89,7 +90,7 @@
 							{s.total ? `${progressPct()}%` : formatBytes(s.downloaded)}
 						</span>
 						<span class="font-mono text-xs text-neutral-900 tabular-nums">
-							{s.total ? `${formatBytes(s.downloaded)} of ${formatBytes(s.total)}` : 'Size unknown'}
+							{s.total ? t('updater.of', { done: formatBytes(s.downloaded), total: formatBytes(s.total) }) : t('updater.sizeUnknown')}
 						</span>
 					</div>
 
@@ -102,14 +103,14 @@
 						{/if}
 					</div>
 
-					<p class="text-xs text-neutral-900">Keep the app open. It will restart itself once the update is installed.</p>
+					<p class="text-xs text-neutral-900">{t('updater.keepOpen')}</p>
 				</div>
 			{:else if s.phase === 'installing'}
-				<p class="text-xs text-neutral-900">Finalizing. The app will restart in a moment.</p>
+				<p class="text-xs text-neutral-900">{t('updater.finalizing')}</p>
 			{:else if s.phase === 'unsupported'}
 				<p class="text-xs text-neutral-900">{s.message}</p>
 			{:else if s.phase === 'error'}
-				<p class="mb-3 text-xs text-neutral-900">Couldn't check for updates.</p>
+				<p class="mb-3 text-xs text-neutral-900">{t('updater.checkFailed')}</p>
 				<pre
 					class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1100">{s.message}</pre>
 			{/if}
@@ -117,16 +118,16 @@
 
 		{#snippet footer()}
 			{#if s.phase === 'up_to_date'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> OK </button>
+				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> {t('common.ok')} </button>
 			{:else if s.phase === 'available'}
-				<button type="button" class="button-main primary rounded-lg" onclick={onSkip}> Skip this version </button>
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Later </button>
-				<button type="button" class="button-main green rounded-lg" onclick={installUpdate}> Install &amp; restart </button>
+				<button type="button" class="button-main primary rounded-lg" onclick={onSkip}> {t('updater.skipVersion')} </button>
+				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> {t('common.later')} </button>
+				<button type="button" class="button-main green rounded-lg" onclick={installUpdate}> {t('updater.installRestart')} </button>
 			{:else if s.phase === 'error'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
-				<CopyButton text={s.message} label="Copy error" class="button-main red gap-3 rounded-lg" />
+				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> {t('common.dismiss')} </button>
+				<CopyButton text={s.message} label={t('updater.copyError')} class="button-main red gap-3 rounded-lg" />
 			{:else if s.phase === 'unsupported'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> OK </button>
+				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> {t('common.ok')} </button>
 			{/if}
 		{/snippet}
 	</ModalShell>

@@ -8,6 +8,7 @@
 	import { getCachedAppInfo } from '$lib/modules/app_info';
 	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
 	import { announcementStore, runModalQueue } from '$lib/modules/announcements';
+	import { t } from '$lib/modules/i18n';
 
 	let open = $state(false);
 
@@ -243,32 +244,32 @@
 	{#if open}
 		<div transition:fly={{ duration: 200, y: 5 }}>
 			<Menu>
-				<MenuSection label="Errors" />
-				<MenuItem label="Rust panic (preview)" onclick={fakeRustPanic} />
-				<MenuItem label="Real crash (panic)" onclick={realRustCrash} />
-				<MenuItem label="Native crash (process)" onclick={nativeCrash} />
-				<MenuItem label="Unexpected exit (process)" onclick={unexpectedExit} />
-				<MenuItem label="Main thread hang (20 s)" onclick={mainThreadHang} />
-				<MenuItem label="JS error" onclick={fakeJsError} />
-				<MenuItem label="Promise rejection" onclick={fakePromiseRejection} />
-				<MenuItem label="Safe Mode (simulate)" onclick={fakeSafeMode} />
-				<MenuSection label="Updater" />
-				<MenuItem label="Update available" onclick={fakeUpdateAvailable} />
-				<MenuItem label="Pre-release update available" onclick={fakeBetaUpdateAvailable} />
-				<MenuItem label="Downloading 30%" onclick={fakeDownloading} />
-				<MenuItem label="Update error" onclick={fakeUpdateError} />
-				<MenuSection label="Announcements" />
-				<MenuItem label="Test RC Banner" onclick={fakeRcBanner} />
-				<MenuItem label="Test Modal Notice" onclick={fakeModalNotice} />
-				<MenuItem label="Test Queue (2 Banners + 2 Modals)" onclick={fakeQueueMultiple} />
-				<MenuItem label="Reset Dismissed Notices" onclick={resetDismissedAnnouncements} />
+				<MenuSection label={t('debug.errors')} />
+				<MenuItem label={t('debug.rustPanicPreview')} onclick={fakeRustPanic} />
+				<MenuItem label={t('debug.realCrash')} onclick={realRustCrash} />
+				<MenuItem label={t('debug.nativeCrash')} onclick={nativeCrash} />
+				<MenuItem label={t('debug.unexpectedExit')} onclick={unexpectedExit} />
+				<MenuItem label={t('debug.mainThreadHang')} onclick={mainThreadHang} />
+				<MenuItem label={t('debug.jsError')} onclick={fakeJsError} />
+				<MenuItem label={t('debug.promiseRejection')} onclick={fakePromiseRejection} />
+				<MenuItem label={t('debug.safeModeSimulate')} onclick={fakeSafeMode} />
+				<MenuSection label={t('debug.updater')} />
+				<MenuItem label={t('debug.updateAvailable')} onclick={fakeUpdateAvailable} />
+				<MenuItem label={t('debug.preReleaseUpdateAvailable')} onclick={fakeBetaUpdateAvailable} />
+				<MenuItem label={t('debug.downloading')} onclick={fakeDownloading} />
+				<MenuItem label={t('debug.updateError')} onclick={fakeUpdateError} />
+				<MenuSection label={t('debug.announcements')} />
+				<MenuItem label={t('debug.testRcBanner')} onclick={fakeRcBanner} />
+				<MenuItem label={t('debug.testModalNotice')} onclick={fakeModalNotice} />
+				<MenuItem label={t('debug.testQueue')} onclick={fakeQueueMultiple} />
+				<MenuItem label={t('debug.resetDismissed')} onclick={resetDismissedAnnouncements} />
 				<MenuSeparator />
-				<MenuItem label="Clear all" onclick={clearAll} />
+				<MenuItem label={t('debug.clearAll')} onclick={clearAll} />
 			</Menu>
 		</div>
 	{/if}
 
-	<button type="button" class="button-header size-7 px-3 text-xs" onclick={() => (open = !open)} title="Dev triggers">
-		{open ? 'Close' : 'Dev'}
+	<button type="button" class="button-header size-7 px-3 text-xs" onclick={() => (open = !open)} title={t('debug.triggers')}>
+		{open ? t('common.close') : t('debug.dev')}
 	</button>
 </div>

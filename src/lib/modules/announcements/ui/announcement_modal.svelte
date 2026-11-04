@@ -4,6 +4,7 @@
 	import { announcementStore } from '../stores.svelte';
 	import { handleAnnouncementAction } from '../methods';
 	import type { Announcement } from '../types';
+	import { t } from '$lib/modules/i18n';
 
 	interface Props extends ModalBaseProps {
 		announcement: Announcement;
@@ -56,7 +57,7 @@
 
 	<div class="flex items-center justify-end gap-2 px-5 pt-2 pb-4">
 		<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
-			{totalModals > 1 ? 'Next' : 'Close'}
+			{totalModals > 1 ? t('announcement.next') : t('common.close')}
 		</button>
 
 		{#if announcement.action}

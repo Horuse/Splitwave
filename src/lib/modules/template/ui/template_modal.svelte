@@ -5,6 +5,7 @@
 	import type { NodeKind } from '$lib/modules/pipeline/types';
 	import { TEMPLATES } from '../catalog';
 	import type { Template, TemplateAccent } from '../types';
+	import { t } from '$lib/modules/i18n';
 
 	let { modalId }: ModalBaseProps = $props();
 
@@ -28,30 +29,38 @@
 	};
 
 	/** One chip per distinct kind, so a two-mic template shows Microphone once. */
-	function kinds(t: Template): NodeKind[] {
-		return [...new Set(t.nodes.map((n) => n.kind))];
+	function kinds(tpl: Template): NodeKind[] {
+		return [...new Set(tpl.nodes.map((n) => n.kind))];
 	}
 
-	function pick(t: Template) {
-		modalManager.close(modalId, t.id);
+	function pick(tpl: Template) {
+		modalManager.close(modalId, tpl.id);
+	}
+
+	/** Falls back to the catalog's own name/description so a template added
+	 * without its translation never renders the raw key. */
+	function label(tpl: Template, field: 'name' | 'description'): string {
+		const key = `template.${tpl.id}.${field}`;
+		const text = t(key);
+		return text === key ? tpl[field] : text;
 	}
 </script>
 
 <div class="grid grid-cols-2 gap-3 px-5 pt-1 pb-5 sm:grid-cols-3">
-	{#each TEMPLATES as t (t.id)}
+	{#each TEMPLATES as tpl (tpl.id)}
 		<button
 			type="button"
-			onclick={() => pick(t)}
-			class={['flex h-full min-h-44 flex-col items-center justify-center gap-3 rounded-xl border p-4 text-center transition-colors', CARD[t.accent]]}>
+			onclick={() => pick(tpl)}
+			class={['flex h-full min-h-44 flex-col items-center justify-center gap-3 rounded-xl border p-4 text-center transition-colors', CARD[tpl.accent]]}>
 			<div class="flex min-h-9 flex-wrap items-center justify-center gap-1.5">
-				{#if t.nodes.length === 0}
-					<span class={['flex size-9 items-center justify-center rounded-lg border border-dashed border-neutral-500', TILE[t.accent]]}>
+				{#if tpl.nodes.length === 0}
+					<span class={['flex size-9 items-center justify-center rounded-lg border border-dashed border-neutral-500', TILE[tpl.accent]]}>
 						<Add class="size-4" />
 					</span>
 				{:else}
-					{#each kinds(t) as kind (kind)}
+					{#each kinds(tpl) as kind (kind)}
 						{@const entry = registry[kind]}
-						<span class={['flex size-9 items-center justify-center rounded-lg', TILE[t.accent]]} title={entry.label}>
+						<span class={['flex size-9 items-center justify-center rounded-lg', TILE[tpl.accent]]} title={entry.label}>
 							<entry.icon class="size-4" />
 						</span>
 					{/each}
@@ -59,8 +68,8 @@
 			</div>
 
 			<div class="flex flex-col gap-1">
-				<span class="text-sm font-medium text-theme">{t.name}</span>
-				<span class="text-[11px] leading-snug text-neutral-900">{t.description}</span>
+				<span class="text-sm font-medium text-theme">{label(tpl, 'name')}</span>
+				<span class="text-[11px] leading-snug text-neutral-900">{label(tpl, 'description')}</span>
 			</div>
 		</button>
 	{/each}

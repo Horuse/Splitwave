@@ -4,11 +4,15 @@
 	import { Plug } from '$lib/components/icons';
 	import { methods } from '$lib/modules/audio/methods';
 	import type { WindowsVirtualCableStatus } from '$lib/modules/audio/types';
+	import { t } from '$lib/modules/i18n';
 
 	let status = $state<WindowsVirtualCableStatus | null>(null);
 	let checking = $state(true);
 	let installing = $state(false);
-	let issue = $state<string | null>(null);
+	// Kept as the raw error plus a fallback key, so the message re-translates
+	// when the language changes instead of freezing the language it was shown in.
+	let issue = $state<{ value: unknown; fallbackKey: string } | null>(null);
+	let issueText = $derived(issue ? (friendlyIssue(issue.value) ?? t(issue.fallbackKey)) : null);
 
 	const needsRestart = $derived(status?.state === 'rebootRequired' || status?.state === 'removalPendingReboot');
 	const incomplete = $derived(status?.state === 'partial');
@@ -24,30 +28,32 @@
 		return typeof value.message === 'string' && value.message.trim() ? value.message : null;
 	}
 
-	function friendlyIssue(value: unknown): string {
+	function friendlyIssue(value: unknown): string | null {
 		switch (errorCode(value)) {
 			case 'elevationCancelled':
-				return 'Administrator approval was cancelled.';
+				return t('vdev.windows.issue.elevationCancelled');
 			case 'downloadFailed':
-				return 'Splitwave could not download VB-CABLE. Check your connection and try again.';
+				return t('vdev.windows.issue.downloadFailed');
 			case 'downloadTimedOut':
-				return 'Downloading VB-CABLE timed out. Check your connection and try again.';
+				return t('vdev.windows.issue.downloadTimedOut');
 			case 'checksumMismatch':
-				return 'The downloaded VB-CABLE archive failed its SHA-256 check, so Splitwave did not run it.';
+				return t('vdev.windows.issue.checksumMismatch');
 			case 'invalidSignature':
-				return errorMessage(value) ?? 'The downloaded driver could not be verified, so Splitwave did not run it.';
+				return errorMessage(value) ?? t('vdev.windows.issue.invalidSignature');
 			case 'driverPackageNotDetected':
-				return 'VB-CABLE installer finished, but Windows did not register the expected driver.';
+				return t('vdev.windows.issue.driverPackageNotDetected');
 			case 'helperResultMissing':
 			case 'helperResultInvalid':
-				return 'Splitwave could not read the installer result. Details were written to the app log.';
+				return t('vdev.windows.issue.helperResultMissing');
 			case 'operationInProgress':
-				return 'Another virtual microphone operation is already in progress.';
+				return t('vdev.windows.issue.operationInProgress');
 			case 'installerTimedOut':
 			case 'helperTimedOut':
-				return 'VB-CABLE setup took too long and was stopped. Try the installation again.';
+				return t('vdev.windows.issue.installerTimedOut');
 			default:
-				return errorMessage(value) ?? 'The virtual microphone could not be installed.';
+				// The backend's own message names the failing step; it is shown
+				// verbatim rather than flattened into a generic string.
+				return errorMessage(value);
 		}
 	}
 
@@ -58,7 +64,7 @@
 			status = await methods.windowsVirtualCableStatus();
 			issue = null;
 		} catch (error) {
-			issue = errorMessage(error) ?? 'Splitwave could not check the Windows virtual microphone status.';
+			issue = { value: error, fallbackKey: 'vdev.windows.issue.statusCheckFailed' };
 		} finally {
 			checking = false;
 		}
@@ -70,7 +76,7 @@
 		try {
 			status = await methods.installWindowsVirtualCable();
 		} catch (error) {
-			issue = friendlyIssue(error);
+			issue = { value: error, fallbackKey: 'vdev.windows.issue.installFailed' };
 			try {
 				status = await methods.windowsVirtualCableStatus();
 				if (status.usable) issue = null;
@@ -86,7 +92,7 @@
 		try {
 			await openUrl('https://vb-cable.com/');
 		} catch {
-			issue = 'Splitwave could not open the VB-Audio website.';
+			issue = { value: null, fallbackKey: 'vdev.windows.issue.openWebsiteFailed' };
 		}
 	}
 
@@ -104,42 +110,42 @@
 			<Plug class={['size-5', ready ? 'text-emerald-600 dark:text-emerald-400' : needsRestart || incomplete ? 'text-amber-600' : 'text-neutral-800']} />
 		</div>
 		<div class="flex min-w-0 flex-1 flex-col gap-1">
-			<h2 class="font-medium text-theme">VB-CABLE virtual microphone</h2>
+			<h2 class="font-medium text-theme">{t('vdev.windows.title')}</h2>
 			{#if checking}
-				<p class="text-xs text-neutral-900">Checking Windows audio...</p>
+				<p class="text-xs text-neutral-900">{t('vdev.windows.checking')}</p>
 			{:else if status?.state === 'installedExternal'}
-				<p class="text-xs text-neutral-900">Installed outside Splitwave</p>
+				<p class="text-xs text-neutral-900">{t('vdev.windows.installedExternal')}</p>
 			{:else if status?.state === 'unknownOwnership'}
-				<p class="text-xs text-neutral-900">Installed, ownership could not be verified</p>
+				<p class="text-xs text-neutral-900">{t('vdev.windows.unknownOwnership')}</p>
 			{:else if ready}
-				<p class="text-xs text-emerald-700 dark:text-emerald-300">Ready</p>
+				<p class="text-xs text-emerald-700 dark:text-emerald-300">{t('vdev.windows.ready')}</p>
 			{:else if needsRestart}
-				<p class="text-xs text-amber-700 dark:text-amber-300">Restart Windows to finish setup</p>
+				<p class="text-xs text-amber-700 dark:text-amber-300">{t('vdev.windows.restartRequired')}</p>
 			{:else if incomplete}
-				<p class="text-xs text-amber-700 dark:text-amber-300">Installation incomplete</p>
+				<p class="text-xs text-amber-700 dark:text-amber-300">{t('vdev.windows.incomplete')}</p>
 			{:else if status?.state === 'notInstalled'}
-				<p class="text-xs text-neutral-900">Not installed</p>
+				<p class="text-xs text-neutral-900">{t('vdev.windows.notInstalled')}</p>
 			{:else}
-				<p class="text-xs text-neutral-900">Status unavailable</p>
+				<p class="text-xs text-neutral-900">{t('vdev.windows.statusUnavailable')}</p>
 			{/if}
 		</div>
 		{#if !checking && status?.state === 'notInstalled'}
 			<button type="button" class="button-main green rounded-lg" onclick={install} disabled={installing}>
-				{installing ? 'Installing...' : 'Install virtual microphone'}
+				{installing ? t('common.installing') : t('vdev.windows.installVirtualMic')}
 			</button>
 		{:else if !installing && (issue || needsRestart || incomplete || status?.state === 'unknownOwnership')}
-			<button type="button" class="button-main primary rounded-lg" onclick={() => loadStatus(true)}>Check again</button>
+			<button type="button" class="button-main primary rounded-lg" onclick={() => loadStatus(true)}>{t('vdev.windows.checkAgain')}</button>
 		{/if}
 	</div>
 
 	{#if ready}
 		<div class="grid gap-2 rounded-xl bg-neutral-100 p-3 sm:grid-cols-2">
 			<div class="flex flex-col gap-0.5">
-				<span class="text-[10px] font-semibold tracking-wide text-neutral-800 uppercase">Speaker output</span>
+				<span class="text-[10px] font-semibold tracking-wide text-neutral-800 uppercase">{t('vdev.windows.speakerOutput')}</span>
 				<span class="font-mono text-xs text-theme">{status?.renderEndpointName}</span>
 			</div>
 			<div class="flex flex-col gap-0.5">
-				<span class="text-[10px] font-semibold tracking-wide text-neutral-800 uppercase">Microphone input</span>
+				<span class="text-[10px] font-semibold tracking-wide text-neutral-800 uppercase">{t('vdev.windows.microphoneInput')}</span>
 				<span class="font-mono text-xs text-theme">{status?.captureEndpointName}</span>
 			</div>
 		</div>
@@ -147,17 +153,17 @@
 
 	{#if needsRestart}
 		<p class="text-xs leading-relaxed text-neutral-1000">
-			VB-CABLE is present, but Windows has not exposed both audio endpoints yet. Splitwave checks again when this window regains focus.
+			{t('vdev.windows.restartDetail')}
 		</p>
 	{:else if status?.state === 'installedExternal'}
-		<p class="text-xs leading-relaxed text-neutral-1000">Splitwave will use this installation without claiming or removing it.</p>
+		<p class="text-xs leading-relaxed text-neutral-1000">{t('vdev.windows.externalDetail')}</p>
 	{:else if status?.state === 'unknownOwnership'}
-		<p class="text-xs leading-relaxed text-neutral-1000">The existing driver will be preserved and not changed.</p>
+		<p class="text-xs leading-relaxed text-neutral-1000">{t('vdev.windows.unknownDetail')}</p>
 	{:else if incomplete}
-		<p class="text-xs leading-relaxed text-neutral-1000">Splitwave found only part of the expected VB-CABLE installation and will not modify it.</p>
+		<p class="text-xs leading-relaxed text-neutral-1000">{t('vdev.windows.incompleteDetail')}</p>
 	{:else if status?.state === 'notInstalled'}
 		<p class="text-xs leading-relaxed text-neutral-1000">
-			Splitwave downloads the standard VB-Audio package from its official source. Administrator approval and a Windows restart may be required.
+			{t('vdev.windows.installDetail')}
 		</p>
 	{/if}
 
@@ -165,13 +171,14 @@
 		<p class="text-xs leading-relaxed text-neutral-900">{status.detail}</p>
 	{/if}
 
-	{#if issue}
-		<p class="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-700 dark:text-red-300">{issue}</p>
+	{#if issueText}
+		<p class="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-xs leading-relaxed text-red-700 dark:text-red-300">{issueText}</p>
 	{/if}
 
 	<div class="border-t border-neutral-300 pt-3 text-xs leading-relaxed text-neutral-900">
-		The origin of VB-CABLE :
-		<button type="button" class="text-blue-600 underline-offset-2 hover:underline" onclick={learnAboutVbCable}>www.vb-cable.com</button>. VB-CABLE is a
-		donationware, all participations are welcome.
+		{t('vdev.windows.origin')}
+		<button type="button" class="text-blue-600 underline-offset-2 hover:underline" onclick={learnAboutVbCable}>www.vb-cable.com</button>{t(
+			'vdev.windows.donationware'
+		)}
 	</div>
 </section>

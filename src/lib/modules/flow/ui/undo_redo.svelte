@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { ArrowUndo, ArrowRedo } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	let canUndo = $derived(pipelineStore.editorActions?.canUndo?.() ?? false);
 	let canRedo = $derived(pipelineStore.editorActions?.canRedo?.() ?? false);
@@ -24,9 +25,9 @@
 	function onWindowKeyDown(e: KeyboardEvent) {
 		if (!(e.metaKey || e.ctrlKey)) return;
 		if (e.key !== 'z' && e.key !== 'Z') return;
-		const t = e.target as HTMLElement | null;
-		const tag = t?.tagName?.toLowerCase();
-		if (tag === 'input' || tag === 'textarea' || tag === 'select' || t?.isContentEditable) return;
+		const el = e.target as HTMLElement | null;
+		const tag = el?.tagName?.toLowerCase();
+		if (tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable) return;
 		e.preventDefault();
 		if (e.shiftKey) {
 			if (!canRedo) return;
@@ -46,10 +47,10 @@
 </script>
 
 <div class="flex items-center gap-1">
-	<button type="button" class="button-header size-7" class:active={undoActive} title="Undo (⌘Z)" disabled={!canUndo} onclick={onUndo}>
+	<button type="button" class="button-header size-7" class:active={undoActive} title={t('flow.undoShortcut')} disabled={!canUndo} onclick={onUndo}>
 		<ArrowUndo class="h-4 w-4" />
 	</button>
-	<button type="button" class="button-header size-7" class:active={redoActive} title="Redo (⇧⌘Z)" disabled={!canRedo} onclick={onRedo}>
+	<button type="button" class="button-header size-7" class:active={redoActive} title={t('flow.redoShortcut')} disabled={!canRedo} onclick={onRedo}>
 		<ArrowRedo class="h-4 w-4" />
 	</button>
 </div>

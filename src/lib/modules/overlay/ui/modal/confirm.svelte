@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { modalManager, type ModalBaseProps } from '../../modal';
 	import Toggle from '$lib/components/toggle.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	interface Props {
 		message?: string;
@@ -15,15 +16,7 @@
 		warning?: string;
 	}
 
-	let {
-		modalId,
-		message = 'Are you sure?',
-		confirmLabel = 'Confirm',
-		cancelLabel = 'Cancel',
-		danger = false,
-		checkboxLabel,
-		warning
-	}: ModalBaseProps & Props = $props();
+	let { modalId, message, confirmLabel, cancelLabel, danger = false, checkboxLabel, warning }: ModalBaseProps & Props = $props();
 
 	let dontAskAgain = $state(false);
 
@@ -33,7 +26,7 @@
 </script>
 
 <div class="flex flex-col gap-4 px-5 py-4">
-	<p class="text-sm text-neutral-1100">{message}</p>
+	<p class="text-sm text-neutral-1100">{message ?? t('common.areYouSure')}</p>
 
 	{#if warning}
 		<div class="warning-block">{warning}</div>
@@ -45,10 +38,10 @@
 
 	<div class="flex justify-end gap-2">
 		<button type="button" class="button-main primary rounded-lg" onclick={() => close(false)}>
-			{cancelLabel}
+			{cancelLabel ?? t('common.cancel')}
 		</button>
 		<button type="button" class={['button-main rounded-lg', danger ? 'red' : 'green']} onclick={() => close(true)}>
-			{confirmLabel}
+			{confirmLabel ?? t('common.confirm')}
 		</button>
 	</div>
 </div>

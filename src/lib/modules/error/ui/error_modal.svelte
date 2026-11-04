@@ -5,6 +5,7 @@
 	import { formatAppInfo, getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import { ModalShell } from '$lib/modules/overlay/ui/modal';
 	import CopyButton from '$lib/components/copy_button.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	const REPO = 'Horuse/Splitwave';
 	// Longer issue URLs are cut off or rejected, so the GitHub link carries only
@@ -90,24 +91,24 @@
 	function sourceLabel(s: NonNullable<typeof current>['source']): string {
 		switch (s) {
 			case 'rustPanic':
-				return 'Rust panic';
+				return t('error.source.rustPanic');
 			case 'nativeCrash':
-				return 'Native crash';
+				return t('error.source.nativeCrash');
 			case 'unexpectedExit':
-				return 'Unexpected exit';
+				return t('error.source.unexpectedExit');
 			case 'hang':
-				return 'Not responding';
+				return t('error.source.hang');
 			case 'jsError':
-				return 'JS error';
+				return t('error.source.jsError');
 			case 'unhandledRejection':
-				return 'Unhandled promise rejection';
+				return t('error.source.unhandledRejection');
 		}
 	}
 </script>
 
 {#if current}
 	<ModalShell
-		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
+		title={current.previousRun ? t('error.crashedTitle') : t('error.genericTitle')}
 		titleClass={current.previousRun ? 'text-sm font-semibold text-amber-500' : 'text-sm font-semibold text-red-500'}
 		onClose={dismiss}>
 		{#snippet badge()}
@@ -117,7 +118,7 @@
 				</span>
 				{#if current.previousRun || audioStore.safeMode}
 					<span class="rounded-md bg-amber-500/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-						SAFE MODE
+						{t('error.safeModeBadge')}
 					</span>
 				{/if}
 			</div>
@@ -126,32 +127,31 @@
 		<div class="flex flex-col gap-3 px-5 py-4">
 			{#if current.previousRun || audioStore.safeMode}
 				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
-					<div class="font-semibold">Safe Mode is active</div>
+					<div class="font-semibold">{t('error.safeModeTitle')}</div>
 					<div class="mt-0.5 text-[11px] opacity-90">
-						Automatic audio pipeline startup was skipped to prevent a crash loop. You can safely inspect or edit your pipelines and start them
-						manually when ready.
+						{t('error.safeModeMessage')}
 					</div>
 				</div>
 			{/if}
 			<p class="text-xs text-neutral-900">
 				{#if current.previousRun}
-					The app closed unexpectedly during your previous session. Reporting this helps us fix it.
+					{t('error.previousRunHint')}
 				{:else}
-					Please report this so we can fix it.
+					{t('error.reportHint')}
 				{/if}
 			</p>
 			<pre
 				class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1100">{current.message}</pre>
 			{#if current.stack}
 				<details class="group">
-					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Stack trace</summary>
+					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">{t('error.stackTrace')}</summary>
 					<pre
 						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.stack}</pre>
 				</details>
 			{/if}
 			{#if current.logs}
 				<details class="group">
-					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Session log</summary>
+					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">{t('error.sessionLog')}</summary>
 					<pre
 						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.logs}</pre>
 				</details>
@@ -159,9 +159,9 @@
 		</div>
 
 		{#snippet footer()}
-			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
-			<CopyButton text={() => buildDetails()} label="Copy details" class="button-main primary gap-3 rounded-lg" />
-			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}> Report on GitHub </button>
+			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> {t('common.dismiss')} </button>
+			<CopyButton text={() => buildDetails()} label={t('error.copyDetails')} class="button-main primary gap-3 rounded-lg" />
+			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}> {t('error.reportOnGitHub')} </button>
 		{/snippet}
 	</ModalShell>
 {/if}

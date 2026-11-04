@@ -3,6 +3,7 @@ import { methods } from './methods';
 import { audioStore } from './stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { formatHz } from '$lib/components/format';
+import { t } from '$lib/modules/i18n';
 import type { NativeDeviceInfo } from './types';
 
 export type DeviceInfoTarget = { kind: 'input' | 'output'; deviceId: () => string | null } | { kind: 'system' | 'app'; pipelineRate?: () => number };
@@ -150,11 +151,11 @@ export function useDeviceInfo(target: DeviceInfoTarget): DeviceInfoState {
 		if (!info) return undefined;
 		if (target.kind === 'output') {
 			if (info.sampleRate === appSettings.pipelineSampleRate) return undefined;
-			return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(info.sampleRate)}`;
+			return t('node.source.resampling', { from: formatHz(appSettings.pipelineSampleRate), to: formatHz(info.sampleRate) });
 		} else {
 			const sr = info.sampleRate;
 			if (sr === appSettings.pipelineSampleRate) return undefined;
-			return `Resampling: ${formatHz(sr)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+			return t('node.source.resampling', { from: formatHz(sr), to: formatHz(appSettings.pipelineSampleRate) });
 		}
 	});
 

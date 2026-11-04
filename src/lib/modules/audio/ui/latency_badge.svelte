@@ -2,6 +2,7 @@
 	import Gauge from '$lib/components/icons/gauge.svelte';
 	import { methods } from '../methods';
 	import { audioStore } from '../stores.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	let latencyMs = $state<number | null>(null);
 
@@ -25,9 +26,7 @@
 </script>
 
 {#if latencyMs !== null && latencyMs > 0}
-	<span
-		class="flex items-center gap-1.5 rounded-md border border-theme/10 bg-background px-2 py-0.5"
-		title="Total latency (input + all nodes + output buffer)">
+	<span class="flex items-center gap-1.5 rounded-md border border-theme/10 bg-background px-2 py-0.5" title={t('audio.latencyTooltip')}>
 		<Gauge class="h-3.5 w-3.5 text-neutral-500" />
 		<span class="font-mono text-xs text-neutral-800 tabular-nums">{latencyMs} ms</span>
 	</span>

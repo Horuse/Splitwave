@@ -5,6 +5,7 @@
 	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 	import MeterBar from '$lib/components/meter_bar.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	const METER_GRADIENT = 'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
 
@@ -77,17 +78,17 @@
 		const nextDisplays = new Array(n);
 		const nextHolds = new Array(n);
 		for (let i = 0; i < n; i++) {
-			const t = ampToDb(targets[i]) + dbOffset;
+			const target = ampToDb(targets[i]) + dbOffset;
 			const d = displays[i] ?? -Infinity;
 			const h = holds[i] ?? -Infinity;
-			nextDisplays[i] = t > d ? t : Math.max(t, d - PEAK_FALL_DB_PER_SEC * dt);
+			nextDisplays[i] = target > d ? target : Math.max(target, d - PEAK_FALL_DB_PER_SEC * dt);
 			let newHold = h;
 			holdTimes[i] = (holdTimes[i] ?? 0) + dt;
-			if (t >= h) {
-				newHold = t;
+			if (target >= h) {
+				newHold = target;
 				holdTimes[i] = 0;
 			} else if (holdTimes[i] > HOLD_SEC) {
-				newHold = Math.max(t, h - HOLD_FALL_DB_PER_SEC * dt);
+				newHold = Math.max(target, h - HOLD_FALL_DB_PER_SEC * dt);
 			}
 			nextHolds[i] = newHold;
 		}
@@ -101,7 +102,7 @@
 	});
 </script>
 
-<div class="flex w-full flex-col gap-1" aria-label="Live level">
+<div class="flex w-full flex-col gap-1" aria-label={t('node.inputMeter.liveLevel')}>
 	{#each rows as i (i)}
 		{@const db = displays[i] ?? -Infinity}
 		{@const hold = holds[i] ?? -Infinity}

@@ -3,6 +3,7 @@
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { Checkmark } from '$lib/components/icons';
 	import { relativeTime } from '$lib/utils/time';
+	import { t } from '$lib/modules/i18n';
 
 	let now = $state(Date.now());
 	let timer: ReturnType<typeof setInterval> | undefined;
@@ -17,12 +18,12 @@
 		now;
 		const ms = pipelineStore.lastSavedAt;
 		if (ms === 0) return '—';
-		if (Date.now() - ms < 2000) return 'just now';
+		if (Date.now() - ms < 2000) return t('flow.savedJustNow');
 		return relativeTime(ms);
 	});
 </script>
 
 <div class="flex items-center gap-1 text-[10px] text-neutral-900">
 	<Checkmark class="h-3 w-3 text-green-600" />
-	<span class="font-mono tabular-nums">Saved {label}</span>
+	<span class="font-mono tabular-nums">{t('flow.savedAt', { time: label })}</span>
 </div>

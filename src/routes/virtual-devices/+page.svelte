@@ -11,6 +11,7 @@
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatHz } from '$lib/components/format';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	const isLinux = platform() === 'linux';
 	const isWindows = platform() === 'windows';
@@ -51,7 +52,13 @@
 	}
 
 	function addDevice() {
-		devices = [...devices, { id: createId(), name: `Device ${devices.length + 1}`, channels: 2, sampleRate: 48_000 }];
+		// Names are persisted and shown by the OS, so derive the number from the
+		// devices that already exist instead of the array length (deleting a
+		// middle device would otherwise reuse a name).
+		const used = new Set(devices.map((d) => d.name));
+		let n = devices.length + 1;
+		while (used.has(t('vdev.defaultName', { n }))) n += 1;
+		devices = [...devices, { id: createId(), name: t('vdev.defaultName', { n }), channels: 2, sampleRate: 48_000 }];
 	}
 
 	function removeDevice(id: string) {
@@ -121,17 +128,15 @@
 
 <div class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-8">
 	<div class="mt-2 flex flex-col gap-1">
-		<h1 class="text-2xl font-semibold">Virtual Devices</h1>
+		<h1 class="text-2xl font-semibold">{t('vdev.title')}</h1>
 
 		{#if isWindows}
 			<p class="max-w-3xl text-base text-neutral-700">
-				Windows uses the fixed VB-CABLE device pair. Send a Speaker node to CABLE Input, then select CABLE Output as the microphone in another app.
+				{t('vdev.windowsHint')}
 			</p>
 		{:else}
 			<p class="max-w-3xl text-base text-neutral-700">
-				A virtual device is a system audio device that exists only in software - no hardware required. Apps can send audio to it or record from it just
-				like a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and route it
-				to another.
+				{t('vdev.genericHint')}
 			</p>
 		{/if}
 	</div>
@@ -145,16 +150,16 @@
 					<Plug class={['size-4.5', status?.installed ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-700']} />
 				</div>
 				<div class="flex-1">
-					<div class="font-medium">Audio Server Plugin</div>
+					<div class="font-medium">{t('vdev.audioServerPlugin')}</div>
 					<div class="text-xs text-neutral-900">
-						{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to appear in system audio
+						{status?.installed ? t('vdev.installed') : t('vdev.notInstalled')} &mdash; {t('vdev.requiredHint')}
 					</div>
 				</div>
 				{#if status?.installed}
-					<button class="btn-alert h-full py-1.5" onclick={uninstall}>Uninstall</button>
+					<button class="btn-alert h-full py-1.5" onclick={uninstall}>{t('vdev.uninstall')}</button>
 				{:else}
 					<button class="btn-alert h-full py-1.5" onclick={installDriver} disabled={installing}>
-						{installing ? 'Installing...' : 'Install'}
+						{installing ? t('common.installing') : t('common.install')}
 					</button>
 				{/if}
 			</div>
@@ -169,17 +174,17 @@
 		{#if isLinux || status?.installed}
 			<div class="flex flex-col gap-4">
 				<div class="flex items-center justify-between">
-					<h2 class="text-lg font-medium">Devices</h2>
+					<h2 class="text-lg font-medium">{t('vdev.devices')}</h2>
 					<button class="button-main primary gap-1.5 py-1.5" onclick={addDevice}>
 						<Add class="size-4" />
-						Add device
+						{t('vdev.addDevice')}
 					</button>
 				</div>
 
 				{#if devices.length === 0}
 					<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-12">
 						<SoundWave class="size-10 text-neutral-600" />
-						<p class="text-sm text-neutral-900">No virtual devices. Add one above.</p>
+						<p class="text-sm text-neutral-900">{t('vdev.empty')}</p>
 					</div>
 				{:else}
 					<ul class="flex flex-col gap-2">
@@ -196,19 +201,23 @@
 									<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">
 										{d.id.slice(0, 8)}
 									</span>
-									<button class="btn-alert px-2.5 py-2" onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
+									<button
+										class="btn-alert px-2.5 py-2"
+										onclick={() => removeDevice(d.id)}
+										aria-label={t('vdev.removeAria')}
+										title={t('vdev.removeAria')}>
 										<Delete class="size-4" />
 									</button>
 								</div>
 								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 									<div class="flex items-center gap-2">
-										<span class="text-xs text-neutral-900">Channels</span>
+										<span class="text-xs text-neutral-900">{t('vdev.channels')}</span>
 										<NumberStepper
 											value={d.channels ?? 2}
 											min={1}
 											max={maxChannels}
 											step={1}
-											label="Channels"
+											label={t('vdev.channels')}
 											onchange={(v) => setChannels(d.id, v)} />
 									</div>
 									<div class="flex items-center gap-1">
@@ -225,17 +234,17 @@
 											</button>
 										{/each}
 									</div>
-									<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to {maxChannels} channels </span>
+									<span class="ml-auto text-[11px] text-neutral-800"> {t('vdev.appearsAs', { n: maxChannels })} </span>
 								</div>
 								<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-300/40 pt-2">
 									<div class="flex items-center gap-2">
-										<span class="text-xs text-neutral-900">Sample rate</span>
+										<span class="text-xs text-neutral-900">{t('vdev.sampleRate')}</span>
 										<NumberStepper
 											value={d.sampleRate ?? 48_000}
 											min={8000}
 											max={384000}
 											step={1}
-											label="Sample rate"
+											label={t('vdev.sampleRate')}
 											onchange={(v) => setSampleRate(d.id, v)} />
 										<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz</span>
 									</div>
@@ -253,7 +262,7 @@
 											</button>
 										{/each}
 									</div>
-									<span class="ml-auto text-[11px] text-neutral-800"> Matches project rate to avoid resampling </span>
+									<span class="ml-auto text-[11px] text-neutral-800"> {t('vdev.matchesProject')} </span>
 								</div>
 							</li>
 						{/each}
@@ -263,8 +272,8 @@
 
 			{#if dirty}
 				<div class="warning-block">
-					<strong>Changes not applied</strong>
-					Press Apply to update the system audio devices.
+					<strong>{t('vdev.changesNotApplied')}</strong>
+					{t('vdev.applyHint')}
 				</div>
 			{/if}
 
@@ -274,7 +283,7 @@
 
 			<div class="flex items-center gap-4">
 				<button class="button-main primary px-8 py-2" onclick={apply} disabled={applying}>
-					{applying ? 'Applying...' : 'Apply'}
+					{applying ? t('common.applying') : t('common.apply')}
 				</button>
 			</div>
 		{/if}

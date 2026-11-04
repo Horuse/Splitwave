@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { audioStore } from '../stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	let { pipelineId }: { pipelineId: string } = $props();
 
@@ -15,7 +16,7 @@
 			} else {
 				const snapshot = pipelineStore.editorActions?.getSnapshot();
 				if (!snapshot) {
-					audioStore.reportError('No pipeline loaded');
+					audioStore.reportError(t('audio.noPipelineLoaded'));
 					return;
 				}
 				await audioStore.activatePipeline(pipelineId, { nodes: snapshot.nodes, edges: snapshot.edges });
@@ -32,8 +33,8 @@
 	{#if busy}
 		…
 	{:else if audioStore.isRunning}
-		Stop
+		{t('common.stop')}
 	{:else}
-		Activate
+		{t('common.activate')}
 	{/if}
 </button>

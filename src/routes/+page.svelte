@@ -8,18 +8,19 @@
 	import { isFromFuture } from '$lib/modules/pipeline/migrations';
 	import { TEMPLATES, instantiate } from '$lib/modules/template';
 	import { TemplateModal } from '$lib/modules/template/ui';
+	import { t } from '$lib/modules/i18n';
 
 	async function createPipeline() {
-		const templateId = await modalManager.open<string>('New pipeline', TemplateModal, {
+		const templateId = await modalManager.open<string>(t('template.newTitle'), TemplateModal, {
 			size: 'xl',
-			description: 'Start from a wired-up layout, or an empty canvas.'
+			description: t('template.newDescription')
 		});
 		if (!templateId) return;
 
-		const template = TEMPLATES.find((t) => t.id === templateId);
+		const template = TEMPLATES.find((tpl) => tpl.id === templateId);
 		if (!template) return;
 
-		const name = `Pipeline ${pipelineStore.pipelines.length + 1}`;
+		const name = t('pipelines.defaultName', { n: pipelineStore.pipelines.length + 1 });
 		const p = instantiate(template, name);
 		await pipelineStore.save(p);
 		await goto(`/pipelines/${p.id}`);
@@ -28,9 +29,9 @@
 	async function remove(id: string, name: string, event: Event) {
 		event.stopPropagation();
 		event.preventDefault();
-		const ok = await modalManager.open<boolean>(`Delete "${name}"?`, ConfirmModal, {
-			message: 'This pipeline and its snapshot history will be permanently removed.',
-			confirmLabel: 'Delete',
+		const ok = await modalManager.open<boolean>(t('pipelines.deleteTitle', { name }), ConfirmModal, {
+			message: t('pipelines.deleteMessage'),
+			confirmLabel: t('common.delete'),
 			danger: true
 		});
 		if (ok) await pipelineStore.remove(id);
@@ -81,21 +82,21 @@
 	{/if}
 
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold">Pipelines</h1>
+		<h1 class="text-2xl font-semibold">{t('pipelines.title')}</h1>
 
 		<button class="button-main primary gap-1.5 p-6 py-2" onclick={createPipeline}>
 			<Add class="size-4" />
-			New pipeline
+			{t('pipelines.new')}
 		</button>
 	</div>
 
 	{#if pipelineStore.pipelines.length === 0}
 		<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-16">
 			<SoundWave class="size-10 text-neutral-600" />
-			<p class="text-sm text-neutral-900">No pipelines yet. Create one to get started.</p>
+			<p class="text-sm text-neutral-900">{t('pipelines.empty')}</p>
 			<button class="button-main primary gap-1.5 py-1.5" onclick={createPipeline}>
 				<Add class="size-4" />
-				New pipeline
+				{t('pipelines.new')}
 			</button>
 		</div>
 	{:else}
@@ -111,7 +112,7 @@
 							<span class="font-medium">{p.name}</span>
 							{#if stale}
 								<span class="rounded border border-amber-600/50 bg-amber-500/20 px-1.5 py-0.5 font-mono text-[9px] text-amber-600">
-									newer version
+									{t('pipelines.newerVersion')}
 								</span>
 							{/if}
 							{#if audioStore.runningPipelineId === p.id}
@@ -120,9 +121,9 @@
 						</div>
 						<div class="text-xs text-neutral-900">
 							{#if stale}
-								Saved by a newer version - update Splitwave to open it.
+								{t('pipelines.newerVersionHint')}
 							{:else}
-								{p.nodes.length} nodes · updated {relativeTime(p.updatedAt)}
+								{t('pipelines.summary', { nodes: p.nodes.length, time: relativeTime(p.updatedAt) })}
 							{/if}
 						</div>
 					</svelte:element>
@@ -135,15 +136,15 @@
 								…
 							{:else if audioStore.isRunning && audioStore.runningPipelineId === p.id}
 								<Stop class="size-3.5" />
-								Stop
+								{t('common.stop')}
 							{:else}
 								<Play class="size-3.5" />
-								Activate
+								{t('common.activate')}
 							{/if}
 						</button>
-						<button class="btn-alert py-2" onclick={(e) => remove(p.id, p.name, e)} aria-label="Delete pipeline">
+						<button class="btn-alert py-2" onclick={(e) => remove(p.id, p.name, e)} aria-label={t('pipelines.deleteAria')}>
 							<Delete class="size-3.5" />
-							Delete
+							{t('common.delete')}
 						</button>
 					</div>
 				</li>

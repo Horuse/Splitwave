@@ -10,6 +10,7 @@
 	import Slider from './_slider.svelte';
 	import Toggle from '$lib/components/toggle.svelte';
 	import { Plug, Refresh, WindowOff } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
 	let { id, data }: NodeProps<PluginNodeType> = $props();
@@ -173,7 +174,7 @@
 </script>
 
 <Wrapper
-	label={data.name || 'Plugin'}
+	label={data.name || t('node.plugin.label')}
 	icon={Plug}
 	accent="effect"
 	hasInput
@@ -187,8 +188,8 @@
 		<Combobox
 			{options}
 			value={currentUid}
-			placeholder={data.name || (pluginCatalog.scanning ? 'Scanning…' : 'Select a plugin')}
-			emptyHint={pluginCatalog.scanning ? 'Scanning…' : 'No plugins found'}
+			placeholder={data.name || (pluginCatalog.scanning ? t('node.plugin.scanning') : t('node.plugin.selectPlaceholder'))}
+			emptyHint={pluginCatalog.scanning ? t('node.plugin.scanning') : t('node.plugin.noPlugins')}
 			onOpen={() => pluginCatalog.refresh()}
 			onChange={select}>
 			{#snippet footer()}
@@ -196,21 +197,21 @@
 			{/snippet}
 		</Combobox>
 		{#if missing}
-			<p class="text-xs text-rose-400">Not installed, or failed to load</p>
+			<p class="text-xs text-rose-400">{t('node.plugin.notInstalled')}</p>
 		{/if}
 		{#if pluginCatalog.error}
-			<p class="text-xs text-rose-400">Plugin scan failed: {pluginCatalog.error}</p>
+			<p class="text-xs text-rose-400">{t('node.plugin.scanFailed', { error: pluginCatalog.error })}</p>
 		{/if}
 		{#if data.path}
 			{#if loading}
 				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
 					<Refresh class="h-4 w-4 shrink-0 animate-spin" />
-					Loading plugin...
+					{t('node.plugin.loading')}
 				</p>
 			{:else if canOpenEditor && !status.hasEditor}
 				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
 					<WindowOff class="h-4 w-4 shrink-0" />
-					No editor
+					{t('node.plugin.noEditor')}
 				</p>
 				{#if editorError}
 					<p class="text-xs text-rose-400">{editorError}</p>
@@ -219,15 +220,15 @@
 				<button
 					class="nodrag nopan rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
 					disabled={!canOpenEditor}
-					title={canOpenEditor ? undefined : 'Start the pipeline to open the editor'}
+					title={canOpenEditor ? undefined : t('node.plugin.startToOpen')}
 					onclick={toggleEditor}>
-					{editorOpen ? 'Close editor' : 'Open editor'}
+					{editorOpen ? t('node.plugin.closeEditor') : t('node.plugin.openEditor')}
 				</button>
 			{/if}
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>
-			<Toggle size="sm" label="Show parameters" checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
+			<Toggle size="sm" label={t('node.plugin.showParams')} checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
 			{#if data.showParams && params.length}
 				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
 					{#each params as p (p.id)}

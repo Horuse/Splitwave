@@ -15,6 +15,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	const isWindows = platform() === 'windows';
 
@@ -67,14 +68,14 @@
 	});
 </script>
 
-<Wrapper label="Microphone" accent="input" icon={Mic} {srcTooltip}>
+<Wrapper label={t('node.microphone.label')} accent="input" icon={Mic} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-2">
-		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
+		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder={t('node.mic.select')} onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				{#if !isWindows}
 					<ComboboxAction
-						label="Add virtual device"
+						label={t('node.mic.addVirtual')}
 						icon={Add}
 						onclick={() => {
 							close();
@@ -84,24 +85,32 @@
 			{/snippet}
 		</Combobox>
 		{#if missing}
-			<span class="text-[10px] text-red-500">Selected device not available</span>
+			<span class="text-[10px] text-red-500">{t('node.device.missing')}</span>
 		{:else if devInfo.info}
 			<span class="node-spec">
 				{devInfo.specText}
 			</span>
 		{:else if data.deviceId}
 			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
-				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+				{devInfo.isLoading ? t('node.device.detecting') : t('node.device.detectFailed')}
 			</span>
 		{/if}
 
 		{#if data.deviceId && !missing}
 			{#if gain.unsupported}
-				<span class="text-[10px] text-neutral-900"> Input gain not adjustable for this device </span>
+				<span class="text-[10px] text-neutral-900"> {t('node.mic.gainUnsupported')} </span>
 			{:else if gain.scalar !== null}
-				<Slider label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
+				<Slider
+					label={t('node.slider.gain')}
+					value={gainPct}
+					min={0}
+					max={100}
+					step={1}
+					format={formatPct}
+					ticks={[25, 50, 75]}
+					onChange={setGainPct} />
 				{#if gain.unsynced}
-					<span class="text-[10px] text-neutral-900">Gain changed elsewhere won't show here</span>
+					<span class="text-[10px] text-neutral-900">{t('node.mic.gainUnsynced')}</span>
 				{/if}
 			{/if}
 			<InputMeter nodeId={id} {channelCount} />

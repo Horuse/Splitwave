@@ -16,6 +16,7 @@
 	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;
 	let { id, data }: NodeProps<WebRtcNodeType> = $props();
@@ -24,7 +25,7 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `WebRTC audio operates at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
+		return t('node.source.webrtcResampling', { rate: formatHz(48_000), pipeline: formatHz(appSettings.pipelineSampleRate) });
 	});
 
 	const MAX_CHANNELS = 255;
@@ -53,7 +54,9 @@
 	let joinPassword = $state('');
 	let phase = $state<'idle' | 'hosting' | 'joining'>('idle');
 	let busy = $state(false);
-	let error = $state('');
+	let errorKey = $state<string | null>(null);
+	let errorText = $state<string | null>(null);
+	let error = $derived(errorText ?? (errorKey ? t(errorKey) : ''));
 	let peers = $state<{ peerId: string; muted: boolean; name: string; channels: number[] }[]>([]);
 	let quality = $state<Record<string, { ping: number; loss: number }>>({});
 	// Jitter buffer depth: latency this node adds, separate from the link's RTT.
@@ -87,17 +90,17 @@
 		{ bps: 128_000, label: '128' }
 	];
 
-	const APPS: { value: OpusApplication; label: string; sub: string }[] = [
-		{ value: 'voip', label: 'VoIP', sub: 'voice' },
-		{ value: 'audio', label: 'Audio', sub: 'music' },
-		{ value: 'low-delay', label: 'Low', sub: 'delay' }
-	];
+	const APPS = $derived<{ value: OpusApplication; label: string; sub: string }[]>([
+		{ value: 'voip', label: 'VoIP', sub: t('node.webrtc.voice') },
+		{ value: 'audio', label: 'Audio', sub: t('node.webrtc.music') },
+		{ value: 'low-delay', label: 'Low', sub: t('node.webrtc.delaySub') }
+	]);
 
-	const CODECS: { value: NetCodec; label: string; sub: string }[] = [
-		{ value: 'opus', label: 'Opus', sub: 'compressed' },
+	const CODECS = $derived<{ value: NetCodec; label: string; sub: string }[]>([
+		{ value: 'opus', label: 'Opus', sub: t('node.webrtc.compressed') },
 		{ value: 'pcm-f32', label: 'PCM', sub: 'f32' },
 		{ value: 'pcm-i16', label: 'PCM', sub: 'i16' }
-	];
+	]);
 
 	function setCodec(codec: NetCodec) {
 		flow.updateNodeData(id, { codec });
@@ -121,13 +124,14 @@
 
 	async function createRoom() {
 		busy = true;
-		error = '';
+		errorKey = null;
+		errorText = null;
 		try {
 			const hash = await audioMethods.webrtcHashPassword(password);
 			roomCode = await audioMethods.webrtcCreateRoom(id, data.opusBitrate, data.opusApplication, hash);
 			phase = 'hosting';
 		} catch (e) {
-			error = String(e);
+			errorText = String(e);
 		} finally {
 			busy = false;
 		}
@@ -135,13 +139,14 @@
 
 	async function joinRoom() {
 		busy = true;
-		error = '';
+		errorKey = null;
+		errorText = null;
 		try {
 			const hash = await audioMethods.webrtcHashPassword(joinPassword);
 			await audioMethods.webrtcJoinRoom(id, joinInput.trim().toUpperCase(), data.opusBitrate, data.opusApplication, hash);
 			phase = 'joining';
 		} catch (e) {
-			error = String(e);
+			errorText = String(e);
 			busy = false;
 		}
 	}
@@ -157,12 +162,12 @@
 	}
 
 	async function destroy() {
-		if (!(await confirmAction('Destroy this room? All participants will be disconnected.', 'Destroy'))) return;
+		if (!(await confirmAction(t('node.webrtc.destroyConfirm'), t('node.webrtc.destroy')))) return;
 		await cancel();
 	}
 
 	async function leave() {
-		if (!(await confirmAction('Leave this room?', 'Leave'))) return;
+		if (!(await confirmAction(t('node.webrtc.leaveConfirm'), t('node.webrtc.leave')))) return;
 		await cancel();
 	}
 
@@ -178,7 +183,8 @@
 		peers = [];
 		quality = {};
 		lossWindows.clear();
-		error = '';
+		errorKey = null;
+		errorText = null;
 		busy = false;
 	}
 
@@ -238,12 +244,13 @@
 			if (phase === 'joining' && peers.length === 0) {
 				stopPingPolling();
 				phase = 'idle';
-				error = 'Host left the room';
+				errorKey = 'node.webrtc.hostLeft';
 			}
 		}),
 		audioMethods.onWebrtcError((e) => {
 			if (e.nodeId !== id) return;
-			error = e.error;
+			errorKey = null;
+			errorText = e.error;
 			busy = false;
 			phase = 'idle';
 		}),
@@ -276,34 +283,34 @@
 	});
 </script>
 
-<Wrapper label="WebRTC" icon={PeopleTeam} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label={t('node.webRtcCollaborator.label')} icon={PeopleTeam} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- device / participant name -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Name</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.name')}</span>
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
-				placeholder="This device"
+				placeholder={t('node.webrtc.devicePlaceholder')}
 				value={data.name ?? ''}
 				onchange={(e) => setName(e.currentTarget.value)} />
 		</div>
 
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.codec')}</span>
 			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.bitrate')}</span>
 				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.mode')}</span>
 				<SegmentedButtons
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
@@ -314,45 +321,45 @@
 		<hr class="border-neutral-300" />
 
 		{#if phase === 'idle'}
-			<PasswordInput bind:value={password} placeholder="Password (optional)" />
+			<PasswordInput bind:value={password} placeholder={t('node.webrtc.passwordOptional')} />
 			<button class="nodrag nopan button-main primary h-6 rounded-md px-2 font-mono text-[10px]" disabled={busy} onclick={createRoom}>
-				{busy ? 'creating…' : 'Create room'}
+				{busy ? t('node.webrtc.creating') : t('node.webrtc.createRoom')}
 			</button>
 			<hr class="border-neutral-200" />
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
-				placeholder="Room code"
+				placeholder={t('node.webrtc.roomCode')}
 				inputmode="numeric"
 				maxlength={6}
 				bind:value={joinInput} />
 			<div class="flex gap-1">
-				<PasswordInput bind:value={joinPassword} placeholder="Password" />
+				<PasswordInput bind:value={joinPassword} placeholder={t('form.password')} />
 				<button
 					class="nodrag nopan button-main primary h-6 rounded-md px-3 font-mono text-[10px]"
 					disabled={busy || joinInput.trim().length < 6}
 					onclick={joinRoom}>
-					Join
+					{t('node.webrtc.join')}
 				</button>
 			</div>
 		{:else if phase === 'hosting'}
 			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">Room code</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.roomCode')}</span>
 				<button class="nodrag nopan button-main secondary h-4 rounded px-1.5 font-mono text-[9px]" onclick={() => copy(roomCode)}
-					>{copied ? 'copied!' : 'copy'}</button>
+					>{copied ? t('node.webrtc.copied') : t('node.webrtc.copy')}</button>
 			</div>
 			<div class="flex items-center justify-between rounded border border-neutral-300 bg-neutral-50 px-2 py-1">
 				<span class="font-mono text-base font-bold tracking-widest text-neutral-900">{roomCode}</span>
 			</div>
 			{#if peers.length === 0}
-				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
+				<p class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.waitingForPeer')}</p>
 			{/if}
-			<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={destroy}> Destroy </button>
+			<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={destroy}> {t('node.webrtc.destroy')} </button>
 		{:else if phase === 'joining'}
 			{#if peers.length === 0}
-				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={cancel}> Cancel </button>
+				<p class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.connecting')}</p>
+				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={cancel}> {t('node.webrtc.cancel')} </button>
 			{:else}
-				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={leave}> Leave </button>
+				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={leave}> {t('node.webrtc.leave')} </button>
 			{/if}
 		{/if}
 
@@ -363,7 +370,7 @@
 		<!-- added latency: one buffer serves every peer, unlike the per-peer ping -->
 		{#if peers.length > 0}
 			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">delay</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.webrtc.delay')}</span>
 				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
 					{bufferMs ? `${bufferMs}ms` : '--'}
 				</span>
@@ -374,8 +381,8 @@
 			<hr class="border-neutral-300" />
 			{#if phase !== 'idle'}
 				<div class="relative flex min-h-5 items-center justify-between gap-1">
-					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
-					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
+					<span class="truncate font-mono text-[9px] text-neutral-500">{t('node.webrtc.allPeers')}</span>
+					<span class="shrink-0 font-mono text-[9px] text-neutral-400">{t('node.webrtc.mixed')}</span>
 					<Handle type="source" id="mixed" position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>
 			{/if}

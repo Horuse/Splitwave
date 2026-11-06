@@ -143,6 +143,8 @@ pub struct MicrophoneData {
 pub struct SystemAudioData {
     #[serde(default = "default_true")]
     pub exclude_current_app: bool,
+    #[serde(default)]
+    pub mute_original: bool,
     #[serde(default = "default_one")]
     pub volume: f32,
 }
@@ -158,6 +160,8 @@ fn default_one() -> f32 {
 #[ts(export)]
 pub struct AppAudioData {
     pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub mute_original: bool,
     #[serde(default = "default_one")]
     pub volume: f32,
 }
@@ -579,9 +583,11 @@ pub enum InputSpec {
     },
     SystemAudio {
         exclude_current_app: bool,
+        mute_original: bool,
     },
     AppAudio {
         bundle_id: String,
+        mute_original: bool,
     },
     AudioFile {
         file_path: String,
@@ -1002,6 +1008,7 @@ fn resolve_inputs(
                     let data: SystemAudioData = parse(n.data, "SystemAudio")?;
                     let spec = InputSpec::SystemAudio {
                         exclude_current_app: data.exclude_current_app,
+                        mute_original: data.mute_original,
                     };
                     (spec, data.volume, true)
                 }
@@ -1011,6 +1018,7 @@ fn resolve_inputs(
                         bundle_id: data
                             .bundle_id
                             .ok_or_else(|| miss(&n.id, "App Audio has no application selected"))?,
+                        mute_original: data.mute_original,
                     };
                     (spec, data.volume, true)
                 }
@@ -1791,7 +1799,7 @@ mod tests {
     }
 
     #[test]
-    fn system_audio_defaults_volume_and_exclude() {
+    fn system_audio_defaults_volume_exclude_and_mute() {
         let sys = node("sys", NodeKind::SystemAudio, serde_json::json!({}));
         let g = GraphSpec {
             sample_rate: None,
@@ -1802,7 +1810,7 @@ mod tests {
         let v = g.validate().expect("valid");
         assert_eq!(v.inputs[0].volume, 1.0);
         assert!(
-            matches!(&v.inputs[0].spec, InputSpec::SystemAudio { exclude_current_app } if *exclude_current_app)
+            matches!(&v.inputs[0].spec, InputSpec::SystemAudio { exclude_current_app, mute_original } if *exclude_current_app && !*mute_original)
         );
     }
 

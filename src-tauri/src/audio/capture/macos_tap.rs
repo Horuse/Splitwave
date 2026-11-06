@@ -69,6 +69,7 @@ extern "C" {
     fn ba_tap_start_app(
         handle: *mut c_void,
         bundle_id: *const c_char,
+        mute_original: i32,
         io_frames: u32,
         callback: SampleCallback,
         user_data: *mut c_void,
@@ -76,6 +77,7 @@ extern "C" {
     fn ba_tap_start_system(
         handle: *mut c_void,
         exclude_current_app: i32,
+        mute_original: i32,
         io_frames: u32,
         callback: SampleCallback,
         user_data: *mut c_void,
@@ -146,7 +148,14 @@ extern "C" fn sample_trampoline(
 impl TapCapture {
     /// `io_frames` is the IO buffer asked of the tap's aggregate. Each delivery
     /// carries one, so it sets how bursty capture is; 0 keeps the HAL default.
-    pub fn start_app(bundle_id: &str, io_frames: u32, bridge: BroadcastRx) -> AppResult<Self> {
+    /// `mute_original` silences the tapped app on the output device, so the
+    /// listener hears only the graph's copy instead of both summed.
+    pub fn start_app(
+        bundle_id: &str,
+        mute_original: bool,
+        io_frames: u32,
+        bridge: BroadcastRx,
+    ) -> AppResult<Self> {
         let bundle_cstr = CString::new(bundle_id)
             .map_err(|_| AppError::Validation("bundle id contains nul byte".into()))?;
         Self::start(
@@ -154,16 +163,25 @@ impl TapCapture {
             &format!("app audio capture ({bundle_id})"),
             bridge,
             |handle, callback, user_data| unsafe {
-                ba_tap_start_app(handle, bundle_cstr.as_ptr(), io_frames, callback, user_data)
+                ba_tap_start_app(
+                    handle,
+                    bundle_cstr.as_ptr(),
+                    i32::from(mute_original),
+                    io_frames,
+                    callback,
+                    user_data,
+                )
             },
         )
     }
 
     /// When `exclude_current_app` is set our own output is dropped from the
     /// mix, which prevents a feedback loop when System Audio is routed back
-    /// through Splitwave.
+    /// through Splitwave. `mute_original` silences everything the tap covers on
+    /// the output device, leaving only the graph's copy audible.
     pub fn start_system(
         exclude_current_app: bool,
+        mute_original: bool,
         io_frames: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
@@ -175,6 +193,7 @@ impl TapCapture {
                 ba_tap_start_system(
                     handle,
                     if exclude_current_app { 1 } else { 0 },
+                    i32::from(mute_original),
                     io_frames,
                     callback,
                     user_data,

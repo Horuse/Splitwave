@@ -5,7 +5,7 @@
 //! 13.0-14.3, where it scopes audio by display content and cannot keep other
 //! apps out of the mix.
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::audio::input_bridge::BroadcastRx;
 use crate::error::AppResult;
@@ -58,18 +58,25 @@ impl Capture {
     /// `io_frames` sizes a tap's deliveries; ScreenCaptureKit picks its own.
     pub fn start_app(
         bundle_id: &str,
+        mute_original: bool,
         sample_rate: u32,
         io_frames: u32,
         bridge: BroadcastRx,
     ) -> AppResult<Self> {
         match backend() {
             Backend::Tap => {
-                info!(%bundle_id, io_frames, "starting app-audio capture (Core Audio process tap)");
+                info!(%bundle_id, mute_original, io_frames, "starting app-audio capture (Core Audio process tap)");
                 Ok(Capture::Tap(TapCapture::start_app(
-                    bundle_id, io_frames, bridge,
+                    bundle_id,
+                    mute_original,
+                    io_frames,
+                    bridge,
                 )?))
             }
             Backend::Sck => {
+                if mute_original {
+                    warn!("mute original needs a Core Audio process tap (macOS 14.4+); ignored");
+                }
                 info!(%bundle_id, "starting app-audio capture (ScreenCaptureKit, macOS < 14.4)");
                 Ok(Capture::Sck(SckCapture::start_app(
                     bundle_id,
@@ -83,6 +90,7 @@ impl Capture {
 
     pub fn start_system(
         exclude_current_app: bool,
+        mute_original: bool,
         sample_rate: u32,
         io_frames: u32,
         bridge: BroadcastRx,
@@ -91,15 +99,19 @@ impl Capture {
             Backend::Tap => {
                 info!(
                     exclude_current_app,
-                    io_frames, "starting system-audio capture (Core Audio process tap)"
+                    mute_original, io_frames, "starting system-audio capture (Core Audio process tap)"
                 );
                 Ok(Capture::Tap(TapCapture::start_system(
                     exclude_current_app,
+                    mute_original,
                     io_frames,
                     bridge,
                 )?))
             }
             Backend::Sck => {
+                if mute_original {
+                    warn!("mute original needs a Core Audio process tap (macOS 14.4+); ignored");
+                }
                 info!(
                     exclude_current_app,
                     "starting system-audio capture (ScreenCaptureKit, macOS < 14.4)"

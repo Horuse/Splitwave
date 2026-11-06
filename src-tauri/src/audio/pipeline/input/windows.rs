@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::audio::device::{self, DeviceKind};
 use crate::audio::graph::{InputSpec, ValidInput};
@@ -15,6 +15,15 @@ use super::super::file_reader::SeekFlush;
 use super::super::host::Host;
 use super::super::native::native_config;
 use super::{resolve_audio_file, start_audio_file, InputHandle, ResolvedInput};
+
+/// Process loopback reads the stream after session volume, so muting the
+/// session silences the capture along with the original; there is no Windows
+/// implementation. The flag only arrives from a graph authored elsewhere.
+fn warn_mute_unsupported(mute_original: bool) {
+    if mute_original {
+        warn!("mute original is not supported on Windows; the captured audio stays audible on its own output");
+    }
+}
 
 pub(in crate::audio::pipeline) fn resolve_input(
     inp: &ValidInput,
@@ -34,13 +43,19 @@ pub(in crate::audio::pipeline) fn resolve_input(
         }
         InputSpec::SystemAudio {
             exclude_current_app,
+            mute_original,
         } => Ok(ResolvedInput::SystemAudio {
             sample_rate: crate::audio::capture::loopback_mix_rate()?,
             exclude_current_app: *exclude_current_app,
+            mute_original: *mute_original,
         }),
-        InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
+        InputSpec::AppAudio {
+            bundle_id,
+            mute_original,
+        } => Ok(ResolvedInput::AppAudio {
             sample_rate: target_sample_rate,
             bundle_id: bundle_id.clone(),
+            mute_original: *mute_original,
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
         InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. } => {
@@ -113,7 +128,9 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::SystemAudio {
             sample_rate,
             exclude_current_app,
+            mute_original,
         } => {
+            warn_mute_unsupported(mute_original);
             info!(
                 sample_rate,
                 exclude_current_app, "starting system-audio capture (WASAPI loopback)"
@@ -129,7 +146,9 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::AppAudio {
             sample_rate,
             bundle_id,
+            mute_original,
         } => {
+            warn_mute_unsupported(mute_original);
             info!(sample_rate, %bundle_id, "starting app-audio capture (WASAPI process loopback)");
             let capture = crate::audio::capture::Capture::start_app(
                 &bundle_id,

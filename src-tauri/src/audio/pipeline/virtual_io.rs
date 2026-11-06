@@ -85,7 +85,7 @@ impl VirtualDevices {
         let id = match spec {
             InputSpec::Microphone { device_id } => device_id.clone(),
             InputSpec::SystemAudio { .. } => "system".to_string(),
-            InputSpec::AppAudio { bundle_id } => format!("app:{bundle_id}"),
+            InputSpec::AppAudio { bundle_id, .. } => format!("app:{bundle_id}"),
             _ => return None,
         };
         Some(

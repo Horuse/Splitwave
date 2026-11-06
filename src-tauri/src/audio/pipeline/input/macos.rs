@@ -51,13 +51,19 @@ pub(in crate::audio::pipeline) fn resolve_input(inp: &ValidInput) -> AppResult<R
         }
         InputSpec::SystemAudio {
             exclude_current_app,
+            mute_original,
         } => Ok(ResolvedInput::SystemAudio {
             sample_rate: crate::audio::capture::capture_rate(),
             exclude_current_app: *exclude_current_app,
+            mute_original: *mute_original,
         }),
-        InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
+        InputSpec::AppAudio {
+            bundle_id,
+            mute_original,
+        } => Ok(ResolvedInput::AppAudio {
             sample_rate: crate::audio::capture::capture_rate(),
             bundle_id: bundle_id.clone(),
+            mute_original: *mute_original,
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
         // Resolved as a network producer in build_output_graph, never here.
@@ -167,9 +173,11 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::SystemAudio {
             sample_rate,
             exclude_current_app,
+            mute_original,
         } => {
             let capture = crate::audio::capture::Capture::start_system(
                 exclude_current_app,
+                mute_original,
                 sample_rate,
                 io_frames,
                 bridge,
@@ -180,9 +188,11 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::AppAudio {
             sample_rate,
             bundle_id,
+            mute_original,
         } => {
             let capture = crate::audio::capture::Capture::start_app(
                 &bundle_id,
+                mute_original,
                 sample_rate,
                 io_frames,
                 bridge,

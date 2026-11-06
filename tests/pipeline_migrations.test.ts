@@ -3,6 +3,7 @@ import { withDefaults } from '../src/lib/modules/pipeline/defaults';
 import { isFromFuture, migrate, migrateSnapshot, MIGRATIONS } from '../src/lib/modules/pipeline/migrations';
 import { migrateChannelRouting } from '../src/lib/modules/pipeline/migrations/v1_channel_routing';
 import { migrateFileRecordingMode } from '../src/lib/modules/pipeline/migrations/v2_file_recording_mode';
+import { migrateMuteOriginal } from '../src/lib/modules/pipeline/migrations/v3_mute_original';
 import type { Pipeline } from '../src/lib/modules/pipeline/types';
 import { PIPELINE_VERSION } from '../src/lib/modules/pipeline/version';
 
@@ -126,6 +127,24 @@ describe('v1 file-recording migration', () => {
 			const data = withDefaults('fileRecording', { format });
 			expect(data.format).toEqual(expected);
 		}
+	});
+});
+
+describe('v3 mute-original migration', () => {
+	it('keeps existing capture nodes audible and leaves other nodes alone', () => {
+		const source = pipeline({
+			version: 2,
+			nodes: [
+				{ id: 'sys', kind: 'systemAudio', data: { excludeCurrentApp: true, volume: 1 }, position: { x: 0, y: 0 } },
+				{ id: 'app', kind: 'appAudio', data: { bundleId: 'com.test', volume: 0.5 }, position: { x: 1, y: 0 } },
+				{ id: 'mic', kind: 'microphone', data: { deviceId: null }, position: { x: 2, y: 0 } }
+			] as Pipeline['nodes']
+		});
+
+		const migrated = migrateMuteOriginal(source);
+		expect(migrated.nodes[0].data).toMatchObject({ excludeCurrentApp: true, muteOriginal: false });
+		expect(migrated.nodes[1].data).toMatchObject({ bundleId: 'com.test', volume: 0.5, muteOriginal: false });
+		expect(migrated.nodes[2].data).toEqual({ deviceId: null });
 	});
 });
 

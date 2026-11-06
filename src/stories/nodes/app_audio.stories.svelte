@@ -5,11 +5,11 @@
 
 	const { argTypes, args } = compose(
 		dataArgs(
-			{ bundleId: { control: 'select', options: ['com.example.app1', 'com.example.app2', 'com.example.gone'] }, volume: { control: range(0, 1, 0.01) } },
-			{ bundleId: 'com.example.app1', volume: 1 }
+			{ bundleId: { control: 'select', options: ['com.example.app1', 'com.example.app2', 'com.example.gone'] }, volume: { control: range(0, 1, 0.01) }, muteOriginal: { control: 'boolean' } },
+			{ bundleId: 'com.example.app1', muteOriginal: true, volume: 1 }
 		),
 		signalArgs(['signal', 'signalLevel', 'signalChannels', 'signalMotion']),
-		envArgs(['running', 'apps', 'deviceChannels', 'deviceSampleRate', 'pipelineSampleRate'])
+		envArgs(['platform', 'running', 'apps', 'deviceChannels', 'deviceSampleRate', 'pipelineSampleRate'])
 	);
 
 	const { Story } = defineMeta({ title: 'Nodes/Inputs/App Audio', argTypes, args });
@@ -25,3 +25,6 @@
 <Story name="App closed" args={{ bundleId: 'com.example.gone' }} {template} />
 <Story name="Many apps" args={{ apps: 8 }} {template} />
 <Story name="Muted" args={{ volume: 0 }} {template} />
+<Story name="Original audible" args={{ muteOriginal: false }} {template} />
+<Story name="Windows" args={{ platform: 'windows' }} {template} />
+<Story name="Linux" args={{ platform: 'linux' }} {template} />

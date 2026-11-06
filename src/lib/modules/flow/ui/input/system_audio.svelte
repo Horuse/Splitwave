@@ -15,8 +15,8 @@
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
 
-	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
-	// loopback) need it neither.
+	// Self-exclusion and muting the original are macOS-only: Linux (PipeWire)
+	// and Windows (WASAPI loopback) need the first and cannot do the second.
 	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
 	const isPreview = getContext(PREVIEW_CTX) === true;
 	const isMac = isPreview || platform() === 'macos';
@@ -126,6 +126,12 @@
 				label="Exclude this app"
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
+			<Toggle
+				size="sm"
+				label="Mute original"
+				hint="Silences captured audio on its own output, so only this graph plays it"
+				checked={data.muteOriginal ?? false}
+				onChange={(v) => flow.updateNodeData(id, { muteOriginal: v })} />
 		{/if}
 		{#if devInfo.info}
 			<span class="node-spec">{devInfo.specText}</span>

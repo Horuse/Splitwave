@@ -4,7 +4,10 @@
 	import { compose, dataArgs, envArgs, range, signalArgs } from '../harness/args';
 
 	const { argTypes, args } = compose(
-		dataArgs({ volume: { control: range(0, 1, 0.01) }, excludeCurrentApp: { control: 'boolean' } }, { volume: 1, excludeCurrentApp: true }),
+		dataArgs(
+			{ volume: { control: range(0, 1, 0.01) }, excludeCurrentApp: { control: 'boolean' }, muteOriginal: { control: 'boolean' } },
+			{ volume: 1, excludeCurrentApp: true, muteOriginal: true }
+		),
 		signalArgs(['signal', 'signalLevel', 'signalChannels', 'signalMotion']),
 		envArgs(['platform', 'running', 'deviceChannels', 'deviceSampleRate', 'capturePermission', 'pipelineSampleRate'])
 	);

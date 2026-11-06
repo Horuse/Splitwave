@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::audio::graph::{InputSpec, ValidInput};
 use crate::audio::input_bridge::BroadcastRx;
@@ -29,13 +29,19 @@ pub(in crate::audio::pipeline) fn resolve_input(
         }
         InputSpec::SystemAudio {
             exclude_current_app,
+            mute_original,
         } => Ok(ResolvedInput::SystemAudio {
             sample_rate: target_sample_rate,
             exclude_current_app: *exclude_current_app,
+            mute_original: *mute_original,
         }),
-        InputSpec::AppAudio { bundle_id } => Ok(ResolvedInput::AppAudio {
+        InputSpec::AppAudio {
+            bundle_id,
+            mute_original,
+        } => Ok(ResolvedInput::AppAudio {
             sample_rate: target_sample_rate,
             bundle_id: bundle_id.clone(),
+            mute_original: *mute_original,
         }),
         InputSpec::AudioFile { file_path } => resolve_audio_file(file_path),
         InputSpec::NetReceiver { .. } | InputSpec::WebRtcRecv { .. } => {
@@ -107,7 +113,14 @@ pub(in crate::audio::pipeline) fn start_input_stream(
             };
             Ok(InputHandle::Capture(capture))
         }
-        ResolvedInput::SystemAudio { sample_rate, .. } => {
+        ResolvedInput::SystemAudio {
+            sample_rate,
+            mute_original,
+            ..
+        } => {
+            if mute_original {
+                warn!("mute original is not supported for system audio on Linux");
+            }
             info!("starting system-audio capture (PipeWire sink monitor)");
             let mut bridge = bridge;
             let capture = crate::audio::capture::Capture::start_system(
@@ -124,7 +137,11 @@ pub(in crate::audio::pipeline) fn start_input_stream(
         ResolvedInput::AppAudio {
             sample_rate,
             bundle_id,
+            mute_original,
         } => {
+            if mute_original {
+                warn!("mute original is not implemented for app audio on Linux yet");
+            }
             info!(%bundle_id, "starting app-audio capture (PipeWire tap)");
             let mut bridge = bridge;
             let capture = crate::audio::capture::Capture::start_app(

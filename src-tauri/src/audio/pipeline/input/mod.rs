@@ -132,10 +132,15 @@ pub(super) enum ResolvedInput {
         // PipeWire sink-monitor capture can't exclude our own output.
         #[cfg_attr(target_os = "linux", allow(dead_code))]
         exclude_current_app: bool,
+        // Only Core Audio process taps can silence the original.
+        #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+        mute_original: bool,
     },
     AppAudio {
         sample_rate: u32,
         bundle_id: String,
+        #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+        mute_original: bool,
     },
     AudioFile {
         sample_rate: u32,
@@ -525,6 +530,7 @@ mod tests {
         let sys = ResolvedInput::SystemAudio {
             sample_rate: 96_000,
             exclude_current_app: true,
+            mute_original: false,
         };
         assert_eq!(sys.sample_rate(), 96_000);
         assert_eq!(sys.native_channels(), 2, "non-cpal sources emit stereo");
@@ -532,6 +538,7 @@ mod tests {
         let app = ResolvedInput::AppAudio {
             sample_rate: 48_000,
             bundle_id: "com.test".into(),
+            mute_original: false,
         };
         assert_eq!(app.sample_rate(), 48_000);
         assert_eq!(app.native_channels(), 2);

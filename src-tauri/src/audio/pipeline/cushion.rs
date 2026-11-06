@@ -942,7 +942,7 @@ mod tap_recorder {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let cap =
-            crate::audio::capture::Capture::start_app("com.google.Chrome", 44_100, io_frames, rx)
+            crate::audio::capture::Capture::start_app("com.google.Chrome", false, 44_100, io_frames, rx)
                 .expect("tap");
         let start = Instant::now();
         let mut rows = Vec::new();

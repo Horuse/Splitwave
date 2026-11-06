@@ -5,13 +5,20 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
+	import Toggle from '$lib/components/toggle.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { Apps } from '$lib/components/icons';
-	import { onNodeAction } from '$lib/modules/flow/utils';
-	import { onDestroy, onMount } from 'svelte';
+	import { onNodeAction, PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { getContext, onDestroy, onMount } from 'svelte';
+	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
+
+	// Only Core Audio process taps can silence the tapped app.
+	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const canMuteOriginal = isPreview || platform() === 'macos';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();
@@ -88,6 +95,14 @@
 			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
 				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
 			</span>
+		{/if}
+		{#if canMuteOriginal}
+			<Toggle
+				size="sm"
+				label="Mute original"
+				hint="Silences the app on its own output, so only this graph plays it"
+				checked={data.muteOriginal ?? false}
+				onChange={(v) => flow.updateNodeData(id, { muteOriginal: v })} />
 		{/if}
 		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}

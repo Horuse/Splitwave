@@ -13,7 +13,7 @@
 	import Wrapper from '../node.svelte';
 	import { PeopleTeam } from '$lib/components/icons';
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
-	import { channelColor, channelLabel, handleEdgeStyle, parseHandle } from '$lib/modules/flow/utils';
+	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '$lib/modules/flow/utils';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
@@ -33,7 +33,7 @@
 		Math.max(
 			1,
 			wired.current.reduce((n, c) => {
-				const ch = c.targetHandle ? parseHandle(c.targetHandle) : null;
+				const ch = c.targetHandle ? channelOf(c.targetHandle) : null;
 				return ch === null ? n : Math.max(n, ch);
 			}, 0)
 		)
@@ -62,11 +62,12 @@
 	let copied = $state(false);
 
 	function removePeerEdges(peerId: string) {
-		const mix = `peer:${peerId}`;
-		const prefix = `peer:${peerId}:`;
 		const orphaned = flow
 			.getEdges()
-			.filter((e) => e.source === id && (e.sourceHandle === mix || e.sourceHandle?.startsWith(prefix)))
+			.filter((e) => {
+				const p = parsePort(e.sourceHandle);
+				return e.source === id && p?.signal === 'audio' && p.port.kind === 'peer' && p.port.peer === peerId;
+			})
 			.map((e) => ({ id: e.id }));
 		if (orphaned.length > 0) flow.deleteElements({ edges: orphaned });
 	}
@@ -376,7 +377,7 @@
 				<div class="relative flex min-h-5 items-center justify-between gap-1">
 					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
 					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
-					<Handle type="source" id="mixed" position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
+					<Handle type="source" id={MAIN_HANDLE} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>
 			{/if}
 			{#each peers as peer (peer.peerId)}
@@ -399,7 +400,7 @@
 						</button>
 						<button class="nodrag nopan button-main red h-4 rounded px-1 font-mono text-[9px]" onclick={() => disconnect(peer.peerId)}> x </button>
 					</div>
-					<Handle type="source" id={`peer:${peer.peerId}`} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
+					<Handle type="source" id={peerHandle(peer.peerId)} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>
 				<!-- per-channel outputs for this peer -->
 				{#each peer.channels as c (c)}
@@ -409,7 +410,7 @@
 						</span>
 						<Handle
 							type="source"
-							id={`peer:${peer.peerId}:${c}`}
+							id={peerHandle(peer.peerId, c)}
 							position={Position.Right}
 							class="handle"
 							style={handleEdgeStyle(channelColor(c), 'source')} />

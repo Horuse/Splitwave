@@ -7,6 +7,9 @@ import {
 	ArrowDownload as ArrowDownloadIcon,
 	Backspace as BackspaceIcon,
 	ArrowUpload as ArrowUploadIcon,
+	ArrowRight as ArrowRightIcon,
+	ArrowSwap as ArrowSwapIcon,
+	ChevronDoubleRight as ChevronDoubleRightIcon,
 	Balance as BalanceIcon,
 	Compressor as CompressorIcon,
 	DataBar as DataBarIcon,
@@ -20,6 +23,10 @@ import {
 	Plug as PlugIcon,
 	Pulse as PulseIcon,
 	FileRecord as FileRecordIcon,
+	KeyCommand as KeyCommandIcon,
+	Loop as LoopIcon,
+	ArrowRedo as ArrowRedoIcon,
+	Hourglass as HourglassIcon,
 	Reverb as ReverbIcon,
 	Saturator as SaturatorIcon,
 	Sliders as SlidersIcon,
@@ -57,6 +64,14 @@ import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
+import KeyInput from '../ui/condition/key_input.svelte';
+import Toggle from '../ui/condition/toggle.svelte';
+import Cycle from '../ui/condition/cycle.svelte';
+import Timer from '../ui/condition/timer.svelte';
+import If from '../ui/condition/if.svelte';
+import Switch from '../ui/condition/switch.svelte';
+import Select from '../ui/condition/select.svelte';
+import LevelTrigger from '../ui/condition/level_trigger.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -323,6 +338,78 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		component: NetSender,
 		icon: ArrowUploadIcon,
 		defaultData: DEFAULT_NODE_DATA['netSender']
+	}),
+	keyInput: entry<'keyInput'>({
+		kind: 'keyInput',
+		category: 'condition',
+		label: 'Key Input',
+		description: 'A global shortcut as a control signal: high while the key is held, even with the app in the background.',
+		component: KeyInput,
+		icon: KeyCommandIcon,
+		defaultData: DEFAULT_NODE_DATA['keyInput']
+	}),
+	toggle: entry<'toggle'>({
+		kind: 'toggle',
+		category: 'condition',
+		label: 'Toggle',
+		description: 'Flips its output each time the input goes high, and keeps it until the next press.',
+		component: Toggle,
+		icon: LoopIcon,
+		defaultData: DEFAULT_NODE_DATA['toggle']
+	}),
+	cycle: entry<'cycle'>({
+		kind: 'cycle',
+		category: 'condition',
+		label: 'Cycle',
+		description: 'Steps through its outputs one press at a time and wraps around; only the current step is high.',
+		component: Cycle,
+		icon: ArrowRedoIcon,
+		defaultData: DEFAULT_NODE_DATA['cycle']
+	}),
+	timer: entry<'timer'>({
+		kind: 'timer',
+		category: 'condition',
+		label: 'Timer',
+		description: 'Delay turns its output on a set time after start goes high; Repeat pulses it at that interval while start stays high.',
+		component: Timer,
+		icon: HourglassIcon,
+		defaultData: DEFAULT_NODE_DATA['timer']
+	}),
+	if: entry<'if'>({
+		kind: 'if',
+		category: 'condition',
+		label: 'If',
+		description: 'Sends its input to the true output while the condition is high, to the false output otherwise, crossfading between them.',
+		component: If,
+		icon: ArrowRightIcon,
+		defaultData: DEFAULT_NODE_DATA['if']
+	}),
+	switch: entry<'switch'>({
+		kind: 'switch',
+		category: 'condition',
+		label: 'Switch',
+		description: 'Sends its input to one of 2-8 outputs; each output has its own trigger, so one key per branch picks it.',
+		component: Switch,
+		icon: ChevronDoubleRightIcon,
+		defaultData: DEFAULT_NODE_DATA['switch']
+	}),
+	select: entry<'select'>({
+		kind: 'select',
+		category: 'condition',
+		label: 'Select',
+		description: 'Hears one of 2-8 inputs; each input has its own trigger, so one key per source picks it.',
+		component: Select,
+		icon: ArrowSwapIcon,
+		defaultData: DEFAULT_NODE_DATA['select']
+	}),
+	levelTrigger: entry<'levelTrigger'>({
+		kind: 'levelTrigger',
+		category: 'condition',
+		label: 'Level Trigger',
+		description: 'High while its input is louder than the threshold, held a moment after it drops so speech does not flicker.',
+		component: LevelTrigger,
+		icon: GaugeIcon,
+		defaultData: DEFAULT_NODE_DATA['levelTrigger']
 	})
 };
 
@@ -330,14 +417,15 @@ export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'condition'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
 	output: 'Outputs',
 	monitor: 'Monitors',
 	network: 'Network',
-	effect: 'Effects'
+	effect: 'Effects',
+	condition: 'Conditions'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

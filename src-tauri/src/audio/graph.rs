@@ -4,6 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use serde::Deserialize;
 use ts_rs::TS;
 
+use crate::audio::port::{AudioPort, Port};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Deserialize)]
@@ -41,14 +42,36 @@ pub struct NodeSpec {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EdgeSpec {
-    #[allow(dead_code)]
     pub id: String,
     pub source: String,
-    /// `Some("peer:<id>")` selects a WebRTC per-peer output; `None` is the main out.
-    pub source_handle: Option<String>,
+    pub source_handle: Port,
     pub target: String,
-    /// `Some("sidechain")` routes to an effect's sidechain key input.
-    pub target_handle: Option<String>,
+    pub target_handle: Port,
+}
+
+impl EdgeSpec {
+    fn is_control(&self) -> bool {
+        matches!(
+            (&self.source_handle, &self.target_handle),
+            (Port::Control(_), Port::Control(_))
+        )
+    }
+
+    /// The engine routes audio only; a control cable has no audio ends.
+    fn audio_ports(&self) -> AppResult<(&AudioPort, &AudioPort)> {
+        match (&self.source_handle, &self.target_handle) {
+            (Port::Audio(AudioPort::Branch { .. }), _)
+            | (_, Port::Audio(AudioPort::Branch { .. })) => Err(AppError::Validation(format!(
+                "edge {} uses a branch output of a node that has none",
+                self.id
+            ))),
+            (Port::Audio(s), Port::Audio(t)) => Ok((s, t)),
+            _ => Err(AppError::Validation(format!(
+                "edge {} is not an audio cable",
+                self.id
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash, TS)]
@@ -82,6 +105,14 @@ pub enum NodeKind {
     NetReceiver,
     NetSender,
     Plugin,
+    KeyInput,
+    Toggle,
+    Cycle,
+    Timer,
+    If,
+    Switch,
+    Select,
+    LevelTrigger,
 }
 
 impl NodeKind {
@@ -101,6 +132,7 @@ impl NodeKind {
             | NodeKind::Saturator
             | NodeKind::Eq
             | NodeKind::LevelMeter
+            | NodeKind::LevelTrigger
             | NodeKind::LufsMeter
             | NodeKind::Waveform
             | NodeKind::Spectrum
@@ -112,7 +144,13 @@ impl NodeKind {
             | NodeKind::NoiseSuppressor
             | NodeKind::Declick
             | NodeKind::DeEsser
-            | NodeKind::Plugin => NodeCategory::Effect,
+            | NodeKind::Plugin
+            | NodeKind::If
+            | NodeKind::Switch
+            | NodeKind::Select => NodeCategory::Effect,
+            NodeKind::KeyInput | NodeKind::Toggle | NodeKind::Cycle | NodeKind::Timer => {
+                NodeCategory::Control
+            }
             // Two destinations in one UI node: it sends to peers and emits what
             // they send back. `expand_roles` splits it into an output half and
             // an input half, so no single category is ever asked for.
@@ -128,6 +166,8 @@ pub enum NodeCategory {
     Input,
     Output,
     Effect,
+    /// Evaluated by the frontend; the engine never sees these nodes.
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -327,6 +367,34 @@ pub struct GainData {
     #[serde(default)]
     pub bypassed: bool,
 }
+
+/// Output open on an If: 1 while the condition holds, 2 otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct IfData {
+    pub selected: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SwitchData {
+    pub outputs: u32,
+    pub selected: u32,
+}
+
+/// Input heard through a Select, 1-based.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SelectData {
+    pub inputs: u32,
+    pub selected: u32,
+}
+
+/// Most outputs a Switch, or inputs a Select, can have.
+pub const MAX_SWITCH_OUTPUTS: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -713,10 +781,9 @@ pub enum EdgeKind {
 #[derive(Debug, Clone)]
 pub struct ValidEdge {
     pub from: String,
-    pub source_handle: Option<String>,
+    pub source_handle: AudioPort,
     pub to: String,
-    /// Target-side handle, e.g. `Some("ch1")` for a WebRTC bridge channel input.
-    pub target_handle: Option<String>,
+    pub target_handle: AudioPort,
     pub kind: EdgeKind,
 }
 
@@ -741,11 +808,69 @@ struct RoleNode<'a> {
     kind: NodeKind,
     role: NodeCategory,
     data: &'a serde_json::Value,
+    /// Set on the gates a branching node expands into: whether this one is open.
+    gate_open: Option<bool>,
 }
 
 /// Marks the receive half of a split dual-role node. Node ids are cuid2
 /// (alphanumeric), so this can never collide with one.
 const RECV_SUFFIX: &str = "#recv";
+
+/// The gate carrying output `k` (1-based) of a branching node.
+pub fn branch_gate_id(node_id: &str, k: usize) -> String {
+    format!("{node_id}#b{k}")
+}
+
+/// How a branching node splits into gates: a fork feeds one input to every
+/// gate and sends each gate out its own output; a join takes each input through
+/// its own gate and sums the gates into one output.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    Fork,
+    Join,
+}
+
+#[derive(Clone, Copy)]
+struct Branching {
+    shape: Shape,
+    count: usize,
+    selected: usize,
+}
+
+/// Where a join's gates are summed; its output is the node's.
+fn join_mix_id(node_id: &str) -> String {
+    format!("{node_id}#mix")
+}
+
+fn branching(n: &NodeSpec) -> AppResult<Option<Branching>> {
+    let ranged = |count: u32, what: &str| {
+        if (2..=MAX_SWITCH_OUTPUTS).contains(&count) {
+            Ok(count)
+        } else {
+            Err(miss(&n.id, &format!("needs 2 to 8 {what}")))
+        }
+    };
+    let (shape, count, selected) = match n.kind {
+        NodeKind::If => (Shape::Fork, 2, parse::<IfData>(&n.data, "If")?.selected),
+        NodeKind::Switch => {
+            let d: SwitchData = parse(&n.data, "Switch")?;
+            (Shape::Fork, ranged(d.outputs, "outputs")?, d.selected)
+        }
+        NodeKind::Select => {
+            let d: SelectData = parse(&n.data, "Select")?;
+            (Shape::Join, ranged(d.inputs, "inputs")?, d.selected)
+        }
+        _ => return Ok(None),
+    };
+    if !(1..=count).contains(&selected) {
+        return Err(miss(&n.id, "selected branch does not exist"));
+    }
+    Ok(Some(Branching {
+        shape,
+        count: count as usize,
+        selected: selected as usize,
+    }))
+}
 
 /// A node audio may end at besides an output: an analyzer renders telemetry,
 /// and a plugin can be an end point of its own (one that sends its input over
@@ -754,6 +879,7 @@ fn is_end_point_kind(kind: NodeKind) -> bool {
     matches!(
         kind,
         NodeKind::LevelMeter
+            | NodeKind::LevelTrigger
             | NodeKind::LufsMeter
             | NodeKind::Waveform
             | NodeKind::Spectrum
@@ -765,16 +891,45 @@ impl GraphSpec {
     /// Splits dual-role nodes so that every node below plays exactly one role.
     /// Each half of a WebRTC collaborator exists only if something is wired to
     /// that side: a send-only node opens no receive tap, and a receive-only node
-    /// never clocks silence onto the wire.
-    fn expand_roles(&self) -> (Vec<RoleNode<'_>>, Vec<EdgeSpec>) {
+    /// never clocks silence onto the wire. A branching node becomes one gate per
+    /// output, all fed the node's input, only the selected one open; the rest of
+    /// the engine then routes them as plain effects.
+    fn expand_roles(&self) -> AppResult<(Vec<RoleNode<'_>>, Vec<EdgeSpec>)> {
         let mut nodes: Vec<RoleNode<'_>> = Vec::with_capacity(self.nodes.len());
+        let mut branched: HashMap<&str, Branching> = HashMap::new();
         for n in &self.nodes {
+            if let Some(b) = branching(n)? {
+                branched.insert(n.id.as_str(), b);
+                for k in 1..=b.count {
+                    nodes.push(RoleNode {
+                        id: branch_gate_id(&n.id, k),
+                        kind: n.kind,
+                        role: NodeCategory::Effect,
+                        data: &n.data,
+                        gate_open: Some(k == b.selected),
+                    });
+                }
+                if b.shape == Shape::Join {
+                    nodes.push(RoleNode {
+                        id: join_mix_id(&n.id),
+                        kind: n.kind,
+                        role: NodeCategory::Effect,
+                        data: &n.data,
+                        gate_open: None,
+                    });
+                }
+                continue;
+            }
             if n.kind != NodeKind::WebRtcCollaborator {
+                if n.kind.category() == NodeCategory::Control {
+                    continue;
+                }
                 nodes.push(RoleNode {
                     id: n.id.clone(),
                     kind: n.kind,
                     role: n.kind.category(),
                     data: &n.data,
+                    gate_open: None,
                 });
                 continue;
             }
@@ -784,6 +939,7 @@ impl GraphSpec {
                     kind: n.kind,
                     role: NodeCategory::Output,
                     data: &n.data,
+                    gate_open: None,
                 });
             }
             if self.edges.iter().any(|e| e.source == n.id) {
@@ -792,6 +948,7 @@ impl GraphSpec {
                     kind: n.kind,
                     role: NodeCategory::Input,
                     data: &n.data,
+                    gate_open: None,
                 });
             }
         }
@@ -804,22 +961,76 @@ impl GraphSpec {
             .filter(|n| n.kind == NodeKind::WebRtcCollaborator)
             .map(|n| n.id.as_str())
             .collect();
-        let edges = self
-            .edges
-            .iter()
-            .map(|e| EdgeSpec {
-                id: e.id.clone(),
-                source: if split.contains(e.source.as_str()) {
-                    format!("{}{RECV_SUFFIX}", e.source)
-                } else {
-                    e.source.clone()
+        let unrouted = |e: &EdgeSpec, node: &str| {
+            AppError::Validation(format!("edge {} meets {node} on no branch of it", e.id))
+        };
+        let mut edges = Vec::with_capacity(self.edges.len());
+        for e in self.edges.iter().filter(|e| !e.is_control()) {
+            let (source, source_handle) = match branched.get(e.source.as_str()) {
+                Some(b) => match (&e.source_handle, b.shape) {
+                    (Port::Audio(AudioPort::Branch { branch, port }), Shape::Fork)
+                        if *branch <= b.count =>
+                    {
+                        (
+                            branch_gate_id(&e.source, *branch),
+                            Port::Audio((**port).clone()),
+                        )
+                    }
+                    (Port::Audio(AudioPort::Branch { .. }), _) | (_, Shape::Fork) => {
+                        return Err(unrouted(e, &e.source))
+                    }
+                    (handle, Shape::Join) => (join_mix_id(&e.source), handle.clone()),
                 },
-                source_handle: e.source_handle.clone(),
-                target: e.target.clone(),
-                target_handle: e.target_handle.clone(),
-            })
-            .collect();
-        (nodes, edges)
+                None if split.contains(e.source.as_str()) => (
+                    format!("{}{RECV_SUFFIX}", e.source),
+                    e.source_handle.clone(),
+                ),
+                None => (e.source.clone(), e.source_handle.clone()),
+            };
+            let edge = |id: String, target: String, target_handle: Port| EdgeSpec {
+                id,
+                source: source.clone(),
+                source_handle: source_handle.clone(),
+                target,
+                target_handle,
+            };
+            match branched.get(e.target.as_str()) {
+                Some(b) if b.shape == Shape::Fork => edges.extend((1..=b.count).map(|k| {
+                    edge(
+                        branch_gate_id(&e.id, k),
+                        branch_gate_id(&e.target, k),
+                        e.target_handle.clone(),
+                    )
+                })),
+                Some(b) => match &e.target_handle {
+                    Port::Audio(AudioPort::Branch { branch, port }) if *branch <= b.count => edges
+                        .push(edge(
+                            e.id.clone(),
+                            branch_gate_id(&e.target, *branch),
+                            Port::Audio((**port).clone()),
+                        )),
+                    _ => return Err(unrouted(e, &e.target)),
+                },
+                None => edges.push(edge(
+                    e.id.clone(),
+                    e.target.clone(),
+                    e.target_handle.clone(),
+                )),
+            }
+        }
+        // A join's gates all sum into its mix.
+        for (id, b) in branched.iter().filter(|(_, b)| b.shape == Shape::Join) {
+            for k in 1..=b.count {
+                edges.push(EdgeSpec {
+                    id: format!("{}#m{k}", join_mix_id(id)),
+                    source: branch_gate_id(id, k),
+                    source_handle: Port::MAIN,
+                    target: join_mix_id(id),
+                    target_handle: Port::MAIN,
+                });
+            }
+        }
+        Ok((nodes, edges))
     }
 
     /// Rules:
@@ -847,13 +1058,14 @@ impl GraphSpec {
                 )));
             }
         }
-        let (nodes, edges) = self.expand_roles();
+        let (nodes, edges) = self.expand_roles()?;
         let nodes_by_id: HashMap<&str, &RoleNode> =
             nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
         let mut outgoing: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut incoming: HashMap<&str, Vec<&str>> = HashMap::new();
         for edge in &edges {
+            edge.audio_ports()?;
             if !nodes_by_id.contains_key(edge.source.as_str())
                 || !nodes_by_id.contains_key(edge.target.as_str())
             {
@@ -930,17 +1142,20 @@ impl GraphSpec {
         let edges: Vec<ValidEdge> = edges
             .iter()
             .filter(|e| keep.contains(e.source.as_str()) && keep.contains(e.target.as_str()))
-            .map(|e| ValidEdge {
-                from: e.source.clone(),
-                source_handle: e.source_handle.clone(),
-                to: e.target.clone(),
-                target_handle: e.target_handle.clone(),
-                kind: match e.target_handle.as_deref() {
-                    Some("sidechain") => EdgeKind::Sidechain,
-                    _ => EdgeKind::Main,
-                },
+            .map(|e| {
+                let (source, target) = e.audio_ports()?;
+                Ok(ValidEdge {
+                    from: e.source.clone(),
+                    source_handle: source.clone(),
+                    to: e.target.clone(),
+                    target_handle: target.clone(),
+                    kind: match target {
+                        AudioPort::Sidechain => EdgeKind::Sidechain,
+                        _ => EdgeKind::Main,
+                    },
+                })
             })
-            .collect();
+            .collect::<AppResult<_>>()?;
 
         let sample_rate = match self.sample_rate {
             Some(sr) if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&sr) => {
@@ -1257,6 +1472,19 @@ fn bfs_backward_pred<'a>(
 }
 
 fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
+    if let Some(open) = n.gate_open {
+        return Ok(EffectSpec::Mute(MuteData {
+            muted: !open,
+            bypassed: false,
+        }));
+    }
+    // The only non-gate node a Select expands into is its unity-gain mix.
+    if n.kind == NodeKind::Select {
+        return Ok(EffectSpec::Gain(GainData {
+            gain_db: 0.0,
+            bypassed: false,
+        }));
+    }
     Ok(match n.kind {
         NodeKind::Gain => EffectSpec::Gain(parse(n.data, "Gain")?),
         NodeKind::Mute => EffectSpec::Mute(parse(n.data, "Mute")?),
@@ -1264,6 +1492,9 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
         NodeKind::Saturator => EffectSpec::Saturator(parse(n.data, "Saturator")?),
         NodeKind::Eq => EffectSpec::Eq(parse(n.data, "Eq")?),
         NodeKind::LevelMeter => EffectSpec::LevelMeter(parse(n.data, "LevelMeter")?),
+        // Meters its input like a level meter; the editor turns the level into
+        // a control signal against its threshold.
+        NodeKind::LevelTrigger => EffectSpec::LevelMeter(LevelMeterData {}),
         NodeKind::LufsMeter => EffectSpec::LufsMeter(parse(n.data, "LufsMeter")?),
         NodeKind::Waveform => EffectSpec::Waveform(parse(n.data, "Waveform")?),
         NodeKind::Spectrum => EffectSpec::Spectrum(parse(n.data, "Spectrum")?),
@@ -1419,17 +1650,245 @@ mod tests {
     fn edge(
         id: &str,
         source: &str,
-        source_handle: Option<&str>,
+        source_handle: &str,
         target: &str,
-        target_handle: Option<&str>,
+        target_handle: &str,
     ) -> EdgeSpec {
         EdgeSpec {
             id: id.to_string(),
             source: source.to_string(),
-            source_handle: source_handle.map(str::to_string),
+            source_handle: source_handle.parse().unwrap(),
             target: target.to_string(),
-            target_handle: target_handle.map(str::to_string),
+            target_handle: target_handle.parse().unwrap(),
         }
+    }
+
+    #[test]
+    fn mixed_signal_cables_are_rejected() {
+        for (sh, th) in [
+            ("control:power", "audio:main"),
+            ("audio:main", "control:power"),
+        ] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), speaker("s")],
+                edges: vec![edge("e", "m", sh, "s", th)],
+            };
+            assert!(g.validate().is_err(), "{sh} -> {th}");
+        }
+    }
+
+    #[test]
+    fn control_layer_stays_out_of_the_audio_graph() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                gain_node("g"),
+                speaker("s"),
+                node("k", NodeKind::KeyInput, serde_json::json!({})),
+                node("t", NodeKind::Toggle, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", "audio:main", "g", "audio:main"),
+                edge("e2", "g", "audio:main", "s", "audio:main"),
+                edge("c1", "k", "control:out", "t", "control:in"),
+                edge("c2", "t", "control:out", "g", "control:power"),
+            ],
+        };
+        let v = g.validate().expect("control nodes are ignored");
+        assert_eq!(v.effects.len(), 1);
+        assert_eq!(v.edges.len(), 2);
+    }
+
+    fn switch(id: &str, outputs: u32, selected: u32) -> NodeSpec {
+        node(
+            id,
+            NodeKind::Switch,
+            serde_json::json!({ "outputs": outputs, "selected": selected }),
+        )
+    }
+
+    #[test]
+    fn branching_node_becomes_one_gate_per_output() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), switch("sw", 3, 2), gain_node("g"), speaker("s")],
+            edges: vec![
+                edge("in", "m", "audio:ch1", "sw", "audio:ch1"),
+                edge("b1", "sw", "audio:branch1:ch1", "s", "audio:ch1"),
+                edge("b2", "sw", "audio:branch2:ch1", "g", "audio:ch1"),
+                edge("out", "g", "audio:ch1", "s", "audio:ch1"),
+            ],
+        };
+        let v = g.validate().expect("valid");
+        let gate = |k| v.effects.iter().find(|e| e.id == branch_gate_id("sw", k));
+        assert!(matches!(
+            gate(1).map(|e| &e.spec),
+            Some(EffectSpec::Mute(MuteData { muted: true, .. }))
+        ));
+        assert!(matches!(
+            gate(2).map(|e| &e.spec),
+            Some(EffectSpec::Mute(MuteData { muted: false, .. }))
+        ));
+        assert!(gate(3).is_none(), "an unwired output is pruned");
+        assert!(v.edges.iter().any(|e| e.from == branch_gate_id("sw", 2)
+            && e.to == "g"
+            && e.source_handle == AudioPort::Channel(1)));
+        assert!(v
+            .edges
+            .iter()
+            .any(|e| e.from == "m" && e.to == branch_gate_id("sw", 1)));
+    }
+
+    #[test]
+    fn select_joins_its_gates_into_one_mix() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("a"),
+                mic("b"),
+                node(
+                    "sel",
+                    NodeKind::Select,
+                    serde_json::json!({ "inputs": 2, "selected": 2 }),
+                ),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("ea", "a", "audio:main", "sel", "audio:branch1:main"),
+                edge("eb", "b", "audio:main", "sel", "audio:branch2:main"),
+                edge("out", "sel", "audio:main", "s", "audio:main"),
+            ],
+        };
+        let v = g.validate().expect("valid");
+        let gate = |k| {
+            v.effects
+                .iter()
+                .find(|e| e.id == branch_gate_id("sel", k))
+                .map(|e| &e.spec)
+        };
+        assert!(matches!(
+            gate(1),
+            Some(EffectSpec::Mute(MuteData { muted: true, .. }))
+        ));
+        assert!(matches!(
+            gate(2),
+            Some(EffectSpec::Mute(MuteData { muted: false, .. }))
+        ));
+        let has = |from: &str, to: &str| v.edges.iter().any(|e| e.from == from && e.to == to);
+        assert!(has("a", &branch_gate_id("sel", 1)));
+        assert!(has("b", &branch_gate_id("sel", 2)));
+        assert!(has(&branch_gate_id("sel", 1), "sel#mix"));
+        assert!(has(&branch_gate_id("sel", 2), "sel#mix"));
+        assert!(has("sel#mix", "s"));
+    }
+
+    #[test]
+    fn level_trigger_is_an_end_point_metering_its_input() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                node("lt", NodeKind::LevelTrigger, serde_json::json!({})),
+            ],
+            edges: vec![edge("e", "m", "audio:main", "lt", "audio:main")],
+        };
+        let v = g
+            .validate()
+            .expect("a level trigger alone is a destination");
+        assert!(matches!(v.effects[0].spec, EffectSpec::LevelMeter(_)));
+    }
+
+    #[test]
+    fn select_rejects_an_input_on_no_branch() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("a"),
+                node(
+                    "sel",
+                    NodeKind::Select,
+                    serde_json::json!({ "inputs": 2, "selected": 1 }),
+                ),
+                speaker("s"),
+            ],
+            edges: vec![
+                edge("ea", "a", "audio:main", "sel", "audio:main"),
+                edge("out", "sel", "audio:main", "s", "audio:main"),
+            ],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn branching_node_rejects_a_missing_output() {
+        for handle in ["audio:branch4:ch1", "audio:ch1"] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), switch("sw", 3, 1), speaker("s")],
+                edges: vec![
+                    edge("in", "m", "audio:ch1", "sw", "audio:ch1"),
+                    edge("out", "sw", handle, "s", "audio:ch1"),
+                ],
+            };
+            assert!(g.validate().is_err(), "{handle}");
+        }
+    }
+
+    #[test]
+    fn branching_node_rejects_bad_data() {
+        for (outputs, selected) in [(1, 1), (9, 1), (3, 0), (3, 4)] {
+            let g = GraphSpec {
+                sample_rate: None,
+                buffer_frames: None,
+                nodes: vec![mic("m"), switch("sw", outputs, selected), speaker("s")],
+                edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
+            };
+            assert!(g.validate().is_err(), "{outputs}/{selected}");
+        }
+    }
+
+    #[test]
+    fn branch_port_on_a_plain_node_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![mic("m"), speaker("s")],
+            edges: vec![edge("e", "m", "audio:branch1:ch1", "s", "audio:ch1")],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn audio_cable_into_a_control_node_is_rejected() {
+        let g = GraphSpec {
+            sample_rate: None,
+            buffer_frames: None,
+            nodes: vec![
+                mic("m"),
+                speaker("s"),
+                node("t", NodeKind::Toggle, serde_json::json!({})),
+            ],
+            edges: vec![
+                edge("e1", "m", "audio:main", "s", "audio:main"),
+                edge("e2", "m", "audio:main", "t", "audio:main"),
+            ],
+        };
+        assert!(g.validate().is_err());
+    }
+
+    #[test]
+    fn handle_without_signal_prefix_is_rejected() {
+        let json = r#"{"nodes":[],"edges":[{"id":"e","source":"a","sourceHandle":"ch1","target":"b","targetHandle":"audio:main"}]}"#;
+        assert!(serde_json::from_str::<GraphSpec>(json).is_err());
     }
 
     #[test]
@@ -1438,7 +1897,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), collab("w")],
-            edges: vec![edge("e", "m", None, "w", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "w", "audio:ch1")],
         };
         let v = g.validate().expect("send-only graph is valid");
         // The send half is a destination in its own right: no speaker, no meter,
@@ -1462,7 +1921,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![collab("w"), speaker("s")],
-            edges: vec![edge("e", "w", Some("peer:p:0"), "s", None)],
+            edges: vec![edge("e", "w", "audio:peer:p:0", "s", "audio:main")],
         };
         let v = g.validate().expect("recv-only graph is valid");
         assert_eq!(v.inputs.len(), 1);
@@ -1485,8 +1944,8 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), collab("w"), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "w", Some("ch1")),
-                edge("e2", "w", Some("peer:p:0"), "s", None),
+                edge("e1", "m", "audio:main", "w", "audio:ch1"),
+                edge("e2", "w", "audio:peer:p:0", "s", "audio:main"),
             ],
         };
         let v = g.validate().expect("duplex graph is valid");
@@ -1535,7 +1994,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![gain("g"), speaker("s")],
-            edges: vec![edge("e", "g", None, "s", None)],
+            edges: vec![edge("e", "g", "audio:main", "s", "audio:main")],
         };
         let v = g
             .validate()
@@ -1648,7 +2107,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m")],
-            edges: vec![edge("e", "m", None, "ghost", None)],
+            edges: vec![edge("e", "m", "audio:main", "ghost", "audio:main")],
         };
         assert!(g.validate().is_err());
     }
@@ -1669,8 +2128,8 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), speaker("s")],
             edges: vec![
-                edge("same", "m", None, "s", Some("ch1")),
-                edge("same", "m", None, "s", Some("ch2")),
+                edge("same", "m", "audio:main", "s", "audio:ch1"),
+                edge("same", "m", "audio:main", "s", "audio:ch2"),
             ],
         };
         let error = duplicate_edges.validate().expect_err("duplicate edge id");
@@ -1683,7 +2142,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), mic("m2")],
-            edges: vec![edge("e", "m", None, "m2", None)],
+            edges: vec![edge("e", "m", "audio:main", "m2", "audio:main")],
         };
         let err = g.validate().expect_err("edges into inputs are nonsense");
         assert!(format!("{err}").contains("points into input"));
@@ -1695,7 +2154,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![speaker("s"), speaker("s2")],
-            edges: vec![edge("e", "s", None, "s2", None)],
+            edges: vec![edge("e", "s", "audio:main", "s2", "audio:main")],
         };
         // An output feeding an output trips the output-source check (targets
         // aren't inputs, so the input-role rule doesn't fire first).
@@ -1709,7 +2168,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g")],
-            edges: vec![edge("e", "m", None, "g", None)],
+            edges: vec![edge("e", "m", "audio:main", "g", "audio:main")],
         };
         let err = g.validate().expect_err("no output, no meter");
         assert!(format!("{err}").contains("no routing"));
@@ -1722,10 +2181,10 @@ mod tests {
             buffer_frames: None,
             nodes: vec![mic("m"), gain_node("g1"), gain_node("g2"), speaker("s")],
             edges: vec![
-                edge("e1", "m", None, "g1", None),
-                edge("e2", "g1", None, "g2", None),
-                edge("e3", "g2", None, "g1", None),
-                edge("e4", "g2", None, "s", None),
+                edge("e1", "m", "audio:main", "g1", "audio:main"),
+                edge("e2", "g1", "audio:main", "g2", "audio:main"),
+                edge("e3", "g2", "audio:main", "g1", "audio:main"),
+                edge("e4", "g2", "audio:main", "s", "audio:main"),
             ],
         };
         let err = g.validate().expect_err("cycle");
@@ -1740,7 +2199,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic_node, speaker("s")],
-            edges: vec![edge("e", "m", None, "s", None)],
+            edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("routed mic without device");
         assert!(format!("{err}").contains("no device selected"));
@@ -1754,7 +2213,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic_node, mic("m2"), speaker("s")],
-            edges: vec![edge("e1", "m2", None, "s", None)],
+            edges: vec![edge("e1", "m2", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("unrouted mic is kept but not resolved");
         assert_eq!(v.inputs.len(), 1);
@@ -1769,7 +2228,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), sp, speaker("s2")],
-            edges: vec![edge("e2", "m", None, "s2", None)],
+            edges: vec![edge("e2", "m", "audio:main", "s2", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert_eq!(v.outputs.len(), 1);
@@ -1784,7 +2243,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), sp],
-            edges: vec![edge("e", "m", None, "s", None)],
+            edges: vec![edge("e", "m", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("routed speaker without device");
         assert!(format!("{err}").contains("Speaker has no device"));
@@ -1797,7 +2256,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![sys, speaker("s")],
-            edges: vec![edge("e", "sys", None, "s", None)],
+            edges: vec![edge("e", "sys", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert_eq!(v.inputs[0].volume, 1.0);
@@ -1825,7 +2284,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("new mode + existing file");
         assert!(format!("{err}").contains("already exists"));
@@ -1848,7 +2307,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("missing dir");
         assert!(format!("{err}").contains("choose-file"));
@@ -1870,7 +2329,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         let err = g.validate().expect_err("append flac");
         assert!(format!("{err}").contains("WAV/AIFF"), "actual: {err}");
@@ -1894,7 +2353,7 @@ mod tests {
                 sample_rate: None,
                 buffer_frames: None,
                 nodes: vec![mic("m"), rec],
-                edges: vec![edge("e", "m", None, "rec", None)],
+                edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
             };
             assert!(g.validate().is_err(), "channels {channels}");
         }
@@ -1913,7 +2372,7 @@ mod tests {
                 sample_rate: None,
                 buffer_frames: None,
                 nodes: vec![mic("m"), rec],
-                edges: vec![edge("e", "m", None, "rec", None)],
+                edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
             };
             assert!(g.validate().is_err(), "channels {channels}");
         }
@@ -1936,7 +2395,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), rec],
-            edges: vec![edge("e", "m", None, "rec", None)],
+            edges: vec![edge("e", "m", "audio:main", "rec", "audio:main")],
         };
         assert!(g.validate().is_err());
     }
@@ -1959,7 +2418,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), bad],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let err = g.validate().expect_err("bad ip");
         assert!(format!("{err}").contains("invalid target IP"));
@@ -1980,7 +2439,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), good],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let v = g.validate().expect("valid");
         assert!(matches!(
@@ -2008,7 +2467,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![mic("m"), good],
-            edges: vec![edge("e", "m", None, "net", Some("ch1"))],
+            edges: vec![edge("e", "m", "audio:main", "net", "audio:ch1")],
         };
         let v = g.validate().expect("valid");
         assert!(matches!(
@@ -2027,7 +2486,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![bad_gain, speaker("s")],
-            edges: vec![edge("e", "g", None, "s", None)],
+            edges: vec![edge("e", "g", "audio:main", "s", "audio:main")],
         };
         let err = g.validate().expect_err("gain with string db");
         assert!(format!("{err}").contains("invalid Gain data"));
@@ -2049,7 +2508,7 @@ mod tests {
             sample_rate: None,
             buffer_frames: None,
             nodes: vec![plugin, speaker("s")],
-            edges: vec![edge("e", "p", None, "s", None)],
+            edges: vec![edge("e", "p", "audio:main", "s", "audio:main")],
         };
         let v = g.validate().expect("valid");
         assert!(v.effects.iter().any(|e| matches!(

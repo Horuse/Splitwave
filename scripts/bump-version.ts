@@ -26,9 +26,5 @@ await edit('CHANGELOG.md', /(\n## \[)/, `\n## [${version}] - ${date}\n$1`);
 
 // AppStream sorts "2.0.0-beta.1" above "2.0.0", so pre-releases stay out of the Flathub metadata.
 if (!prerelease) {
-	await edit(
-		'flatpak/com.horuse.splitwave.metainfo.xml',
-		/(<releases>\n)/,
-		`$1    <release version="${version}" date="${date}" />\n`
-	);
+	await edit('flatpak/com.horuse.splitwave.metainfo.xml', /(<releases>\n)/, `$1    <release version="${version}" date="${date}" />\n`);
 }

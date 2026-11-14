@@ -3,13 +3,14 @@
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { SpeakerMute, Dismiss } from '$lib/components/icons';
+	import { SpeakerMute } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
-	import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
-	import { accelerator, formatAccelerator } from './_accelerator';
+	import ControlPort from '../condition/_control_port.svelte';
+	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { useControlInput } from '../../control.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
-	import { onMount } from 'svelte';
+	import { getContext, onMount, untrack } from 'svelte';
 	import Slider from './_slider.svelte';
 	import { formatPct } from '$lib/components/format';
 
@@ -20,14 +21,10 @@
 
 	const CUE_VOLUME_DEFAULT = 40;
 
-	let binding = $state(false);
-	let bindError = $state('');
-
-	// Reads through the live node store rather than the `data` snapshot: the
-	// shortcut handler is registered once per accelerator and would otherwise
-	// act on a value captured at registration time.
-	// `beep` swaps the spoken clip for a 0.2 s tone: push-to-talk toggles far too
-	// often for "muted" / "unmuted" to be usable.
+	// Reads through the live node store rather than the `data` snapshot, which
+	// a control input's effect would otherwise have captured.
+	// `beep` swaps the spoken clip for a 0.2 s tone: a key driving the mute
+	// toggles far too often for "muted" / "unmuted" to be usable.
 	function setMuted(muted: boolean, beep = false) {
 		const current = flow.getNode(id)?.data as MuteNodeData | undefined;
 		if (!current || current.muted === muted) return;
@@ -44,62 +41,21 @@
 		if (current) setMuted(!current.muted);
 	}
 
-	function setPushToTalk(enabled: boolean) {
-		flow.updateNodeData(id, { pushToTalk: enabled });
-		if (enabled) setMuted(true, true);
-	}
-
-	// Deriving the primitives keeps the effect from re-registering on every
-	// `muted` write: xyflow replaces the whole `data` object on each update.
-	let hotkey = $derived(data.hotkey);
-	let pushToTalk = $derived(data.pushToTalk ?? false);
-
+	// A wired `open` input owns the mute: high lets the audio through, so a key
+	// wired straight in is push-to-talk.
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const open = isPreview
+		? null
+		: useControlInput(
+				untrack(() => id),
+				OPEN_HANDLE
+			);
+	let wired = $derived(open?.current != null);
 	$effect(() => {
-		if (!hotkey) return;
-		const key = hotkey;
-		const ptt = pushToTalk;
-
-		let live = true;
-		// A leftover registration from a previous mount (HMR, node re-render)
-		// makes `register` fail with "already registered"; clear it first.
-		unregister(key)
-			.catch(() => {})
-			.then(() => {
-				if (!live) return;
-				return register(key, (e) => {
-					if (!live) return;
-					if (ptt) {
-						setMuted(e.state === 'Released', true);
-					} else if (e.state === 'Pressed') {
-						toggle();
-					}
-				});
-			})
-			.then(() => {
-				if (live) bindError = '';
-			})
-			.catch((err) => {
-				if (live) bindError = String(err);
-			});
-
-		return () => {
-			live = false;
-			unregister(key).catch(() => {});
-		};
+		const high = open?.current;
+		if (high == null) return;
+		untrack(() => setMuted(!high, true));
 	});
-
-	function capture(e: KeyboardEvent) {
-		e.preventDefault();
-		if (e.key === 'Escape') {
-			binding = false;
-			return;
-		}
-		const combo = accelerator(e);
-		if (!combo) return;
-		bindError = '';
-		binding = false;
-		flow.updateNodeData(id, { hotkey: combo });
-	}
 
 	let cueOptions = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
 	let cueMissing = $derived(!!data.cueDeviceId && !audioStore.outputDevices.some((d) => d.id === data.cueDeviceId));
@@ -120,11 +76,6 @@
 		flow.updateNodeData(id, { cueVolume: v });
 	}
 
-	function clearHotkey() {
-		bindError = '';
-		flow.updateNodeData(id, { hotkey: undefined });
-	}
-
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
@@ -134,7 +85,8 @@
 
 <Wrapper label="Mute" icon={SpeakerMute} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<button
-		title="Toggle mute (M)"
+		title={wired ? 'Driven by the open input' : 'Toggle mute'}
+		disabled={wired}
 		class={[
 			'nodrag nopan flex w-40 items-center justify-center gap-2 rounded-lg border px-3 py-2 transition-colors',
 			data.muted ? 'border-red-500/60 bg-red-500/10' : 'border-neutral-400 bg-neutral-100 hover:bg-neutral-200'
@@ -155,35 +107,9 @@
 		</span>
 	</button>
 
-	<div class="nodrag nopan mt-3 flex w-40 items-center gap-1">
-		<button
-			title={binding ? 'Press any key, Esc to cancel' : 'Bind a global shortcut'}
-			class={[
-				'flex-1 truncate rounded-md border px-2 py-1 font-mono text-xs tabular-nums transition-colors',
-				binding ? 'border-blue-500/60 bg-blue-500/10 text-blue-500' : 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
-			]}
-			onclick={() => (binding = !binding)}>
-			{binding ? 'Press a key...' : data.hotkey ? formatAccelerator(data.hotkey) : 'Bind key'}
-		</button>
-		{#if data.hotkey && !binding}
-			<button
-				title="Clear shortcut"
-				class="rounded-md border border-neutral-400 bg-neutral-100 p-1 text-neutral-900 hover:bg-neutral-200"
-				onclick={clearHotkey}>
-				<Dismiss class="size-3" />
-			</button>
-		{/if}
+	<div class="mt-3">
+		<ControlPort id={OPEN_HANDLE} side="target" label="open" high={open?.current ?? false} />
 	</div>
-
-	{#if bindError}
-		<p class="mt-1 w-40 text-[10px] break-words text-red-500">{bindError}</p>
-	{/if}
-
-	{#if data.hotkey}
-		<div class="nodrag nopan mt-2 w-40">
-			<Toggle size="sm" checked={data.pushToTalk ?? false} label="Push-to-talk" onChange={setPushToTalk} />
-		</div>
-	{/if}
 
 	<div class="nodrag nopan mt-3 flex w-40 flex-col gap-1 border-t border-neutral-400 pt-2">
 		<Toggle size="sm" checked={data.cueEnabled ?? false} label="Sound cue" onChange={setCueEnabled} />
@@ -215,5 +141,3 @@
 		{/if}
 	</div>
 </Wrapper>
-
-<svelte:window onkeydown={binding ? capture : undefined} />

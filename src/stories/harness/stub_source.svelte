@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Handle, Position, type Node, type NodeProps } from '@xyflow/svelte';
-	import { channelColor, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { channelColor, channelHandle, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 
 	type StubNode = Node<{ channels: number }, 'stub'>;
 	let { data }: NodeProps<StubNode> = $props();
@@ -12,7 +12,7 @@
 		{#each { length: data.channels } as _, i (i)}
 			<div class="relative flex h-3 items-center justify-end font-mono text-[9px] text-neutral-700 normal-case">
 				{channelLabel(i, data.channels)}
-				<Handle type="source" id={`ch${i + 1}`} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
+				<Handle type="source" id={channelHandle(i + 1)} position={Position.Right} class="handle" style={handleEdgeStyle(channelColor(i), 'source')} />
 			</div>
 		{/each}
 	</div>

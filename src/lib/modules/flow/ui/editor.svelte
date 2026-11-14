@@ -9,7 +9,20 @@
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { DND_MIME, defaultDataFor, emitNodeAction, fromXyEdges, fromXyNodes, nodeTypes, parseHandle, registry, toXyEdges, toXyNodes } from '../utils';
+	import {
+		DND_MIME,
+		canConnect,
+		channelHandle,
+		channelOf,
+		defaultDataFor,
+		emitNodeAction,
+		fromXyEdges,
+		fromXyNodes,
+		nodeTypes,
+		registry,
+		toXyEdges,
+		toXyNodes
+	} from '../utils';
 	import Sidebar from './sidebar.svelte';
 	import ChannelEdge from './_channel_edge.svelte';
 	import ConnectionLine from './_connection_line.svelte';
@@ -28,7 +41,7 @@
 
 	function sanitizeEdges(xyNodes: XyNode[], xyEdges: XyEdge[]): XyEdge[] {
 		const ids = new Set(xyNodes.map((n) => n.id));
-		return xyEdges.filter((e) => ids.has(e.source) && ids.has(e.target));
+		return xyEdges.filter((e) => ids.has(e.source) && ids.has(e.target) && canConnect(e.sourceHandle, e.targetHandle));
 	}
 
 	let nodes = $state.raw<XyNode[]>(untrack(() => toXyNodes(pipeline.nodes)));
@@ -53,13 +66,13 @@
 			if (!from || armed.length < 2 || fresh.length === 0) return;
 
 			const seed = fresh.find((e) => {
-				const ch = e.sourceHandle ? parseHandle(e.sourceHandle) : null;
+				const ch = e.sourceHandle ? channelOf(e.sourceHandle) : null;
 				return e.source === from && ch !== null && armed.includes(ch);
 			});
-			const seedCh = seed?.sourceHandle ? parseHandle(seed.sourceHandle) : null;
+			const seedCh = seed?.sourceHandle ? channelOf(seed.sourceHandle) : null;
 			if (!seed?.targetHandle || seedCh === null) return;
 
-			const dropped = parseHandle(seed.targetHandle) ?? 1;
+			const dropped = channelOf(seed.targetHandle) ?? 1;
 			// The target may refuse the whole set: mono recording takes one channel.
 			const cap = channelCaps.get(seed.target) ?? Infinity;
 			// Sequential from the drop point, occupied or not: the user chose that
@@ -70,15 +83,15 @@
 			const added: XyEdge[] = [];
 			// Which physical channel was dragged from doesn't matter: mapping is
 			// always ascending armed[i] -> run[i], anchored at the drop point.
-			const retargeted = current.map((e) => (e.id === seed.id ? { ...e, targetHandle: `ch${run[armed.indexOf(seedCh)]}` } : e));
+			const retargeted = current.map((e) => (e.id === seed.id ? { ...e, targetHandle: channelHandle(run[armed.indexOf(seedCh)]) } : e));
 			armed.forEach((ch, i) => {
 				if (ch === seedCh || run[i] === undefined) return;
 				added.push({
 					id: createId(),
 					source: seed.source,
-					sourceHandle: `ch${ch}`,
+					sourceHandle: channelHandle(ch),
 					target: seed.target,
-					targetHandle: `ch${run[i]}`,
+					targetHandle: channelHandle(run[i]),
 					animated: edgeSettings.animated,
 					type: 'channel'
 				});
@@ -679,6 +692,7 @@
 			{edgeTypes}
 			defaultEdgeOptions={{ animated: edgeSettings.animated, type: 'channel' }}
 			connectionLineComponent={ConnectionLine}
+			isValidConnection={(c) => canConnect(c.sourceHandle, c.targetHandle)}
 			deleteKey={['Delete', 'Backspace']}
 			onnodecontextmenu={onNodeContextMenu}
 			onedgecontextmenu={onEdgeContextMenu}

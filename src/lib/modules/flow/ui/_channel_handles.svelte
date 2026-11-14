@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { channelColor, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
+	import { branchChannelOf, branchHandle, channelColor, channelHandle, channelLabel, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	interface Props {
@@ -12,8 +12,13 @@
 		min?: number;
 		/** Sources with nothing upstream (a net receiver) grow on their own cables. */
 		selfGrowing?: boolean;
+		/** Branch these sockets belong to, 1-based: an output of an If or Switch,
+		 * or an input of a Select. */
+		branch?: number;
+		/** Names each socket (L / R / chN) beside it. */
+		labelled?: boolean;
 	}
-	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false }: Props = $props();
+	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch, labelled = false }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
@@ -24,11 +29,17 @@
 	let isSource = $derived(side === 'source');
 	let grows = $derived(selfGrowing ? isSource : !isSource);
 	// A channel only has an output once something feeds it, unless it is a source.
+	// Cables into a branch count as that channel; a branched input counts only
+	// its own branch's cables.
 	let occupied = $derived(
 		selfGrowing
 			? outgoing.current.map((c) => c.sourceHandle).filter((h): h is string => !!h)
-			: incoming.current.map((c) => c.targetHandle).filter((h): h is string => !!h)
+			: incoming.current
+					.map((c) => branchChannelOf(c.targetHandle, isSource ? undefined : branch) ?? null)
+					.filter((ch): ch is number => ch !== null)
+					.map(channelHandle)
 	);
+	let fed = $derived(occupied.length);
 	let slots = $derived(deriveSlots(occupied, grows, max, min).filter((s) => grows || s.occupied));
 
 	$effect(() => {
@@ -44,8 +55,9 @@
 	});
 
 	// Capture beats xyflow's mousedown, which would otherwise start a drag.
+	// A multi-channel drag fans out plain channel handles, so branch outputs opt out.
 	function onArm(event: MouseEvent, ch: number) {
-		if (!event.altKey || !isSource) return;
+		if (!event.altKey || !isSource || branch !== undefined) return;
 		event.stopPropagation();
 		event.preventDefault();
 		channelSelection.toggle(nodeId, ch);
@@ -57,9 +69,12 @@
 		{@const color = channelColor(slot.ch - 1)}
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
 		<div class="relative flex min-h-4 items-center" class:justify-end={isSource} onmousedowncapture={(e) => onArm(e, slot.ch)}>
+			{#if labelled && slot.occupied}
+				<span class="font-mono text-[9px] leading-none" style="color:{color}">{channelLabel(slot.ch - 1, fed)}</span>
+			{/if}
 			<Handle
 				type={side}
-				id={slot.id}
+				id={branch === undefined ? slot.id : branchHandle(branch, slot.ch)}
 				position={isSource ? Position.Right : Position.Left}
 				class={['handle', armed && 'handle-armed']}
 				style={handleEdgeStyle(color, side)} />

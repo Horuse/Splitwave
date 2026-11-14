@@ -154,8 +154,8 @@ fn loopback(port: u16, sample_rate: Value, codec: &str) -> Graph {
         .node("tx", "netSender", sender(port, 1, sample_rate, codec))
         .node("rx", "netReceiver", json!({ "port": port, "channels": 1 }))
         .node("s", "speaker", speaker("out"))
-        .edge_handles("m", None, "tx", Some("ch1"))
-        .edge_handles("rx", Some("ch1"), "s", None)
+        .edge_handles("m", "audio:main", "tx", "audio:ch1")
+        .edge_handles("rx", "audio:ch1", "s", "audio:main")
 }
 
 #[test]

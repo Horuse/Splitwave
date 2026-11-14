@@ -802,6 +802,7 @@ mod tests {
         use super::super::dag::build_output_graph;
         use crate::audio::effects::EffectRegistry;
         use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+        use crate::audio::port::Port;
         use std::collections::HashMap;
 
         let g = GraphSpec {
@@ -822,9 +823,9 @@ mod tests {
             edges: vec![EdgeSpec {
                 id: "e".into(),
                 source: "m".into(),
-                source_handle: None,
+                source_handle: Port::MAIN,
                 target: "lm".into(),
-                target_handle: None,
+                target_handle: Port::MAIN,
             }],
         };
         let valid: ValidGraph = g.validate().expect("valid");
@@ -883,6 +884,7 @@ mod tests {
         use super::super::dag::build_output_graph;
         use crate::audio::effects::EffectRegistry;
         use crate::audio::graph::{EdgeSpec, GraphSpec, NodeKind, NodeSpec, ValidGraph};
+        use crate::audio::port::Port;
         use std::collections::HashMap;
 
         for block in [32, 1024] {
@@ -904,9 +906,9 @@ mod tests {
                 edges: vec![EdgeSpec {
                     id: "e".into(),
                     source: "m".into(),
-                    source_handle: None,
+                    source_handle: Port::MAIN,
                     target: "lm".into(),
-                    target_handle: None,
+                    target_handle: Port::MAIN,
                 }],
             };
             let valid: ValidGraph = g.validate().expect("valid");

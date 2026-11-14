@@ -149,6 +149,7 @@ clack-host = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad5
 clack-extensions = { git = "https://github.com/prokopyl/clack.git", rev = "f874e858ad576c601367b3038af5088a4e671744", features = ["clack-host", "audio-ports", "gui", "timer", "state", "params", "latency", "raw-window-handle_06"] }
 raw-window-handle = "0.6"
 vst3 = "0.3"
+midir = "0.11.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Plugin editor windows are plain X11 windows, see `editor_x11`.

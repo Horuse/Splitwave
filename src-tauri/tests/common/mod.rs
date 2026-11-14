@@ -95,15 +95,15 @@ impl Graph {
     }
 
     pub fn edge(self, from: &str, to: &str) -> Self {
-        self.edge_handles(from, None, to, None)
+        self.edge_handles(from, "audio:main", to, "audio:main")
     }
 
     pub fn edge_handles(
         mut self,
         from: &str,
-        source_handle: Option<&str>,
+        source_handle: &str,
         to: &str,
-        target_handle: Option<&str>,
+        target_handle: &str,
     ) -> Self {
         let id = format!("e{}", self.edges.len());
         self.edges.push(json!({

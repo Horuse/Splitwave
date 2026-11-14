@@ -1,3 +1,5 @@
+import { channelHandle, channelOf, parsePort } from './handles';
+
 // Curated categorical palette — vibrant mid-tones that stay legible on both
 // light and dark backgrounds. ch1/ch2 keep the DAW-familiar red/blue; the rest
 // are distinct hues, cycling for wide channel counts.
@@ -19,6 +21,8 @@ const CHANNEL_PALETTE = [
 	'#10b981', // emerald
 	'#eab308' // yellow
 ];
+
+const NEUTRAL = '#a3a3a3';
 
 export function channelColor(index: number): string {
 	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
@@ -52,9 +56,28 @@ const PIN_SHAPE = 'width:5px !important;height:10px !important;border-radius:2px
 // Nudge a handle from the padded content edge onto the node's outer border
 // (node padding is 1rem). Avoids the negative-margin "overhang" rows, which
 // desynced the visible dot from its clickable connection target.
+function edgeOffset(side: 'source' | 'target'): string {
+	return side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
+}
+
 export function handleEdgeStyle(color: string, side: 'source' | 'target'): string {
-	const edge = side === 'source' ? 'right:-1rem !important;' : 'left:-1rem !important;';
-	return `${handleStyle(color)};${PIN_SHAPE}${edge}`;
+	return `${handleStyle(color)};${PIN_SHAPE}${edgeOffset(side)}`;
+}
+
+// Control cables are dashed while idle and their sockets diamonds, so the
+// signal reads from the shape alone: colour already means "which channel".
+// The handle itself is a bare hit area; `_control_socket.svelte` draws the diamond.
+export const CONTROL_DASH = '4 3';
+const SOCKET_AREA = 'width:14px !important;height:14px !important;background:transparent !important;border:none !important;';
+
+export function controlEdgeStyle(side: 'source' | 'target'): string {
+	return `${SOCKET_AREA}${edgeOffset(side)}`;
+}
+
+/** An action input sits on the node's top border, `lift` px above the
+ * button it presses, so its cable never runs under the node. */
+export function controlTopStyle(lift: number): string {
+	return `${SOCKET_AREA}top:${-lift - 7}px !important;`;
 }
 
 export interface Slot {
@@ -63,39 +86,33 @@ export interface Slot {
 	occupied: boolean;
 }
 
-const NEUTRAL = '#a3a3a3';
-
 /** Edge colour for a source handle: per-channel handles take their channel's
  * colour, bus and per-peer mixes stay neutral. */
 export function handleColor(handle: string | null | undefined): string {
-	if (!handle) return NEUTRAL;
-	const ch = parseHandle(handle);
-	if (ch !== null) return channelColor(ch - 1);
-	// `peer:<id>:<c>` is one channel of a peer, counted from zero.
-	const peer = /^peer:.+:(\d+)$/.exec(handle);
-	return peer ? channelColor(Number(peer[1])) : NEUTRAL;
-}
-
-export function parseHandle(handle: string): number | null {
-	const m = /^ch(\d+)$/.exec(handle);
-	return m ? Number(m[1]) : null;
+	const p = parsePort(handle);
+	if (p?.signal !== 'audio') return NEUTRAL;
+	const port = p.port.kind === 'branch' ? p.port.port : p.port;
+	if (port.kind === 'channel') return channelColor(port.ch - 1);
+	// A peer's channels count from zero.
+	if (port.kind === 'peer' && port.ch !== null) return channelColor(port.ch);
+	return NEUTRAL;
 }
 
 // A removed cable frees its slot in place; renumbering would reroute live audio.
 export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = Infinity, min = 0): Slot[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
-		const ch = parseHandle(h);
+		const ch = channelOf(h);
 		if (ch !== null) taken.add(ch);
 	}
 
 	const end = Math.min(Math.max(taken.size === 0 ? 0 : Math.max(...taken), min), max);
 	const slots: Slot[] = [];
 	for (let ch = 1; ch <= end; ch++) {
-		slots.push({ id: `ch${ch}`, ch, occupied: taken.has(ch) });
+		slots.push({ id: channelHandle(ch), ch, occupied: taken.has(ch) });
 	}
 	if (trailing && end < max) {
-		slots.push({ id: `ch${end + 1}`, ch: end + 1, occupied: false });
+		slots.push({ id: channelHandle(end + 1), ch: end + 1, occupied: false });
 	}
 	return slots;
 }
@@ -103,7 +120,7 @@ export function deriveSlots(occupiedHandles: string[], trailing: boolean, max = 
 export function freeRunFrom(occupiedHandles: string[], start: number, count: number): number[] {
 	const taken = new Set<number>();
 	for (const h of occupiedHandles) {
-		const ch = parseHandle(h);
+		const ch = channelOf(h);
 		if (ch !== null) taken.add(ch);
 	}
 	const run: number[] = [];

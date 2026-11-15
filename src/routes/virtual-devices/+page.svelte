@@ -5,7 +5,6 @@
 	import { methods } from '$lib/modules/audio/methods';
 	import type { VirtualDeviceConfig, VirtualDriverStatus } from '$lib/modules/audio/types';
 	import Header from '$lib/components/layout/header.svelte';
-	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import Add from '~icons/fluent/add-24-filled';
 	import Delete from '~icons/fluent/delete-16-filled';
@@ -118,11 +117,7 @@
 	}
 </script>
 
-<Header>
-	{#snippet left()}
-		<HeaderNav />
-	{/snippet}
-</Header>
+<Header />
 
 <div class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-8">
 	<div class="mt-2 flex flex-col gap-1">

@@ -8,6 +8,7 @@
 @import './components/input.css';
 @import './components/callout.css';
 @import './components/brand.css';
+@import './components/sidebar.css';
 
 @source '../';
 @custom-variant dark (&:where(.dark, .dark *));

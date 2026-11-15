@@ -38,7 +38,6 @@
 	}
 
 	import Header from '$lib/components/layout/header.svelte';
-	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
@@ -74,11 +73,7 @@
 	}
 </script>
 
-<Header>
-	{#snippet left()}
-		<HeaderNav />
-	{/snippet}
-</Header>
+<Header />
 
 <div class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-8">
 	{#if !isWindows}

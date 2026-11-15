@@ -13,6 +13,8 @@
 	import { DebugPanel } from '$lib/modules/debug';
 	import { loadAppInfo } from '$lib/modules/app_info';
 	import { watchSmoothRadius } from '@splitwave/ui';
+	import { page } from '$app/state';
+	import AppSidebar from '$lib/components/layout/app_sidebar.svelte';
 	import { ModalRender } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { AboutModal } from '$lib/modules/about/ui';
@@ -137,9 +139,14 @@
 
 <UpdateBanner />
 
-<main class="flex h-screen flex-col overflow-hidden">
-	{@render children()}
-</main>
+<div class="flex h-screen overflow-hidden">
+	{#if page.route.id !== '/pipelines/[id]'}
+		<AppSidebar />
+	{/if}
+	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+		{@render children()}
+	</main>
+</div>
 
 <ErrorModal />
 

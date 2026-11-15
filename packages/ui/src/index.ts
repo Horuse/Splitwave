@@ -14,3 +14,4 @@ export * from './callout';
 export * from './banner';
 export * from './card';
 export * from './separator';
+export * from './sidebar';

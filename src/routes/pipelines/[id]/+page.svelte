@@ -88,12 +88,7 @@
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
 						{pipeline.name}
 					</span>
-					<Input
-						bind:ref={nameInput}
-						bind:value={pipeline.name}
-						oninput={onNameInput}
-						maxlength={MAX_NAME_LENGTH}
-						style="width:{nameWidth}px" />
+					<Input bind:ref={nameInput} bind:value={pipeline.name} oninput={onNameInput} maxlength={MAX_NAME_LENGTH} style="width:{nameWidth}px" />
 				</div>
 			{/if}
 		</div>

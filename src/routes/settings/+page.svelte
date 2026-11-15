@@ -3,7 +3,6 @@
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';
 	import Header from '$lib/components/layout/header.svelte';
-	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
@@ -102,11 +101,7 @@
 	});
 </script>
 
-<Header>
-	{#snippet left()}
-		<HeaderNav />
-	{/snippet}
-</Header>
+<Header />
 
 <div class="min-h-0 flex-1 overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">
@@ -386,6 +381,6 @@
 
 		<PresetsSection />
 
-		<Button class="self-start" type="button" onclick={() => resetAll()}> Reset to defaults </Button>
+		<Button class="self-start" type="button" onclick={() => resetAll()}>Reset to defaults</Button>
 	</div>
 </div>

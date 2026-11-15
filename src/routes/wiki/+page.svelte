@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Header from '$lib/components/layout/header.svelte';
-	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 
 	const ENTRIES = [
 		{
@@ -26,11 +25,7 @@
 	];
 </script>
 
-<Header>
-	{#snippet left()}
-		<HeaderNav />
-	{/snippet}
-</Header>
+<Header />
 
 <div class="min-h-0 flex-1 overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">

@@ -2,7 +2,7 @@
 	import { Button, Popover } from '@splitwave/ui';
 	import type { Snippet } from 'svelte';
 	import { slide } from 'svelte/transition';
-	import { themeStore } from '$lib/modules/theme/stores';
+	import { page } from '$app/state';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { modalManager } from '$lib/modules/overlay/modal';
@@ -35,9 +35,6 @@
 		menuOpen = false;
 		checkForUpdates().catch(() => {});
 	}
-	function cycleTheme() {
-		$themeStore = $themeStore === 'light' ? 'dark' : $themeStore === 'dark' ? 'system' : 'light';
-	}
 	function undo() {
 		menuOpen = false;
 		pipelineStore.editorActions?.undo();
@@ -52,17 +49,12 @@
 	data-tauri-drag-region
 	class={[
 		'z-500 flex w-full flex-row items-center gap-8 border-b border-theme/5 bg-background px-1.5',
-		customTitlebar ? 'h-10 pl-3' : 'h-[max(2.5rem,calc(40px/var(--ui-zoom,1)))] pl-[calc(80px/var(--ui-zoom,1))]'
+		customTitlebar || page.route.id !== '/pipelines/[id]' ? 'h-10 pl-3' : 'h-[max(2.5rem,calc(40px/var(--ui-zoom,1)))] pl-[calc(80px/var(--ui-zoom,1))]'
 	]}>
 	{@render left?.()}
 
 	<div class="ml-auto flex flex-row items-center gap-4">
 		{@render right?.()}
-
-		<Button variant="ghost" icon aria-label="Theme toggle" title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`} onclick={cycleTheme}>
-			<svg class="size-4 fill-current" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"
-				><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm0-2V4a8 8 0 1 1 0 16Z" /></svg>
-		</Button>
 
 		{#if customTitlebar}
 			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
@@ -109,7 +101,7 @@
 			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase">Safe Mode</span>
 			<span>Auto-starting audio pipeline was skipped because Splitwave crashed last time.</span>
 		</div>
-		<Button tone="warning" type="button" onclick={() => (audioStore.safeMode = false)}> Dismiss </Button>
+		<Button tone="warning" type="button" onclick={() => (audioStore.safeMode = false)}>Dismiss</Button>
 	</div>
 {/if}
 

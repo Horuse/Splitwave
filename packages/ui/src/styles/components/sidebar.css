@@ -1,0 +1,29 @@
+@layer components {
+	.sidebar {
+		@apply flex h-full w-56 shrink-0 flex-col gap-1 border-r border-dashed border-neutral-300 bg-neutral-50 p-2;
+	}
+	.sidebar-section {
+		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
+	}
+	.sidebar-item {
+		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 select-none;
+		border-radius: var(--r, 10px);
+
+		& > svg {
+			@apply size-4.5 shrink-0;
+		}
+		&:hover {
+			@apply bg-neutral-200 text-theme;
+		}
+		&[data-active='true'] {
+			@apply bg-neutral-200 font-medium text-theme;
+
+			&::before {
+				content: '';
+				@apply absolute top-1/2 -left-2 h-4 w-1 -translate-y-1/2 rounded-r-full;
+				background-color: var(--color-brand);
+				box-shadow: 0 0 12px 1px var(--color-brand);
+			}
+		}
+	}
+}

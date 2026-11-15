@@ -1,21 +1,9 @@
 @layer components {
 	.btn-brand {
-		@apply transition-[color,background-color,border-color,box-shadow] duration-200 ease-out;
-		color: var(--color-brand-strong);
-		@variant dark {
-			color: var(--color-brand);
-		}
-		background-color: color-mix(in oklch, var(--color-brand) 16%, transparent);
-		border-color: color-mix(in oklch, var(--color-brand) 35%, transparent);
+		@apply border-orange-500/40 bg-orange-500/40 text-orange-800 dark:text-orange-200;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
-			color: var(--color-brand-strong);
-			@variant dark {
-				color: var(--color-brand);
-			}
-			background-color: color-mix(in oklch, var(--color-brand) 22%, transparent);
-			border-color: color-mix(in oklch, var(--color-brand) 55%, transparent);
-			box-shadow: 0 0 16px -6px var(--color-brand);
+			@apply border-orange-500/50 bg-orange-500/50 text-orange-900 dark:text-orange-100;
 		}
 	}
 

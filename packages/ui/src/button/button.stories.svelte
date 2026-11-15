@@ -57,6 +57,18 @@
 	{/snippet}
 </Story>
 
+<Story name="Loading">
+	{#snippet template()}
+		<div class="flex items-center gap-2 p-6">
+			<Button loading>Center</Button>
+			<Button loading loadingPosition="start">Start</Button>
+			<Button loading loadingPosition="end" tone="brand">End</Button>
+			<Button loader onclick={() => new Promise((r) => setTimeout(r, 1200))}>Async click</Button>
+			<Button loader loadingPosition="start" tone="success" onclick={() => new Promise((r) => setTimeout(r, 1200))}>Save</Button>
+		</div>
+	{/snippet}
+</Story>
+
 <Story name="States">
 	{#snippet template()}
 		<div class="flex items-center gap-2 p-6">

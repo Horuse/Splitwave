@@ -86,8 +86,10 @@
 			await store.save();
 			await methods.applyVirtualDevices(devices);
 			appliedDevices = devices;
+			return true;
 		} catch (e) {
 			error = String(e);
+			return false;
 		} finally {
 			applying = false;
 		}
@@ -101,8 +103,10 @@
 			status = await methods.virtualDriverStatus();
 			// a fresh install has no device config yet; Apply writes it
 			if (devices.length > 0) appliedDevices = [];
+			return true;
 		} catch (e) {
 			error = String(e);
+			return false;
 		} finally {
 			installing = false;
 		}
@@ -150,9 +154,7 @@
 						{#if status?.installed}
 							<Button tone="danger" onclick={uninstall}>Uninstall</Button>
 						{:else}
-							<Button tone="brand" onclick={installDriver} disabled={installing}>
-								{installing ? 'Installing...' : 'Install'}
-							</Button>
+							<Button tone="brand" loader loadingPosition="start" onclick={installDriver}>Install</Button>
 						{/if}
 					{/snippet}
 				</SectionCard>
@@ -248,9 +250,7 @@
 					<Callout tone="danger">{error}</Callout>
 				{/if}
 
-				<Button tone="brand" class="self-start" onclick={apply} disabled={applying}>
-					{applying ? 'Applying...' : 'Apply'}
-				</Button>
+				<Button tone="brand" class="self-start" loader loadingPosition="start" onclick={apply}>Apply</Button>
 			{/if}
 		{/if}
 	</div>

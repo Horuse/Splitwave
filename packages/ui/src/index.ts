@@ -18,3 +18,4 @@ export * from './sidebar';
 export * from './chip';
 export * from './section-card';
 export * from './nav-tree';
+export * from './toc';

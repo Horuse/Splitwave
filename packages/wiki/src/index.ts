@@ -5,6 +5,8 @@ export interface WikiArticle {
 	title: string;
 	description: string;
 	order: number;
+	/** File path inside src/articles, used for the GitHub edit link. */
+	file: string;
 	component: Component;
 }
 
@@ -37,6 +39,7 @@ export const articles: WikiArticle[] = Object.entries(modules).map(([path, mod])
 		title: mod.metadata?.title ?? titleFromSlug(slug),
 		description: mod.metadata?.description ?? '',
 		order: mod.metadata?.order ?? 0,
+		file: path.slice('./articles/'.length),
 		component: mod.default
 	};
 });
@@ -83,6 +86,30 @@ export function getNode(slug: string): WikiNode | undefined {
 		}
 	};
 	return walk(tree);
+}
+
+const REPO_EDIT = 'https://github.com/Horuse/Splitwave/edit/main/packages/wiki/src/articles/';
+
+export function editUrl(article: WikiArticle): string {
+	return REPO_EDIT + article.file;
+}
+
+/** Pages in reading order: depth-first through the tree, folders before their children. */
+export const ordered: WikiNode[] = (() => {
+	const out: WikiNode[] = [];
+	const walk = (list: WikiNode[]) => {
+		for (const n of list) {
+			out.push(n);
+			walk(n.children);
+		}
+	};
+	walk(tree);
+	return out;
+})();
+
+export function neighbours(slug: string): { prev?: WikiNode; next?: WikiNode } {
+	const i = ordered.findIndex((n) => n.slug === slug);
+	return i < 0 ? {} : { prev: ordered[i - 1], next: ordered[i + 1] };
 }
 
 export { default as WikiVideo } from './wiki-video.svelte';

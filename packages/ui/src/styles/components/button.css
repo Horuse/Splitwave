@@ -61,10 +61,10 @@
 	}
 
 	.btn-danger {
-		@apply border-red-500/40 bg-red-500/15 text-red-600 dark:text-red-400;
+		@apply border-red-500/40 bg-red-500/40 text-red-800 dark:text-red-200;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
-			@apply border-red-500/60 bg-red-500/25 text-red-700 dark:text-red-300;
+			@apply border-red-500/50 bg-red-500/50 text-red-900 dark:text-red-100;
 		}
 	}
 
@@ -82,5 +82,57 @@
 		&:hover:not(:disabled, [aria-disabled='true']) {
 			@apply border-blue-500/50 bg-blue-500/50 text-blue-900 dark:text-blue-100;
 		}
+	}
+}
+
+@layer components {
+	.btn {
+		position: relative;
+	}
+	.btn-content {
+		display: contents;
+	}
+	.btn[data-loader='center'] .btn-content {
+		visibility: hidden;
+	}
+	.btn[aria-busy='true'] {
+		cursor: progress;
+	}
+
+	.btn-loader {
+		width: 1.1em;
+		height: 1.1em;
+		flex-shrink: 0;
+	}
+	.btn-loader-center {
+		position: absolute;
+		inset: 0;
+		margin: auto;
+	}
+	.btn-loader-ring {
+		transform-origin: 12px 12px;
+		stroke-dasharray: 14 43;
+		animation: btn-spin 0.8s linear infinite;
+		transition: stroke-dasharray 300ms;
+	}
+	.btn-loader-check {
+		stroke-dasharray: 14;
+		stroke-dashoffset: 14;
+		transition: stroke-dashoffset 300ms 150ms;
+	}
+	.btn-loader[data-state='success'] {
+		.btn-loader-ring {
+			animation: none;
+			stroke-dasharray: 56.55 0;
+		}
+		.btn-loader-check {
+			stroke-dashoffset: 0;
+		}
+	}
+}
+
+@keyframes btn-spin {
+	to {
+		transform: rotate(360deg);
 	}
 }

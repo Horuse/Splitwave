@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Toggle } from '@splitwave/ui';
 	import { getContext, onMount } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
@@ -8,7 +9,6 @@
 	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
-	import Toggle from '$lib/components/toggle.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
@@ -121,7 +121,7 @@
 			</div>
 		{/if}
 		{#if isMac}
-			<Toggle
+			<Toggle class="nodrag nopan"
 				size="sm"
 				label="Exclude this app"
 				checked={data.excludeCurrentApp ?? true}

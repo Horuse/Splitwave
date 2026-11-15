@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { NumberStepper } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { CycleNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { ArrowRedo } from '$lib/components/icons';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import ControlPort from './_control_port.svelte';
 	import { NEXT_HANDLE, PREVIEW_CTX, RESET_HANDLE, parsePort, stepHandle } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
@@ -83,7 +83,7 @@
 	<div class="flex w-52 flex-col gap-3">
 		<div class="nodrag nopan flex items-center justify-between gap-2">
 			<span class="font-mono text-[9px] text-neutral-500">Steps</span>
-			<NumberStepper value={data.steps} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Steps" onchange={setSteps} />
+			<NumberStepper class="nodrag nopan" value={data.steps} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Steps" onchange={setSteps} />
 		</div>
 		<div class="flex items-start justify-between gap-4">
 			<div class="flex flex-col gap-2">

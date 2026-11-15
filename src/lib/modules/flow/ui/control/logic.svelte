@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { Segmented } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LogicNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { ArrowRight } from '$lib/components/icons';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import ControlPort from './_control_port.svelte';
 	import GateGlyph from './_gate_glyph.svelte';
 	import { A_HANDLE, B_HANDLE, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
@@ -54,7 +54,7 @@
 
 <Wrapper label="Logic" icon={ArrowRight} accent="control">
 	<div class="flex w-52 flex-col gap-3">
-		<SegmentedButtons
+		<Segmented class="nodrag nopan"
 			label="Operator"
 			note={LOGIC_OPS.find((o) => o.op === op)?.hint}
 			options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}

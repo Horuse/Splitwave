@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { Segmented } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { KeyInputNodeData, KeyInputSource } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { KeyCommand } from '$lib/components/icons';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import HotkeyBinder from '../_hotkey_binder.svelte';
 	import MidiBinder from '../_midi_binder.svelte';
 	import { useGlobalHotkey } from '../_hotkey.svelte';
@@ -53,7 +53,7 @@
 
 <Wrapper label="Key Input" icon={KeyCommand} accent="control">
 	<div class="flex flex-col gap-2 pb-1">
-		<SegmentedButtons options={SOURCES} value={source} onSelect={(next) => set({ source: next })} />
+		<Segmented class="nodrag nopan" options={SOURCES} value={source} onSelect={(next) => set({ source: next })} />
 		<div class="relative flex flex-col">
 			{#if source === 'keyboard'}
 				<HotkeyBinder {hotkey} error={shortcut.error} onChange={(next) => set({ hotkey: next })} {held} />

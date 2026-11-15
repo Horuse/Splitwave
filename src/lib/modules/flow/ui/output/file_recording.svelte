@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, NumberStepper, Segmented } from '@splitwave/ui';
 	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -23,10 +23,8 @@
 	import Wrapper from '../node.svelte';
 	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
 	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
@@ -670,11 +668,11 @@
 			</Tooltip>
 		</div>
 
-		<SegmentedButtons options={modeOptions} value={mode} onSelect={setMode} label="Mode" columns={3} />
+		<Segmented class="nodrag nopan" options={modeOptions} value={mode} onSelect={setMode} label="Mode" columns={3} />
 
-		<SegmentedButtons options={FORMATS.map((f) => ({ ...f, disabled: locked }))} value={data.format.kind} onSelect={setFormatKind} columns={3} />
+		<Segmented class="nodrag nopan" options={FORMATS.map((f) => ({ ...f, disabled: locked }))} value={data.format.kind} onSelect={setFormatKind} columns={3} />
 
-		<SegmentedButtons
+		<Segmented class="nodrag nopan"
 			label="Channels"
 			note={maxChannels >= 512 ? 'no limit' : `max ${maxChannels}`}
 			options={CHANNEL_MODES}
@@ -682,7 +680,7 @@
 			onSelect={setChannelMode} />
 
 		{#if cfg.rate.mode !== 'fixed'}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				label="Sample rate"
 				note="kHz"
 				options={rateOptions}
@@ -692,7 +690,7 @@
 			{#if rateSelection === 'custom' && cfg.rate.mode === 'grid+custom'}
 				<div class="flex items-center justify-end gap-1">
 					<span class="font-mono text-[9px] text-neutral-500">Hz</span>
-					<NumberStepper
+					<NumberStepper class="nodrag nopan"
 						value={data.sampleRate ?? DEFAULT_SAMPLE_RATE}
 						min={cfg.rate.min ?? 8000}
 						max={cfg.rate.max ?? 384000}
@@ -705,18 +703,18 @@
 		{/if}
 
 		{#if data.format.kind === 'wav'}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				options={WAV_BIT_DEPTHS.map((b) => ({ value: b.value, label: b.label, subtitle: b.sub, disabled: locked }))}
 				value={data.format.bitDepth}
 				onSelect={setWavBitDepth} />
 		{:else if data.format.kind === 'flac'}
-			<SegmentedButtons options={FLAC_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setFlacBitDepth} />
-			<SegmentedButtons
+			<Segmented class="nodrag nopan" options={FLAC_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setFlacBitDepth} />
+			<Segmented class="nodrag nopan"
 				options={FLAC_COMPRESSIONS.map((c) => ({ ...c, disabled: locked }))}
 				value={data.format.compression}
 				onSelect={setFlacCompression} />
 		{:else if data.format.kind === 'opus'}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				label="Bitrate"
 				note="kbps"
 				options={bitrateOptions()}
@@ -725,7 +723,7 @@
 			{#if showCustomBitrate}
 				<div class="flex items-center justify-end gap-1">
 					<span class="font-mono text-[9px] text-neutral-500">kbps</span>
-					<NumberStepper
+					<NumberStepper class="nodrag nopan"
 						value={Math.round(data.format.bitrate / 1000)}
 						min={bitrateBounds()[0]}
 						max={bitrateBounds()[1]}
@@ -735,12 +733,12 @@
 						onchange={setCustomBitrate} />
 				</div>
 			{/if}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				options={OPUS_APPLICATIONS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub, disabled: locked }))}
 				value={data.format.application}
 				onSelect={setOpusApplication} />
 		{:else if data.format.kind === 'mp3'}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				label="Bitrate"
 				note="kbps"
 				options={bitrateOptions()}
@@ -749,7 +747,7 @@
 			{#if showCustomBitrate}
 				<div class="flex items-center justify-end gap-1">
 					<span class="font-mono text-[9px] text-neutral-500">kbps</span>
-					<NumberStepper
+					<NumberStepper class="nodrag nopan"
 						value={data.format.bitrateKbps}
 						min={bitrateBounds()[0]}
 						max={bitrateBounds()[1]}
@@ -760,7 +758,7 @@
 				</div>
 			{/if}
 		{:else if data.format.kind === 'aac'}
-			<SegmentedButtons
+			<Segmented class="nodrag nopan"
 				label="Bitrate"
 				note="kbps"
 				options={bitrateOptions()}
@@ -769,7 +767,7 @@
 			{#if showCustomBitrate}
 				<div class="flex items-center justify-end gap-1">
 					<span class="font-mono text-[9px] text-neutral-500">kbps</span>
-					<NumberStepper
+					<NumberStepper class="nodrag nopan"
 						value={Math.round(data.format.bitrate / 1000)}
 						min={bitrateBounds()[0]}
 						max={bitrateBounds()[1]}
@@ -780,7 +778,7 @@
 				</div>
 			{/if}
 		{:else}
-			<SegmentedButtons options={AIFF_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
+			<Segmented class="nodrag nopan" options={AIFF_BIT_DEPTHS.map((b) => ({ ...b, disabled: locked }))} value={data.format.bitDepth} onSelect={setAiffBitDepth} />
 		{/if}
 
 		<div class="flex items-baseline justify-between font-mono text-[11px]">

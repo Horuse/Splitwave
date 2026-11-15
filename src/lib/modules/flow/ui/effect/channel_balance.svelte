@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Balance } from '$lib/components/icons';
-	import Toggle from '$lib/components/toggle.svelte';
 	import Slider from './_slider.svelte';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
@@ -87,7 +87,7 @@
 			<button type="button" class="nodrag nopan rounded border border-neutral-300 bg-neutral-100 px-2 py-0.5 hover:bg-neutral-200" onclick={center}>
 				Center
 			</button>
-			<Toggle size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />
+			<Toggle class="nodrag nopan" size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />
 		</div>
 	</div>
 </Wrapper>

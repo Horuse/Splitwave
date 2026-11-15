@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, NumberStepper, Toggle } from '@splitwave/ui';
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';
 	import Header from '$lib/components/layout/header.svelte';
 	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { edgeSettings, type EdgeShape } from '$lib/modules/flow/edge_settings.svelte';
 	import EdgeShapeIcon from '$lib/modules/flow/ui/_edge_shape_icon.svelte';
-	import Toggle from '$lib/components/toggle.svelte';
 	import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
 	import {
 		appSettings,
@@ -18,7 +17,6 @@
 		PIPELINE_SAMPLE_RATE_PRESETS,
 		BUFFER_FRAME_PRESETS
 	} from '$lib/modules/settings/stores.svelte';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz, formatLatencyMs } from '$lib/components/format';
 	import PresetsSection from './_presets_section.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';

@@ -1,0 +1,53 @@
+@layer components {
+	.stepper {
+		display: flex;
+		align-items: center;
+		overflow: hidden;
+		border: 1px solid var(--layer-next-line);
+		border-radius: var(--radius-md);
+		background-color: var(--layer-next);
+
+		&:focus-within {
+			border-color: var(--color-accent);
+		}
+	}
+	.stepper-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		color: var(--color-muted);
+		cursor: pointer;
+
+		&:hover:not(:disabled) {
+			background-color: var(--layer-next-hover);
+			color: var(--color-content);
+		}
+		&:disabled {
+			opacity: 0.4;
+			cursor: not-allowed;
+		}
+	}
+	.stepper-input {
+		height: 1.5rem;
+		border-inline: 1px solid var(--layer-next-line);
+		background: transparent;
+		text-align: center;
+		font-family: var(--font-mono);
+		font-size: 0.625rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-content);
+		outline: none;
+		appearance: textfield;
+
+		&::-webkit-inner-spin-button,
+		&::-webkit-outer-spin-button {
+			appearance: none;
+		}
+		&:disabled {
+			opacity: 0.4;
+			cursor: not-allowed;
+		}
+	}
+}

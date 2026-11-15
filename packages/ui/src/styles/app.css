@@ -3,6 +3,9 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import './tokens.css';
 @import './components/button.css';
+@import './components/toggle.css';
+@import './components/segmented.css';
+@import './components/number-stepper.css';
 
 @source '../';
 @custom-variant dark (&:where(.dark, .dark *));

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { NumberStepper, Segmented } from '@splitwave/ui';
 	import { onDestroy, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
@@ -7,8 +8,6 @@
 	import { channelOf } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import { ArrowUpload } from '$lib/components/icons';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 
@@ -193,20 +192,20 @@
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
+			<Segmented class="nodrag nopan" options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if data.codec === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
+				<Segmented class="nodrag nopan" options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-				<SegmentedButtons
+				<Segmented class="nodrag nopan"
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
 					onSelect={setApp} />
@@ -214,11 +213,11 @@
 		{:else}
 			<!-- sample rate -->
 			<div class="flex flex-col gap-1">
-				<SegmentedButtons label="Sample rate" note="kHz" options={rateOptions} value={rateSelection} onSelect={setRateSelection} columns={3} />
+				<Segmented class="nodrag nopan" label="Sample rate" note="kHz" options={rateOptions} value={rateSelection} onSelect={setRateSelection} columns={3} />
 				{#if rateSelection === 'custom'}
 					<div class="flex items-center justify-end gap-1">
 						<span class="font-mono text-[9px] text-neutral-500">Hz</span>
-						<NumberStepper
+						<NumberStepper class="nodrag nopan"
 							value={data.sampleRate ?? appSettings.pipelineSampleRate}
 							min={8000}
 							max={384000}

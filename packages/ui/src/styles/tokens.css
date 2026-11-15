@@ -85,6 +85,7 @@
 }
 
 /* A container sets data-layer; controls inside read --layer-next, one step deeper than the parent. */
+:root,
 [data-layer] {
 	--layer-hover: color-mix(in oklch, var(--layer), var(--color-content) 6%);
 	--layer-active: color-mix(in oklch, var(--layer), var(--color-content) 11%);
@@ -94,6 +95,8 @@
 	--layer-line-strong: color-mix(in oklch, var(--layer), var(--color-content) var(--line-mix-strong));
 	--layer-next-line: color-mix(in oklch, var(--layer-next), var(--color-content) var(--line-mix));
 	--layer-next-line-strong: color-mix(in oklch, var(--layer-next), var(--color-content) var(--line-mix-strong));
+}
+[data-layer] {
 	background-color: var(--layer);
 }
 [data-layer='0'] {

@@ -12,7 +12,8 @@
 		onSelect,
 		label,
 		note,
-		columns
+		columns,
+		class: className
 	}: {
 		options: Option[];
 		value: T;
@@ -20,6 +21,7 @@
 		label?: string;
 		note?: string;
 		columns?: number;
+		class?: string;
 	} = $props();
 
 	let cols = $derived(columns ?? options.length);
@@ -31,17 +33,16 @@
 
 {#if label || note}
 	<div class="flex items-baseline justify-between gap-2">
-		{#if label}<span class="font-mono text-[9px] text-neutral-500">{label}</span>{/if}
-		{#if note}<span class="font-mono text-[9px] text-neutral-400">{note}</span>{/if}
+		{#if label}<span class="segmented-caption">{label}</span>{/if}
+		{#if note}<span class="segmented-caption">{note}</span>{/if}
 	</div>
 {/if}
 
-<div class="nodrag nopan relative rounded-md border border-neutral-300 bg-neutral-100 p-0.5">
+<div class={['segmented', className]}>
 	{#if selectedIndex >= 0}
-		<!-- Offsets, not transform: a composited layer rasterises blurry under xyflow's zoom. -->
 		<div class="pointer-events-none absolute inset-0.5">
 			<div
-				class="absolute rounded-sm bg-neutral-900 transition-[left,top] duration-200 ease-out"
+				class="segmented-thumb"
 				style="width:{100 / cols}%; height:{100 / rows}%; left:{(col * 100) / cols}%; top:{(row * 100) / rows}%;">
 			</div>
 		</div>
@@ -51,13 +52,11 @@
 		{#each options as opt (opt.value)}
 			<button
 				type="button"
+				class="segmented-item"
+				aria-pressed={value === opt.value}
 				disabled={opt.disabled}
 				onclick={() => onSelect(opt.value)}
-				title={opt.subtitle || opt.label}
-				class={[
-					'relative z-10 flex flex-col items-center justify-center rounded-sm px-1 py-1.5 leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-30',
-					value === opt.value ? 'text-white' : 'text-neutral-900 not-disabled:hover:bg-neutral-200/60'
-				]}>
+				title={opt.subtitle || opt.label}>
 				<span class="font-mono text-[9px] tabular-nums">{opt.label}</span>
 				{#if opt.subtitle}
 					<span class="mt-0.5 text-[7px] opacity-70">{opt.subtitle}</span>

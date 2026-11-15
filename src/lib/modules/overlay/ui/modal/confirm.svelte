@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Toggle } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '../../modal';
-	import Toggle from '$lib/components/toggle.svelte';
 
 	interface Props {
 		message?: string;

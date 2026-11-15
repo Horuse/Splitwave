@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { SpeakerMute } from '$lib/components/icons';
-	import Toggle from '$lib/components/toggle.svelte';
 	import ControlPort from '../control/_control_port.svelte';
 	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { useControlInput } from '../../control.svelte';
@@ -112,7 +112,7 @@
 	</div>
 
 	<div class="nodrag nopan mt-3 flex w-40 flex-col gap-1 border-t border-neutral-400 pt-2">
-		<Toggle size="sm" checked={data.cueEnabled ?? false} label="Sound cue" onChange={setCueEnabled} />
+		<Toggle class="nodrag nopan" size="sm" checked={data.cueEnabled ?? false} label="Sound cue" onChange={setCueEnabled} />
 
 		{#if data.cueEnabled}
 			<span class="text-[10px] text-neutral-900">Plays on the output device</span>

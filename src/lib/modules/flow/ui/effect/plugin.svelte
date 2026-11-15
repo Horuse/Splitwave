@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
 	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
@@ -8,7 +9,6 @@
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
 	import Slider from './_slider.svelte';
-	import Toggle from '$lib/components/toggle.svelte';
 	import { Plug, Refresh, WindowOff } from '$lib/components/icons';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
@@ -231,7 +231,7 @@
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>
-			<Toggle size="sm" label="Show parameters" checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
+			<Toggle class="nodrag nopan" size="sm" label="Show parameters" checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
 			{#if data.showParams && params.length}
 				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
 					{#each params as p (p.id)}

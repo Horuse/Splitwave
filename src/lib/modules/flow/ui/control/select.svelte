@@ -1,11 +1,10 @@
 <script lang="ts">
+	import { NumberStepper, Segmented } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SelectNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import ChannelHandles from '../_channel_handles.svelte';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { ArrowSwap } from '$lib/components/icons';
 	import ControlPort from './_control_port.svelte';
 	import { useSelectOutput } from './_select_output';
@@ -37,9 +36,9 @@
 	<div class="flex w-52 flex-col gap-3">
 		<div class="nodrag nopan flex items-center justify-between gap-2">
 			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
-			<NumberStepper value={data.inputs} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Inputs" onchange={setInputs} />
+			<NumberStepper class="nodrag nopan" value={data.inputs} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Inputs" onchange={setInputs} />
 		</div>
-		<SegmentedButtons
+		<Segmented class="nodrag nopan"
 			label="Hear"
 			options={inputs.map((k) => ({ label: String(k), value: k }))}
 			columns={Math.min(inputs.length, 4)}

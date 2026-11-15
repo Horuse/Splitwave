@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Segmented } from '@splitwave/ui';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
@@ -13,7 +13,6 @@
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
 	import { PeopleTeam } from '$lib/components/icons';
-	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '$lib/modules/flow/utils';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
@@ -293,20 +292,20 @@
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
+			<Segmented class="nodrag nopan" options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
+				<Segmented class="nodrag nopan" options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-				<SegmentedButtons
+				<Segmented class="nodrag nopan"
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
 					onSelect={setApp} />

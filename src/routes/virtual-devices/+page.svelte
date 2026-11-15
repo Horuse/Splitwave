@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, NumberStepper } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
 	import { methods } from '$lib/modules/audio/methods';
@@ -8,7 +8,6 @@
 	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
-	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

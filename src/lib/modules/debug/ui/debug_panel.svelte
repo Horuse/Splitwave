@@ -239,7 +239,7 @@
 	}
 </script>
 
-<div class="fixed right-3 bottom-3 z-[200] flex flex-col items-end gap-1">
+<div class="fixed bottom-3 left-3 z-[200] flex flex-col items-start gap-1">
 	{#if open}
 		<div transition:fly={{ duration: 200, y: 5 }}>
 			<Menu>

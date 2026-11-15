@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Callout, Input, NumberStepper } from '@splitwave/ui';
+	import { Button, Callout, Card, Chip, Input, NumberStepper, SectionCard, Separator, smoothRadius } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
 	import { methods } from '$lib/modules/audio/methods';
@@ -119,57 +119,52 @@
 
 <Header />
 
-<div class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-8">
-	<div class="mt-2 flex flex-col gap-1">
-		<h1 class="text-2xl font-semibold">Virtual Devices</h1>
+<div class="min-h-0 flex-1 overflow-y-auto">
+	<div class="mx-auto flex w-full max-w-3xl flex-col gap-5 p-8">
+		<div class="flex flex-col gap-1">
+			<h1 class="text-2xl font-semibold">Virtual devices</h1>
+			{#if isWindows}
+				<p class="text-sm text-neutral-900">
+					Windows uses the fixed VB-CABLE device pair. Send a Speaker node to CABLE Input, then select CABLE Output as the microphone in another app.
+				</p>
+			{:else}
+				<p class="text-sm text-neutral-900">
+					A virtual device is a system audio device that exists only in software - no hardware required. Apps can send audio to it or record from it
+					just like a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and
+					route it to another.
+				</p>
+			{/if}
+		</div>
 
 		{#if isWindows}
-			<p class="max-w-3xl text-base text-neutral-700">
-				Windows uses the fixed VB-CABLE device pair. Send a Speaker node to CABLE Input, then select CABLE Output as the microphone in another app.
-			</p>
+			<WindowsVirtualMicrophone />
 		{:else}
-			<p class="max-w-3xl text-base text-neutral-700">
-				A virtual device is a system audio device that exists only in software - no hardware required. Apps can send audio to it or record from it just
-				like a real microphone or speaker. Each device appears as both an input and an output, so a pipeline can receive audio from one app and route it
-				to another.
-			</p>
-		{/if}
-	</div>
+			{#if !isLinux}
+				<SectionCard
+					title="Audio Server Plugin"
+					description="{status?.installed ? 'Installed' : 'Not installed'}. Required for virtual devices to appear in system audio."
+					icon={Plug}>
+					{#snippet actions()}
+						{#if status?.installed}
+							<Button tone="danger" onclick={uninstall}>Uninstall</Button>
+						{:else}
+							<Button tone="brand" onclick={installDriver} disabled={installing}>
+								{installing ? 'Installing...' : 'Install'}
+							</Button>
+						{/if}
+					{/snippet}
+				</SectionCard>
 
-	{#if isWindows}
-		<WindowsVirtualMicrophone />
-	{:else}
-		{#if !isLinux}
-			<div class="flex items-center gap-4 rounded-2xl bg-neutral-200 px-4 py-4">
-				<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
-					<Plug class={['size-4.5', status?.installed ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-700']} />
-				</div>
-				<div class="flex-1">
-					<div class="font-medium">Audio Server Plugin</div>
-					<div class="text-xs text-neutral-900">
-						{status?.installed ? 'Installed' : 'Not installed'} &mdash; required for virtual devices to appear in system audio
-					</div>
-				</div>
-				{#if status?.installed}
-					<Button tone="danger" class="h-full" onclick={uninstall}>Uninstall</Button>
-				{:else}
-					<Button tone="danger" class="h-full" onclick={installDriver} disabled={installing}>
-						{installing ? 'Installing...' : 'Install'}
-					</Button>
-				{/if}
-			</div>
+				<DriverUpdateBanner
+					onUpdated={(s) => {
+						status = s;
+						if (devices.length > 0) appliedDevices = [];
+					}} />
+			{/if}
 
-			<DriverUpdateBanner
-				onUpdated={(s) => {
-					status = s;
-					if (devices.length > 0) appliedDevices = [];
-				}} />
-		{/if}
-
-		{#if isLinux || status?.installed}
-			<div class="flex flex-col gap-4">
-				<div class="flex items-center justify-between">
-					<h2 class="text-lg font-medium">Devices</h2>
+			{#if isLinux || status?.installed}
+				<div class="flex items-center justify-between pt-2">
+					<h2 class="text-lg font-semibold">Devices</h2>
 					<Button onclick={addDevice}>
 						<Add class="size-4" />
 						Add device
@@ -177,107 +172,82 @@
 				</div>
 
 				{#if devices.length === 0}
-					<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-12">
+					<Card dashed class="flex flex-col items-center gap-3 py-12">
 						<SoundWave class="size-10 text-neutral-600" />
 						<p class="text-sm text-neutral-900">No virtual devices. Add one above.</p>
-					</div>
+					</Card>
 				{:else}
-					<ul class="flex flex-col gap-2">
-						{#each devices as d (d.id)}
-							<li class="flex flex-col gap-3 rounded-2xl bg-neutral-200 p-4">
-								<div class="flex items-center gap-3">
-									<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
-										<SoundWave class="size-4.5 text-sky-600 dark:text-sky-400" />
-									</div>
-									<Input
-										size="md"
-										class="flex-1 font-medium"
-										value={d.name}
-										oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
-									<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">
-										{d.id.slice(0, 8)}
-									</span>
-									<Button tone="danger" onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
-										<Delete class="size-4" />
-									</Button>
+					{#each devices as d (d.id)}
+						<Card class="flex flex-col gap-4 p-5">
+							<div class="flex items-center gap-3">
+								<span class="section-card-icon" {@attach smoothRadius({ variable: '--r' })}><SoundWave /></span>
+								<Input
+									size="md"
+									class="flex-1 font-medium"
+									value={d.name}
+									oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
+								<span class="rounded-md bg-(--lv-2) px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">{d.id.slice(0, 8)}</span>
+								<Button tone="danger" icon onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
+									<Delete class="size-4" />
+								</Button>
+							</div>
+
+							<Separator />
+
+							<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+								<span class="w-24 text-xs text-neutral-900">Channels</span>
+								<NumberStepper
+									value={d.channels ?? 2}
+									min={1}
+									max={maxChannels}
+									step={1}
+									label="Channels"
+									onchange={(v) => setChannels(d.id, v)} />
+								<div class="flex items-center gap-1">
+									{#each [2, 8, 16, 32, 64] as preset (preset)}
+										<Chip mono selected={(d.channels ?? 2) === preset} onclick={() => setChannels(d.id, preset)}>{preset}</Chip>
+									{/each}
 								</div>
-								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-									<div class="flex items-center gap-2">
-										<span class="text-xs text-neutral-900">Channels</span>
-										<NumberStepper
-											value={d.channels ?? 2}
-											min={1}
-											max={maxChannels}
-											step={1}
-											label="Channels"
-											onchange={(v) => setChannels(d.id, v)} />
-									</div>
-									<div class="flex items-center gap-1">
-										{#each [2, 8, 16, 32, 64] as preset (preset)}
-											<button
-												class={[
-													'rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums transition-colors',
-													(d.channels ?? 2) === preset
-														? 'border-neutral-800 bg-neutral-600 text-theme'
-														: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
-												]}
-												onclick={() => setChannels(d.id, preset)}>
-												{preset}
-											</button>
-										{/each}
-									</div>
-									<span class="ml-auto text-[11px] text-neutral-800"> Appears as input + output &middot; up to {maxChannels} channels </span>
+								<span class="ml-auto text-[11px] text-neutral-800">Input + output, up to {maxChannels} channels</span>
+							</div>
+
+							<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+								<span class="w-24 text-xs text-neutral-900">Sample rate</span>
+								<NumberStepper
+									value={d.sampleRate ?? DEFAULT_SAMPLE_RATE}
+									min={8000}
+									max={384000}
+									step={1}
+									label="Sample rate"
+									onchange={(v) => setSampleRate(d.id, v)} />
+								<div class="flex items-center gap-1">
+									{#each [44100, 48000, 88200, 96000, 192000] as preset (preset)}
+										<Chip mono selected={(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === preset} onclick={() => setSampleRate(d.id, preset)}>
+											{formatHz(preset)}
+										</Chip>
+									{/each}
 								</div>
-								<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-neutral-300/40 pt-2">
-									<div class="flex items-center gap-2">
-										<span class="text-xs text-neutral-900">Sample rate</span>
-										<NumberStepper
-											value={d.sampleRate ?? DEFAULT_SAMPLE_RATE}
-											min={8000}
-											max={384000}
-											step={1}
-											label="Sample rate"
-											onchange={(v) => setSampleRate(d.id, v)} />
-										<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz</span>
-									</div>
-									<div class="flex items-center gap-1">
-										{#each [44100, 48000, 88200, 96000, 192000] as preset (preset)}
-											<button
-												class={[
-													'rounded-md border px-2 py-0.5 font-mono text-xs tabular-nums transition-colors',
-													(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === preset
-														? 'border-neutral-800 bg-neutral-600 text-theme'
-														: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-300'
-												]}
-												onclick={() => setSampleRate(d.id, preset)}>
-												{formatHz(preset)}
-											</button>
-										{/each}
-									</div>
-									<span class="ml-auto text-[11px] text-neutral-800"> Matches project rate to avoid resampling </span>
-								</div>
-							</li>
-						{/each}
-					</ul>
+								<span class="ml-auto text-[11px] text-neutral-800">Match the project rate to avoid resampling</span>
+							</div>
+						</Card>
+					{/each}
 				{/if}
-			</div>
 
-			{#if dirty}
-				<Callout>
-					<strong>Changes not applied</strong>
-					Press Apply to update the system audio devices.
-				</Callout>
-			{/if}
+				{#if dirty}
+					<Callout>
+						<strong>Changes not applied</strong>
+						Press Apply to update the system audio devices.
+					</Callout>
+				{/if}
 
-			{#if error}
-				<p class="text-sm text-red-500">{error}</p>
-			{/if}
+				{#if error}
+					<Callout tone="danger">{error}</Callout>
+				{/if}
 
-			<div class="flex items-center gap-4">
-				<Button onclick={apply} disabled={applying}>
+				<Button tone="brand" class="self-start" onclick={apply} disabled={applying}>
 					{applying ? 'Applying...' : 'Apply'}
 				</Button>
-			</div>
+			{/if}
 		{/if}
-	{/if}
+	</div>
 </div>

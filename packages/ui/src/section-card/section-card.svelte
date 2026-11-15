@@ -9,10 +9,11 @@
 		description?: string;
 		icon?: Component<{ class?: string }>;
 		class?: ClassValue;
+		actions?: Snippet;
 		children?: Snippet;
 	};
 
-	let { title, description, icon: Icon, class: className, children }: Props = $props();
+	let { title, description, icon: Icon, class: className, actions, children }: Props = $props();
 </script>
 
 <Card class={['flex flex-col gap-5 p-6', className]}>
@@ -20,10 +21,11 @@
 		{#if Icon}
 			<span class="section-card-icon" {@attach smoothRadius({ variable: '--r' })}><Icon /></span>
 		{/if}
-		<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 flex-1 flex-col gap-0.5">
 			<h2 class="text-sm font-semibold text-theme">{title}</h2>
 			{#if description}<p class="text-xs text-neutral-900">{description}</p>{/if}
 		</div>
+		{#if actions}<div class="ml-auto flex shrink-0 items-center gap-2">{@render actions()}</div>{/if}
 	</header>
 	{@render children?.()}
 </Card>

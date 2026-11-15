@@ -5,9 +5,9 @@ order: 1
 ---
 
 <script>
-	import WikiVideo from '../wiki-video.svelte';
-	import mp4 from '../media/alt_connect.mp4';
-	import webm from '../media/alt_connect.webm';
+	import WikiVideo from '../../wiki-video.svelte';
+	import mp4 from '../../media/alt_connect.mp4';
+	import webm from '../../media/alt_connect.webm';
 </script>
 
 Hold **Option** (Alt on Windows/Linux) while picking channels to select several at once, then drag them together as one connection.

@@ -1,0 +1,7 @@
+---
+title: Canvas
+description: Working with nodes and connections on the pipeline canvas.
+order: 1
+---
+
+Everything you do with nodes and cables on the pipeline canvas.

@@ -5,9 +5,9 @@ order: 4
 ---
 
 <script>
-	import WikiVideo from '../wiki-video.svelte';
-	import mp4 from '../media/shift_delete_edges.mp4';
-	import webm from '../media/shift_delete_edges.webm';
+	import WikiVideo from '../../wiki-video.svelte';
+	import mp4 from '../../media/shift_delete_edges.mp4';
+	import webm from '../../media/shift_delete_edges.webm';
 </script>
 
 Hold **Shift** and click each connection you want to remove, then press **Delete** to drop them all at once.

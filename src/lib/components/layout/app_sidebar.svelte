@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { Sidebar, SidebarGroup, SidebarItem, SidebarSection } from '@splitwave/ui';
+	import { NavTree, Sidebar, SidebarItem, SidebarSection, type NavNode } from '@splitwave/ui';
 	import IconFlow from '~icons/fluent/flow-20-filled';
 	import IconSpeaker from '~icons/fluent/speaker-2-20-filled';
 	import IconBook from '~icons/fluent/book-20-filled';
@@ -9,9 +9,12 @@
 	import IconSettings from '~icons/fluent/settings-20-filled';
 	import IconTheme from '~icons/fluent/dark-theme-20-filled';
 	import { page } from '$app/state';
-	import { articles } from '@splitwave/wiki';
+	import { tree, type WikiNode } from '@splitwave/wiki';
 	import IconChevron from '~icons/fluent/chevron-right-16-filled';
 	import { themeStore } from '$lib/modules/theme/stores';
+
+	const toNav = (n: WikiNode): NavNode => ({ id: n.slug, label: n.title, href: `/wiki/${n.slug}`, children: n.children.map(toNav) });
+	const wikiNav = tree.map(toNav);
 
 	let wikiOpen = $state(false);
 	$effect(() => {
@@ -54,11 +57,7 @@
 	</SidebarItem>
 	{#if wikiOpen}
 		<div transition:slide={{ duration: 220, easing: cubicOut }}>
-			<SidebarGroup activeKey={page.params.slug}>
-				{#each articles as a (a.slug)}
-					<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
-				{/each}
-			</SidebarGroup>
+			<NavTree items={wikiNav} activeId={page.params.slug} />
 		</div>
 	{/if}
 	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />

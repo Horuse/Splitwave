@@ -5,6 +5,7 @@
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
 	import { portal } from 'svelte-portal';
 	import { OVERLAY_HOST, type Placement } from '../types';
+	import { smoothRadius } from '../../attachments';
 
 	interface Props {
 		text?: string;
@@ -47,7 +48,10 @@
 		use:portal={OVERLAY_HOST}
 		use:floatingContent
 		transition:fade={{ duration: 100 }}
-		class="pointer-events-none z-[200] rounded-md border border-neutral-700 bg-(--lv-5) px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
+		data-layer="popover"
+		class="pointer-events-none z-[200] border border-neutral-400 bg-popover px-2.5 py-1.5 text-xs text-neutral-1100 shadow-lg"
+		style="border-radius: var(--smooth-r, 8px)"
+		{@attach smoothRadius({ variable: '--smooth-r' })}
 		role="tooltip">
 		{#if content}
 			{@render content()}

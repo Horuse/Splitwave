@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Popover } from '@splitwave/ui';
+	import { Button, Menu, MenuItem, MenuSeparator, Popover } from '@splitwave/ui';
 	import type { Snippet } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { page } from '$app/state';
@@ -71,14 +71,13 @@
 						</Button>
 					{/snippet}
 
-					<div class="min-w-48 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg">
-						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={about}>About Splitwave</button>
-						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={checkUpdates}
-							>Check for Updates…</button>
-						<div class="my-1 border-t border-neutral-300"></div>
-						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={undo}>Undo</button>
-						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={redo}>Redo</button>
-					</div>
+					<Menu class="min-w-48">
+						<MenuItem label="About Splitwave" onclick={about} />
+						<MenuItem label="Check for Updates…" onclick={checkUpdates} />
+						<MenuSeparator />
+						<MenuItem label="Undo" onclick={undo} />
+						<MenuItem label="Redo" onclick={redo} />
+					</Menu>
 				</Popover>
 
 				<div class="flex items-center gap-0.5">

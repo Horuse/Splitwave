@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
+	import { smoothRadius } from '../attachments';
 
 	interface Option {
 		value: string;
@@ -120,19 +121,27 @@
 	{#if open}
 		<div
 			transition:fly={{ duration: 200, y: 5 }}
-			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-(--lv-3) bg-neutral-50 shadow-lg">
+			data-layer="popover"
+			class="absolute top-full right-0 left-0 z-20 mt-1 flex flex-col gap-1 overflow-hidden border border-neutral-400 bg-popover p-1 shadow-lg"
+			style="border-radius: calc(var(--menu-item-r, 10px) + 5px)"
+			{@attach smoothRadius({ variable: '--menu-item-r', side: 28 })}>
 			<input
 				bind:this={inputEl}
 				bind:value={search}
 				type="text"
-				class="nodrag nopan w-full border-b border-(--lv-3) bg-(--lv-1) px-2 py-1 text-sm outline-none"
+				class="nodrag nopan w-full border border-(--lv-3) bg-(--lv-2) px-2.5 py-1 text-sm outline-none"
+				style="border-radius: var(--menu-item-r, 10px)"
 				placeholder="Filter…"
 				onkeydown={onKeyDown} />
-			<ul class="nodrag nopan nowheel max-h-48 overflow-y-auto">
+			<ul class="nodrag nopan nowheel flex max-h-48 flex-col overflow-y-auto">
 				{#if value !== null}
 					<li>
-						<button type="button" class="block w-full px-2 py-1 text-left text-xs text-neutral-900 hover:bg-(--lv-2)" onclick={() => pick(null)}>
-							— Clear selection —
+						<button
+							type="button"
+							class="block w-full px-2.5 py-1.5 text-left text-xs text-neutral-900 hover:bg-(--lv-3)"
+							style="border-radius: var(--menu-item-r, 10px)"
+							onclick={() => pick(null)}>
+							Clear selection
 						</button>
 					</li>
 				{/if}
@@ -140,9 +149,10 @@
 					<li>
 						<button
 							type="button"
+							style="border-radius: var(--menu-item-r, 10px)"
 							class={[
-								'flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm',
-								i === activeIndex ? 'bg-(--lv-2) text-neutral-1000' : 'hover:bg-(--lv-2)',
+								'flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm',
+								i === activeIndex ? 'bg-(--lv-3) text-neutral-1000' : 'hover:bg-(--lv-3)',
 								opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
 							]}
 							onmouseenter={() => (activeIndex = i)}
@@ -165,7 +175,7 @@
 					</li>
 				{/each}
 				{#if filtered.length === 0}
-					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint}</li>
+					<li class="px-2.5 py-1.5 text-xs text-neutral-900">{emptyHint}</li>
 				{/if}
 			</ul>
 			{#if footer}

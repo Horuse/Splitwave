@@ -32,6 +32,8 @@
 
 @theme {
 	--color-foreground: var(--color-neutral-100);
+	/* One step above foreground: popovers, menus, tooltips. */
+	--color-popover: var(--color-neutral-200);
 }
 
 /* Control shades relative to the surface they sit on: a foreground block (card, sidebar) lifts them one step. */
@@ -50,7 +52,15 @@
 	--lv-4: var(--color-neutral-500);
 	--lv-5: var(--color-neutral-600);
 }
+.dark [data-layer='popover'] {
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-500);
+	--lv-4: var(--color-neutral-600);
+	--lv-5: var(--color-neutral-700);
+}
 
 :root:not(.dark) {
 	--color-foreground: var(--color-neutral-50);
+	--color-popover: var(--color-background);
 }

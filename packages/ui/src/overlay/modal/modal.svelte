@@ -2,6 +2,9 @@
 	import type { Snippet } from 'svelte';
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	import Dismiss from '~icons/fluent/dismiss-16-filled';
+	import { Button } from '../../button';
+	import { smoothRadius } from '../../attachments';
 
 	export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -45,14 +48,17 @@
 
 <!-- svelte-ignore a11y_interactive_supports_focus a11y_click_events_have_key_events -->
 <div
-	class="fixed inset-0 z-100 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
+	class="fixed inset-0 z-100 flex items-center justify-center bg-black/50 p-6"
 	style:z-index={zIndex}
 	role="dialog"
 	aria-modal="true"
 	transition:fade|global={{ duration: 150 }}
 	onclick={onBackdrop}>
 	<div
-		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-(--lv-3) bg-(--lv-1) shadow-2xl', WIDTH[size]]}
+		data-layer="fg"
+		class={['flex max-h-[85vh] w-full flex-col overflow-hidden border border-neutral-300 bg-foreground shadow-2xl', WIDTH[size]]}
+		style="border-radius: var(--smooth-r, 20px)"
+		{@attach smoothRadius({ variable: '--smooth-r' })}
 		transition:fly|global={{ duration: 200, y: 8, easing: cubicOut }}
 		onclick={(e) => e.stopPropagation()}
 		role="presentation">
@@ -67,16 +73,9 @@
 				<div class="flex shrink-0 items-center gap-2">
 					{#if badge}{@render badge()}{/if}
 					{#if canClose}
-						<button
-							type="button"
-							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-(--lv-3)"
-							aria-label="Close"
-							onclick={() => onClose?.()}>
-							<svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-								<path
-									d="M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94 4.28 3.22Z" />
-							</svg>
-						</button>
+						<Button icon variant="ghost" aria-label="Close" title="Close" onclick={() => onClose?.()}>
+							<Dismiss class="size-4" />
+						</Button>
 					{/if}
 				</div>
 			</header>

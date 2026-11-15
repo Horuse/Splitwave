@@ -10,7 +10,7 @@
 		argTypes: {
 			tone: { control: 'select', options: ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] },
 			variant: { control: 'select', options: ['soft', 'solid', 'ghost'] },
-			size: { control: 'select', options: ['xs', 'sm', 'md', 'lg'] },
+			size: { control: 'select', options: ['xs', 'sm', 'md', 'lg', 'xl'] },
 			icon: { control: 'boolean' },
 			active: { control: 'boolean' },
 			disabled: { control: 'boolean' }
@@ -20,7 +20,7 @@
 
 	const tones = ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] as const;
 	const variants = ['soft', 'solid', 'ghost'] as const;
-	const sizes = ['xs', 'sm', 'md', 'lg'] as const;
+	const sizes = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
 </script>
 
 <Story name="Playground">

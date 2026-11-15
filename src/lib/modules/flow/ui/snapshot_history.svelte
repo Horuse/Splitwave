@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Popover } from '@splitwave/ui';
+	import { Menu, MenuItem, MenuSection, Popover } from '@splitwave/ui';
 	import { onMount, onDestroy } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { methods as pipelineMethods, type Snapshot } from '$lib/modules/pipeline/methods';
@@ -47,26 +47,25 @@
 		</button>
 	{/snippet}
 
-	<div class="w-72 overflow-hidden rounded-md border border-neutral-400 bg-neutral-50 shadow-lg">
-		<div class="border-b border-neutral-300 bg-neutral-100 px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">Auto-saved snapshots</div>
-		<ul class="nodrag nopan nowheel max-h-72 overflow-y-auto">
+	<Menu class="w-72">
+		<MenuSection label="Auto-saved snapshots" />
+		<ul class="nodrag nopan nowheel flex max-h-72 flex-col overflow-y-auto">
 			{#if snapshots.length === 0}
-				<li class="px-3 py-3 text-xs text-neutral-900 italic">No snapshots yet. Edit the graph to create one.</li>
+				<li class="px-2.5 py-2 text-xs text-neutral-900">No snapshots yet. Edit the graph to create one.</li>
 			{:else}
 				{#each [...snapshots].reverse() as snap, i (i)}
 					<li>
-						<button
-							type="button"
-							class="flex w-full items-baseline justify-between px-3 py-1.5 text-left text-xs text-neutral-1000 transition-colors hover:bg-neutral-200"
-							onclick={() => revert(snap)}>
-							<span class="font-mono tabular-nums">{relativeTime(snap.takenAt)}</span>
-							<span class="text-[10px] text-neutral-900">
-								{snap.pipeline.nodes.length}n · {snap.pipeline.edges.length}e
+						<MenuItem onclick={() => revert(snap)}>
+							<span class="flex items-baseline justify-between gap-2">
+								<span class="tabular-nums">{relativeTime(snap.takenAt)}</span>
+								<span class="text-xs text-neutral-900">
+									{snap.pipeline.nodes.length} nodes, {snap.pipeline.edges.length} edges
+								</span>
 							</span>
-						</button>
+						</MenuItem>
 					</li>
 				{/each}
 			{/if}
 		</ul>
-	</div>
+	</Menu>
 </Popover>

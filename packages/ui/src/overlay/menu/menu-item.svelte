@@ -17,20 +17,19 @@
 <button
 	type="button"
 	class={[
-		'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors duration-100',
+		'flex h-8 w-full shrink-0 items-center gap-2.5 px-2.5 text-left text-sm transition-colors duration-100',
 		danger ? 'text-red-700 dark:text-red-300' : 'text-neutral-1100',
-		disabled ? 'cursor-not-allowed opacity-40' : danger ? 'hover:bg-red-500/15' : 'hover:bg-(--lv-2)'
+		disabled ? 'cursor-not-allowed opacity-40' : danger ? 'hover:bg-red-500/15' : 'hover:bg-(--lv-3)'
 	]}
+	style="border-radius: var(--menu-item-r, 11.6px)"
 	{disabled}
 	{onclick}
 	role="menuitem">
 	{#if icon}
 		{@const Ico = icon}
-		<Ico class="h-3.5 w-3.5 shrink-0 opacity-70" />
-	{:else}
-		<span class="h-3.5 w-3.5 shrink-0"></span>
+		<Ico class="size-4 shrink-0" />
 	{/if}
-	<span class="flex-1">
+	<span class="flex-1 truncate">
 		{#if children}
 			{@render children()}
 		{:else}
@@ -38,7 +37,7 @@
 		{/if}
 	</span>
 	{#if shortcut}
-		<span class="flex items-center gap-0.5 font-mono text-[10px] text-neutral-900">
+		<span class="flex items-center gap-0.5 text-xs text-neutral-900">
 			{@render shortcut()}
 		</span>
 	{/if}

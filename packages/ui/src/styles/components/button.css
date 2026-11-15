@@ -29,6 +29,9 @@
 	.btn-lg {
 		@apply h-9 px-5 text-sm;
 	}
+	.btn-xl {
+		@apply h-11 px-6 text-base;
+	}
 	.btn-icon {
 		@apply aspect-square px-0;
 	}

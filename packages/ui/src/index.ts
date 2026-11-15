@@ -15,3 +15,5 @@ export * from './banner';
 export * from './card';
 export * from './separator';
 export * from './sidebar';
+export * from './chip';
+export * from './section-card';

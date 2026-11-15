@@ -1,4 +1,12 @@
 <script lang="ts">
+	import { Chip, SectionCard, Separator } from '@splitwave/ui';
+	import IconPaint from '~icons/fluent/paint-brush-20-regular';
+	import IconGrid from '~icons/fluent/grid-20-regular';
+	import IconGauge from '~icons/fluent/gauge-20-regular';
+	import IconRecord from '~icons/fluent/record-20-regular';
+	import IconSync from '~icons/fluent/arrow-sync-20-regular';
+	import IconBookmark from '~icons/fluent/bookmark-20-regular';
+	import IconReset from '~icons/fluent/arrow-reset-20-regular';
 	import { Button, NumberStepper, Toggle } from '@splitwave/ui';
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';
@@ -103,27 +111,14 @@
 
 <Header />
 
-<div class="min-h-0 flex-1 overflow-y-auto p-8">
-	<div class="flex max-w-2xl flex-col gap-8">
-		<section class="flex flex-col gap-3">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Appearance</h2>
-				<p class="text-xs text-neutral-900">System follows your OS setting and changes with it.</p>
-			</div>
+<div class="min-h-0 flex-1 overflow-y-auto">
+	<div class="mx-auto flex w-full max-w-3xl flex-col gap-5 p-8">
+		<h1 class="text-2xl font-semibold">Settings</h1>
 
+		<SectionCard title="Appearance" description="How Splitwave looks. System follows your OS setting and changes with it." icon={IconPaint}>
 			<div class="grid grid-cols-3 gap-2">
 				{#each THEMES as t (t.value)}
-					<button
-						type="button"
-						onclick={() => ($themeStore = t.value)}
-						class={[
-							'rounded-xl border px-3 py-2 text-[11px] font-medium transition-colors',
-							$themeStore === t.value
-								? 'border-neutral-900 bg-neutral-200 text-theme'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}>
-						{t.label}
-					</button>
+					<Chip class="py-2" selected={$themeStore === t.value} onclick={() => ($themeStore = t.value)}>{t.label}</Chip>
 				{/each}
 			</div>
 
@@ -137,58 +132,33 @@
 					label="Interface scale"
 					onchange={(v) => appSettings.setUiScale(v)} />
 				<span class="font-mono text-xs text-neutral-800 tabular-nums">%</span>
-				<button
-					type="button"
-					disabled={appSettings.uiScale === 100}
-					onclick={() => appSettings.setUiScale(100)}
-					class="rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1 text-[11px] font-medium text-neutral-1000 transition-colors hover:bg-neutral-200 disabled:opacity-40">
-					Reset
-				</button>
-			</div>
-		</section>
-
-		<section class="flex flex-col gap-3">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Cable shape</h2>
-				<p class="text-xs text-neutral-900">How connections are routed between nodes.</p>
+				<Chip disabled={appSettings.uiScale === 100} onclick={() => appSettings.setUiScale(100)}>Reset</Chip>
 			</div>
 
-			<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-				{#each SHAPES as s (s.value)}
-					<button
-						type="button"
-						onclick={() => setShape(s.value)}
-						title={s.hint}
-						class={[
-							'flex flex-col items-center gap-2 rounded-xl border p-3 transition-colors',
-							edgeSettings.shape === s.value
-								? 'border-neutral-900 bg-neutral-200 text-theme'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}>
-						<EdgeShapeIcon shape={s.value} animated={edgeSettings.animated} />
-						<span class="text-[11px] font-medium">{s.label}</span>
-					</button>
+			<Separator />
+
+			<div class="flex flex-col gap-2">
+				<h3 class="text-xs font-semibold text-theme">Cable shape</h3>
+				<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+					{#each SHAPES as sh (sh.value)}
+						<Chip class="gap-2 p-3" title={sh.hint} selected={edgeSettings.shape === sh.value} onclick={() => setShape(sh.value)}>
+							<EdgeShapeIcon shape={sh.value} animated={edgeSettings.animated} />
+							{sh.label}
+						</Chip>
+					{/each}
+				</div>
+			</div>
+
+			<div class="flex flex-col gap-2">
+				<h3 class="text-xs font-semibold text-theme">Rendering</h3>
+				<p class="text-xs text-neutral-900">Turn these off first if the canvas drops frames on a large graph.</p>
+				{#each [{ key: 'animated' as const, label: 'Animate cables', hint: 'Marching dashes along every connection. Runs a CSS animation per edge.' }, { key: 'pins' as const, label: 'Connector pins', hint: 'Draws a plug at each end of a cable.' }] as row (row.key)}
+					<Toggle checked={edgeSettings[row.key]} label={row.label} hint={row.hint} onChange={() => toggle(row.key)} />
 				{/each}
 			</div>
-		</section>
+		</SectionCard>
 
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Rendering</h2>
-				<p class="text-xs text-neutral-900">Turn these off first if the canvas drops frames on a large graph.</p>
-			</div>
-
-			{#each [{ key: 'animated' as const, label: 'Animate cables', hint: 'Marching dashes along every connection. Runs a CSS animation per edge.' }, { key: 'pins' as const, label: 'Connector pins', hint: 'Draws a plug at each end of a cable.' }] as row (row.key)}
-				<Toggle checked={edgeSettings[row.key]} label={row.label} hint={row.hint} onChange={() => toggle(row.key)} />
-			{/each}
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Canvas</h2>
-				<p class="text-xs text-neutral-900">Where nodes land when you drag them.</p>
-			</div>
-
+		<SectionCard title="Canvas and history" description="Where nodes land when you drag them, and how many snapshots each pipeline keeps." icon={IconGrid}>
 			<Toggle
 				checked={appSettings.snapToGrid}
 				label="Snap to grid"
@@ -199,51 +169,103 @@
 				<div class="flex items-center gap-2 pl-1">
 					<span class="text-xs text-neutral-900">Grid size</span>
 					{#each GRID_SIZES as size (size)}
-						<button
-							type="button"
-							onclick={() => setApp('gridSize', size)}
-							class={[
-								'rounded-lg border px-2.5 py-1 font-mono text-[11px] tabular-nums transition-colors',
-								appSettings.gridSize === size
-									? 'border-neutral-900 bg-neutral-200 text-theme'
-									: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-							]}>
-							{size}
-						</button>
+						<Chip mono selected={appSettings.gridSize === size} onclick={() => setApp('gridSize', size)}>{size}</Chip>
 					{/each}
 				</div>
 			{/if}
-		</section>
 
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">History</h2>
-				<p class="text-xs text-neutral-900">Snapshots kept per pipeline. Older ones are dropped as new ones arrive.</p>
+			<Separator />
+
+			<div class="flex flex-col gap-2">
+				<h3 class="text-xs font-semibold text-theme">Snapshots per pipeline</h3>
+				<p class="text-xs text-neutral-900">Older ones are dropped as new ones arrive.</p>
+				<div class="flex items-center gap-2">
+					{#each SNAPSHOT_LIMITS as limit (limit)}
+						<Chip mono selected={appSettings.maxSnapshots === limit} onclick={() => setApp('maxSnapshots', limit)}>{limit}</Chip>
+					{/each}
+				</div>
+			</div>
+		</SectionCard>
+
+		<SectionCard title="Audio engine" description="Sample rate, buffer size and what happens when a device goes away." icon={IconGauge}>
+			<div class="flex flex-col gap-2">
+				<h3 class="text-xs font-semibold text-theme">Pipeline sample rate</h3>
+				<p class="text-xs text-neutral-900">
+					Working sample rate for mixing and DSP. Matching this rate across your input and output devices ensures bit-transparent audio with zero
+					resampling artifacts, preserving low-level details and preventing intersample clipping.
+				</p>
+				<div class="flex flex-wrap items-center gap-2">
+					{#each PIPELINE_SAMPLE_RATE_PRESETS as rate (rate)}
+						<Chip
+							mono
+							selected={!customRateSelected && appSettings.pipelineSampleRate === rate}
+							onclick={() => {
+								customRateSelected = false;
+								setEngine('pipelineSampleRate', rate);
+							}}>
+							{formatHz(rate)}
+						</Chip>
+					{/each}
+					<Chip
+						selected={customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
+						onclick={() => (customRateSelected = true)}>
+						Custom
+					</Chip>
+				</div>
+
+				{#if customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
+					<div class="flex items-center gap-2 pt-1 pl-1">
+						<span class="text-xs text-neutral-900">Custom frequency</span>
+						<NumberStepper
+							value={appSettings.pipelineSampleRate}
+							min={MIN_SAMPLE_RATE}
+							max={MAX_SAMPLE_RATE}
+							step={1}
+							label="Custom sample rate"
+							onchange={(v) =>
+								setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
+						<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
+					</div>
+				{/if}
 			</div>
 
-			<div class="flex items-center gap-2">
-				{#each SNAPSHOT_LIMITS as limit (limit)}
-					<button
-						type="button"
-						onclick={() => setApp('maxSnapshots', limit)}
-						class={[
-							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
-							appSettings.maxSnapshots === limit
-								? 'border-neutral-900 bg-neutral-200 text-theme'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}>
-						{limit}
-					</button>
-				{/each}
-			</div>
-		</section>
+			<Separator />
 
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Updates</h2>
-				<p class="text-xs text-neutral-900">Checking from the menu always works, whatever this is set to.</p>
+			<div class="flex flex-col gap-2">
+				<h3 class="text-xs font-semibold text-theme">Buffer size</h3>
+				<p class="text-xs text-neutral-900">
+					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the latency readout
+					reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running pipeline reopens its devices at
+					the new size right away.
+				</p>
+				<div class="flex flex-wrap items-center gap-2">
+					{#each BUFFER_FRAME_PRESETS as frames (frames)}
+						<Chip mono selected={appSettings.bufferFrames === frames} onclick={() => setEngine('bufferFrames', frames)}>
+							<span>{frames}</span>
+							<span class="text-[9px] text-neutral-800">{formatLatencyMs((frames * 1000) / appSettings.pipelineSampleRate)} ms</span>
+						</Chip>
+					{/each}
+				</div>
 			</div>
 
+			<Separator />
+
+			<Toggle
+				checked={appSettings.keepRunningOnDisconnect}
+				label="Keep pipeline running on disconnect"
+				hint="Streams silence to outputs and waits for the device to reconnect. When disabled, disconnecting a device stops the pipeline immediately."
+				onChange={() => setApp('keepRunningOnDisconnect', !appSettings.keepRunningOnDisconnect)} />
+		</SectionCard>
+
+		<SectionCard title="Recording" description="Guards against accidentally erasing an existing recording in Overwrite mode." icon={IconRecord}>
+			<Toggle
+				checked={appSettings.confirmOverwriteChanges}
+				label="Confirm changes in Overwrite mode"
+				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
+				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
+		</SectionCard>
+
+		<SectionCard title="Updates and startup" description="Checking from the menu always works, whatever this is set to." icon={IconSync}>
 			<Toggle
 				checked={appSettings.checkUpdatesOnLaunch}
 				label="Check on launch"
@@ -255,132 +277,26 @@
 				label="Receive pre-release updates (Beta / RC)"
 				hint="Download preview versions (beta, RC, alpha) with the newest features and bug fixes before general release."
 				onChange={() => setApp('includePreReleases', !appSettings.includePreReleases)} />
-		</section>
 
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Recording</h2>
-				<p class="text-xs text-neutral-900">Guards against accidentally erasing an existing recording in Overwrite mode.</p>
-			</div>
-
-			<Toggle
-				checked={appSettings.confirmOverwriteChanges}
-				label="Confirm changes in Overwrite mode"
-				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
-				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Pipeline sample rate</h2>
-				<p class="text-xs text-neutral-900">
-					Working sample rate for mixing and DSP. Matching this rate across your input and output devices ensures bit-transparent audio with zero
-					resampling artifacts, preserving low-level details and preventing intersample clipping.
-				</p>
-			</div>
-
-			<div class="flex flex-wrap items-center gap-2">
-				{#each PIPELINE_SAMPLE_RATE_PRESETS as rate (rate)}
-					<button
-						type="button"
-						onclick={() => {
-							customRateSelected = false;
-							setEngine('pipelineSampleRate', rate);
-						}}
-						class={[
-							'rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
-							!customRateSelected && appSettings.pipelineSampleRate === rate
-								? 'border-neutral-900 bg-neutral-200 text-theme'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}>
-						{formatHz(rate)}
-					</button>
-				{/each}
-				<button
-					type="button"
-					onclick={() => (customRateSelected = true)}
-					class={[
-						'rounded-lg border px-3 py-1 text-[11px] font-medium transition-colors',
-						customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)
-							? 'border-neutral-900 bg-neutral-200 text-theme'
-							: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-					]}>
-					Custom
-				</button>
-			</div>
-
-			{#if customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
-				<div class="flex items-center gap-2 pt-1 pl-1">
-					<span class="text-xs text-neutral-900">Custom frequency</span>
-					<NumberStepper
-						value={appSettings.pipelineSampleRate}
-						min={MIN_SAMPLE_RATE}
-						max={MAX_SAMPLE_RATE}
-						step={1}
-						label="Custom sample rate"
-						onchange={(v) =>
-							setEngine('pipelineSampleRate', Math.min(Math.max(Math.round(v) || DEFAULT_SAMPLE_RATE, MIN_SAMPLE_RATE), MAX_SAMPLE_RATE))} />
-					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
-				</div>
-			{/if}
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Buffer size</h2>
-				<p class="text-xs text-neutral-900">
-					Samples each device callback carries. Smaller buffers cut latency but leave the CPU less time per block; raise it if the latency readout
-					reports dropped audio. Nodes that need larger blocks run at their own size and show an hourglass. A running pipeline reopens its devices at
-					the new size right away.
-				</p>
-			</div>
-
-			<div class="flex flex-wrap items-center gap-2">
-				{#each BUFFER_FRAME_PRESETS as frames (frames)}
-					<button
-						type="button"
-						onclick={() => setEngine('bufferFrames', frames)}
-						class={[
-							'flex flex-col items-center rounded-lg border px-3 py-1 font-mono text-[11px] tabular-nums transition-colors',
-							appSettings.bufferFrames === frames
-								? 'border-neutral-900 bg-neutral-200 text-theme'
-								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
-						]}>
-						<span>{frames}</span>
-						<span class="text-[9px] text-neutral-800">{formatLatencyMs((frames * 1000) / appSettings.pipelineSampleRate)} ms</span>
-					</button>
-				{/each}
-			</div>
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Device disconnection</h2>
-				<p class="text-xs text-neutral-900">What happens when an audio device disconnects while a pipeline is running.</p>
-			</div>
-
-			<Toggle
-				checked={appSettings.keepRunningOnDisconnect}
-				label="Keep pipeline running on disconnect"
-				hint="Streams silence to outputs and waits for the device to reconnect. When disabled, disconnecting a device stops the pipeline immediately."
-				onChange={() => setApp('keepRunningOnDisconnect', !appSettings.keepRunningOnDisconnect)} />
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<div>
-				<h2 class="text-sm font-semibold text-theme">Startup</h2>
-				<p class="text-xs text-neutral-900">Registers Splitwave with your OS's login items.</p>
-			</div>
+			<Separator />
 
 			<Toggle
 				checked={appSettings.launchOnStartup}
 				label="Launch on system startup"
 				hint="Starts Splitwave automatically when you log in."
 				onChange={() => setLaunchOnStartup(!appSettings.launchOnStartup)} />
-		</section>
+		</SectionCard>
 
-		<PresetsSection />
+		<SectionCard
+			title="Effect presets"
+			description="Presets you saved from a node. Built-in ones are not listed, they cannot be changed."
+			icon={IconBookmark}>
+			<PresetsSection />
+		</SectionCard>
 
-		<Button class="self-start" type="button" onclick={() => resetAll()}>Reset to defaults</Button>
+		<Button class="self-start" onclick={() => resetAll()}>
+			<IconReset class="size-4" />
+			Reset to defaults
+		</Button>
 	</div>
 </div>

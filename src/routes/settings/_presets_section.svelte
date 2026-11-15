@@ -54,12 +54,7 @@
 	}
 </script>
 
-<section class="flex flex-col gap-3">
-	<div>
-		<h2 class="text-sm font-semibold text-theme">Effect presets</h2>
-		<p class="text-xs text-neutral-900">Presets you saved from a node. Built-in ones are not listed -- they cannot be changed.</p>
-	</div>
-
+<div class="flex flex-col gap-3">
 	{#if presets.length === 0}
 		<div class="rounded-xl border border-dashed border-neutral-400 px-4 py-8 text-center">
 			<p class="text-xs text-neutral-900">No saved presets yet. Use the + button on an effect to store its settings.</p>
@@ -105,4 +100,4 @@
 			{/each}
 		</ul>
 	{/if}
-</section>
+</div>

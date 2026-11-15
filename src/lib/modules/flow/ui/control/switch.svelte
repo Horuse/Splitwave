@@ -5,7 +5,7 @@
 	import type { SwitchNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import InputColumn from './_input_column.svelte';
-	import { ChevronDoubleRight } from '$lib/components/icons';
+	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';
 	import ControlPort from './_control_port.svelte';
 	import OutputRow from './_output_row.svelte';
 	import { useSelectOutput } from './_select_output';

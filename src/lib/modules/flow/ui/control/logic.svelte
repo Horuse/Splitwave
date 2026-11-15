@@ -4,7 +4,7 @@
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LogicNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { ArrowRight } from '$lib/components/icons';
+	import ArrowRight from '~icons/fluent/arrow-right-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import GateGlyph from './_gate_glyph.svelte';
 	import { A_HANDLE, B_HANDLE, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';

@@ -5,7 +5,7 @@
 	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import Markdown from '$lib/components/markdown.svelte';
-	import { Checkmark } from '$lib/components/icons';
+	import Checkmark from '~icons/fluent/checkmark-16-filled';
 	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import { formatBytes } from '$lib/components/format';
 

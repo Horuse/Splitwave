@@ -5,7 +5,7 @@
 	import type { SelectNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import ChannelHandles from '../_channel_handles.svelte';
-	import { ArrowSwap } from '$lib/components/icons';
+	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { useSelectOutput } from './_select_output';
 	import { MAX_BRANCHES, MIN_BRANCHES, pruneBranches, useBranchTriggers } from './_branches.svelte';

@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { methods as pipelineMethods, type Snapshot } from '$lib/modules/pipeline/methods';
-	import { ChevronDown } from '$lib/components/icons';
+	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
 	import { Popover } from '$lib/modules/overlay/ui';
 	import { relativeTime } from '$lib/utils/time';
 

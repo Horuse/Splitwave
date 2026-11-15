@@ -2,7 +2,7 @@
 	import { getContext, untrack } from 'svelte';
 	import { NodeResizer, useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
-	import { Pulse } from '$lib/components/icons';
+	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { channelOf, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';

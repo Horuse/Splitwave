@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
-	import { ChevronDown } from '$lib/components/icons';
+	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
 
 	interface Option {
 		value: string;

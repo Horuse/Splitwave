@@ -42,7 +42,11 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
-	import { Add, Delete, Play, SoundWave, Stop } from '$lib/components/icons';
+	import Add from '~icons/fluent/add-24-filled';
+	import Delete from '~icons/fluent/delete-16-filled';
+	import Play from '~icons/fluent/play-24-filled';
+	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
+	import Stop from '~icons/fluent/stop-24-filled';
 	import { platform } from '@tauri-apps/plugin-os';
 
 	const isWindows = platform() === 'windows';

@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { KeyInputNodeData, KeyInputSource } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { KeyCommand } from '$lib/components/icons';
+	import KeyCommand from '~icons/fluent/key-command-24-regular';
 	import HotkeyBinder from '../_hotkey_binder.svelte';
 	import MidiBinder from '../_midi_binder.svelte';
 	import { useGlobalHotkey } from '../_hotkey.svelte';

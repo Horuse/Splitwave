@@ -7,7 +7,7 @@
 	import { formatHz, formatRate, formatKhzValue } from '$lib/components/format';
 	import { channelOf } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
-	import { ArrowUpload } from '$lib/components/icons';
+	import ArrowUpload from '~icons/fluent/arrow-upload-16-filled';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 

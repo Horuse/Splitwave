@@ -4,7 +4,7 @@
 	import type { DeclickNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Backspace } from '$lib/components/icons';
+	import Backspace from '~icons/fluent/backspace-24-filled';
 
 	type DeclickNodeType = Node<DeclickNodeData, 'declick'>;
 	let { id, data }: NodeProps<DeclickNodeType> = $props();

@@ -4,7 +4,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { CycleNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { ArrowRedo } from '$lib/components/icons';
+	import ArrowRedo from '~icons/fluent/arrow-redo-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { NEXT_HANDLE, PREVIEW_CTX, RESET_HANDLE, parsePort, stepHandle } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';

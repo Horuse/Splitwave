@@ -29,7 +29,15 @@
 	import EdgeRectSelect from './_edge_rect_select.svelte';
 	import OrphanEdges from './_orphan_edges.svelte';
 	const edgeTypes = { channel: ChannelEdge };
-	import { Backspace, Copy, ClipboardPaste, Delete, Folder, KeyCommand, Loop, Refresh, Rewind } from '$lib/components/icons';
+	import Backspace from '~icons/fluent/backspace-24-filled';
+	import Copy from '~icons/fluent/copy-16-filled';
+	import ClipboardPaste from '~icons/fluent/clipboard-paste-16-filled';
+	import Delete from '~icons/fluent/delete-16-filled';
+	import Folder from '~icons/fluent/folder-16-filled';
+	import KeyCommand from '~icons/fluent/key-command-24-regular';
+	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
+	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
+	import Rewind from '~icons/fluent/rewind-16-filled';
 	import { channelCaps, channelSelection } from '../stores.svelte';
 	import { edgeSettings } from '../edge_settings.svelte';
 	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';

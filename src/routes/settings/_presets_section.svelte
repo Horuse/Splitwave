@@ -4,7 +4,7 @@
 	import { registry } from '$lib/modules/flow/utils/nodes';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui';
-	import { Delete } from '$lib/components/icons';
+	import Delete from '~icons/fluent/delete-16-filled';
 
 	let presets = $state<Preset[]>([]);
 	let editing = $state<string | null>(null);

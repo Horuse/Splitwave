@@ -4,7 +4,7 @@
 	import type { NoiseSuppressorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Wand } from '$lib/components/icons';
+	import Wand from '~icons/fluent/wand-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

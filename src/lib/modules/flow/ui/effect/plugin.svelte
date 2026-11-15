@@ -8,7 +8,9 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
-	import { Plug, Refresh, WindowOff } from '$lib/components/icons';
+	import Plug from '~icons/fluent/plug-connected-16-filled';
+	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
+	import WindowOff from '~icons/fluent/window-multiple-off-16-regular';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
 	let { id, data }: NodeProps<PluginNodeType> = $props();

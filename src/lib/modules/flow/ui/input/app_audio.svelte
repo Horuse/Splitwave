@@ -8,7 +8,7 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
-	import { Apps } from '$lib/components/icons';
+	import Apps from '~icons/fluent/apps-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatPct } from '$lib/components/format';

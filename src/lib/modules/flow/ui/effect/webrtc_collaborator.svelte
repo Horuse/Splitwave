@@ -11,7 +11,7 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
 	import Wrapper from '../node.svelte';
-	import { PeopleTeam } from '$lib/components/icons';
+	import PeopleTeam from '~icons/fluent/people-team-16-filled';
 	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '$lib/modules/flow/utils';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

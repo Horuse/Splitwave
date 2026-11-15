@@ -9,7 +9,13 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import ActionSocket from '../_action_socket.svelte';
-	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
+	import Folder from '~icons/fluent/folder-16-filled';
+	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
+	import MusicNote from '~icons/fluent/music-note-2-16-filled';
+	import Pause from '~icons/fluent/pause-24-filled';
+	import Play from '~icons/fluent/play-24-filled';
+	import Stop from '~icons/fluent/stop-24-filled';
+	import { Autoplay, SkipBack5, SkipForward5 } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

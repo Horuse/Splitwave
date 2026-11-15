@@ -2,7 +2,14 @@
 	import type { NodeCategory, NodeKind } from '$lib/modules/pipeline/types';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
-	import { Add, ArrowSwap, DataBar, KeyCommand, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
+	import Add from '~icons/fluent/add-24-filled';
+	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
+	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
+	import KeyCommand from '~icons/fluent/key-command-24-regular';
+	import Mic from '~icons/fluent/mic-16-filled';
+	import Plug from '~icons/fluent/plug-connected-16-filled';
+	import Sliders from '~icons/fluent/options-16-filled';
+	import Speaker from '~icons/fluent/speaker-2-16-filled';
 	import { CATEGORY_TEXT } from '../utils/accents';
 
 	const CATEGORY_ICON = {

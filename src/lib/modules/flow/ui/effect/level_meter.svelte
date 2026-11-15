@@ -5,7 +5,7 @@
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { DataBar } from '$lib/components/icons';
+	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { formatDb } from '$lib/components/format';
 

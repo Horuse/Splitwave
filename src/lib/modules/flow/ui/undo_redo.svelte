@@ -2,7 +2,8 @@
 	import { Button } from '@splitwave/ui';
 	import { onMount } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import { ArrowUndo, ArrowRedo } from '$lib/components/icons';
+	import ArrowUndo from '~icons/fluent/arrow-undo-16-filled';
+	import ArrowRedo from '~icons/fluent/arrow-redo-16-filled';
 
 	let canUndo = $derived(pipelineStore.editorActions?.canUndo?.() ?? false);
 	let canRedo = $derived(pipelineStore.editorActions?.canRedo?.() ?? false);

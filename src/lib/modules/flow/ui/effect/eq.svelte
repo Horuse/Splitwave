@@ -4,7 +4,7 @@
 	import type { EqNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Sliders } from '$lib/components/icons';
+	import Sliders from '~icons/fluent/options-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import { formatFreq, formatGain } from '$lib/components/format';

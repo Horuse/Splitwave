@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ToggleNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { Loop } from '$lib/components/icons';
+	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
 	import ControlSocket from '../_control_socket.svelte';
 	import { CONTROL_IN, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';

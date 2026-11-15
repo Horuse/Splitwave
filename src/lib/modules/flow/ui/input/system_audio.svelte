@@ -10,7 +10,7 @@
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
-	import { SoundWave } from '$lib/components/icons';
+	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
 

@@ -2,7 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { fn } from 'storybook/test';
 	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
-	import { Add } from '$lib/components/icons';
+	import Add from '~icons/fluent/add-24-filled';
 	import Controlled from '../harness/controlled.svelte';
 
 	const DEVICES = [

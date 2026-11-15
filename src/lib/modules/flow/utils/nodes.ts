@@ -2,40 +2,31 @@ import type { Component } from 'svelte';
 import type { ClassValue } from 'svelte/elements';
 import type { NodeTypes } from '@xyflow/svelte';
 import { DEFAULT_NODE_DATA } from '$lib/modules/pipeline/defaults';
-import {
-	Apps as AppsIcon,
-	ArrowDownload as ArrowDownloadIcon,
-	Backspace as BackspaceIcon,
-	ArrowUpload as ArrowUploadIcon,
-	ArrowRight as ArrowRightIcon,
-	ArrowSwap as ArrowSwapIcon,
-	ChevronDoubleRight as ChevronDoubleRightIcon,
-	Balance as BalanceIcon,
-	Compressor as CompressorIcon,
-	DataBar as DataBarIcon,
-	Delay as DelayIcon,
-	Gauge as GaugeIcon,
-	Limiter as LimiterIcon,
-	Mic as MicIcon,
-	MusicNote as MusicNoteIcon,
-	NoiseGate as NoiseGateIcon,
-	PeopleTeam as PeopleTeamIcon,
-	Plug as PlugIcon,
-	Pulse as PulseIcon,
-	FileRecord as FileRecordIcon,
-	KeyCommand as KeyCommandIcon,
-	Loop as LoopIcon,
-	ArrowRedo as ArrowRedoIcon,
-	Hourglass as HourglassIcon,
-	Reverb as ReverbIcon,
-	Saturator as SaturatorIcon,
-	Sliders as SlidersIcon,
-	SoundWave as SoundWaveIcon,
-	Speaker as SpeakerIcon,
-	SpeakerMute as SpeakerMuteIcon,
-	Trending as TrendingIcon,
-	Wand as WandIcon
-} from '$lib/components/icons';
+import AppsIcon from '~icons/fluent/apps-16-filled';
+import ArrowDownloadIcon from '~icons/fluent/arrow-download-16-filled';
+import BackspaceIcon from '~icons/fluent/backspace-24-filled';
+import ArrowUploadIcon from '~icons/fluent/arrow-upload-16-filled';
+import ArrowRightIcon from '~icons/fluent/arrow-right-16-filled';
+import ArrowSwapIcon from '~icons/fluent/arrow-swap-16-filled';
+import ChevronDoubleRightIcon from '~icons/fluent/chevron-double-right-20-filled';
+import DataBarIcon from '~icons/fluent/data-bar-vertical-16-filled';
+import GaugeIcon from '~icons/fluent/gauge-16-filled';
+import MicIcon from '~icons/fluent/mic-16-filled';
+import MusicNoteIcon from '~icons/fluent/music-note-2-16-filled';
+import PeopleTeamIcon from '~icons/fluent/people-team-16-filled';
+import PlugIcon from '~icons/fluent/plug-connected-16-filled';
+import PulseIcon from '~icons/fluent/pulse-20-filled';
+import KeyCommandIcon from '~icons/fluent/key-command-24-regular';
+import LoopIcon from '~icons/fluent/arrow-repeat-all-16-filled';
+import ArrowRedoIcon from '~icons/fluent/arrow-redo-16-filled';
+import HourglassIcon from '~icons/fluent/hourglass-16-filled';
+import SlidersIcon from '~icons/fluent/options-16-filled';
+import SoundWaveIcon from '~icons/fluent/sound-wave-circle-16-filled';
+import SpeakerIcon from '~icons/fluent/speaker-2-16-filled';
+import SpeakerMuteIcon from '~icons/fluent/speaker-mute-16-filled';
+import TrendingIcon from '~icons/fluent/arrow-trending-16-filled';
+import WandIcon from '~icons/fluent/wand-16-filled';
+import { Balance as BalanceIcon, Compressor as CompressorIcon, Delay as DelayIcon, Limiter as LimiterIcon, NoiseGate as NoiseGateIcon, FileRecord as FileRecordIcon, Reverb as ReverbIcon, Saturator as SaturatorIcon } from '$lib/components/icons';
 import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '$lib/modules/pipeline/types';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';

@@ -5,7 +5,8 @@
 	import { MAIN_HANDLE, PREVIEW_CTX } from '../utils';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
-	import { ArrowSwap, Hourglass } from '$lib/components/icons';
+	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
+	import Hourglass from '~icons/fluent/hourglass-16-filled';
 	import { latencyStore } from '$lib/modules/audio/latency.svelte';
 	import { formatLatencyMs } from '$lib/components/format';
 	import { Tooltip } from '$lib/modules/overlay/ui';

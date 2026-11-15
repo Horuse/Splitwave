@@ -4,7 +4,7 @@
 	import type { GainNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { Trending } from '$lib/components/icons';
+	import Trending from '~icons/fluent/arrow-trending-16-filled';
 
 	type GainNodeType = Node<GainNodeData, 'gain'>;
 	let { id, data }: NodeProps<GainNodeType> = $props();

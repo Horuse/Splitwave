@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ClassValue } from 'svelte/elements';
-	import { Eye, EyeOff } from '$lib/components/icons';
+	import Eye from '~icons/fluent/eye-16-filled';
+	import EyeOff from '~icons/fluent/eye-off-16-filled';
 
 	interface Props {
 		value: string;

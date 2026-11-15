@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, type ButtonVariants } from '@splitwave/ui';
-	import { Copy, Checkmark } from '$lib/components/icons';
+	import Copy from '~icons/fluent/copy-16-filled';
+	import Checkmark from '~icons/fluent/checkmark-16-filled';
 
 	let {
 		text,

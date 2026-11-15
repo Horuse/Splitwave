@@ -4,7 +4,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { TimerMode, TimerNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { Hourglass } from '$lib/components/icons';
+	import Hourglass from '~icons/fluent/hourglass-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_OUT, PREVIEW_CTX, START_HANDLE } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';

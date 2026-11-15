@@ -4,7 +4,9 @@
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { methods } from '$lib/modules/audio/methods';
-	import { Add, Minus, ChevronDoubleRight } from '$lib/components/icons';
+	import Add from '~icons/fluent/add-24-filled';
+	import Minus from '~icons/fluent/subtract-24-filled';
+	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';
 
 	// Canvas waveform viewer shared by the Waveform and File Recording nodes:
 	// scope blocks are pre-binned into fixed segments, and the view

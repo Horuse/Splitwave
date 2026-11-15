@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import { Checkmark } from '$lib/components/icons';
+	import Checkmark from '~icons/fluent/checkmark-16-filled';
 	import { relativeTime } from '$lib/utils/time';
 
 	let now = $state(Date.now());

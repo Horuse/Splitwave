@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Refresh } from '$lib/components/icons';
+	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import ComboboxAction from './combobox_action.svelte';
 
 	interface Props {

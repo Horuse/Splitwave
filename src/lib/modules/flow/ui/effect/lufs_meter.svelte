@@ -7,7 +7,8 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LufsMeterNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import { Gauge, Refresh } from '$lib/components/icons';
+	import Gauge from '~icons/fluent/gauge-16-filled';
+	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { Combobox } from '$lib/modules/form/ui';
 

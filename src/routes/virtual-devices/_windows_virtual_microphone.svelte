@@ -2,7 +2,7 @@
 	import { Button } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { onMount } from 'svelte';
-	import { Plug } from '$lib/components/icons';
+	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import { methods } from '$lib/modules/audio/methods';
 	import type { WindowsVirtualCableStatus } from '$lib/modules/audio/types';
 

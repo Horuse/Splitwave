@@ -6,7 +6,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { formatHz, formatRate, formatPct, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
-	import { ArrowDownload } from '$lib/components/icons';
+	import ArrowDownload from '~icons/fluent/arrow-download-16-filled';
 	import { channelOf } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';

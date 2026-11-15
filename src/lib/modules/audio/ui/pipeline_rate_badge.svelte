@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { Pulse } from '$lib/components/icons';
+	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { formatHz } from '$lib/components/format';
 
 	let rateFormatted = $derived(formatHz(appSettings.pipelineSampleRate));

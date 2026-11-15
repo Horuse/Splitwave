@@ -7,7 +7,10 @@
 	import Header from '$lib/components/layout/header.svelte';
 	import HeaderNav from '$lib/components/layout/header_nav.svelte';
 	import { DriverUpdateBanner } from '$lib/modules/audio/ui';
-	import { Add, Delete, Plug, SoundWave } from '$lib/components/icons';
+	import Add from '~icons/fluent/add-24-filled';
+	import Delete from '~icons/fluent/delete-16-filled';
+	import Plug from '~icons/fluent/plug-connected-16-filled';
+	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatHz } from '$lib/components/format';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

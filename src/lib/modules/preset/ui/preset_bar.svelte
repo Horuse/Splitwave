@@ -1,7 +1,8 @@
 <script lang="ts" generics="K extends PresetKind">
 	import { Combobox, ComboboxAction } from '$lib/modules/form/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
-	import { Delete, Add } from '$lib/components/icons';
+	import Delete from '~icons/fluent/delete-16-filled';
+	import Add from '~icons/fluent/add-24-filled';
 	import type { NodeDataMap } from '$lib/modules/pipeline/types';
 	import { methods } from '../methods';
 	import type { Preset, PresetData, PresetKind } from '../types';

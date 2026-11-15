@@ -4,7 +4,7 @@
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import { SpeakerMute } from '$lib/components/icons';
+	import SpeakerMute from '~icons/fluent/speaker-mute-16-filled';
 	import ControlPort from '../control/_control_port.svelte';
 	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { useControlInput } from '../../control.svelte';

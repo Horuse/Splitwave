@@ -21,7 +21,12 @@
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import Wrapper from '../node.svelte';
-	import { Eye, EyeOff, Folder, FolderOpen, FileRecord, Pulse } from '$lib/components/icons';
+	import Eye from '~icons/fluent/eye-16-filled';
+	import EyeOff from '~icons/fluent/eye-off-16-filled';
+	import Folder from '~icons/fluent/folder-16-filled';
+	import FolderOpen from '~icons/fluent/folder-open-16-filled';
+	import Pulse from '~icons/fluent/pulse-20-filled';
+	import { FileRecord } from '$lib/components/icons';
 	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
 	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
 	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';

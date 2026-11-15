@@ -10,7 +10,8 @@
 	import Wrapper from '../node.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
 	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
-	import { Speaker, Add } from '$lib/components/icons';
+	import Speaker from '~icons/fluent/speaker-2-16-filled';
+	import Add from '~icons/fluent/add-24-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';

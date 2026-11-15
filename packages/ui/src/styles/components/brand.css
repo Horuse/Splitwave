@@ -1,0 +1,47 @@
+@layer components {
+	.btn-brand {
+		@apply border-transparent text-white;
+		background-color: var(--color-brand);
+		box-shadow: 0 0 0 1px oklch(1 0 0 / 0.15) inset;
+
+		&:hover:not(:disabled, [aria-disabled='true']) {
+			@apply border-transparent text-white;
+			background-color: var(--color-brand-strong);
+			box-shadow:
+				0 0 0 1px oklch(1 0 0 / 0.2) inset,
+				0 0 24px -4px var(--color-brand);
+		}
+	}
+
+	.banner {
+		@apply relative isolate overflow-hidden text-white;
+		border-radius: var(--smooth-r, 20px);
+		background:
+			radial-gradient(45% 40% at 50% 105%, oklch(0.99 0.05 95), oklch(0.9 0.14 80 / 0.85) 30%, oklch(0.8 0.18 60 / 0.4) 55%, transparent 75%),
+			linear-gradient(180deg, var(--color-brand) 0%, var(--color-brand-strong) 100%);
+
+		&::before {
+			content: '';
+			position: absolute;
+			inset: 0;
+			z-index: -1;
+			background-image: repeating-linear-gradient(0deg, oklch(1 0 0 / 0.07) 0 1px, transparent 1px 4px);
+			mask-image: linear-gradient(180deg, black 30%, transparent 100%);
+		}
+	}
+
+	.card {
+		@apply relative border border-neutral-300 bg-neutral-100 text-theme;
+		border-radius: var(--smooth-r, 16px);
+	}
+	.card-dashed {
+		@apply border-dashed border-neutral-400;
+	}
+
+	.separator {
+		@apply border-0 border-t border-dashed border-neutral-400;
+	}
+	.separator-vertical {
+		@apply self-stretch border-t-0 border-l;
+	}
+}

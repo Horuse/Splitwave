@@ -8,7 +8,7 @@
 		component: Button,
 		tags: ['autodocs'],
 		argTypes: {
-			tone: { control: 'select', options: ['neutral', 'accent', 'success', 'danger', 'warning'] },
+			tone: { control: 'select', options: ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] },
 			variant: { control: 'select', options: ['soft', 'solid', 'ghost'] },
 			size: { control: 'select', options: ['xs', 'sm', 'md', 'lg'] },
 			icon: { control: 'boolean' },
@@ -18,7 +18,7 @@
 		args: { tone: 'neutral', variant: 'soft', size: 'md', icon: false, active: false, disabled: false }
 	});
 
-	const tones = ['neutral', 'accent', 'success', 'danger', 'warning'] as const;
+	const tones = ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] as const;
 	const variants = ['soft', 'solid', 'ghost'] as const;
 	const sizes = ['xs', 'sm', 'md', 'lg'] as const;
 </script>

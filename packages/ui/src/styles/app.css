@@ -2,10 +2,12 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
 @import './theme.css';
+@import './brand.css';
 @import './components/smooth.css';
 @import './components/button.css';
 @import './components/input.css';
 @import './components/callout.css';
+@import './components/brand.css';
 
 @source '../';
 @custom-variant dark (&:where(.dark, .dark *));

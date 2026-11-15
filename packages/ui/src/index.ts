@@ -11,3 +11,6 @@ export * from './password-input';
 export * from './combobox';
 export * from './overlay';
 export * from './callout';
+export * from './banner';
+export * from './card';
+export * from './separator';

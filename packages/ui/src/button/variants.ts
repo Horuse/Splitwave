@@ -7,7 +7,8 @@ export const buttonVariants = cva('btn', {
 			accent: 'btn-accent',
 			success: 'btn-success',
 			danger: 'btn-danger',
-			warning: 'btn-warning'
+			warning: 'btn-warning',
+			brand: 'btn-brand'
 		},
 		variant: {
 			soft: '',

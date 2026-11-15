@@ -13,7 +13,7 @@
 		)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Cycle', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Cycle', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

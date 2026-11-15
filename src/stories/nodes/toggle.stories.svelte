@@ -5,7 +5,7 @@
 
 	const { argTypes, args } = compose(dataArgs({ on: { control: 'boolean' } }, { on: false }));
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Toggle', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Toggle', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

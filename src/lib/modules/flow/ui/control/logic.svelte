@@ -52,7 +52,7 @@
 	}
 </script>
 
-<Wrapper label="Logic" icon={ArrowRight} accent="condition">
+<Wrapper label="Logic" icon={ArrowRight} accent="control">
 	<div class="flex w-52 flex-col gap-3">
 		<SegmentedButtons
 			label="Operator"

@@ -6,7 +6,7 @@
 
 	const { argTypes, args } = compose(dataArgs({ op: { control: 'select', options: LOGIC_OPS.map((o) => o.op) } }, { op: 'and' }));
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Logic', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Logic', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

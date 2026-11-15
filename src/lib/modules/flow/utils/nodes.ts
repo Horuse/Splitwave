@@ -64,15 +64,15 @@ import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
-import KeyInput from '../ui/condition/key_input.svelte';
-import Toggle from '../ui/condition/toggle.svelte';
-import Logic from '../ui/condition/logic.svelte';
-import Cycle from '../ui/condition/cycle.svelte';
-import Timer from '../ui/condition/timer.svelte';
-import If from '../ui/condition/if.svelte';
-import Switch from '../ui/condition/switch.svelte';
-import Select from '../ui/condition/select.svelte';
-import LevelTrigger from '../ui/condition/level_trigger.svelte';
+import KeyInput from '../ui/control/key_input.svelte';
+import Toggle from '../ui/control/toggle.svelte';
+import Logic from '../ui/control/logic.svelte';
+import Cycle from '../ui/control/cycle.svelte';
+import Timer from '../ui/control/timer.svelte';
+import If from '../ui/control/if.svelte';
+import Switch from '../ui/control/switch.svelte';
+import Select from '../ui/control/select.svelte';
+import LevelTrigger from '../ui/control/level_trigger.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -342,7 +342,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	keyInput: entry<'keyInput'>({
 		kind: 'keyInput',
-		category: 'condition',
+		category: 'control',
 		label: 'Key Input',
 		description: 'A global shortcut as a control signal: high while the key is held, even with the app in the background.',
 		component: KeyInput,
@@ -351,7 +351,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	toggle: entry<'toggle'>({
 		kind: 'toggle',
-		category: 'condition',
+		category: 'control',
 		label: 'Toggle',
 		description: 'Flips its output each time the input goes high, and keeps it until the next press.',
 		component: Toggle,
@@ -360,7 +360,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	cycle: entry<'cycle'>({
 		kind: 'cycle',
-		category: 'condition',
+		category: 'control',
 		label: 'Cycle',
 		description: 'Steps through its outputs one press at a time and wraps around; only the current step is high.',
 		component: Cycle,
@@ -369,7 +369,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	timer: entry<'timer'>({
 		kind: 'timer',
-		category: 'condition',
+		category: 'control',
 		label: 'Timer',
 		description: 'Delay turns its output on a set time after start goes high; Repeat pulses it at that interval while start stays high.',
 		component: Timer,
@@ -378,7 +378,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	logic: entry<'logic'>({
 		kind: 'logic',
-		category: 'condition',
+		category: 'control',
 		label: 'Logic',
 		description: 'Combines control signals with a logic operator, such as NOT to invert one or AND to need two at once.',
 		component: Logic,
@@ -414,7 +414,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	levelTrigger: entry<'levelTrigger'>({
 		kind: 'levelTrigger',
-		category: 'condition',
+		category: 'control',
 		label: 'Level Trigger',
 		description: 'High while its input is louder than the threshold, held a moment after it drops so speech does not flicker.',
 		component: LevelTrigger,
@@ -427,7 +427,7 @@ export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'routing', 'condition'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'routing', 'control'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
@@ -435,7 +435,7 @@ export const categoryLabel: Record<NodeCategory, string> = {
 	monitor: 'Monitors',
 	network: 'Network',
 	effect: 'Effects',
-	condition: 'Conditions',
+	control: 'Control',
 	routing: 'Routing'
 };
 

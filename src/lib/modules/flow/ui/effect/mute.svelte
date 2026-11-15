@@ -5,7 +5,7 @@
 	import Wrapper from '../node.svelte';
 	import { SpeakerMute } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
-	import ControlPort from '../condition/_control_port.svelte';
+	import ControlPort from '../control/_control_port.svelte';
 	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { useControlInput } from '../../control.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';

@@ -5,7 +5,7 @@
 
 	const { argTypes, args } = compose(dataArgs({ inputs: { control: range(2, 8, 1) }, selected: { control: range(1, 8, 1) } }, { inputs: 3, selected: 1 }));
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Select', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Routing/Select', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

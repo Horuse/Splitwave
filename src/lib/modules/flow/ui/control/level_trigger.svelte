@@ -54,7 +54,7 @@
 	}
 </script>
 
-<Wrapper label="Level Trigger" icon={Gauge} accent="condition" hasInput channelIo nodeId={id}>
+<Wrapper label="Level Trigger" icon={Gauge} accent="control" hasInput channelIo nodeId={id}>
 	<div class="flex w-48 flex-col gap-2">
 		<div class="relative">
 			<MeterBar class="h-2 rounded-sm" pct={toPct(levelDb)} fillClass={high ? 'bg-yellow-500' : 'bg-neutral-600'} />

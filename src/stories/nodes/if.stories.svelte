@@ -16,7 +16,7 @@
 		wiringArgs(2)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/If', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Routing/If', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

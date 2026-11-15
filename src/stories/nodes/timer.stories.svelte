@@ -13,7 +13,7 @@
 		)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Timer', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Timer', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

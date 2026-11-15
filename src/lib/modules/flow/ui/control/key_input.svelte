@@ -51,7 +51,7 @@
 	}
 </script>
 
-<Wrapper label="Key Input" icon={KeyCommand} accent="condition">
+<Wrapper label="Key Input" icon={KeyCommand} accent="control">
 	<div class="flex flex-col gap-2 pb-1">
 		<SegmentedButtons options={SOURCES} value={source} onSelect={(next) => set({ source: next })} />
 		<div class="relative flex flex-col">

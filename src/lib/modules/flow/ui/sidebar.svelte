@@ -11,7 +11,7 @@
 		monitor: DataBar,
 		network: Plug,
 		effect: Sliders,
-		condition: KeyCommand,
+		control: KeyCommand,
 		routing: ArrowSwap
 	};
 

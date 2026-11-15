@@ -20,7 +20,7 @@
 		envArgs(['outputDevices'])
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Effects/Mute', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Routing/Mute', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

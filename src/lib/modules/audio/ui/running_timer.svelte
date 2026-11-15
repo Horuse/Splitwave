@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { audioStore } from '../stores.svelte';
-	import { formatDuration } from '@splitwave/nodes';
+	import { AnimatedTime } from '@splitwave/ui';
 
 	let elapsed = $state(0);
 
@@ -18,4 +18,4 @@
 	});
 </script>
 
-<span class="tabular-nums">{formatDuration(elapsed)}</span>
+<AnimatedTime value={elapsed * 1000} />

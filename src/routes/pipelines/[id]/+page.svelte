@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { Button, Callout, Input, Separator } from '@splitwave/ui';
+	import { Button, Callout, Input } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import type { Pipeline } from '@splitwave/nodes';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { ActivationButton, LatencyBadge, PipelineRateBadge, RunningTimer } from '$lib/modules/audio/ui';
 	import Header from '$lib/components/layout/header.svelte';
 	import Flow from '$lib/modules/flow';
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
@@ -101,15 +99,6 @@
 				<SavedIndicator />
 				<UndoRedo />
 				<SnapshotHistory pipelineId={pipeline.id} />
-				<Separator vertical class="mx-1 h-5" />
-			{/if}
-			<PipelineRateBadge />
-			{#if audioStore.isRunning}
-				<LatencyBadge />
-				<span class="px-1 text-xs text-brand tabular-nums"><RunningTimer /></span>
-			{/if}
-			{#if pipeline}
-				<ActivationButton pipelineId={pipeline.id} />
 			{/if}
 		</div>
 	{/snippet}

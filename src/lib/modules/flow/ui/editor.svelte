@@ -713,7 +713,7 @@
 			</div>
 		{/if}
 	</div>
-	<Sidebar />
+	<Sidebar pipelineId={pipeline.id} />
 </div>
 
 {#if contextMenu}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Tooltip, smoothRadius } from '@splitwave/ui';
+	import { AnimatedNumber, Tooltip, smoothRadius } from '@splitwave/ui';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import { formatLatencyMs as ms } from '@splitwave/nodes';
 	import { latencyStore } from '../latency.svelte';
@@ -20,18 +20,20 @@
 				].filter((r) => r.value > 0.05)
 			: []
 	);
+	// Same rounding as formatLatencyMs: one decimal under 10 ms, whole numbers above.
+	const msFormat = (v: number): Intl.NumberFormatOptions => ({ minimumFractionDigits: v < 10 ? 1 : 0, maximumFractionDigits: v < 10 ? 1 : 0 });
 	let sum = $derived(rows.reduce((a, r) => a + r.value, 0) || 1);
 </script>
 
 {#if report && path}
-	<Tooltip placement="bottom">
+	<Tooltip placement="top-end">
 		<span
 			class={['flex h-7 items-center gap-1.5 border px-2.5', strained ? 'border-amber-500/60 bg-amber-500/10' : 'border-(--lv-3) bg-(--lv-1)']}
 			style="border-radius: var(--r, 10px)"
 			{@attach smoothRadius({ variable: '--r' })}>
 			<Gauge class={['size-4', strained ? 'text-amber-600' : 'text-neutral-900']} />
 			<span class="text-xs text-neutral-1100 tabular-nums">
-				{ms(path.totalMs)}{path.hardwareIncluded ? '' : '+'} ms
+				<AnimatedNumber value={path.totalMs} format={msFormat(path.totalMs)} suffix={path.hardwareIncluded ? ' ms' : '+ ms'} />
 			</span>
 		</span>
 		{#snippet content()}
@@ -39,7 +41,8 @@
 				<div class="flex flex-col gap-0.5">
 					<span class="text-neutral-900">Round-trip latency</span>
 					<span class="text-2xl font-semibold text-theme tabular-nums">
-						{ms(path.totalMs)}{path.hardwareIncluded ? '' : '+'}<span class="ml-1 text-sm font-normal text-neutral-900">ms</span>
+						<AnimatedNumber value={path.totalMs} format={msFormat(path.totalMs)} suffix={path.hardwareIncluded ? '' : '+'} /><span
+							class="ml-1 text-sm font-normal text-neutral-900">ms</span>
 					</span>
 				</div>
 
@@ -73,7 +76,7 @@
 						<span class="h-1.5 flex-1 overflow-hidden rounded-full bg-(--lv-3)">
 							<span class={['block h-full', strained ? 'bg-amber-500' : 'bg-neutral-1000']} style="width: {Math.min(loadPct, 100)}%"></span>
 						</span>
-						<span class={['w-9 text-right', strained ? 'text-amber-600' : 'text-neutral-1200']}>{loadPct}%</span>
+						<AnimatedNumber value={loadPct} suffix="%" class={['w-9 text-right', strained ? 'text-amber-600' : 'text-neutral-1200']} />
 					</span>
 				</div>
 

@@ -92,7 +92,8 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Time"
 				value={data.timeMs}
 				min={1}
@@ -102,7 +103,8 @@
 				defaultValue={250}
 				ticks={[100, 500, 1000]}
 				onChange={(v) => patch('timeMs', v)} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Feedback"
 				value={data.feedback}
 				min={0}
@@ -112,7 +114,8 @@
 				defaultValue={0.4}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('feedback', v)} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Mix"
 				value={data.mix}
 				min={0}

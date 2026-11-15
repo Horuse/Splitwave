@@ -2,7 +2,8 @@
 	import { setContext } from 'svelte';
 	import { SvelteFlowProvider } from '@xyflow/svelte';
 	import type { NodeKind } from '@splitwave/nodes';
-	import { PREVIEW_CTX, categoryLabel, categoryOrder, kindsByCategory, registry } from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { categoryLabel, categoryOrder, kindsByCategory, registry } from '$lib/modules/flow/utils/nodes';
 	import { startSignal, type SignalOptions } from './signal';
 
 	let { signal }: { signal: SignalOptions } = $props();

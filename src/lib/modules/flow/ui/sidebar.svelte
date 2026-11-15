@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { NodeCategory, NodeKind } from '@splitwave/nodes';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
+	import { DND_MIME } from '../utils/context';
+	import { categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
 	import Add from '~icons/fluent/add-24-filled';
 	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';

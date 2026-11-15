@@ -3,7 +3,8 @@
 	import { SvelteFlow, SvelteFlowProvider, type Edge, type Node } from '@xyflow/svelte';
 	import type { NodeKind } from '@splitwave/nodes';
 	import ChannelEdge from '$lib/modules/flow/ui/_channel_edge.svelte';
-	import { canConnect, defaultDataFor, nodeTypes } from '$lib/modules/flow/utils';
+	import { canConnect } from '$lib/modules/flow/utils';
+	import { defaultDataFor, nodeTypes } from '$lib/modules/flow/utils/nodes';
 	import EnvScope from './env_scope.svelte';
 	import { DEFAULT_ENV } from './backend';
 

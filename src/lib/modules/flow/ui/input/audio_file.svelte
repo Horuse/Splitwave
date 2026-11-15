@@ -292,6 +292,16 @@
 			<span class="text-neutral-900 tabular-nums">{formatDuration(totalSec, 1)}</span>
 		</div>
 
-		<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
 	</div>
 </Wrapper>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ViewportPortal, useStore } from '@xyflow/svelte';
 	import Delete from '~icons/fluent/delete-16-filled';
-	import { registry } from '$lib/modules/flow/utils';
+	import { registry } from '$lib/modules/flow/utils/nodes';
 	import type { NodeKind } from '@splitwave/nodes';
 
 	interface Props {

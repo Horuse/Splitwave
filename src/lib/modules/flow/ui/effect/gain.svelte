@@ -32,7 +32,8 @@
 
 <Wrapper label="Gain" icon={Trending} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="nowheel nodrag w-48">
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Level"
 			value={data.gainDb}
 			min={-24}

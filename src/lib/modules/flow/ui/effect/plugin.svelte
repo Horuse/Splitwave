@@ -188,7 +188,8 @@
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex w-56 flex-col gap-2">
-		<Combobox class="nodrag nopan"
+		<Combobox
+			class="nodrag nopan"
 			{options}
 			value={currentUid}
 			placeholder={data.name || (pluginCatalog.scanning ? 'Scanning…' : 'Select a plugin')}
@@ -231,11 +232,17 @@
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
 			</p>
-			<Toggle class="nodrag nopan" size="sm" label="Show parameters" checked={!!data.showParams} onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
+			<Toggle
+				class="nodrag nopan"
+				size="sm"
+				label="Show parameters"
+				checked={!!data.showParams}
+				onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
 			{#if data.showParams && params.length}
 				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
 					{#each params as p (p.id)}
-						<Slider class="nodrag nopan nowheel"
+						<Slider
+							class="nodrag nopan nowheel"
 							label={p.name}
 							value={p.value}
 							min={p.min}

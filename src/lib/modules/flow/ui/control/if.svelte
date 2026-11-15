@@ -65,7 +65,8 @@
 
 <Wrapper label="If" icon={ArrowRight} accent="routing">
 	<div class="flex w-52 flex-col gap-3">
-		<Segmented class="nodrag nopan"
+		<Segmented
+			class="nodrag nopan"
 			label="Operator"
 			note={LOGIC_OPS.find((o) => o.op === op)?.hint}
 			options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}

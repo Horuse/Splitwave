@@ -76,7 +76,13 @@
 
 <Wrapper label="Speaker" accent="output" icon={Speaker} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-1">
-		<Combobox class="nodrag nopan w-full" {options} value={data.deviceId ?? null} placeholder="— Select output —" onChange={setDevice} onOpen={() => refresh()}>
+		<Combobox
+			class="nodrag nopan w-full"
+			{options}
+			value={data.deviceId ?? null}
+			placeholder="— Select output —"
+			onChange={setDevice}
+			onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				<ComboboxAction
@@ -104,7 +110,16 @@
 			{#if volume.unsupported}
 				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
 			{:else if volume.scalar !== null}
-				<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
+				<Slider
+					class="nodrag nopan nowheel"
+					label="Volume"
+					value={volumePct}
+					min={0}
+					max={100}
+					step={1}
+					format={formatPct}
+					ticks={[25, 50, 75]}
+					onChange={setVolumePct} />
 				{#if volume.unsynced}
 					<span class="text-[10px] text-neutral-900">Volume changed elsewhere won't show here</span>
 				{/if}

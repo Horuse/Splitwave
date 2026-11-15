@@ -33,7 +33,8 @@
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="deEsser" {data} onApply={applyPreset} />
 
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Frequency"
 			value={data.frequency}
 			min={2000}
@@ -44,7 +45,8 @@
 			format={formatHz}
 			ticks={[4000, 6500, 9000, 12000]}
 			onChange={(v) => set({ frequency: v })} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Threshold"
 			value={data.thresholdDb}
 			min={-80}
@@ -54,7 +56,8 @@
 			defaultValue={-30}
 			ticks={[-60, -40, -20, 0]}
 			onChange={(v) => set({ thresholdDb: v })} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Ratio"
 			value={data.ratio}
 			min={1}

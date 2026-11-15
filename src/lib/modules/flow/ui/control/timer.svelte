@@ -79,7 +79,16 @@
 <Wrapper label="Timer" icon={Hourglass} accent="control">
 	<div class="flex w-52 flex-col gap-3">
 		<Segmented class="nodrag nopan" options={MODES} value={data.mode} onSelect={(mode) => set({ mode })} />
-		<Slider class="nodrag nopan nowheel" label="Time" value={data.ms} min={50} max={10000} step={50} format={formatTime} defaultValue={1000} onChange={(ms) => set({ ms })} />
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Time"
+			value={data.ms}
+			min={50}
+			max={10000}
+			step={50}
+			format={formatTime}
+			defaultValue={1000}
+			onChange={(ms) => set({ ms })} />
 		<MeterBar class="h-1.5 rounded-sm" trackClass="bg-black/35" pct={progress * 100} fillClass={high ? 'bg-yellow-500' : 'bg-neutral-600'} />
 		<div class="flex items-center justify-between">
 			<ControlPort id={START_HANDLE} side="target" label="start" high={running} />

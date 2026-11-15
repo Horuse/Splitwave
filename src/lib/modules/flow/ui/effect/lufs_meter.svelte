@@ -354,7 +354,12 @@
 
 		<!-- delivery profile -->
 		<div class="flex flex-col gap-0.5">
-			<Combobox class="nodrag nopan" options={PROFILES.map((p) => ({ value: p.id, label: p.label }))} value={profile.id} size="sm" onChange={setProfile} />
+			<Combobox
+				class="nodrag nopan"
+				options={PROFILES.map((p) => ({ value: p.id, label: p.label }))}
+				value={profile.id}
+				size="sm"
+				onChange={setProfile} />
 			<span class="text-[8px] leading-tight text-neutral-500">{profile.note}</span>
 		</div>
 

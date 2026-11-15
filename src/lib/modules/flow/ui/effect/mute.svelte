@@ -126,7 +126,8 @@
 			{#if cueMissing}
 				<span class="text-[10px] text-red-500">Selected device not available</span>
 			{/if}
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Cue volume"
 				value={data.cueVolume ?? CUE_VOLUME_DEFAULT}
 				min={0}

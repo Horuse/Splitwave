@@ -81,7 +81,8 @@
 		</div>
 
 		<div class="flex w-50 flex-col gap-1.5">
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Ceiling"
 				value={data.ceilingDb}
 				min={-12}
@@ -91,7 +92,8 @@
 				defaultValue={-0.3}
 				ticks={[-6, -3, -1, 0]}
 				onChange={setCeiling} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Lookahead"
 				value={data.lookaheadMs}
 				min={1}
@@ -101,7 +103,8 @@
 				defaultValue={5}
 				ticks={[2, 5, 10]}
 				onChange={setLookahead} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Release"
 				value={data.releaseMs}
 				min={10}

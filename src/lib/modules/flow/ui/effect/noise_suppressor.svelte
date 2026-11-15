@@ -63,7 +63,8 @@
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
 		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. {formatHz(48_000)} only.</p>
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Attenuation"
 			value={data.attenuationLimitDb}
 			min={0}
@@ -73,7 +74,8 @@
 			defaultValue={100}
 			ticks={[25, 50, 75]}
 			onChange={(v) => patch('attenuationLimitDb', v)} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Post-filter"
 			value={data.postFilterBeta ?? 0}
 			min={0}
@@ -83,7 +85,8 @@
 			defaultValue={0}
 			ticks={[0.01, 0.02, 0.03, 0.04]}
 			onChange={(v) => patch('postFilterBeta', v)} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Min thresh"
 			value={data.minThreshDb ?? -10}
 			min={-15}
@@ -93,7 +96,8 @@
 			defaultValue={-10}
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('minThreshDb', v)} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Max ERB thresh"
 			value={data.maxErbThreshDb ?? 30}
 			min={-15}
@@ -103,7 +107,8 @@
 			defaultValue={30}
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('maxErbThreshDb', v)} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Max DF thresh"
 			value={data.maxDfThreshDb ?? 20}
 			min={-15}

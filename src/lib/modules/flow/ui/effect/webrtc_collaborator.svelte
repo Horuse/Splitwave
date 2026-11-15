@@ -290,20 +290,29 @@
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
 			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
-			<Segmented class="nodrag nopan" options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
+			<Segmented
+				class="nodrag nopan"
+				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
+				value={data.codec}
+				onSelect={setCodec} />
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
-				<Segmented class="nodrag nopan" options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
+				<Segmented
+					class="nodrag nopan"
+					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
+					value={data.opusBitrate}
+					onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
 				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
-				<Segmented class="nodrag nopan"
+				<Segmented
+					class="nodrag nopan"
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
 					onSelect={setApp} />
@@ -326,9 +335,7 @@
 				bind:value={joinInput} />
 			<div class="flex gap-1">
 				<PasswordInput class="nodrag nopan" bind:value={joinPassword} placeholder="Password" />
-				<Button size="sm" class="nodrag nopan font-mono" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>
-					Join
-				</Button>
+				<Button size="sm" class="nodrag nopan font-mono" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>Join</Button>
 			</div>
 		{:else if phase === 'hosting'}
 			<div class="flex items-center justify-between">
@@ -341,13 +348,13 @@
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
 			{/if}
-			<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={destroy}> Destroy </Button>
+			<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={destroy}>Destroy</Button>
 		{:else if phase === 'joining'}
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={cancel}> Cancel </Button>
+				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={cancel}>Cancel</Button>
 			{:else}
-				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={leave}> Leave </Button>
+				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={leave}>Leave</Button>
 			{/if}
 		{/if}
 
@@ -394,7 +401,7 @@
 							onclick={() => toggleMute(peer.peerId, peer.muted)}>
 							{peer.muted ? 'M' : 'ON'}
 						</Button>
-						<Button tone="danger" size="xs" class="nodrag nopan font-mono" onclick={() => disconnect(peer.peerId)}> x </Button>
+						<Button tone="danger" size="xs" class="nodrag nopan font-mono" onclick={() => disconnect(peer.peerId)}>x</Button>
 					</div>
 					<Handle type="source" id={peerHandle(peer.peerId)} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>

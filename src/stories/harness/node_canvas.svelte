@@ -2,7 +2,8 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteFlow, SvelteFlowProvider, type Edge, type Node } from '@xyflow/svelte';
 	import type { NodeKind } from '@splitwave/nodes';
-	import { channelHandle, nodeTypes, registry } from '$lib/modules/flow/utils';
+	import { channelHandle } from '$lib/modules/flow/utils';
+	import { nodeTypes, registry } from '$lib/modules/flow/utils/nodes';
 	import ChannelEdge from '$lib/modules/flow/ui/_channel_edge.svelte';
 	import StubSource from './stub_source.svelte';
 	import EnvScope from './env_scope.svelte';

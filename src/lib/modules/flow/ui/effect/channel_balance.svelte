@@ -70,8 +70,19 @@
 			</div>
 		</div>
 
-		<Slider class="nodrag nopan nowheel" label="Left" value={data.leftGainDb} min={-24} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[-12, -6, 0, 6, 12]} onChange={setLeft} />
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Left"
+			value={data.leftGainDb}
+			min={-24}
+			max={24}
+			step={0.1}
+			unit=" dB"
+			defaultValue={0}
+			ticks={[-12, -6, 0, 6, 12]}
+			onChange={setLeft} />
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Right"
 			value={data.rightGainDb}
 			min={-24}

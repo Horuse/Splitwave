@@ -10,20 +10,8 @@
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import {
-		DND_MIME,
-		canConnect,
-		channelHandle,
-		channelOf,
-		defaultDataFor,
-		emitNodeAction,
-		fromXyEdges,
-		fromXyNodes,
-		nodeTypes,
-		registry,
-		toXyEdges,
-		toXyNodes
-	} from '../utils';
+	import { DND_MIME, canConnect, channelHandle, channelOf, emitNodeAction, fromXyEdges, fromXyNodes, toXyEdges, toXyNodes } from '../utils';
+	import { defaultDataFor, nodeTypes, registry } from '../utils/nodes';
 	import Sidebar from './sidebar.svelte';
 	import ChannelEdge from './_channel_edge.svelte';
 	import ConnectionLine from './_connection_line.svelte';

@@ -120,7 +120,8 @@
 			</div>
 		{/if}
 		{#if isMac}
-			<Toggle class="nodrag nopan"
+			<Toggle
+				class="nodrag nopan"
 				size="sm"
 				label="Exclude this app"
 				checked={data.excludeCurrentApp ?? true}
@@ -133,7 +134,17 @@
 				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
 			</span>
 		{/if}
-		<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>
 </Wrapper>

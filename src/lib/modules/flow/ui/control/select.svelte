@@ -38,7 +38,8 @@
 			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
 			<NumberStepper class="nodrag nopan" value={data.inputs} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Inputs" onchange={setInputs} />
 		</div>
-		<Segmented class="nodrag nopan"
+		<Segmented
+			class="nodrag nopan"
 			label="Hear"
 			options={inputs.map((k) => ({ label: String(k), value: k }))}
 			columns={Math.min(inputs.length, 4)}

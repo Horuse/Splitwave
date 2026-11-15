@@ -113,7 +113,8 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Room"
 				value={data.roomSize}
 				min={0}
@@ -123,7 +124,8 @@
 				defaultValue={0.5}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('roomSize', v)} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Damping"
 				value={data.damping}
 				min={0}
@@ -133,7 +135,8 @@
 				defaultValue={0.5}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('damping', v)} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Width"
 				value={data.width}
 				min={0}
@@ -143,7 +146,8 @@
 				defaultValue={1}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('width', v)} />
-			<Slider class="nodrag nopan nowheel"
+			<Slider
+				class="nodrag nopan nowheel"
 				label="Mix"
 				value={data.mix}
 				min={0}

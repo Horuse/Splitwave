@@ -101,7 +101,8 @@
 			</div>
 		</div>
 
-		<Slider class="nodrag nopan nowheel"
+		<Slider
+			class="nodrag nopan nowheel"
 			label="Ceiling"
 			value={data.thresholdDb}
 			min={-24}
@@ -111,6 +112,16 @@
 			defaultValue={0}
 			ticks={[-12, -6, -3, 0]}
 			onChange={setThreshold} />
-		<Slider class="nodrag nopan nowheel" label="Drive" value={data.driveDb} min={0} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[0, 6, 12, 24]} onChange={setDrive} />
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Drive"
+			value={data.driveDb}
+			min={0}
+			max={24}
+			step={0.1}
+			unit=" dB"
+			defaultValue={0}
+			ticks={[0, 6, 12, 24]}
+			onChange={setDrive} />
 	</div>
 </Wrapper>

@@ -26,7 +26,16 @@ import SpeakerIcon from '~icons/fluent/speaker-2-16-filled';
 import SpeakerMuteIcon from '~icons/fluent/speaker-mute-16-filled';
 import TrendingIcon from '~icons/fluent/arrow-trending-16-filled';
 import WandIcon from '~icons/fluent/wand-16-filled';
-import { Balance as BalanceIcon, Compressor as CompressorIcon, Delay as DelayIcon, Limiter as LimiterIcon, NoiseGate as NoiseGateIcon, FileRecord as FileRecordIcon, Reverb as ReverbIcon, Saturator as SaturatorIcon } from '$lib/components/icons';
+import {
+	Balance as BalanceIcon,
+	Compressor as CompressorIcon,
+	Delay as DelayIcon,
+	Limiter as LimiterIcon,
+	NoiseGate as NoiseGateIcon,
+	FileRecord as FileRecordIcon,
+	Reverb as ReverbIcon,
+	Saturator as SaturatorIcon
+} from '$lib/components/icons';
 import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '@splitwave/nodes';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
@@ -64,11 +73,6 @@ import If from '../ui/control/if.svelte';
 import Switch from '../ui/control/switch.svelte';
 import Select from '../ui/control/select.svelte';
 import LevelTrigger from '../ui/control/level_trigger.svelte';
-
-// MIME type used during drag-and-drop from the sidebar.
-export const DND_MIME = 'application/x-splitwave-nodekind';
-
-export const PREVIEW_CTX = Symbol('flow-preview');
 
 export interface NodeRegistryEntry<K extends NodeKind = NodeKind> {
 	kind: K;

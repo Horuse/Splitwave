@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fly } from 'svelte/transition';
 	import type { Component, Snippet } from 'svelte';
 	import { smoothRadius } from '../attachments';
 
@@ -18,6 +19,9 @@
 </script>
 
 {#snippet content()}
+	{#if active && !nested}
+		<span class="sidebar-marker" transition:fly={{ x: -4, duration: 180 }}></span>
+	{/if}
 	{#if Icon}<Icon />{/if}
 	<span class="flex-1 truncate">{label}</span>
 	{@render trailing?.()}

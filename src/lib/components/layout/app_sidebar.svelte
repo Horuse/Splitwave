@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { Sidebar, SidebarItem, SidebarSection } from '@splitwave/ui';
+	import { Sidebar, SidebarGroup, SidebarItem, SidebarSection } from '@splitwave/ui';
 	import IconFlow from '~icons/fluent/flow-20-filled';
 	import IconSpeaker from '~icons/fluent/speaker-2-20-filled';
 	import IconBook from '~icons/fluent/book-20-filled';
@@ -53,10 +53,12 @@
 		{/snippet}
 	</SidebarItem>
 	{#if wikiOpen}
-		<div class="sidebar-group" transition:slide={{ duration: 220, easing: cubicOut }}>
-			{#each articles as a (a.slug)}
-				<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
-			{/each}
+		<div transition:slide={{ duration: 220, easing: cubicOut }}>
+			<SidebarGroup activeKey={page.params.slug}>
+				{#each articles as a (a.slug)}
+					<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
+				{/each}
+			</SidebarGroup>
 		</div>
 	{/if}
 	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />

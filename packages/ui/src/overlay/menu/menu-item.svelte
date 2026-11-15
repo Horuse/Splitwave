@@ -17,7 +17,7 @@
 <button
 	type="button"
 	class={[
-		'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm',
+		'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors duration-100',
 		danger ? 'text-red-700 dark:text-red-300' : 'text-neutral-1100',
 		disabled ? 'cursor-not-allowed opacity-40' : danger ? 'hover:bg-red-500/15' : 'hover:bg-(--lv-2)'
 	]}

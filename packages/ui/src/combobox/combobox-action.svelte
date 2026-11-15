@@ -14,7 +14,7 @@
 
 <button
 	type="button"
-	class="nodrag nopan flex w-full items-center gap-1.5 border-t border-(--lv-3) bg-(--lv-1) px-2 py-1.5 text-left text-xs font-medium text-neutral-1000 hover:bg-(--lv-2)"
+	class="nodrag nopan flex w-full items-center gap-1.5 border-t border-(--lv-3) bg-(--lv-1) px-2 py-1.5 text-left text-xs font-medium text-neutral-1000 transition-colors duration-150 hover:bg-(--lv-2)"
 	{onclick}>
 	{#if Icon}
 		<Icon class="size-3.5 shrink-0 {iconClass}" />

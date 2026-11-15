@@ -7,9 +7,14 @@
 	import IconSettings from '~icons/fluent/settings-20-filled';
 	import Sidebar from './sidebar.svelte';
 	import SidebarItem from './sidebar-item.svelte';
+	import SidebarGroup from './sidebar-group.svelte';
 	import SidebarSection from './sidebar-section.svelte';
 
 	const { Story } = defineMeta({ title: 'Layout/Sidebar', component: Sidebar, tags: ['autodocs'], parameters: { layout: 'fullscreen' } });
+</script>
+
+<script lang="ts">
+	let page = $state('shortcuts');
 </script>
 
 <Story name="Default">
@@ -23,6 +28,11 @@
 				<SidebarItem label="Virtual devices" icon={IconSpeaker} />
 				<SidebarSection label="Resources" />
 				<SidebarItem label="Wiki" icon={IconBook} />
+				<SidebarGroup activeKey={page}>
+					{#each ['intro', 'shortcuts', 'routing'] as p (p)}
+						<SidebarItem nested label={p} active={page === p} onclick={() => (page = p)} />
+					{/each}
+				</SidebarGroup>
 				<SidebarItem label="Changelog" icon={IconHistory} />
 				{#snippet footer()}
 					<SidebarItem label="Settings" icon={IconSettings} />

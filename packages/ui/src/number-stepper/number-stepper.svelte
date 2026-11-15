@@ -48,7 +48,7 @@
 <div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--lv-3) bg-(--lv-1)', className]}>
 	<button
 		type="button"
-		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
+		class="flex h-6 w-6 items-center justify-center text-neutral-900 transition-colors duration-150 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value <= min}
 		onclick={() => onchange(Math.max(min, value - step))}
 		aria-label="Decrease {label}">
@@ -66,7 +66,7 @@
 		aria-label={label} />
 	<button
 		type="button"
-		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
+		class="flex h-6 w-6 items-center justify-center text-neutral-900 transition-colors duration-150 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value >= max}
 		onclick={() => onchange(Math.min(max, value + step))}
 		aria-label="Increase {label}">

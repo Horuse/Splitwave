@@ -4,19 +4,23 @@
 	}
 	.sidebar-item-nested {
 		@apply h-7 pl-2.5 text-[13px];
-
-		&[data-active='true']::before {
-			@apply -left-[9px];
-		}
 	}
 	.sidebar-group {
-		@apply ml-[18px] flex flex-col gap-0.5 border-l border-(--lv-3) pl-2;
+		@apply relative ml-[18px] flex flex-col gap-0.5 border-l border-(--lv-3) pl-2;
+	}
+	.sidebar-group-marker {
+		@apply pointer-events-none absolute top-0 -left-px w-0.5 rounded-full transition-[transform,height,opacity] duration-200 ease-out;
+		background-color: var(--color-brand);
 	}
 	.sidebar-toggle {
 		& > svg {
 			@apply transition-transform duration-150;
 		}
 		@apply -mr-1 flex size-6 items-center justify-center rounded-md text-neutral-800 hover:bg-(--lv-3) hover:text-theme;
+	}
+	.sidebar-marker {
+		@apply pointer-events-none absolute top-1/2 -left-2 -mt-1 h-2 w-1 rounded-r-full;
+		background-color: var(--color-brand);
 	}
 	.sidebar-section {
 		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
@@ -33,24 +37,6 @@
 		}
 		&[data-active='true'] {
 			@apply bg-(--lv-2) font-medium text-theme;
-
-			&::before {
-				content: '';
-				@apply absolute top-1/2 -left-2 h-2 w-1 -translate-y-1/2 rounded-r-full;
-				animation: sidebar-marker-in 200ms ease-out;
-				background-color: var(--color-brand);
-			}
 		}
-	}
-}
-
-@keyframes sidebar-marker-in {
-	from {
-		opacity: 0;
-		transform: translate(-4px, -50%);
-	}
-	to {
-		opacity: 1;
-		transform: translate(0, -50%);
 	}
 }

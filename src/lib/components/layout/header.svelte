@@ -25,6 +25,9 @@
 	const customTitlebar = platform() === 'linux' || platform() === 'windows';
 	const win = customTitlebar ? getCurrentWindow() : null;
 
+	// On macOS a page with nothing in the bar needs only a window drag area, not a visible header.
+	const bare = $derived(!customTitlebar && !left && !right);
+
 	let menuOpen = $state(false);
 
 	function about() {
@@ -45,53 +48,57 @@
 	}
 </script>
 
-<header
-	data-tauri-drag-region
-	class={[
-		'z-500 flex w-full flex-row items-center gap-8 border-b border-theme/5 bg-background px-1.5',
-		customTitlebar || page.route.id !== '/pipelines/[id]' ? 'h-10 pl-3' : 'h-[max(2.5rem,calc(40px/var(--ui-zoom,1)))] pl-[calc(80px/var(--ui-zoom,1))]'
-	]}>
-	{@render left?.()}
+{#if bare}
+	<div data-tauri-drag-region class="absolute inset-x-0 top-0 z-10 h-8"></div>
+{:else}
+	<header
+		data-tauri-drag-region
+		class={[
+			'z-500 flex w-full flex-row items-center gap-8 border-b border-theme/5 bg-background px-1.5',
+			customTitlebar || page.route.id !== '/pipelines/[id]' ? 'h-10 pl-3' : 'h-[max(2.5rem,calc(40px/var(--ui-zoom,1)))] pl-[calc(80px/var(--ui-zoom,1))]'
+		]}>
+		{@render left?.()}
 
-	<div class="ml-auto flex flex-row items-center gap-4">
-		{@render right?.()}
+		<div class="ml-auto flex flex-row items-center gap-4">
+			{@render right?.()}
 
-		{#if customTitlebar}
-			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
-				{#snippet trigger()}
-					<Button variant="ghost" icon type="button" aria-label="Menu">
+			{#if customTitlebar}
+				<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
+					{#snippet trigger()}
+						<Button variant="ghost" icon type="button" aria-label="Menu">
+							<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
+								><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
+						</Button>
+					{/snippet}
+
+					<div class="min-w-48 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg">
+						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={about}>About Splitwave</button>
+						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={checkUpdates}
+							>Check for Updates…</button>
+						<div class="my-1 border-t border-neutral-300"></div>
+						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={undo}>Undo</button>
+						<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={redo}>Redo</button>
+					</div>
+				</Popover>
+
+				<div class="flex items-center gap-0.5">
+					<Button variant="ghost" icon aria-label="Minimize" onclick={() => win?.minimize()}>
 						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-							><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
+							><path stroke-linecap="round" d="M5 12h14" /></svg>
 					</Button>
-				{/snippet}
-
-				<div class="min-w-48 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg">
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={about}>About Splitwave</button>
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={checkUpdates}
-						>Check for Updates…</button>
-					<div class="my-1 border-t border-neutral-300"></div>
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={undo}>Undo</button>
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={redo}>Redo</button>
+					<Button variant="ghost" icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
+						<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
+							><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+					</Button>
+					<Button variant="ghost" icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
+						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
+							><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
+					</Button>
 				</div>
-			</Popover>
-
-			<div class="flex items-center gap-0.5">
-				<Button variant="ghost" icon aria-label="Minimize" onclick={() => win?.minimize()}>
-					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-						><path stroke-linecap="round" d="M5 12h14" /></svg>
-				</Button>
-				<Button variant="ghost" icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
-					<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-						><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
-				</Button>
-				<Button variant="ghost" icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
-					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-						><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
-				</Button>
-			</div>
-		{/if}
-	</div>
-</header>
+			{/if}
+		</div>
+	</header>
+{/if}
 
 {#if audioStore.safeMode}
 	<div

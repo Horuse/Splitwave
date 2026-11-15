@@ -129,7 +129,7 @@
 		</article>
 
 		{#if headings.length}
-			<aside class="sticky top-0 hidden w-48 shrink-0 self-start lg:block">
+			<aside class="sticky top-0 w-44 shrink-0 self-start">
 				<Toc items={headings} activeId={activeHeading} />
 			</aside>
 		{/if}

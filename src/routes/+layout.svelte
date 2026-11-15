@@ -144,7 +144,7 @@
 	{#if page.route.id !== '/pipelines/[id]'}
 		<AppSidebar />
 	{/if}
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<main class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
 		{#if page.route.id === '/pipelines/[id]'}
 			{@render children()}
 		{:else}

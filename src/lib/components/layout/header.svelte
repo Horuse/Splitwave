@@ -59,7 +59,7 @@
 	<div class="ml-auto flex flex-row items-center gap-4">
 		{@render right?.()}
 
-		<Button icon aria-label="Theme toggle" title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`} onclick={cycleTheme}>
+		<Button variant="ghost" icon aria-label="Theme toggle" title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`} onclick={cycleTheme}>
 			<svg class="size-4 fill-current" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"
 				><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm0-2V4a8 8 0 1 1 0 16Z" /></svg>
 		</Button>
@@ -67,7 +67,7 @@
 		{#if customTitlebar}
 			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
 				{#snippet trigger()}
-					<Button icon type="button" aria-label="Menu">
+					<Button variant="ghost" icon type="button" aria-label="Menu">
 						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 							><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
 					</Button>
@@ -84,15 +84,15 @@
 			</Popover>
 
 			<div class="flex items-center gap-0.5">
-				<Button icon aria-label="Minimize" onclick={() => win?.minimize()}>
+				<Button variant="ghost" icon aria-label="Minimize" onclick={() => win?.minimize()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M5 12h14" /></svg>
 				</Button>
-				<Button icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
+				<Button variant="ghost" icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
 					<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
 				</Button>
-				<Button icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
+				<Button variant="ghost" icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
 				</Button>

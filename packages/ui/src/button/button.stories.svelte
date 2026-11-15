@@ -36,7 +36,7 @@
 		<div class="flex flex-col gap-3 p-6">
 			{#each variants as variant (variant)}
 				<div class="flex items-center gap-2">
-					<span class="w-12 font-mono text-[11px] text-muted">{variant}</span>
+					<span class="text-muted w-12 font-mono text-[11px]">{variant}</span>
 					{#each tones as tone (tone)}
 						<Button {tone} {variant}>{tone}</Button>
 					{/each}

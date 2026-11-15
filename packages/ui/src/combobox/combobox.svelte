@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import IconChevronDown from '~icons/fluent/chevron-down-16-filled';
+	import { fly } from 'svelte/transition';
+	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
 
 	interface Option {
 		value: string;
@@ -92,61 +93,79 @@
 	});
 </script>
 
-<div bind:this={containerEl} class={['relative min-w-0', ClassName]}>
-	<button type="button" class={['combobox-trigger', size === 'sm' && 'combobox-sm']} aria-expanded={open} onclick={() => (open ? closePanel() : openPanel())}>
+<div bind:this={containerEl} class="relative min-w-0 {ClassName}">
+	<button
+		type="button"
+		class={[
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 text-left text-neutral-1100 hover:bg-neutral-200',
+			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
+		]}
+		onclick={() => (open ? closePanel() : openPanel())}>
 		<span class="flex min-w-0 flex-1 items-center gap-1.5">
 			{#if selected?.icon}
 				<img src="data:image/png;base64,{selected.icon}" alt="" class="h-4 w-4 shrink-0" />
 			{/if}
 			{#if selected?.badge}
-				<span class="combobox-badge">
+				<span class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
 					{selected.badge}
 				</span>
 			{/if}
-			<span class={['truncate', !selected && 'text-subtle']}>
+			<span class="truncate {selected ? '' : 'text-neutral-900'}">
 				{selected?.label ?? placeholder}
 			</span>
 		</span>
-		<IconChevronDown class="size-3 shrink-0 opacity-60" />
+		<ChevronDown class="h-3 w-3 shrink-0 opacity-60" />
 	</button>
 
 	{#if open}
-		<div class="combobox-panel">
-			<input bind:this={inputEl} bind:value={search} type="text" class="combobox-filter" placeholder="Filter…" onkeydown={onKeyDown} />
-			<ul class="nowheel max-h-48 overflow-y-auto">
+		<div
+			transition:fly={{ duration: 200, y: 5 }}
+			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-neutral-400 bg-neutral-50 shadow-lg">
+			<input
+				bind:this={inputEl}
+				bind:value={search}
+				type="text"
+				class="nodrag nopan w-full border-b border-neutral-300 bg-neutral-100 px-2 py-1 text-sm outline-none"
+				placeholder="Filter…"
+				onkeydown={onKeyDown} />
+			<ul class="nodrag nopan nowheel max-h-48 overflow-y-auto">
 				{#if value !== null}
 					<li>
-						<button type="button" class="combobox-option text-xs" onclick={() => pick(null)}> — Clear selection — </button>
+						<button type="button" class="block w-full px-2 py-1 text-left text-xs text-neutral-900 hover:bg-neutral-200" onclick={() => pick(null)}>
+							— Clear selection —
+						</button>
 					</li>
 				{/if}
 				{#each filtered as opt, i (opt.value)}
 					<li>
 						<button
 							type="button"
-							class="combobox-option"
-							data-active={i === activeIndex}
-							aria-selected={opt.value === value}
+							class={[
+								'flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm',
+								i === activeIndex ? 'bg-neutral-200 text-neutral-1000' : 'hover:bg-neutral-200',
+								opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
+							]}
 							onmouseenter={() => (activeIndex = i)}
 							onclick={() => pick(opt)}>
 							{#if opt.icon}
 								<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
 							{/if}
 							{#if opt.badge}
-								<span class="combobox-badge">
+								<span class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
 									{opt.badge}
 								</span>
 							{/if}
 							<span class="flex min-w-0 flex-col">
 								<span class="truncate">{opt.label}</span>
 								{#if opt.subtitle}
-									<span class="truncate text-[10px] text-subtle">{opt.subtitle}</span>
+									<span class="truncate text-[10px] text-neutral-900">{opt.subtitle}</span>
 								{/if}
 							</span>
 						</button>
 					</li>
 				{/each}
 				{#if filtered.length === 0}
-					<li class="px-2 py-1 text-xs text-subtle italic">{emptyHint}</li>
+					<li class="px-2 py-1 text-xs text-neutral-900 italic">{emptyHint}</li>
 				{/if}
 			</ul>
 			{#if footer}

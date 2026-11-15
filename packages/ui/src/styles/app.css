@@ -1,14 +1,9 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
-@import './tokens.css';
+@import './theme.css';
 @import './components/button.css';
-@import './components/toggle.css';
-@import './components/segmented.css';
-@import './components/number-stepper.css';
-@import './components/slider.css';
 @import './components/input.css';
-@import './components/combobox.css';
 @import './components/callout.css';
 
 @source '../';
@@ -17,12 +12,4 @@
 @theme {
 	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
 	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
-}
-
-@layer base {
-	body {
-		background-color: var(--color-surface-0);
-		color: var(--color-content);
-		font-family: var(--font-sans);
-	}
 }

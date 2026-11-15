@@ -1,26 +1,38 @@
 <script lang="ts">
 	import type { ClassValue } from 'svelte/elements';
-	import IconEye from '~icons/fluent/eye-16-filled';
-	import IconEyeOff from '~icons/fluent/eye-off-16-filled';
-	import { Input } from '../input';
+	import Eye from '~icons/fluent/eye-16-filled';
+	import EyeOff from '~icons/fluent/eye-off-16-filled';
 
-	let { value = $bindable(''), placeholder = 'Password', class: className }: { value: string; placeholder?: string; class?: ClassValue } = $props();
+	interface Props {
+		value: string;
+		placeholder?: string;
+		class?: ClassValue;
+	}
+
+	let { value = $bindable(''), placeholder = 'Password', class: cls }: Props = $props();
 
 	let visible = $state(false);
 </script>
 
 <div class="relative w-full">
-	<Input type={visible ? 'text' : 'password'} mono class={['w-full pr-6', className]} {placeholder} bind:value />
+	<input
+		type={visible ? 'text' : 'password'}
+		class={[
+			'nowheel h-6 w-full rounded border border-neutral-300 bg-neutral-50 pr-6 pl-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400',
+			cls
+		]}
+		{placeholder}
+		bind:value />
 	<button
 		type="button"
 		tabindex={-1}
-		class="absolute top-1/2 right-1 flex -translate-y-1/2 text-muted hover:text-content"
+		class="absolute top-1/2 right-1 flex -translate-y-1/2 text-neutral-500 hover:text-neutral-800"
 		title={visible ? 'Hide password' : 'Show password'}
 		onclick={() => (visible = !visible)}>
 		{#if visible}
-			<IconEye class="size-3.5" />
+			<Eye class="h-3.5 w-3.5" />
 		{:else}
-			<IconEyeOff class="size-3.5" />
+			<EyeOff class="h-3.5 w-3.5" />
 		{/if}
 	</button>
 </div>

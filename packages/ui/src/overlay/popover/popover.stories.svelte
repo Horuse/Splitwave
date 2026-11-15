@@ -13,7 +13,7 @@
 				{#snippet trigger()}
 					<Button>Open popover</Button>
 				{/snippet}
-				<div class="w-56 rounded-lg border border-line-strong bg-surface-2 p-3 text-xs">Popover content. Click outside or press Escape to close.</div>
+				<div class="border-line-strong bg-surface-2 w-56 rounded-lg border p-3 text-xs">Popover content. Click outside or press Escape to close.</div>
 			</Popover>
 		</div>
 	{/snippet}

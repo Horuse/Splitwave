@@ -268,7 +268,7 @@
 		</div>
 	{/if}
 
-	<Button icon type="button" onclick={() => (open = !open)} title="Dev triggers">
+	<Button variant="ghost" icon type="button" onclick={() => (open = !open)} title="Dev triggers">
 		{open ? 'Close' : 'Dev'}
 	</Button>
 </div>

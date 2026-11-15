@@ -36,7 +36,7 @@
 	let hoverPct = $state<number | null>(null);
 	let hoverPos = $state(0); // px along the reveal axis
 
-	// Divide out any ancestor scale so the reading tracks the cursor at any zoom.
+	// Divide out the xyflow zoom so the reading tracks the cursor at any scale.
 	function onMove(e: MouseEvent) {
 		const el = e.currentTarget as HTMLElement;
 		const rect = el.getBoundingClientRect();
@@ -68,14 +68,14 @@
 	{/if}
 	<div class={['absolute inset-0', fillClass]} style="background: {gradient}; clip-path: {clip};"></div>
 	{#if hold != null && hold > 0}
-		<div class="absolute bg-content" style={holdStyle}></div>
+		<div class="absolute bg-white" style={holdStyle}></div>
 	{/if}
 	{@render children?.()}
 	{#if hover && hoverPct !== null}
-		<div class="pointer-events-none absolute z-10 bg-info" style={hoverLineStyle}>
+		<div class="pointer-events-none absolute z-10 bg-cyan-400" style={hoverLineStyle}>
 			{#if hoverLabel}
 				<span
-					class="absolute left-1/2 -translate-x-1/2 rounded bg-surface-4 px-1 font-mono text-[8px] leading-tight whitespace-nowrap text-content"
+					class="absolute left-1/2 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight whitespace-nowrap text-white"
 					style={orientation === 'vertical' ? `top: ${hoverPos < 12 ? '2px' : '-10px'};` : 'top: -10px;'}>{hoverLabel(hoverPct)}</span>
 			{/if}
 		</div>

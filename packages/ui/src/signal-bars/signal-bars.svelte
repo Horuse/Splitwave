@@ -42,10 +42,10 @@
 	{#each Array(bars) as _, i (i)}
 		<span
 			class="w-[3px] rounded-[1px]"
-			class:bg-surface-4={i >= filled || color === 'unknown'}
-			class:bg-success={i < filled && color === 'good'}
-			class:bg-warning={i < filled && color === 'fair'}
-			class:bg-danger={i < filled && color === 'poor'}
+			class:bg-neutral-300={i >= filled || color === 'unknown'}
+			class:bg-green-500={i < filled && color === 'good'}
+			class:bg-yellow-500={i < filled && color === 'fair'}
+			class:bg-red-500={i < filled && color === 'poor'}
 			style="height: {4 + i * 3}px"></span>
 	{/each}
 </div>

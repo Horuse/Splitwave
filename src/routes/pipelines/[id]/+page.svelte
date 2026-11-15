@@ -82,7 +82,7 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-3">
-			<Button href="/">← Back</Button>
+			<Button variant="ghost" href="/">← Back</Button>
 			{#if pipeline}
 				<div class="relative">
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">

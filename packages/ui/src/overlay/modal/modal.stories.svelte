@@ -17,7 +17,7 @@
 	{#snippet template(args)}
 		<div class="h-[28rem]">
 			<Modal {...args} onClose={() => {}}>
-				<div class="px-5 py-4 text-xs text-muted">Modal body content.</div>
+				<div class="text-muted px-5 py-4 text-xs">Modal body content.</div>
 				{#snippet footer()}
 					<Button>Cancel</Button>
 					<Button tone="success">Save</Button>

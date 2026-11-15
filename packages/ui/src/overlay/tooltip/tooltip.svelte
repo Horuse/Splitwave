@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import { createFloatingActions } from 'svelte-floating-ui';
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
 	import { portal } from 'svelte-portal';
@@ -45,7 +46,8 @@
 	<div
 		use:portal={OVERLAY_HOST}
 		use:floatingContent
-		class="pointer-events-none z-[200] rounded-md border border-line-strong bg-surface-4 px-2 py-1 font-mono text-[10px] text-content"
+		transition:fade={{ duration: 100 }}
+		class="pointer-events-none z-[200] rounded-md border border-neutral-700 bg-neutral-500 px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
 		role="tooltip">
 		{#if content}
 			{@render content()}

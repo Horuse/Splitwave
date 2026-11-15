@@ -10,7 +10,7 @@
 	{#snippet template()}
 		<ContextMenu>
 			{#snippet trigger()}
-				<div class="m-8 flex h-40 w-80 items-center justify-center rounded-lg border border-dashed border-line-strong text-xs text-muted">
+				<div class="border-line-strong text-muted m-8 flex h-40 w-80 items-center justify-center rounded-lg border border-dashed text-xs">
 					Right click here
 				</div>
 			{/snippet}

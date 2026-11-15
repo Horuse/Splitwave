@@ -21,6 +21,9 @@
 
 	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, tone = 'default', class: className, onChange }: Props = $props();
 
+	const TONE = { default: 'text-neutral-900', success: 'text-emerald-700', warning: 'text-amber-600', danger: 'text-red-500' } as const;
+	let valueClass = $derived(TONE[tone]);
+
 	let ghost = $state<number | null>(null);
 
 	let editing = $state(false);
@@ -130,14 +133,13 @@
 	}
 </script>
 
-<label class={['slider', className]}>
+<label class={['flex flex-col gap-0.5 text-[11px] text-neutral-1000', className]}>
 	<span class="flex items-baseline justify-between">
 		<span>{label}</span>
 		<input
 			type="text"
 			inputmode="decimal"
-			class="slider-value"
-			data-tone={tone}
+			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
 			value={editing ? draft : display(value)}
 			oninput={(e) => (draft = e.currentTarget.value)}
 			onfocus={startEdit}
@@ -147,8 +149,7 @@
 	<div class="relative pt-1 pb-2">
 		<input
 			type="range"
-			class="slider-range"
-			style="--pct: {leftPct(value)}%"
+			class="nodrag nopan nowheel w-full accent-amber-500"
 			{min}
 			{max}
 			{step}
@@ -162,12 +163,16 @@
 		{#if ticks && ticks.length > 0}
 			<div class="pointer-events-none absolute inset-x-0 bottom-0 h-1.5">
 				{#each ticks as t (t)}
-					<span class="slider-tick" style="left: {leftPct(t)}%;"></span>
+					<span class="absolute top-0 h-1.5 w-px bg-neutral-700/50" style="left: {leftPct(t)}%;"></span>
 				{/each}
 			</div>
 		{/if}
 		{#if ghost !== null}
-			<span class="slider-ghost" style="left: {leftPct(ghost)}%;">{display(ghost)}</span>
+			<span
+				class="pointer-events-none absolute -top-0.5 z-10 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[9px] leading-tight text-white shadow"
+				style="left: {leftPct(ghost)}%;">
+				{display(ghost)}
+			</span>
 		{/if}
 	</div>
 </label>

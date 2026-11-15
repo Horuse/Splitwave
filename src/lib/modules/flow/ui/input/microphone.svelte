@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { goto } from '$app/navigation';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
@@ -7,7 +8,6 @@
 	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
 	import { Mic, Add } from '$lib/components/icons';
@@ -99,7 +99,7 @@
 			{#if gain.unsupported}
 				<span class="text-[10px] text-neutral-900"> Input gain not adjustable for this device </span>
 			{:else if gain.scalar !== null}
-				<Slider label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
+				<Slider class="nodrag nopan nowheel" label="Gain" value={gainPct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setGainPct} />
 				{#if gain.unsynced}
 					<span class="text-[10px] text-neutral-900">Gain changed elsewhere won't show here</span>
 				{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Toggle } from '@splitwave/ui';
+	import { Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
 	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
@@ -8,7 +8,6 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
-	import Slider from './_slider.svelte';
 	import { Plug, Refresh, WindowOff } from '$lib/components/icons';
 
 	type PluginNodeType = Node<PluginNodeData, 'plugin'>;
@@ -235,7 +234,7 @@
 			{#if data.showParams && params.length}
 				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
 					{#each params as p (p.id)}
-						<Slider
+						<Slider class="nodrag nopan nowheel"
 							label={p.name}
 							value={p.value}
 							min={p.min}

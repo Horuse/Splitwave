@@ -1,9 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import SignalBars from '$lib/components/signal_bars.svelte';
+	import SignalBars from './signal-bars.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Components/Signal Bars',
+		title: 'Data/Signal Bars',
+		component: SignalBars,
+		tags: ['autodocs'],
 		argTypes: {
 			loss: { control: { type: 'range', min: 0, max: 0.3, step: 0.005 } },
 			ping: { control: { type: 'range', min: 0, max: 500, step: 5 } },

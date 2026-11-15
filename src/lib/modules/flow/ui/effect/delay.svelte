@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { MAX_DELAY_MS } from '$lib/modules/pipeline/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DelayNodeData } from '$lib/modules/pipeline/types';
@@ -7,7 +8,6 @@
 	import { Delay } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 
 	type DelayNodeType = Node<DelayNodeData, 'delay'>;
 	let { id, data }: NodeProps<DelayNodeType> = $props();
@@ -92,7 +92,7 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Time"
 				value={data.timeMs}
 				min={1}
@@ -102,7 +102,7 @@
 				defaultValue={250}
 				ticks={[100, 500, 1000]}
 				onChange={(v) => patch('timeMs', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Feedback"
 				value={data.feedback}
 				min={0}
@@ -112,7 +112,7 @@
 				defaultValue={0.4}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('feedback', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Mix"
 				value={data.mix}
 				min={0}

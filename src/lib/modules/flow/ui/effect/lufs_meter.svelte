@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { MeterBar } from '@splitwave/ui';
 	import { LUFS_SILENT } from '$lib/modules/pipeline/generated/engine';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
@@ -8,7 +9,6 @@
 	import Wrapper from '../node.svelte';
 	import { Gauge, Refresh } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
-	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { Combobox } from '$lib/modules/form/ui';
 
 	type LufsMeterNodeType = Node<LufsMeterNodeData, 'lufsMeter'>;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseSuppressorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -6,7 +7,6 @@
 	import { Wand } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatHz } from '$lib/components/format';
 
@@ -63,7 +63,7 @@
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
 		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. {formatHz(48_000)} only.</p>
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Attenuation"
 			value={data.attenuationLimitDb}
 			min={0}
@@ -73,7 +73,7 @@
 			defaultValue={100}
 			ticks={[25, 50, 75]}
 			onChange={(v) => patch('attenuationLimitDb', v)} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Post-filter"
 			value={data.postFilterBeta ?? 0}
 			min={0}
@@ -83,7 +83,7 @@
 			defaultValue={0}
 			ticks={[0.01, 0.02, 0.03, 0.04]}
 			onChange={(v) => patch('postFilterBeta', v)} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Min thresh"
 			value={data.minThreshDb ?? -10}
 			min={-15}
@@ -93,7 +93,7 @@
 			defaultValue={-10}
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('minThreshDb', v)} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Max ERB thresh"
 			value={data.maxErbThreshDb ?? 30}
 			min={-15}
@@ -103,7 +103,7 @@
 			defaultValue={30}
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('maxErbThreshDb', v)} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Max DF thresh"
 			value={data.maxDfThreshDb ?? 20}
 			min={-15}

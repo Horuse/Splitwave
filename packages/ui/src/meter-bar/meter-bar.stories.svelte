@@ -1,13 +1,14 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import MeterBar from '$lib/components/meter_bar.svelte';
+	import MeterBar from './meter-bar.svelte';
 
 	const GRADIENT = 'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
 	const GRADIENT_V = GRADIENT.replace('to right', 'to top');
 
 	const { Story } = defineMeta({
-		title: 'Components/Meter Bar',
+		title: 'Data/Meter Bar',
 		component: MeterBar,
+		tags: ['autodocs'],
 		argTypes: {
 			pct: { control: { type: 'range', min: 0, max: 100, step: 1 } },
 			hold: { control: { type: 'range', min: 0, max: 100, step: 1 } },

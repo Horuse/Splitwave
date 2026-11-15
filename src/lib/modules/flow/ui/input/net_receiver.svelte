@@ -1,9 +1,9 @@
 <script lang="ts">
+	import { SignalBars } from '@splitwave/ui';
 	import { onDestroy, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetReceiverNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { formatHz, formatRate, formatPct, LossWindow } from '$lib/components/format';
 	import Wrapper from '../node.svelte';
 	import { ArrowDownload } from '$lib/components/icons';

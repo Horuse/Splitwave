@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { Toggle } from '@splitwave/ui';
+	import { Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Balance } from '$lib/components/icons';
-	import Slider from './_slider.svelte';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
 	let { id, data }: NodeProps<ChannelBalanceNodeType> = $props();
@@ -71,8 +70,8 @@
 			</div>
 		</div>
 
-		<Slider label="Left" value={data.leftGainDb} min={-24} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[-12, -6, 0, 6, 12]} onChange={setLeft} />
-		<Slider
+		<Slider class="nodrag nopan nowheel" label="Left" value={data.leftGainDb} min={-24} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[-12, -6, 0, 6, 12]} onChange={setLeft} />
+		<Slider class="nodrag nopan nowheel"
 			label="Right"
 			value={data.rightGainDb}
 			min={-24}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SaturatorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -6,7 +7,6 @@
 	import { Saturator } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 
 	type SaturatorNodeType = Node<SaturatorNodeData, 'saturator'>;
 	let { id, data }: NodeProps<SaturatorNodeType> = $props();
@@ -101,7 +101,7 @@
 			</div>
 		</div>
 
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Ceiling"
 			value={data.thresholdDb}
 			min={-24}
@@ -111,6 +111,6 @@
 			defaultValue={0}
 			ticks={[-12, -6, -3, 0]}
 			onChange={setThreshold} />
-		<Slider label="Drive" value={data.driveDb} min={0} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[0, 6, 12, 24]} onChange={setDrive} />
+		<Slider class="nodrag nopan nowheel" label="Drive" value={data.driveDb} min={0} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[0, 6, 12, 24]} onChange={setDrive} />
 	</div>
 </Wrapper>

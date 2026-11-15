@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { goto } from '$app/navigation';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SpeakerNodeData } from '$lib/modules/pipeline/types';
@@ -8,7 +9,6 @@
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
 	import { Speaker, Add } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -104,7 +104,7 @@
 			{#if volume.unsupported}
 				<span class="text-[10px] text-neutral-900"> Hardware volume not adjustable for this device </span>
 			{:else if volume.scalar !== null}
-				<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
+				<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} ticks={[25, 50, 75]} onChange={setVolumePct} />
 				{#if volume.unsynced}
 					<span class="text-[10px] text-neutral-900">Volume changed elsewhere won't show here</span>
 				{/if}

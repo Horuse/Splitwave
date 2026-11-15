@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { MeterBar } from '@splitwave/ui';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { Position } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
 	import { channelColor, channelHandle, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
-	import MeterBar from '$lib/components/meter_bar.svelte';
 
 	const METER_GRADIENT = 'linear-gradient(to right, #22c55e 0%, #22c55e 70%, #eab308 70%, #eab308 90%, #f97316 90%, #f97316 95%, #ef4444 95%, #ef4444 100%)';
 

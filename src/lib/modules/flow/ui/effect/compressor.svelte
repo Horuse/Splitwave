@@ -1,11 +1,11 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { CompressorNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils';
 	import { Compressor } from '$lib/components/icons';
-	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
@@ -132,7 +132,7 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Threshold"
 				value={data.thresholdDb}
 				min={-60}
@@ -142,7 +142,7 @@
 				defaultValue={-18}
 				ticks={[-40, -20, -10]}
 				onChange={(v) => patch('thresholdDb', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Ratio"
 				value={data.ratio}
 				min={1}
@@ -152,7 +152,7 @@
 				defaultValue={3}
 				ticks={[2, 4, 8]}
 				onChange={(v) => patch('ratio', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Attack"
 				value={data.attackMs}
 				min={0.1}
@@ -162,7 +162,7 @@
 				defaultValue={10}
 				ticks={[1, 10, 50]}
 				onChange={(v) => patch('attackMs', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Release"
 				value={data.releaseMs}
 				min={10}
@@ -172,7 +172,7 @@
 				defaultValue={100}
 				ticks={[50, 250, 500]}
 				onChange={(v) => patch('releaseMs', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Knee"
 				value={data.kneeDb}
 				min={0}
@@ -182,7 +182,7 @@
 				defaultValue={6}
 				ticks={[0, 6, 12]}
 				onChange={(v) => patch('kneeDb', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Makeup"
 				value={data.makeupDb}
 				min={0}

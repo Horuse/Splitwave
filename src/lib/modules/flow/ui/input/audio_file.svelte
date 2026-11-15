@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Slider } from '@splitwave/ui';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
@@ -8,7 +8,6 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import ActionSocket from '../_action_socket.svelte';
 	import { Autoplay, Folder, Loop, MusicNote, Pause, Play, SkipBack5, SkipForward5, Stop } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -288,6 +287,6 @@
 			<span class="text-neutral-900 tabular-nums">{formatDuration(totalSec, 1)}</span>
 		</div>
 
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 	</div>
 </Wrapper>

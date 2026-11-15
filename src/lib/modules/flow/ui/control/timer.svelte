@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { Segmented } from '@splitwave/ui';
+	import { MeterBar, Segmented, Slider } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { TimerMode, TimerNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
 	import { Hourglass } from '$lib/components/icons';
-	import MeterBar from '$lib/components/meter_bar.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_OUT, PREVIEW_CTX, START_HANDLE } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
@@ -81,7 +79,7 @@
 <Wrapper label="Timer" icon={Hourglass} accent="control">
 	<div class="flex w-52 flex-col gap-3">
 		<Segmented class="nodrag nopan" options={MODES} value={data.mode} onSelect={(mode) => set({ mode })} />
-		<Slider label="Time" value={data.ms} min={50} max={10000} step={50} format={formatTime} defaultValue={1000} onChange={(ms) => set({ ms })} />
+		<Slider class="nodrag nopan nowheel" label="Time" value={data.ms} min={50} max={10000} step={50} format={formatTime} defaultValue={1000} onChange={(ms) => set({ ms })} />
 		<MeterBar class="h-1.5 rounded-sm" trackClass="bg-black/35" pct={progress * 100} fillClass={high ? 'bg-yellow-500' : 'bg-neutral-600'} />
 		<div class="flex items-center justify-between">
 			<ControlPort id={START_HANDLE} side="target" label="start" high={running} />

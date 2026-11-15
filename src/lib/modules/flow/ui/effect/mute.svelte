@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Toggle } from '@splitwave/ui';
+	import { Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -11,7 +11,6 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { getContext, onMount, untrack } from 'svelte';
-	import Slider from './_slider.svelte';
 	import { formatPct } from '$lib/components/format';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
@@ -128,7 +127,7 @@
 			{#if cueMissing}
 				<span class="text-[10px] text-red-500">Selected device not available</span>
 			{/if}
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Cue volume"
 				value={data.cueVolume ?? CUE_VOLUME_DEFAULT}
 				min={0}

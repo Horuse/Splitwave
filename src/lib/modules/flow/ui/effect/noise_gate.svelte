@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
@@ -10,7 +11,6 @@
 	import { NoiseGate } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 
 	type NoiseGateNodeType = Node<NoiseGateNodeData, 'noiseGate'>;
 	let { id, data }: NodeProps<NoiseGateNodeType> = $props();
@@ -142,7 +142,7 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Threshold"
 				value={data.thresholdDb}
 				min={-80}
@@ -152,7 +152,7 @@
 				defaultValue={-40}
 				ticks={[-60, -40, -20]}
 				onChange={(v) => patch('thresholdDb', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Range"
 				value={data.rangeDb}
 				min={-80}
@@ -162,7 +162,7 @@
 				defaultValue={-40}
 				ticks={[-60, -40, -20]}
 				onChange={(v) => patch('rangeDb', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Attack"
 				value={data.attackMs}
 				min={0.1}
@@ -172,7 +172,7 @@
 				defaultValue={1}
 				ticks={[1, 5, 20]}
 				onChange={(v) => patch('attackMs', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Hold"
 				value={data.holdMs}
 				min={0}
@@ -182,7 +182,7 @@
 				defaultValue={50}
 				ticks={[20, 100, 250]}
 				onChange={(v) => patch('holdMs', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Release"
 				value={data.releaseMs}
 				min={10}

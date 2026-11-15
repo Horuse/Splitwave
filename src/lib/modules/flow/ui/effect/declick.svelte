@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DeclickNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Backspace } from '$lib/components/icons';
-	import Slider from './_slider.svelte';
 
 	type DeclickNodeType = Node<DeclickNodeData, 'declick'>;
 	let { id, data }: NodeProps<DeclickNodeType> = $props();
@@ -32,7 +32,7 @@
 
 <Wrapper label="Declick" icon={Backspace} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Sensitivity"
 			value={data.sensitivity}
 			min={0}
@@ -42,7 +42,7 @@
 			format={(v) => `${Math.round(v * 100)}%`}
 			ticks={[0, 0.25, 0.5, 0.75, 1]}
 			onChange={setSensitivity} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Max width"
 			value={data.maxWidthMs ?? 2}
 			min={0.3}

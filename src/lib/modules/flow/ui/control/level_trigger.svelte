@@ -1,11 +1,10 @@
 <script lang="ts">
+	import { MeterBar, Slider } from '@splitwave/ui';
 	import { untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelTriggerNodeData } from '$lib/modules/pipeline/types';
 	import Wrapper from '../node.svelte';
-	import MeterBar from '$lib/components/meter_bar.svelte';
 	import { Gauge } from '$lib/components/icons';
-	import Slider from '../effect/_slider.svelte';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_OUT } from '$lib/modules/flow/utils';
 	import { controlSignals } from '../../control.svelte';
@@ -61,7 +60,7 @@
 			<!-- Threshold marker -->
 			<span class="pointer-events-none absolute -top-0.5 -bottom-0.5 w-px bg-neutral-1100" style="left:{toPct(data.thresholdDb)}%"></span>
 		</div>
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Threshold"
 			value={data.thresholdDb}
 			min={DB_FLOOR}
@@ -70,7 +69,7 @@
 			unit="dB"
 			defaultValue={-40}
 			onChange={(v) => set({ thresholdDb: v })} />
-		<Slider label="Hold" value={data.holdMs} min={0} max={2000} step={10} unit="ms" defaultValue={300} onChange={(v) => set({ holdMs: v })} />
+		<Slider class="nodrag nopan nowheel" label="Hold" value={data.holdMs} min={0} max={2000} step={10} unit="ms" defaultValue={300} onChange={(v) => set({ holdMs: v })} />
 		<ControlPort id={CONTROL_OUT} side="source" label="out" {high} />
 	</div>
 </Wrapper>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LimiterNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -6,7 +7,6 @@
 	import { Limiter } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 	import GrBar from './_gr_bar.svelte';
 
 	type LimiterNodeType = Node<LimiterNodeData, 'limiter'>;
@@ -81,7 +81,7 @@
 		</div>
 
 		<div class="flex w-50 flex-col gap-1.5">
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Ceiling"
 				value={data.ceilingDb}
 				min={-12}
@@ -91,7 +91,7 @@
 				defaultValue={-0.3}
 				ticks={[-6, -3, -1, 0]}
 				onChange={setCeiling} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Lookahead"
 				value={data.lookaheadMs}
 				min={1}
@@ -101,7 +101,7 @@
 				defaultValue={5}
 				ticks={[2, 5, 10]}
 				onChange={setLookahead} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Release"
 				value={data.releaseMs}
 				min={10}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ReverbNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -6,7 +7,6 @@
 	import { Reverb } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 
 	type ReverbNodeType = Node<ReverbNodeData, 'reverb'>;
 	let { id, data }: NodeProps<ReverbNodeType> = $props();
@@ -113,7 +113,7 @@
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Room"
 				value={data.roomSize}
 				min={0}
@@ -123,7 +123,7 @@
 				defaultValue={0.5}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('roomSize', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Damping"
 				value={data.damping}
 				min={0}
@@ -133,7 +133,7 @@
 				defaultValue={0.5}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('damping', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Width"
 				value={data.width}
 				min={0}
@@ -143,7 +143,7 @@
 				defaultValue={1}
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('width', v)} />
-			<Slider
+			<Slider class="nodrag nopan nowheel"
 				label="Mix"
 				value={data.mix}
 				min={0}

@@ -41,10 +41,7 @@
 <div class={['segmented', className]}>
 	{#if selectedIndex >= 0}
 		<div class="pointer-events-none absolute inset-0.5">
-			<div
-				class="segmented-thumb"
-				style="width:{100 / cols}%; height:{100 / rows}%; left:{(col * 100) / cols}%; top:{(row * 100) / rows}%;">
-			</div>
+			<div class="segmented-thumb" style="width:{100 / cols}%; height:{100 / rows}%; left:{(col * 100) / cols}%; top:{(row * 100) / rows}%;"></div>
 		</div>
 	{/if}
 

@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { GainNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Trending } from '$lib/components/icons';
-	import Slider from './_slider.svelte';
 
 	type GainNodeType = Node<GainNodeData, 'gain'>;
 	let { id, data }: NodeProps<GainNodeType> = $props();
@@ -23,16 +23,16 @@
 		audioMethods.updateEffect(id, patch).catch(() => {});
 	}
 
-	function valueClass(db: number): string {
-		if (db >= 12) return 'text-red-500';
-		if (db >= 3) return 'text-amber-600';
-		return 'text-emerald-700';
+	function tone(db: number) {
+		if (db >= 12) return 'danger';
+		if (db >= 3) return 'warning';
+		return 'success';
 	}
 </script>
 
 <Wrapper label="Gain" icon={Trending} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="nowheel nodrag w-48">
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Level"
 			value={data.gainDb}
 			min={-24}
@@ -41,7 +41,7 @@
 			unit=" dB"
 			defaultValue={0}
 			ticks={[-12, -6, 0, 6, 12]}
-			valueClass={valueClass(data.gainDb)}
+			tone={tone(data.gainDb)}
 			onChange={set} />
 	</div>
 </Wrapper>

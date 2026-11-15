@@ -13,12 +13,13 @@
 		defaultValue?: number;
 		/** Optional canonical positions to render as small tick marks. */
 		ticks?: number[];
-		/** CSS class applied to the numeric readout — lets effects colour-code by value. */
-		valueClass?: string;
+		/** Colours the numeric readout so an effect can flag a risky value. */
+		tone?: 'default' | 'success' | 'warning' | 'danger';
+		class?: string;
 		onChange: (v: number) => void;
 	}
 
-	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, valueClass = 'text-neutral-900', onChange }: Props = $props();
+	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, tone = 'default', class: className, onChange }: Props = $props();
 
 	let ghost = $state<number | null>(null);
 
@@ -129,13 +130,14 @@
 	}
 </script>
 
-<label class="flex flex-col gap-0.5 text-[11px] text-neutral-1000">
+<label class={['slider', className]}>
 	<span class="flex items-baseline justify-between">
 		<span>{label}</span>
 		<input
 			type="text"
 			inputmode="decimal"
-			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
+			class="slider-value"
+			data-tone={tone}
 			value={editing ? draft : display(value)}
 			oninput={(e) => (draft = e.currentTarget.value)}
 			onfocus={startEdit}
@@ -145,7 +147,8 @@
 	<div class="relative pt-1 pb-2">
 		<input
 			type="range"
-			class="nodrag nopan nowheel w-full accent-amber-500"
+			class="slider-range"
+			style="--pct: {leftPct(value)}%"
 			{min}
 			{max}
 			{step}
@@ -159,16 +162,12 @@
 		{#if ticks && ticks.length > 0}
 			<div class="pointer-events-none absolute inset-x-0 bottom-0 h-1.5">
 				{#each ticks as t (t)}
-					<span class="absolute top-0 h-1.5 w-px bg-neutral-700/50" style="left: {leftPct(t)}%;"></span>
+					<span class="slider-tick" style="left: {leftPct(t)}%;"></span>
 				{/each}
 			</div>
 		{/if}
 		{#if ghost !== null}
-			<span
-				class="pointer-events-none absolute -top-0.5 z-10 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[9px] leading-tight text-white shadow"
-				style="left: {leftPct(ghost)}%;">
-				{display(ghost)}
-			</span>
+			<span class="slider-ghost" style="left: {leftPct(ghost)}%;">{display(ghost)}</span>
 		{/if}
 	</div>
 </label>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DeEsserNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -6,7 +7,6 @@
 	import { SoundWave } from '$lib/components/icons';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import Slider from './_slider.svelte';
 	import { formatHz } from '$lib/components/format';
 
 	type DeEsserNodeType = Node<DeEsserNodeData, 'deEsser'>;
@@ -33,7 +33,7 @@
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="deEsser" {data} onApply={applyPreset} />
 
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Frequency"
 			value={data.frequency}
 			min={2000}
@@ -44,7 +44,7 @@
 			format={formatHz}
 			ticks={[4000, 6500, 9000, 12000]}
 			onChange={(v) => set({ frequency: v })} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Threshold"
 			value={data.thresholdDb}
 			min={-80}
@@ -54,7 +54,7 @@
 			defaultValue={-30}
 			ticks={[-60, -40, -20, 0]}
 			onChange={(v) => set({ thresholdDb: v })} />
-		<Slider
+		<Slider class="nodrag nopan nowheel"
 			label="Ratio"
 			value={data.ratio}
 			min={1}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Toggle } from '@splitwave/ui';
+	import { Slider, Toggle } from '@splitwave/ui';
 	import { getContext, onMount } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
@@ -10,7 +10,6 @@
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
@@ -134,7 +133,7 @@
 				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
 			</span>
 		{/if}
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>
 </Wrapper>

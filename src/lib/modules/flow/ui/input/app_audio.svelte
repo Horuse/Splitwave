@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -6,7 +7,6 @@
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
-	import Slider from '../effect/_slider.svelte';
 	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { Apps } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -89,7 +89,7 @@
 				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
 			</span>
 		{/if}
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider class="nodrag nopan nowheel" label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
 		{#if data.bundleId && !missing}
 			<InputMeter nodeId={id} {channelCount} />
 		{/if}

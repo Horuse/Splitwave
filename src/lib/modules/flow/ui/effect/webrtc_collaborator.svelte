@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Segmented } from '@splitwave/ui';
+	import { Button, Segmented, SignalBars } from '@splitwave/ui';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
@@ -7,7 +7,6 @@
 	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { PasswordInput } from '$lib/modules/form/ui';
-	import SignalBars from '$lib/components/signal_bars.svelte';
 	import { LossWindow } from '$lib/components/format';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';

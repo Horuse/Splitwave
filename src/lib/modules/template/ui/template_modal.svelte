@@ -2,7 +2,7 @@
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import { registry } from '$lib/modules/flow/utils/nodes';
 	import Add from '~icons/fluent/add-24-filled';
-	import type { NodeKind } from '$lib/modules/pipeline/types';
+	import type { NodeKind } from '@splitwave/nodes';
 	import { TEMPLATES } from '../catalog';
 	import type { Template, TemplateAccent } from '../types';
 

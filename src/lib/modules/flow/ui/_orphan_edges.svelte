@@ -2,7 +2,7 @@
 	import { ViewportPortal, useStore } from '@xyflow/svelte';
 	import Delete from '~icons/fluent/delete-16-filled';
 	import { registry } from '$lib/modules/flow/utils';
-	import type { NodeKind } from '$lib/modules/pipeline/types';
+	import type { NodeKind } from '@splitwave/nodes';
 
 	interface Props {
 		onDelete: (edgeId: string) => void;

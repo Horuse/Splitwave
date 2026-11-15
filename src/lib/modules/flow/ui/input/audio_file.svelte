@@ -4,7 +4,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { AudioFileNodeData } from '$lib/modules/pipeline/types';
+	import type { AudioFileNodeData } from '@splitwave/nodes';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
@@ -18,7 +18,7 @@
 	import { Autoplay, SkipBack5, SkipForward5 } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { formatHz, formatDuration, formatPct } from '$lib/components/format';
+	import { formatHz, formatDuration, formatPct } from '@splitwave/nodes';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();

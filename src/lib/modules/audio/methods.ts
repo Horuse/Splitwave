@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
-import type { LatencyReport } from '$lib/modules/pipeline/generated/LatencyReport';
+import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
 
 /** Rate and buffer every device stream opens with. */
 function engineFormat() {

@@ -1,4 +1,4 @@
-import type { AnyNodeData, NodeKind } from '$lib/modules/pipeline/types';
+import type { AnyNodeData, NodeKind } from '@splitwave/nodes';
 
 export interface TemplateNode {
 	/** Local to the template; swapped for a cuid when the pipeline is built. */

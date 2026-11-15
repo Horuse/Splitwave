@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
-import type { LatencyReport } from '$lib/modules/pipeline/generated/LatencyReport';
-import type { NodeTiming } from '$lib/modules/pipeline/generated/NodeTiming';
+import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
+import type { NodeTiming } from '@splitwave/nodes/generated/NodeTiming';
 import { methods } from './methods';
 import { audioStore } from './stores.svelte';
 

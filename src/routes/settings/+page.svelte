@@ -17,10 +17,10 @@
 		PIPELINE_SAMPLE_RATE_PRESETS,
 		BUFFER_FRAME_PRESETS
 	} from '$lib/modules/settings/stores.svelte';
-	import { formatHz, formatLatencyMs } from '$lib/components/format';
+	import { formatHz, formatLatencyMs } from '@splitwave/nodes';
 	import PresetsSection from './_presets_section.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '@splitwave/nodes/generated/engine';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
 		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },

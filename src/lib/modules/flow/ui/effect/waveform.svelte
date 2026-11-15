@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext, untrack } from 'svelte';
 	import { NodeResizer, useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { WaveformNodeData } from '$lib/modules/pipeline/types';
+	import type { WaveformNodeData } from '@splitwave/nodes';
 	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { channelOf, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';

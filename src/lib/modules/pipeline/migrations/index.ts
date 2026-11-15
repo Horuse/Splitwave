@@ -1,4 +1,4 @@
-import type { Pipeline } from '../types';
+import type { Pipeline } from '@splitwave/nodes';
 import { PIPELINE_VERSION, versionOf } from '../version';
 import { migrateChannelRouting } from './v1_channel_routing';
 import { migrateFileRecordingMode } from './v2_file_recording_mode';

@@ -1,4 +1,4 @@
-import type { Pipeline } from '../types';
+import type { Pipeline } from '@splitwave/nodes';
 
 /** Handles gained a signal prefix (`audio:` / `control:`), so a cable can only
  * join sockets of one signal. Every v2 cable carried audio. An unnamed end was

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { evaluate, LOGIC_OPS, usesB, type LogicOp } from '../src/lib/modules/flow/logic';
+import { evaluate, LOGIC_OPS, usesB, type LogicOp } from '@splitwave/nodes';
 
 const TRUTH: Record<LogicOp, [boolean, boolean, boolean, boolean]> = {
 	// Outputs for (a, b) = 00, 01, 10, 11.

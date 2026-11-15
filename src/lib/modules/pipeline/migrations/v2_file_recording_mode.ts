@@ -1,5 +1,5 @@
-import type { Pipeline } from '../types';
-import { withDefaults } from '../defaults';
+import type { Pipeline } from '@splitwave/nodes';
+import { withDefaults } from '@splitwave/nodes';
 
 /** `allowOverwrite: boolean` became a three-way `mode` (new/overwrite/append).
  * `true` maps to `overwrite`; `false`/absent stays the `new` default. */

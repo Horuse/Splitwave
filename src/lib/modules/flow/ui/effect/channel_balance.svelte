@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { ChannelBalanceNodeData } from '$lib/modules/pipeline/types';
+	import type { ChannelBalanceNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Balance } from '$lib/components/icons';

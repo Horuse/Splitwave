@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Tooltip } from '@splitwave/ui';
 	import Gauge from '~icons/fluent/gauge-16-filled';
-	import { formatLatencyMs as ms } from '$lib/components/format';
+	import { formatLatencyMs as ms } from '@splitwave/nodes';
 	import { latencyStore } from '../latency.svelte';
 
 	let report = $derived(latencyStore.report);

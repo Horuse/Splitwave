@@ -2,7 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import NodeCanvas from '../harness/node_canvas.svelte';
 	import { compose, dataArgs, envArgs, range, signalArgs, wiringArgs } from '../harness/args';
-	import type { RecordingFormat } from '$lib/modules/pipeline/types';
+	import type { RecordingFormat } from '@splitwave/nodes';
 
 	const FORMATS: Record<string, RecordingFormat> = {
 		'wav f32': { kind: 'wav', bitDepth: 'f32' },

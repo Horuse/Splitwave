@@ -1,4 +1,4 @@
-import type { Pipeline } from './types';
+import type { Pipeline } from '@splitwave/nodes';
 
 /** Bumped when stored pipelines need reshaping; each bump gets a step in
  * `./migrations`. Additive field changes do not need a bump -- `withDefaults`

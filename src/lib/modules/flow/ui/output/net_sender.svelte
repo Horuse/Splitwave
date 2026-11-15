@@ -2,9 +2,9 @@
 	import { NumberStepper, Segmented } from '@splitwave/ui';
 	import { onDestroy, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { NetSenderNodeData, NetCodec, OpusApplication } from '$lib/modules/pipeline/types';
+	import type { NetSenderNodeData, NetCodec, OpusApplication } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { formatHz, formatRate, formatKhzValue } from '$lib/components/format';
+	import { formatHz, formatRate, formatKhzValue } from '@splitwave/nodes';
 	import { channelOf } from '$lib/modules/flow/utils';
 	import Wrapper from '../node.svelte';
 	import ArrowUpload from '~icons/fluent/arrow-upload-16-filled';

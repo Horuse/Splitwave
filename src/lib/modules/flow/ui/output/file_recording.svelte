@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, NumberStepper, Segmented, Tooltip } from '@splitwave/ui';
 	import { open, save } from '@tauri-apps/plugin-dialog';
-	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '@splitwave/nodes/generated/engine';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, untrack } from 'svelte';
@@ -16,7 +16,7 @@
 		RecordingFormat,
 		RecordingMode,
 		WavBitDepth
-	} from '$lib/modules/pipeline/types';
+	} from '@splitwave/nodes';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
@@ -27,8 +27,8 @@
 	import FolderOpen from '~icons/fluent/folder-open-16-filled';
 	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { FileRecord } from '$lib/components/icons';
-	import { RECORDING_FORMATS } from '$lib/modules/pipeline/recording-formats';
-	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
+	import { RECORDING_FORMATS } from '@splitwave/nodes';
+	import { formatHz, formatKhzValue, formatDuration, formatSize } from '@splitwave/nodes';
 	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
 	import { modalManager } from '$lib/modules/overlay/modal';

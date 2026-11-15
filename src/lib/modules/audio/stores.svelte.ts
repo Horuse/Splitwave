@@ -7,7 +7,7 @@ import type { AudioApplication, AudioDevice, StartPipelinePayload } from './type
 import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 import { isFromFuture } from '$lib/modules/pipeline/migrations';
-import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '$lib/modules/pipeline/types';
+import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '@splitwave/nodes';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { errorStore } from '$lib/modules/error';
 import { reconcilePendingChange } from './reconnect';

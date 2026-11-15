@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { NoiseSuppressorNodeData } from '$lib/modules/pipeline/types';
+	import type { NoiseSuppressorNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Wand from '~icons/fluent/wand-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz } from '@splitwave/nodes';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();

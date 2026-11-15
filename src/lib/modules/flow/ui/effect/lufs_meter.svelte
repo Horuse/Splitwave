@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { Combobox, MeterBar } from '@splitwave/ui';
-	import { LUFS_SILENT } from '$lib/modules/pipeline/generated/engine';
+	import { LUFS_SILENT } from '@splitwave/nodes/generated/engine';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { LufsMeterNodeData } from '$lib/modules/pipeline/types';
+	import type { LufsMeterNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';

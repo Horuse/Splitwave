@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { audioStore } from '../stores.svelte';
-	import { formatDuration } from '$lib/components/format';
+	import { formatDuration } from '@splitwave/nodes';
 
 	let elapsed = $state(0);
 

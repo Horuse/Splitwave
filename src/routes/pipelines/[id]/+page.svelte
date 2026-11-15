@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Callout, Input } from '@splitwave/ui';
 	import { page } from '$app/state';
-	import type { Pipeline } from '$lib/modules/pipeline/types';
+	import type { Pipeline } from '@splitwave/nodes';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';

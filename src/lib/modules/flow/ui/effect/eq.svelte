@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { EQ_CROSSOVER_FREQS } from '$lib/modules/pipeline/generated/engine';
+	import { EQ_CROSSOVER_FREQS } from '@splitwave/nodes/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { EqNodeData } from '$lib/modules/pipeline/types';
+	import type { EqNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Sliders from '~icons/fluent/options-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import { formatFreq, formatGain } from '$lib/components/format';
+	import { formatFreq, formatGain } from '@splitwave/nodes';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();

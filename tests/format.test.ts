@@ -10,7 +10,7 @@ import {
 	formatPct,
 	formatRate,
 	LossWindow
-} from '../src/lib/components/format';
+} from '@splitwave/nodes';
 
 describe('formatRate', () => {
 	it('formats bytes and units', () => {

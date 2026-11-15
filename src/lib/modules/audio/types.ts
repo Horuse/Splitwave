@@ -1,4 +1,4 @@
-import type { PipelineEdge, PipelineNode } from '$lib/modules/pipeline/types';
+import type { PipelineEdge, PipelineNode } from '@splitwave/nodes';
 
 export type DeviceKind = 'input' | 'output';
 

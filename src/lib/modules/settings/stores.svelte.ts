@@ -1,7 +1,7 @@
 import { browser } from '$app/environment';
 import { isEnabled } from '@tauri-apps/plugin-autostart';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { BUFFER_FRAME_OPTIONS, DEFAULT_BUFFER_FRAMES, DEFAULT_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
+import { BUFFER_FRAME_OPTIONS, DEFAULT_BUFFER_FRAMES, DEFAULT_SAMPLE_RATE } from '@splitwave/nodes/generated/engine';
 
 const KEY = 'app:settings';
 

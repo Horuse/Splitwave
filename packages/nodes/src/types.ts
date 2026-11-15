@@ -41,7 +41,7 @@ export type { RecordingMode } from './generated/RecordingMode';
 export type { WavBitDepth } from './generated/WavBitDepth';
 
 import type { NodeKind } from './generated/NodeKind';
-import type { LogicOp } from '$lib/modules/flow/logic';
+import type { LogicOp } from './logic';
 
 export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'control' | 'routing';
 

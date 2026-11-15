@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { Pipeline } from '../src/lib/modules/pipeline/types';
+import type { Pipeline } from '@splitwave/nodes';
 import { PIPELINE_VERSION } from '../src/lib/modules/pipeline/version';
 
 const persisted = new Map<string, unknown>();

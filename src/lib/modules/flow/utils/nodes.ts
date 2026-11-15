@@ -1,7 +1,7 @@
 import type { Component } from 'svelte';
 import type { ClassValue } from 'svelte/elements';
 import type { NodeTypes } from '@xyflow/svelte';
-import { DEFAULT_NODE_DATA } from '$lib/modules/pipeline/defaults';
+import { DEFAULT_NODE_DATA } from '@splitwave/nodes';
 import AppsIcon from '~icons/fluent/apps-16-filled';
 import ArrowDownloadIcon from '~icons/fluent/arrow-download-16-filled';
 import BackspaceIcon from '~icons/fluent/backspace-24-filled';
@@ -27,7 +27,7 @@ import SpeakerMuteIcon from '~icons/fluent/speaker-mute-16-filled';
 import TrendingIcon from '~icons/fluent/arrow-trending-16-filled';
 import WandIcon from '~icons/fluent/wand-16-filled';
 import { Balance as BalanceIcon, Compressor as CompressorIcon, Delay as DelayIcon, Limiter as LimiterIcon, NoiseGate as NoiseGateIcon, FileRecord as FileRecordIcon, Reverb as ReverbIcon, Saturator as SaturatorIcon } from '$lib/components/icons';
-import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '$lib/modules/pipeline/types';
+import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '@splitwave/nodes';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
 import AppAudio from '../ui/input/app_audio.svelte';

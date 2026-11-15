@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { ToggleNodeData } from '$lib/modules/pipeline/types';
+	import type { ToggleNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
 	import ControlSocket from '../_control_socket.svelte';

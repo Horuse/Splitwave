@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Segmented } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { KeyInputNodeData, KeyInputSource } from '$lib/modules/pipeline/types';
+	import type { KeyInputNodeData, KeyInputSource } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import KeyCommand from '~icons/fluent/key-command-24-regular';
 	import HotkeyBinder from '../_hotkey_binder.svelte';

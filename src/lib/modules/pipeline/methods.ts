@@ -1,5 +1,5 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
-import type { Pipeline } from './types';
+import type { Pipeline } from '@splitwave/nodes';
 import { PIPELINE_VERSION } from './version';
 import { isFromFuture, migrate, migrateSnapshot } from './migrations';
 import { pruneDanglingEdges } from './sanitize';

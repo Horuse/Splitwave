@@ -2,7 +2,7 @@
 	import { NumberStepper, Segmented } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { SwitchNodeData } from '$lib/modules/pipeline/types';
+	import type { SwitchNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import InputColumn from './_input_column.svelte';
 	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';

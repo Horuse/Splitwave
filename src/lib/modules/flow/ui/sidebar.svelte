@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { NodeCategory, NodeKind } from '$lib/modules/pipeline/types';
+	import type { NodeCategory, NodeKind } from '@splitwave/nodes';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
 	import Add from '~icons/fluent/add-24-filled';

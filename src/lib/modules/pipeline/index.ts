@@ -1,6 +1,6 @@
 import { methods } from './methods';
 import { pipelineStore } from './stores.svelte';
-import type * as types from './types';
+import type * as types from '@splitwave/nodes';
 
 const Pipeline = {
 	methods,

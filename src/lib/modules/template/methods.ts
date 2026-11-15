@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
-import type { Pipeline, PipelineEdge, PipelineNode } from '$lib/modules/pipeline/types';
-import { withDefaults } from '$lib/modules/pipeline/defaults';
+import type { Pipeline, PipelineEdge, PipelineNode } from '@splitwave/nodes';
+import { withDefaults } from '@splitwave/nodes';
 import { PIPELINE_VERSION } from '$lib/modules/pipeline/version';
 import { channelHandle } from '$lib/modules/flow/utils/handles';
 import type { Template } from './types';

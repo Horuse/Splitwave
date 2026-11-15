@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { MidiBinding } from '$lib/modules/pipeline/types';
+	import type { MidiBinding } from '@splitwave/nodes';
 	import { formatMidi } from './_midi.svelte';
 
 	interface Props {

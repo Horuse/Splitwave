@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { LimiterNodeData } from '$lib/modules/pipeline/types';
+	import type { LimiterNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Limiter } from '$lib/components/icons';

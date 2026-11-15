@@ -3,11 +3,11 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { type Node, type NodeProps } from '@xyflow/svelte';
-	import type { LevelMeterNodeData } from '$lib/modules/pipeline/types';
+	import type { LevelMeterNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
-	import { formatDb } from '$lib/components/format';
+	import { formatDb } from '@splitwave/nodes';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
 	let { id, data }: NodeProps<LevelMeterNodeType> = $props();

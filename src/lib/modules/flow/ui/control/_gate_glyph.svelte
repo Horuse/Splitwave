@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { usesB, type LogicOp } from '../../logic';
+	import { usesB, type LogicOp } from '@splitwave/nodes';
 
 	interface Props {
 		op: LogicOp;

@@ -1,5 +1,5 @@
-import type { Pipeline, PipelineEdge } from '../types';
-import { withDefaults } from '../defaults';
+import type { Pipeline, PipelineEdge } from '@splitwave/nodes';
+import { withDefaults } from '@splitwave/nodes';
 
 /** v0 carried one stereo stream per cable on a single unnamed handle per side.
  * v1 gives every channel its own handle, so each old cable becomes two: the

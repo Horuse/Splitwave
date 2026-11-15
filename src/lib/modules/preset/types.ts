@@ -1,12 +1,12 @@
-import type { CompressorData } from '$lib/modules/pipeline/generated/CompressorData';
-import type { DeEsserData } from '$lib/modules/pipeline/generated/DeEsserData';
-import type { DelayData } from '$lib/modules/pipeline/generated/DelayData';
-import type { EqData } from '$lib/modules/pipeline/generated/EqData';
-import type { LimiterData } from '$lib/modules/pipeline/generated/LimiterData';
-import type { NoiseGateData } from '$lib/modules/pipeline/generated/NoiseGateData';
-import type { NoiseSuppressorData } from '$lib/modules/pipeline/generated/NoiseSuppressorData';
-import type { ReverbData } from '$lib/modules/pipeline/generated/ReverbData';
-import type { SaturatorData } from '$lib/modules/pipeline/generated/SaturatorData';
+import type { CompressorData } from '@splitwave/nodes/generated/CompressorData';
+import type { DeEsserData } from '@splitwave/nodes/generated/DeEsserData';
+import type { DelayData } from '@splitwave/nodes/generated/DelayData';
+import type { EqData } from '@splitwave/nodes/generated/EqData';
+import type { LimiterData } from '@splitwave/nodes/generated/LimiterData';
+import type { NoiseGateData } from '@splitwave/nodes/generated/NoiseGateData';
+import type { NoiseSuppressorData } from '@splitwave/nodes/generated/NoiseSuppressorData';
+import type { ReverbData } from '@splitwave/nodes/generated/ReverbData';
+import type { SaturatorData } from '@splitwave/nodes/generated/SaturatorData';
 
 /** `bypassed` is deliberately absent from every entry: it is per-instance state,
  * and recalling a preset must never silently re-enable an effect the user

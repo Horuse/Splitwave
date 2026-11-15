@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import type { Pipeline, PipelineEdge, PipelineNode } from '../types';
+import type { Pipeline, PipelineEdge, PipelineNode } from '@splitwave/nodes';
 
 /** A Mute carried its own global shortcut: `hotkey` toggled it, or with
  * `pushToTalk` unmuted it while held. Shortcuts are Key Input nodes now, wired

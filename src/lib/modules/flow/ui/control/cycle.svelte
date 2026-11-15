@@ -2,7 +2,7 @@
 	import { NumberStepper } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { CycleNodeData } from '$lib/modules/pipeline/types';
+	import type { CycleNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import ArrowRedo from '~icons/fluent/arrow-redo-16-filled';
 	import ControlPort from './_control_port.svelte';

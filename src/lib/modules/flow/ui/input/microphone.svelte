@@ -2,7 +2,7 @@
 	import { Combobox, ComboboxAction, RescanButton, Slider } from '@splitwave/ui';
 	import { goto } from '$app/navigation';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
+	import type { MicrophoneNodeData } from '@splitwave/nodes';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
@@ -14,7 +14,7 @@
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { formatPct } from '$lib/components/format';
+	import { formatPct } from '@splitwave/nodes';
 
 	const isWindows = platform() === 'windows';
 

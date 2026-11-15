@@ -1,5 +1,5 @@
-import type { MidiMessage } from '$lib/modules/pipeline/generated/MidiMessage';
-import type { MidiBinding } from '$lib/modules/pipeline/types';
+import type { MidiMessage } from '@splitwave/nodes/generated/MidiMessage';
+import type { MidiBinding } from '@splitwave/nodes';
 import { tauriListen } from '$lib/utils/tauri_event';
 
 const MIDI_EVENT = 'midi://message';

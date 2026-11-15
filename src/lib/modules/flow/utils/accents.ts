@@ -1,4 +1,4 @@
-import type { NodeCategory } from '$lib/modules/pipeline/types';
+import type { NodeCategory } from '@splitwave/nodes';
 
 /** Data only: the node wrapper and the sidebar both colour by category, and a
  * second copy is how they drifted apart. */

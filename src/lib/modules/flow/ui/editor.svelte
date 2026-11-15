@@ -4,7 +4,7 @@
 	import { createId } from '@paralleldrive/cuid2';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import type { NodeKind, Pipeline } from '$lib/modules/pipeline/types';
+	import type { NodeKind, Pipeline } from '@splitwave/nodes';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';

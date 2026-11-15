@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { relativeTime } from '../src/lib/utils/time';
 import { pruneDanglingEdges } from '../src/lib/modules/pipeline/sanitize';
 import { versionOf } from '../src/lib/modules/pipeline/version';
-import type { Pipeline } from '../src/lib/modules/pipeline/types';
+import type { Pipeline } from '@splitwave/nodes';
 
 describe('relativeTime', () => {
 	const now = Date.now();

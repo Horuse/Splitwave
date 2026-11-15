@@ -3,7 +3,7 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import Delete from '~icons/fluent/delete-16-filled';
 	import Add from '~icons/fluent/add-24-filled';
-	import type { NodeDataMap } from '$lib/modules/pipeline/types';
+	import type { NodeDataMap } from '@splitwave/nodes';
 	import { methods } from '../methods';
 	import type { Preset, PresetData, PresetKind } from '../types';
 	import SavePresetModal from './save_preset_modal.svelte';

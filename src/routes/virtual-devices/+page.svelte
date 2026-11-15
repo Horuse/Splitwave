@@ -12,9 +12,9 @@
 	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz } from '@splitwave/nodes';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
-	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
+	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '@splitwave/nodes/generated/engine';
 	import WindowsVirtualMicrophone from './_windows_virtual_microphone.svelte';
 
 	const isLinux = platform() === 'linux';

@@ -3,16 +3,16 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
-	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
-	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
+	import type { WebRtcCollaboratorNodeData } from '@splitwave/nodes';
+	import type { OpusApplication, NetCodec } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { LossWindow } from '$lib/components/format';
+	import { LossWindow } from '@splitwave/nodes';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui';
 	import Wrapper from '../node.svelte';
 	import PeopleTeam from '~icons/fluent/people-team-16-filled';
 	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '$lib/modules/flow/utils';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz } from '@splitwave/nodes';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 
 	type WebRtcNodeType = Node<WebRtcCollaboratorNodeData, 'webRtcCollaborator'>;

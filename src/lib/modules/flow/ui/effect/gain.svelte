@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { GainNodeData } from '$lib/modules/pipeline/types';
+	import type { GainNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import Trending from '~icons/fluent/arrow-trending-16-filled';

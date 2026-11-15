@@ -6,7 +6,7 @@
 	import Markdown from '$lib/components/markdown.svelte';
 	import Checkmark from '~icons/fluent/checkmark-16-filled';
 	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
-	import { formatBytes } from '$lib/components/format';
+	import { formatBytes } from '@splitwave/nodes';
 
 	let info = $derived(getCachedAppInfo());
 

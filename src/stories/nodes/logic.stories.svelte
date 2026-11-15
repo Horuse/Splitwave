@@ -2,7 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import NodeCanvas from '../harness/node_canvas.svelte';
 	import { compose, dataArgs } from '../harness/args';
-	import { LOGIC_OPS } from '$lib/modules/flow/logic';
+	import { LOGIC_OPS } from '@splitwave/nodes';
 
 	const { argTypes, args } = compose(dataArgs({ op: { control: 'select', options: LOGIC_OPS.map((o) => o.op) } }, { op: 'and' }));
 

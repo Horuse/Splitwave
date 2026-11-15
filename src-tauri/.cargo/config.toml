@@ -6,4 +6,4 @@ CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 # Where `#[ts(export)]` writes generated TS files. `relative = true` resolves
 # against the crate manifest dir (src-tauri/), so `..` climbs to the repo root.
-TS_RS_EXPORT_DIR = { value = "../src/lib/modules/pipeline/generated", relative = true }
+TS_RS_EXPORT_DIR = { value = "../packages/nodes/src/generated", relative = true }

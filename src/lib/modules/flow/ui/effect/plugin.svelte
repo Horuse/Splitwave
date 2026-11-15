@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { PluginNodeData } from '$lib/modules/pipeline/types';
+	import type { PluginNodeData } from '@splitwave/nodes';
 	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { pluginCatalog } from '$lib/modules/audio/plugin_catalog.svelte';

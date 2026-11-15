@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Combobox, RescanButton, Slider } from '@splitwave/ui';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
+	import type { AppAudioNodeData } from '@splitwave/nodes';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { useDeviceInfo } from '$lib/modules/audio';
@@ -10,7 +10,7 @@
 	import Apps from '~icons/fluent/apps-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';
-	import { formatPct } from '$lib/components/format';
+	import { formatPct } from '@splitwave/nodes';
 
 	type AppAudioNodeType = Node<AppAudioNodeData, 'appAudio'>;
 	let { id, data }: NodeProps<AppAudioNodeType> = $props();

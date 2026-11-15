@@ -2,7 +2,7 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 import type { AudioApplication, AudioDevice, PluginDescriptor, PluginParam } from '$lib/modules/audio/types';
 import { audioStore } from '$lib/modules/audio/stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
-import type { LatencyReport } from '$lib/modules/pipeline/generated/LatencyReport';
+import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
 
 export type Platform = 'macos' | 'windows' | 'linux';
 export type LinkQuality = 'offline' | 'good' | 'lossy';

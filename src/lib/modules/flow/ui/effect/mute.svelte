@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { MuteNodeData } from '$lib/modules/pipeline/types';
+	import type { MuteNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import SpeakerMute from '~icons/fluent/speaker-mute-16-filled';
@@ -10,7 +10,7 @@
 	import { useControlInput } from '../../control.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { getContext, onMount, untrack } from 'svelte';
-	import { formatPct } from '$lib/components/format';
+	import { formatPct } from '@splitwave/nodes';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
 	let { id, data }: NodeProps<MuteNodeType> = $props();

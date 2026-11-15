@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { withDefaults } from '../src/lib/modules/pipeline/defaults';
+import { withDefaults } from '@splitwave/nodes';
 import { isFromFuture, migrate, migrateSnapshot, MIGRATIONS } from '../src/lib/modules/pipeline/migrations';
 import { migrateChannelRouting } from '../src/lib/modules/pipeline/migrations/v1_channel_routing';
 import { migrateFileRecordingMode } from '../src/lib/modules/pipeline/migrations/v2_file_recording_mode';
 import { migrateTypedHandles } from '../src/lib/modules/pipeline/migrations/v3_typed_handles';
 import { migrateMuteKeyInput } from '../src/lib/modules/pipeline/migrations/v3_mute_key_input';
-import type { Pipeline } from '../src/lib/modules/pipeline/types';
+import type { Pipeline } from '@splitwave/nodes';
 import { PIPELINE_VERSION } from '../src/lib/modules/pipeline/version';
 
 function pipeline(overrides: Partial<Pipeline> = {}): Pipeline {

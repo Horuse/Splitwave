@@ -1,5 +1,5 @@
 import { methods } from './methods';
-import type { NodeKind, Pipeline } from './types';
+import type { NodeKind, Pipeline } from '@splitwave/nodes';
 
 export type ClipboardNode = {
 	kind: NodeKind;

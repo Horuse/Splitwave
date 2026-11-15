@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteFlow, SvelteFlowProvider, type Edge, type Node } from '@xyflow/svelte';
-	import type { NodeKind } from '$lib/modules/pipeline/types';
+	import type { NodeKind } from '@splitwave/nodes';
 	import { channelHandle, nodeTypes, registry } from '$lib/modules/flow/utils';
 	import ChannelEdge from '$lib/modules/flow/ui/_channel_edge.svelte';
 	import StubSource from './stub_source.svelte';

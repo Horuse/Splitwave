@@ -2,7 +2,7 @@
 	import { Segmented } from '@splitwave/ui';
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { IfNodeData } from '$lib/modules/pipeline/types';
+	import type { IfNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import ArrowRight from '~icons/fluent/arrow-right-16-filled';
 	import ControlPort from './_control_port.svelte';
@@ -11,7 +11,7 @@
 	import OutputRow from './_output_row.svelte';
 	import { useSelectOutput } from './_select_output';
 	import { A_HANDLE, B_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import { evaluate, LOGIC_OPS, usesB, type LogicOp } from '../../logic';
+	import { evaluate, LOGIC_OPS, usesB, type LogicOp } from '@splitwave/nodes';
 	import { useControlInput } from '../../control.svelte';
 
 	type IfNodeType = Node<IfNodeData, 'if'>;

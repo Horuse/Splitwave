@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Slider } from '@splitwave/ui';
-	import { MAX_DELAY_MS } from '$lib/modules/pipeline/generated/engine';
+	import { MAX_DELAY_MS } from '@splitwave/nodes/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { DelayNodeData } from '$lib/modules/pipeline/types';
+	import type { DelayNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import { Delay } from '$lib/components/icons';

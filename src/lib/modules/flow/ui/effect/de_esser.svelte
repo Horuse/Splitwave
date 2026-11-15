@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { DeEsserNodeData } from '$lib/modules/pipeline/types';
+	import type { DeEsserNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import Wrapper from '../node.svelte';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
-	import { formatHz } from '$lib/components/format';
+	import { formatHz } from '@splitwave/nodes';
 
 	type DeEsserNodeType = Node<DeEsserNodeData, 'deEsser'>;
 	let { id, data }: NodeProps<DeEsserNodeType> = $props();

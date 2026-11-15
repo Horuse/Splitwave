@@ -2,12 +2,12 @@
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, NodeResizer, type Node, type NodeProps } from '@xyflow/svelte';
-	import type { SpectrumNodeData } from '$lib/modules/pipeline/types';
+	import type { SpectrumNodeData } from '@splitwave/nodes';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
-	import { formatFreq } from '$lib/components/format';
+	import { formatFreq } from '@splitwave/nodes';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 

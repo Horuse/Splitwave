@@ -3,7 +3,7 @@
 	import { getContext, onMount } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import type { SystemAudioNodeData } from '$lib/modules/pipeline/types';
+	import type { SystemAudioNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import type { CapturePermission } from '$lib/modules/audio/types';
@@ -12,7 +12,7 @@
 	import InputMeter from './_input_meter.svelte';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';
-	import { formatPct } from '$lib/components/format';
+	import { formatPct } from '@splitwave/nodes';
 
 	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
 	// loopback) need it neither.

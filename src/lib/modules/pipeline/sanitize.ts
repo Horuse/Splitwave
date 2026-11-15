@@ -1,4 +1,4 @@
-import type { Pipeline } from './types';
+import type { Pipeline } from '@splitwave/nodes';
 
 /** An edge whose endpoint node is gone renders as nothing and is unreachable in
  * the editor, so it can only be dropped. */

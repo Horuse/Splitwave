@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { SvelteFlowProvider } from '@xyflow/svelte';
-	import type { Pipeline } from '$lib/modules/pipeline/types';
+	import type { Pipeline } from '@splitwave/nodes';
 	import Editor from './editor.svelte';
 	import '@xyflow/svelte/dist/base.css';
 

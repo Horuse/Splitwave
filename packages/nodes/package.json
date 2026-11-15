@@ -9,7 +9,8 @@
 			"svelte": "./src/index.ts",
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
-		}
+		},
+		"./generated/*": "./src/generated/*.ts"
 	},
 	"peerDependencies": {
 		"svelte": "^5"

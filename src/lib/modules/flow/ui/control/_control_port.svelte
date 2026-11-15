@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ControlSocket from '../_control_socket.svelte';
+	import ControlSocket from '@splitwave/nodes/ui/_control_socket.svelte';
 
 	interface Props {
 		id: string;

@@ -8,7 +8,7 @@
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import type { CapturePermission } from '$lib/modules/audio/types';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';

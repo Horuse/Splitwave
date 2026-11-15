@@ -5,8 +5,8 @@
 	import type { SpectrumNodeData } from '@splitwave/nodes';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import { CATEGORY_TEXT } from '@splitwave/nodes/ui';
+	import ChannelHandles from '@splitwave/nodes/ui/_channel_handles.svelte';
 	import { formatFreq } from '@splitwave/nodes';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;

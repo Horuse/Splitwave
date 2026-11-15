@@ -2,7 +2,7 @@
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { GainNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
+	import { getEnginePort } from '../../engine';
 	import Wrapper from '../node.svelte';
 	import Trending from '~icons/fluent/arrow-trending-16-filled';
 
@@ -10,17 +10,18 @@
 	let { id, data }: NodeProps<GainNodeType> = $props();
 
 	const flow = useSvelteFlow();
+	const engine = getEnginePort();
 
 	function set(v: number) {
 		const patch = { gainDb: v };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function tone(db: number) {

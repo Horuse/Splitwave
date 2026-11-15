@@ -5,6 +5,10 @@
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { categoryLabel, categoryOrder, kindsByCategory, registry } from '$lib/modules/flow/utils/nodes';
 	import { startSignal, type SignalOptions } from './signal';
+	import { setEnginePort } from '@splitwave/nodes/engine';
+	import { appEnginePort } from '$lib/modules/audio/engine_port.svelte';
+
+	setEnginePort(appEnginePort);
 
 	let { signal }: { signal: SignalOptions } = $props();
 

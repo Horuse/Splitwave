@@ -3,7 +3,7 @@
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { IfNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowRight from '~icons/fluent/arrow-right-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import GateGlyph from './_gate_glyph.svelte';

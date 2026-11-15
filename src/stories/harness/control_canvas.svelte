@@ -7,6 +7,10 @@
 	import { defaultDataFor, nodeTypes } from '$lib/modules/flow/utils/nodes';
 	import EnvScope from './env_scope.svelte';
 	import { DEFAULT_ENV } from './backend';
+	import { setEnginePort } from '@splitwave/nodes/engine';
+	import { appEnginePort } from '$lib/modules/audio/engine_port.svelte';
+
+	setEnginePort(appEnginePort);
 
 	interface Props {
 		/** Control source on the left, wired from `out` into `to`. */

@@ -20,7 +20,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Eye from '~icons/fluent/eye-16-filled';
 	import EyeOff from '~icons/fluent/eye-off-16-filled';
 	import Folder from '~icons/fluent/folder-16-filled';

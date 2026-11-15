@@ -3,7 +3,7 @@
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { TimerMode, TimerNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Hourglass from '~icons/fluent/hourglass-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_OUT, PREVIEW_CTX, START_HANDLE } from '$lib/modules/flow/utils';

@@ -6,7 +6,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { pluginCatalog } from '$lib/modules/audio/plugin_catalog.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import WindowOff from '~icons/fluent/window-multiple-off-16-regular';

@@ -2,9 +2,9 @@
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ToggleNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
-	import ControlSocket from '../_control_socket.svelte';
+	import ControlSocket from '@splitwave/nodes/ui/_control_socket.svelte';
 	import { CONTROL_IN, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
 

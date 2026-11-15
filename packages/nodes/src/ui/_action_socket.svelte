@@ -2,8 +2,8 @@
 	import { getContext, untrack } from 'svelte';
 	import { useConnection, useUpdateNodeInternals } from '@xyflow/svelte';
 	import ControlSocket from './_control_socket.svelte';
-	import { PREVIEW_CTX, controlHandle, signalOf } from '$lib/modules/flow/utils';
-	import { useControlInput } from '../control.svelte';
+	import { PREVIEW_CTX, controlHandle, signalOf } from './utils';
+	import { useControlInput } from './state/control.svelte';
 
 	interface Props {
 		nodeId: string;

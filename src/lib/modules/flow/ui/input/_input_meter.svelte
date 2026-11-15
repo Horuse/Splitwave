@@ -2,7 +2,7 @@
 	import { MeterBar } from '@splitwave/ui';
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { Position } from '@xyflow/svelte';
-	import Handle from '../_handle.svelte';
+	import Handle from '@splitwave/nodes/ui/_handle.svelte';
 	import { channelColor, channelHandle, channelLabel, handleEdgeStyle } from '$lib/modules/flow/utils';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 

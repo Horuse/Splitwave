@@ -1,5 +1,5 @@
 import type { Template } from './types';
-import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils/handles';
+import { SIDECHAIN_HANDLE } from '@splitwave/nodes/ui';
 
 const COL = 300;
 const ROW = 280;

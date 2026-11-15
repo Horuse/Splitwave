@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseSuppressorNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Wand from '~icons/fluent/wand-16-filled';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';

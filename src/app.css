@@ -1,4 +1,5 @@
 @import '@splitwave/ui/styles';
+@source '../packages/nodes/src';
 
 @layer base {
     body {

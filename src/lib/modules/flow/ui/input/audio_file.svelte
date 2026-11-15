@@ -7,8 +7,8 @@
 	import type { AudioFileNodeData } from '@splitwave/nodes';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '../node.svelte';
-	import ActionSocket from '../_action_socket.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import ActionSocket from '@splitwave/nodes/ui/_action_socket.svelte';
 	import Folder from '~icons/fluent/folder-16-filled';
 	import Loop from '~icons/fluent/arrow-repeat-all-16-filled';
 	import MusicNote from '~icons/fluent/music-note-2-16-filled';

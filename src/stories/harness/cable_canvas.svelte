@@ -5,6 +5,10 @@
 	import ConnectionLine from '$lib/modules/flow/ui/_connection_line.svelte';
 	import { canConnect, channelHandle, controlHandle } from '$lib/modules/flow/utils';
 	import StubSockets from './stub_sockets.svelte';
+	import { setEnginePort } from '@splitwave/nodes/engine';
+	import { appEnginePort } from '$lib/modules/audio/engine_port.svelte';
+
+	setEnginePort(appEnginePort);
 
 	interface Props {
 		audio: number;

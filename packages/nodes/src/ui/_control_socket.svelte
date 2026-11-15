@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Position } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { controlEdgeStyle, controlTopStyle } from '$lib/modules/flow/utils';
+	import { controlEdgeStyle, controlTopStyle } from './utils';
 
 	interface Props {
 		id: string;

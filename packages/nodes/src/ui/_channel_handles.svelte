@@ -2,8 +2,8 @@
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
 	import Handle from './_handle.svelte';
-	import { branchChannelOf, branchHandle, channelColor, channelHandle, channelLabel, deriveSlots, handleEdgeStyle } from '$lib/modules/flow/utils';
-	import { channelCaps, channelSelection } from '$lib/modules/flow/stores.svelte';
+	import { branchChannelOf, branchHandle, channelColor, channelHandle, channelLabel, deriveSlots, handleEdgeStyle } from './utils';
+	import { channelCaps, channelSelection } from './state/channel_selection.svelte';
 
 	interface Props {
 		nodeId: string;

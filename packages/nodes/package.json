@@ -10,9 +10,26 @@
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
 		},
-		"./generated/*": "./src/generated/*.ts"
+		"./generated/*": "./src/generated/*.ts",
+		"./engine": {
+			"svelte": "./src/engine/index.ts",
+			"types": "./src/engine/index.ts",
+			"default": "./src/engine/index.ts"
+		},
+		"./ui": {
+			"svelte": "./src/ui/index.ts",
+			"types": "./src/ui/index.ts",
+			"default": "./src/ui/index.ts"
+		},
+		"./ui/*": {
+			"svelte": "./src/ui/*",
+			"types": "./src/ui/*",
+			"default": "./src/ui/*"
+		}
 	},
 	"peerDependencies": {
-		"svelte": "^5"
+		"svelte": "^5",
+		"@xyflow/svelte": "*",
+		"@splitwave/ui": "*"
 	}
 }

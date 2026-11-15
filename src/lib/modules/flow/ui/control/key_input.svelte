@@ -2,13 +2,13 @@
 	import { Segmented } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { KeyInputNodeData, KeyInputSource } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import KeyCommand from '~icons/fluent/key-command-24-regular';
 	import HotkeyBinder from '../_hotkey_binder.svelte';
 	import MidiBinder from '../_midi_binder.svelte';
 	import { useGlobalHotkey } from '../_hotkey.svelte';
 	import { useMidiControl } from '../_midi.svelte';
-	import ControlSocket from '../_control_socket.svelte';
+	import ControlSocket from '@splitwave/nodes/ui/_control_socket.svelte';
 	import { CONTROL_OUT } from '$lib/modules/flow/utils';
 	import { controlSignals } from '../../control.svelte';
 

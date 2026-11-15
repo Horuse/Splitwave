@@ -7,7 +7,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { deviceVolume } from '$lib/modules/audio/device_volume.svelte';
 	import { useDeviceInfo } from '$lib/modules/audio';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import InputMeter from '../input/_input_meter.svelte';
 	import Speaker from '~icons/fluent/speaker-2-16-filled';
 	import Add from '~icons/fluent/add-24-filled';

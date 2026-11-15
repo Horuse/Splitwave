@@ -2,7 +2,7 @@
 	import { getContext, type Snippet } from 'svelte';
 	import { Handle, type Position } from '@xyflow/svelte';
 	import type { ClassValue } from 'svelte/elements';
-	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
+	import { PREVIEW_CTX } from './utils';
 
 	interface Props {
 		type: 'source' | 'target';

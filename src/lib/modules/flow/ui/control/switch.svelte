@@ -3,7 +3,7 @@
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SwitchNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import InputColumn from './_input_column.svelte';
 	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';
 	import ControlPort from './_control_port.svelte';

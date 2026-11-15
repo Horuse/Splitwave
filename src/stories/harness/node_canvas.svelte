@@ -10,6 +10,10 @@
 	import { setNodeDataLookup, STORY_NODE_ID } from './backend';
 	import { startSignal } from './signal';
 	import { splitArgs } from './args';
+	import { setEnginePort } from '@splitwave/nodes/engine';
+	import { appEnginePort } from '$lib/modules/audio/engine_port.svelte';
+
+	setEnginePort(appEnginePort);
 
 	interface Props {
 		kind: NodeKind;

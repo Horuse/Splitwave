@@ -4,8 +4,8 @@
 	import type { WaveformNodeData } from '@splitwave/nodes';
 	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { channelOf, PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import { CATEGORY_TEXT } from '@splitwave/nodes/ui';
+	import ChannelHandles from '@splitwave/nodes/ui/_channel_handles.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;

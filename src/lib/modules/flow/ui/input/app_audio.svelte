@@ -5,7 +5,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { useDeviceInfo } from '$lib/modules/audio';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import InputMeter from './_input_meter.svelte';
 	import Apps from '~icons/fluent/apps-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';

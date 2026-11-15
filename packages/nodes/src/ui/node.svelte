@@ -3,16 +3,16 @@
 	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { MAIN_HANDLE, PREVIEW_CTX } from '../utils';
-	import { CATEGORY_TEXT } from '../utils/accents';
+	import { MAIN_HANDLE, PREVIEW_CTX, CATEGORY_TEXT } from './utils';
 	import type { NodeCategory } from '@splitwave/nodes';
 	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
 	import Hourglass from '~icons/fluent/hourglass-16-filled';
-	import { latencyStore } from '$lib/modules/audio/latency.svelte';
+	import { getEnginePort } from '../engine';
 	import { formatLatencyMs } from '@splitwave/nodes';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
+	const engine = getEnginePort();
 
 	export interface InputHandleConfig {
 		id: string;
@@ -69,11 +69,11 @@
 
 	// A node that cannot keep up with the engine buffer runs at a larger block
 	// of its own; say so, the way the resampling icon flags a rate change.
-	let timing = $derived(nodeId ? latencyStore.node(nodeId) : undefined);
+	let timing = $derived(nodeId ? engine.nodeTiming(nodeId) : undefined);
 	let blockTooltip = $derived.by(() => {
 		const block = timing?.workingBlock;
-		if (!block || !latencyStore.report || !timing!.sampleRate) return undefined;
-		return `Runs in ${block}-frame blocks (buffer ${latencyStore.report.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / timing!.sampleRate)} ms`;
+		if (!block || engine.bufferFrames === null || !timing!.sampleRate) return undefined;
+		return `Runs in ${block}-frame blocks (buffer ${engine.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / timing!.sampleRate)} ms`;
 	});
 
 	function pos(p: InputHandleConfig['position']): Position {

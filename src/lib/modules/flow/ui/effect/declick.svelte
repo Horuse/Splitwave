@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DeclickNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Backspace from '~icons/fluent/backspace-24-filled';
 
 	type DeclickNodeType = Node<DeclickNodeData, 'declick'>;

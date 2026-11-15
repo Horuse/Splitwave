@@ -3,8 +3,8 @@
 	import { getContext, untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SelectNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
-	import ChannelHandles from '../_channel_handles.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import ChannelHandles from '@splitwave/nodes/ui/_channel_handles.svelte';
 	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { useSelectOutput } from './_select_output';

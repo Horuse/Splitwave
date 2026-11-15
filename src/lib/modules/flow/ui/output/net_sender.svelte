@@ -6,7 +6,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { formatHz, formatRate, formatKhzValue } from '@splitwave/nodes';
 	import { channelOf } from '$lib/modules/flow/utils';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowUpload from '~icons/fluent/arrow-upload-16-filled';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';

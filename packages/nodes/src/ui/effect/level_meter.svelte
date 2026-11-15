@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { MeterBar } from '@splitwave/ui';
 	import { onDestroy, onMount } from 'svelte';
-	import { tauriListen } from '$lib/utils/tauri_event';
+	import { getEnginePort } from '../../engine';
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
-	import { onNodeAction, channelColor, channelLabel } from '$lib/modules/flow/utils';
+	import { onNodeAction, channelColor, channelLabel } from '../utils';
 	import { formatDb } from '@splitwave/nodes';
 
 	type LevelMeterNodeType = Node<LevelMeterNodeData, 'levelMeter'>;
@@ -129,8 +129,9 @@
 		}
 	}
 
+	const engine = getEnginePort();
 	unlistenReset = onNodeAction(id, 'resetPeaks', () => resetPeaks());
-	tauriListen<MeterTick>('audio://meter', (p) => {
+	engine.listen<MeterTick>('audio://meter', (p) => {
 		if (p.nodeId !== id) return;
 		targetPeaks = p.peaks;
 		targetRms = p.rms;

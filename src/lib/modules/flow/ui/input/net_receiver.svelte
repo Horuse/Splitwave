@@ -5,7 +5,7 @@
 	import type { NetReceiverNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { formatHz, formatRate, formatPct, LossWindow } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowDownload from '~icons/fluent/arrow-download-16-filled';
 	import { channelOf } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';

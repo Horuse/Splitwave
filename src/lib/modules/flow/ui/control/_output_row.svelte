@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ChannelHandles from '../_channel_handles.svelte';
+	import ChannelHandles from '@splitwave/nodes/ui/_channel_handles.svelte';
 
 	interface Props {
 		nodeId: string;

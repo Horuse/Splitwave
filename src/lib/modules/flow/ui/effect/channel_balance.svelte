@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import { Balance } from '$lib/components/icons';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;

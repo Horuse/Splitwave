@@ -3,7 +3,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { CompressorNodeData } from '@splitwave/nodes';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils';
 	import { Compressor } from '$lib/components/icons';
 	import GrBar from './_gr_bar.svelte';

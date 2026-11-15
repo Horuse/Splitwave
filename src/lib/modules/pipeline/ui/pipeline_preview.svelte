@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PipelineEdge, PipelineNode } from '@splitwave/nodes';
 	import { registry } from '$lib/modules/flow/utils/nodes';
-	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
+	import { CATEGORY_TEXT } from '@splitwave/nodes/ui';
 	import { edgePath } from '$lib/modules/flow/edge_settings.svelte';
 	import { Position } from '@xyflow/svelte';
 

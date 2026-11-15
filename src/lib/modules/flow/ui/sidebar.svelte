@@ -15,7 +15,7 @@
 	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import Sliders from '~icons/fluent/options-16-filled';
 	import Speaker from '~icons/fluent/speaker-2-16-filled';
-	import { CATEGORY_TEXT } from '../utils/accents';
+	import { CATEGORY_TEXT } from '@splitwave/nodes/ui';
 
 	let { pipelineId }: { pipelineId: string } = $props();
 

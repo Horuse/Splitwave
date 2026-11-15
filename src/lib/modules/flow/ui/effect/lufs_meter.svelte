@@ -6,7 +6,7 @@
 	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LufsMeterNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';

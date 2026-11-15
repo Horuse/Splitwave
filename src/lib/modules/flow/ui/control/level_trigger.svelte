@@ -3,7 +3,7 @@
 	import { untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelTriggerNodeData } from '@splitwave/nodes';
-	import Wrapper from '../node.svelte';
+	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import ControlPort from './_control_port.svelte';
 	import { CONTROL_OUT } from '$lib/modules/flow/utils';

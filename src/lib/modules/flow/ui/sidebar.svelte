@@ -4,6 +4,7 @@
 	import { DND_MIME, categoryLabel, categoryOrder, kindsByCategory, registry } from '../utils/nodes';
 	import { Add, DataBar, Mic, Plug, Sliders, Speaker } from '$lib/components/icons';
 	import { CATEGORY_TEXT } from '../utils/accents';
+	import { t } from '$lib/modules/i18n';
 
 	const CATEGORY_ICON = {
 		input: Mic,
@@ -38,7 +39,7 @@
 				type="button"
 				onclick={() => jumpTo(category)}
 				title={categoryLabel[category]}
-				aria-label={`Jump to ${categoryLabel[category]}`}
+				aria-label={t('flow.jumpToCategory', { category: categoryLabel[category] })}
 				class={[
 					'flex flex-1 items-center justify-center rounded-lg bg-neutral-100 py-1.5 transition-colors hover:bg-neutral-300',
 					CATEGORY_TEXT[category]
@@ -73,7 +74,7 @@
 							<button
 								class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-1000 hover:bg-neutral-300"
 								onclick={() => onClickAdd(kind)}
-								aria-label={`Add ${node.label}`}>
+								aria-label={t('flow.addNode', { label: node.label })}>
 								<Add class="h-4 w-4" />
 							</button>
 						</li>
@@ -82,6 +83,6 @@
 			</section>
 		{/each}
 
-		<p class="mt-auto text-[10px] text-neutral-900">Click + to add, or drag onto canvas.</p>
+		<p class="mt-auto text-[10px] text-neutral-900">{t('flow.sidebarHint')}</p>
 	</div>
 </aside>

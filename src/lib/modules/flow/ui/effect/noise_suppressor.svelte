@@ -9,6 +9,7 @@
 	import Slider from './_slider.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatHz } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();
@@ -44,12 +45,12 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Internal model runs at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
+		return t('node.suppressor.modelRateHint', { rate: formatHz(48_000), pipeline: formatHz(appSettings.pipelineSampleRate) });
 	});
 </script>
 
 <Wrapper
-	label="Noise Suppressor"
+	label={t('node.noiseSuppressor.label')}
 	icon={Wand}
 	accent="effect"
 	hasInput
@@ -62,9 +63,9 @@
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 
-		<p class="text-[10px] leading-tight text-neutral-400">DeepFilterNet speech denoise. {formatHz(48_000)} only.</p>
+		<p class="text-[10px] leading-tight text-neutral-400">{t('node.suppressor.modelNote', { rate: formatHz(48_000) })}</p>
 		<Slider
-			label="Attenuation"
+			label={t('node.suppressor.attenuation')}
 			value={data.attenuationLimitDb}
 			min={0}
 			max={100}
@@ -74,7 +75,7 @@
 			ticks={[25, 50, 75]}
 			onChange={(v) => patch('attenuationLimitDb', v)} />
 		<Slider
-			label="Post-filter"
+			label={t('node.suppressor.postFilter')}
 			value={data.postFilterBeta ?? 0}
 			min={0}
 			max={0.05}
@@ -84,7 +85,7 @@
 			ticks={[0.01, 0.02, 0.03, 0.04]}
 			onChange={(v) => patch('postFilterBeta', v)} />
 		<Slider
-			label="Min thresh"
+			label={t('node.suppressor.minThresh')}
 			value={data.minThreshDb ?? -10}
 			min={-15}
 			max={35}
@@ -94,7 +95,7 @@
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('minThreshDb', v)} />
 		<Slider
-			label="Max ERB thresh"
+			label={t('node.suppressor.maxErb')}
 			value={data.maxErbThreshDb ?? 30}
 			min={-15}
 			max={35}
@@ -104,7 +105,7 @@
 			ticks={[0, 15, 25]}
 			onChange={(v) => patch('maxErbThreshDb', v)} />
 		<Slider
-			label="Max DF thresh"
+			label={t('node.suppressor.maxDf')}
 			value={data.maxDfThreshDb ?? 20}
 			min={-15}
 			max={35}

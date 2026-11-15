@@ -8,6 +8,7 @@
 	import GrBar from './_gr_bar.svelte';
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
+	import { t } from '$lib/modules/i18n';
 
 	type CompressorNodeType = Node<CompressorNodeData, 'compressor'>;
 	let { id, data }: NodeProps<CompressorNodeType> = $props();
@@ -80,14 +81,14 @@
 </script>
 
 <Wrapper
-	label="Compressor"
+	label={t('node.compressor.label')}
 	icon={Compressor}
 	accent="effect"
 	hasInput
 	hasOutput
 	channelIo
 	nodeId={id}
-	inputs={[{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }]}
+	inputs={[{ id: 'sidechain', label: t('node.compressor.sidechain'), position: 'bottom' }]}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
@@ -125,14 +126,15 @@
 					class="text-neutral-400"
 					stroke-dasharray="3,2" />
 				<polyline points={curvePath} fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" />
-				<text x={xToSvg(-30)} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-400" text-anchor="middle">in dB</text>
+				<text x={xToSvg(-30)} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-400" text-anchor="middle"
+					>{t('node.compressor.inDb')}</text>
 			</svg>
 			<GrBar nodeId={id} horizontal />
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
 			<Slider
-				label="Threshold"
+				label={t('node.compressor.threshold')}
 				value={data.thresholdDb}
 				min={-60}
 				max={0}
@@ -142,7 +144,7 @@
 				ticks={[-40, -20, -10]}
 				onChange={(v) => patch('thresholdDb', v)} />
 			<Slider
-				label="Ratio"
+				label={t('node.compressor.ratio')}
 				value={data.ratio}
 				min={1}
 				max={20}
@@ -152,7 +154,7 @@
 				ticks={[2, 4, 8]}
 				onChange={(v) => patch('ratio', v)} />
 			<Slider
-				label="Attack"
+				label={t('node.compressor.attack')}
 				value={data.attackMs}
 				min={0.1}
 				max={100}
@@ -162,7 +164,7 @@
 				ticks={[1, 10, 50]}
 				onChange={(v) => patch('attackMs', v)} />
 			<Slider
-				label="Release"
+				label={t('node.compressor.release')}
 				value={data.releaseMs}
 				min={10}
 				max={1000}
@@ -172,7 +174,7 @@
 				ticks={[50, 250, 500]}
 				onChange={(v) => patch('releaseMs', v)} />
 			<Slider
-				label="Knee"
+				label={t('node.compressor.knee')}
 				value={data.kneeDb}
 				min={0}
 				max={24}
@@ -182,7 +184,7 @@
 				ticks={[0, 6, 12]}
 				onChange={(v) => patch('kneeDb', v)} />
 			<Slider
-				label="Makeup"
+				label={t('node.compressor.makeup')}
 				value={data.makeupDb}
 				min={0}
 				max={24}

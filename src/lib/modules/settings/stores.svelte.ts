@@ -15,6 +15,7 @@ interface Stored {
 	keepRunningOnDisconnect: boolean;
 	pipelineSampleRate: number;
 	uiScale: number;
+	language: string;
 }
 
 const DEFAULTS: Stored = {
@@ -27,7 +28,8 @@ const DEFAULTS: Stored = {
 	confirmOverwriteChanges: true,
 	keepRunningOnDisconnect: true,
 	pipelineSampleRate: 48_000,
-	uiScale: 100
+	uiScale: 100,
+	language: 'en'
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
@@ -36,6 +38,14 @@ export const UI_SCALE_MIN = 50;
 export const UI_SCALE_MAX = 200;
 export const UI_SCALE_STEP = 10;
 export const PIPELINE_SAMPLE_RATE_PRESETS = [44100, 48000, 88200, 96000, 176400, 192000] as const;
+
+/** Mirrors the ids in `i18n/locales`; a tampered or stale stored value would
+ * otherwise leave the picker with nothing selected and silently fall back. */
+const LANGUAGES = ['en', 'zh-CN'] as const;
+
+function isValidLanguage(value: unknown): value is (typeof LANGUAGES)[number] {
+	return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
+}
 
 function load(): Stored {
 	if (!browser) return DEFAULTS;
@@ -58,6 +68,10 @@ class AppSettings {
 	keepRunningOnDisconnect = $state(this.#initial.keepRunningOnDisconnect);
 	pipelineSampleRate = $state(this.#initial.pipelineSampleRate ?? 48_000);
 	uiScale = $state(this.#initial.uiScale ?? 100);
+	/** Valid locale ids. Kept here rather than imported from `i18n/locales`:
+	 * the i18n module already depends on this store, so importing back would
+	 * be circular. */
+	language = $state(isValidLanguage(this.#initial.language) ? this.#initial.language : DEFAULTS.language);
 
 	persist(): void {
 		if (!browser) return;
@@ -71,7 +85,8 @@ class AppSettings {
 			confirmOverwriteChanges,
 			keepRunningOnDisconnect,
 			pipelineSampleRate,
-			uiScale
+			uiScale,
+			language
 		} = this;
 		window.localStorage.setItem(
 			KEY,
@@ -85,7 +100,8 @@ class AppSettings {
 				confirmOverwriteChanges,
 				keepRunningOnDisconnect,
 				pipelineSampleRate,
-				uiScale
+				uiScale,
+				language
 			})
 		);
 	}
@@ -100,6 +116,11 @@ class AppSettings {
 		this.uiScale = Math.min(Math.max(Math.round(percent), UI_SCALE_MIN), UI_SCALE_MAX);
 		this.persist();
 		this.applyUiScale();
+	}
+
+	setLanguage(language: string): void {
+		this.language = isValidLanguage(language) ? language : DEFAULTS.language;
+		this.persist();
 	}
 
 	applyUiScale(): void {

@@ -5,6 +5,7 @@
 	import { ChevronDown } from '$lib/components/icons';
 	import { Popover } from '$lib/modules/overlay/ui';
 	import { relativeTime } from '$lib/utils/time';
+	import { t } from '$lib/modules/i18n';
 
 	let { pipelineId }: { pipelineId: string } = $props();
 
@@ -39,7 +40,7 @@
 		<button
 			type="button"
 			class="flex h-7 items-center gap-1.5 rounded-md border border-neutral-300 bg-neutral-100 px-3 text-xs text-neutral-1100 transition-colors hover:bg-neutral-200">
-			<span>History</span>
+			<span>{t('flow.history')}</span>
 			<span class="rounded bg-neutral-300 px-1 py-1 font-mono text-[10px] leading-none text-neutral-1000 tabular-nums">
 				{snapshots.length}
 			</span>
@@ -48,10 +49,10 @@
 	{/snippet}
 
 	<div class="w-72 overflow-hidden rounded-md border border-neutral-400 bg-neutral-50 shadow-lg">
-		<div class="border-b border-neutral-300 bg-neutral-100 px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">Auto-saved snapshots</div>
+		<div class="border-b border-neutral-300 bg-neutral-100 px-3 py-1.5 text-[10px] tracking-wider text-neutral-900 uppercase">{t('flow.snapshots')}</div>
 		<ul class="nodrag nopan nowheel max-h-72 overflow-y-auto">
 			{#if snapshots.length === 0}
-				<li class="px-3 py-3 text-xs text-neutral-900 italic">No snapshots yet. Edit the graph to create one.</li>
+				<li class="px-3 py-3 text-xs text-neutral-900 italic">{t('flow.noSnapshots')}</li>
 			{:else}
 				{#each [...snapshots].reverse() as snap, i (i)}
 					<li>

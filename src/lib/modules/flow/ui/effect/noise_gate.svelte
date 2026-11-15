@@ -10,6 +10,7 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type NoiseGateNodeType = Node<NoiseGateNodeData, 'noiseGate'>;
 	let { id, data }: NodeProps<NoiseGateNodeType> = $props();
@@ -65,9 +66,9 @@
 			} else {
 				// linear transition zone around threshold (±3 dB)
 				const zone = 3;
-				const t = Math.max(0, Math.min(1, (xDb - (thr - zone)) / zone));
+				const tt = Math.max(0, Math.min(1, (xDb - (thr - zone)) / zone));
 				const rangeOffset = range - xDb;
-				yDb = xDb + rangeOffset * (1 - t * t);
+				yDb = xDb + rangeOffset * (1 - tt * tt);
 			}
 			pts.push(`${xToSvg(xDb).toFixed(1)},${yToSvg(Math.max(Y_MIN, Math.min(Y_MAX, yDb))).toFixed(1)}`);
 		}
@@ -76,14 +77,14 @@
 </script>
 
 <Wrapper
-	label="Noise Gate"
+	label={t('node.noiseGate.label')}
 	icon={NoiseGate}
 	accent="effect"
 	hasInput
 	hasOutput
 	channelIo
 	nodeId={id}
-	inputs={[{ id: 'sidechain', label: 'Sidechain', position: 'bottom' }]}
+	inputs={[{ id: 'sidechain', label: t('node.compressor.sidechain'), position: 'bottom' }]}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
@@ -126,7 +127,7 @@
 			</svg>
 
 			<div class="my-auto flex flex-col items-center gap-1.5 select-none">
-				{#each [{ label: 'Open', state: 'open', color: 'bg-green-500' }, { label: 'Hold', state: 'hold', color: 'bg-amber-400' }, { label: 'Closed', state: 'closed', color: 'bg-neutral-400' }] as item}
+				{#each [{ label: t('node.gate.stateOpen'), state: 'open', color: 'bg-green-500' }, { label: t('node.gate.stateHold'), state: 'hold', color: 'bg-amber-400' }, { label: t('node.gate.stateClosed'), state: 'closed', color: 'bg-neutral-400' }] as item}
 					<div class="flex items-center gap-1.5">
 						<div
 							class="size-2 rounded-full border border-neutral-300 {gateState === item.state ? item.color : 'bg-neutral-200'}
@@ -142,7 +143,7 @@
 
 		<div class="flex w-52 flex-col gap-1.5">
 			<Slider
-				label="Threshold"
+				label={t('node.gate.threshold')}
 				value={data.thresholdDb}
 				min={-80}
 				max={0}
@@ -152,7 +153,7 @@
 				ticks={[-60, -40, -20]}
 				onChange={(v) => patch('thresholdDb', v)} />
 			<Slider
-				label="Range"
+				label={t('node.gate.range')}
 				value={data.rangeDb}
 				min={-80}
 				max={0}
@@ -162,7 +163,7 @@
 				ticks={[-60, -40, -20]}
 				onChange={(v) => patch('rangeDb', v)} />
 			<Slider
-				label="Attack"
+				label={t('node.gate.attack')}
 				value={data.attackMs}
 				min={0.1}
 				max={50}
@@ -172,7 +173,7 @@
 				ticks={[1, 5, 20]}
 				onChange={(v) => patch('attackMs', v)} />
 			<Slider
-				label="Hold"
+				label={t('node.gate.hold')}
 				value={data.holdMs}
 				min={0}
 				max={500}
@@ -182,7 +183,7 @@
 				ticks={[20, 100, 250]}
 				onChange={(v) => patch('holdMs', v)} />
 			<Slider
-				label="Release"
+				label={t('node.gate.release')}
 				value={data.releaseMs}
 				min={10}
 				max={1000}

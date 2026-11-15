@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Add, Minus } from './icons';
+	import { t } from '$lib/modules/i18n';
 
 	let {
 		value,
@@ -7,7 +8,7 @@
 		max,
 		step = 1,
 		disabled = false,
-		label = 'Value',
+		label,
 		width = 'w-12',
 		onchange
 	}: {
@@ -20,6 +21,8 @@
 		width?: string;
 		onchange: (value: number) => void;
 	} = $props();
+
+	let labelText = $derived(label ?? t('form.value'));
 
 	// Local text so typing isn't clobbered by reactive updates; re-syncs when
 	// the external value changes.
@@ -48,7 +51,7 @@
 		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value <= min}
 		onclick={() => onchange(Math.max(min, value - step))}
-		aria-label="Decrease {label}">
+		aria-label={t('form.decrease', { label: labelText })}>
 		<Minus class="size-2" />
 	</button>
 	<input
@@ -60,13 +63,13 @@
 		{step}
 		bind:value={raw}
 		onchange={commit}
-		aria-label={label} />
+		aria-label={labelText} />
 	<button
 		type="button"
 		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value >= max}
 		onclick={() => onchange(Math.min(max, value + step))}
-		aria-label="Increase {label}">
+		aria-label={t('form.increase', { label: labelText })}>
 		<Add class="size-2" />
 	</button>
 </div>

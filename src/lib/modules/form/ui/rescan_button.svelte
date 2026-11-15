@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Refresh } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 	import ComboboxAction from './combobox_action.svelte';
 
 	interface Props {
@@ -7,7 +8,9 @@
 		label?: string;
 	}
 
-	let { onRescan, label = 'Rescan' }: Props = $props();
+	let { onRescan, label }: Props = $props();
+
+	let labelText = $derived(label ?? t('common.rescan'));
 
 	let spinning = $state(false);
 
@@ -22,4 +25,4 @@
 	}
 </script>
 
-<ComboboxAction {label} icon={Refresh} iconClass={spinning ? 'animate-spin' : ''} onclick={run} />
+<ComboboxAction label={labelText} icon={Refresh} iconClass={spinning ? 'animate-spin' : ''} onclick={run} />

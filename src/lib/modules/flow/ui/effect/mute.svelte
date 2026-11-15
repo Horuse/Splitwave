@@ -12,6 +12,7 @@
 	import { onMount } from 'svelte';
 	import Slider from './_slider.svelte';
 	import { formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
 	let { id, data }: NodeProps<MuteNodeType> = $props();
@@ -132,9 +133,18 @@
 	}
 </script>
 
-<Wrapper label="Mute" icon={SpeakerMute} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label={t('node.mute.label')}
+	icon={SpeakerMute}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}>
 	<button
-		title="Toggle mute (M)"
+		title={t('node.mute.toggleTitle')}
 		class={[
 			'nodrag nopan flex w-40 items-center justify-center gap-2 rounded-lg border px-3 py-2 transition-colors',
 			data.muted ? 'border-red-500/60 bg-red-500/10' : 'border-neutral-400 bg-neutral-100 hover:bg-neutral-200'
@@ -151,23 +161,23 @@
 			{/if}
 		</span>
 		<span class={['text-sm font-medium', data.muted ? 'text-red-500' : 'text-neutral-1100']}>
-			{data.muted ? 'MUTED' : 'Active'}
+			{data.muted ? t('node.mute.muted') : t('node.mute.active')}
 		</span>
 	</button>
 
 	<div class="nodrag nopan mt-3 flex w-40 items-center gap-1">
 		<button
-			title={binding ? 'Press any key, Esc to cancel' : 'Bind a global shortcut'}
+			title={binding ? t('node.mute.pressKey') : t('node.mute.bindShortcut')}
 			class={[
 				'flex-1 truncate rounded-md border px-2 py-1 font-mono text-xs tabular-nums transition-colors',
 				binding ? 'border-blue-500/60 bg-blue-500/10 text-blue-500' : 'border-neutral-400 bg-neutral-100 text-neutral-1100 hover:bg-neutral-200'
 			]}
 			onclick={() => (binding = !binding)}>
-			{binding ? 'Press a key...' : data.hotkey ? formatAccelerator(data.hotkey) : 'Bind key'}
+			{binding ? t('node.mute.pressKeyShort') : data.hotkey ? formatAccelerator(data.hotkey) : t('node.mute.bindKey')}
 		</button>
 		{#if data.hotkey && !binding}
 			<button
-				title="Clear shortcut"
+				title={t('node.mute.clearShortcut')}
 				class="rounded-md border border-neutral-400 bg-neutral-100 p-1 text-neutral-900 hover:bg-neutral-200"
 				onclick={clearHotkey}>
 				<Dismiss class="size-3" />
@@ -181,16 +191,16 @@
 
 	{#if data.hotkey}
 		<div class="nodrag nopan mt-2 w-40">
-			<Toggle size="sm" checked={data.pushToTalk ?? false} label="Push-to-talk" onChange={setPushToTalk} />
+			<Toggle size="sm" checked={data.pushToTalk ?? false} label={t('node.mute.pushToTalk')} onChange={setPushToTalk} />
 		</div>
 	{/if}
 
 	<div class="nodrag nopan mt-3 flex w-40 flex-col gap-1 border-t border-neutral-400 pt-2">
-		<Toggle size="sm" checked={data.cueEnabled ?? false} label="Sound cue" onChange={setCueEnabled} />
+		<Toggle size="sm" checked={data.cueEnabled ?? false} label={t('node.mute.soundCue')} onChange={setCueEnabled} />
 
 		{#if data.cueEnabled}
-			<span class="text-[10px] text-neutral-900">Plays on the output device</span>
-			<Combobox class="w-full" options={cueOptions} value={data.cueDeviceId ?? null} placeholder="— Select output —" onChange={setCueDevice}>
+			<span class="text-[10px] text-neutral-900">{t('node.mute.playsOnOutput')}</span>
+			<Combobox class="w-full" options={cueOptions} value={data.cueDeviceId ?? null} placeholder={t('node.mute.cueSelect')} onChange={setCueDevice}>
 				{#snippet footer(close)}
 					<RescanButton
 						onRescan={() => {
@@ -200,10 +210,10 @@
 				{/snippet}
 			</Combobox>
 			{#if cueMissing}
-				<span class="text-[10px] text-red-500">Selected device not available</span>
+				<span class="text-[10px] text-red-500">{t('node.device.missing')}</span>
 			{/if}
 			<Slider
-				label="Cue volume"
+				label={t('node.mute.cueVolume')}
 				value={data.cueVolume ?? CUE_VOLUME_DEFAULT}
 				min={0}
 				max={100}

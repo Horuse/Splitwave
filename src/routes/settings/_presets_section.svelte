@@ -5,6 +5,7 @@
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui';
 	import { Delete } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	let presets = $state<Preset[]>([]);
 	let editing = $state<string | null>(null);
@@ -42,10 +43,10 @@
 	}
 
 	async function remove(p: Preset) {
-		const ok = await modalManager.open<boolean>(`Delete "${p.name}"?`, ConfirmModal, {
+		const ok = await modalManager.open<boolean>(t('preset.deleteTitle', { name: p.name }), ConfirmModal, {
 			size: 'sm',
-			message: 'Nodes already using it keep their current settings.',
-			confirmLabel: 'Delete',
+			message: t('preset.deleteMessage'),
+			confirmLabel: t('common.delete'),
 			danger: true
 		});
 		if (!ok) return;
@@ -56,13 +57,13 @@
 
 <section class="flex flex-col gap-3">
 	<div>
-		<h2 class="text-sm font-semibold text-theme">Effect presets</h2>
-		<p class="text-xs text-neutral-900">Presets you saved from a node. Built-in ones are not listed -- they cannot be changed.</p>
+		<h2 class="text-sm font-semibold text-theme">{t('preset.sectionTitle')}</h2>
+		<p class="text-xs text-neutral-900">{t('preset.sectionHint')}</p>
 	</div>
 
 	{#if presets.length === 0}
 		<div class="rounded-xl border border-dashed border-neutral-400 px-4 py-8 text-center">
-			<p class="text-xs text-neutral-900">No saved presets yet. Use the + button on an effect to store its settings.</p>
+			<p class="text-xs text-neutral-900">{t('preset.empty')}</p>
 		</div>
 	{:else}
 		<ul class="flex flex-col gap-1.5">
@@ -86,7 +87,7 @@
 							<button
 								type="button"
 								class="truncate text-left text-sm font-medium text-theme hover:underline"
-								title="Rename"
+								title={t('common.rename')}
 								onclick={() => startEdit(p)}>
 								{p.name}
 							</button>
@@ -97,7 +98,7 @@
 					<button
 						type="button"
 						class="flex size-7 shrink-0 items-center justify-center rounded-lg text-neutral-1000 transition-colors hover:bg-neutral-300"
-						aria-label="Delete preset"
+						aria-label={t('preset.deleteAria')}
 						onclick={() => remove(p)}>
 						<Delete class="size-3.5" />
 					</button>

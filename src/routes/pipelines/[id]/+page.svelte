@@ -10,6 +10,7 @@
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
 	import { isFromFuture } from '$lib/modules/pipeline/migrations';
+	import { t } from '$lib/modules/i18n';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
@@ -81,7 +82,7 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-3">
-			<a href="/" class="button-header px-4 text-sm">← Back</a>
+			<a href="/" class="button-header px-4 text-sm">{t('common.back')}</a>
 			{#if pipeline}
 				<div class="relative">
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
@@ -118,22 +119,21 @@
 
 <div class="flex min-h-0 w-full flex-1">
 	{#if notFound}
-		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
+		<div class="p-8 text-sm text-gray-500">{t('pipelines.notFound')}</div>
 	{:else if stale}
 		<div class="flex w-full flex-col items-start gap-4 p-8">
 			<div class="warning-block max-w-xl">
-				<span class="font-semibold">This pipeline was saved by a newer version of Splitwave.</span>
+				<span class="font-semibold">{t('pipelines.staleTitle')}</span>
 				<span>
-					Its layout is not known to this build, so opening it would mean guessing at routing this version cannot represent. It is left untouched and
-					can still be deleted.
+					{t('pipelines.staleMessage')}
 				</span>
-				<span>Update Splitwave to open it.</span>
+				<span>{t('pipelines.staleAction')}</span>
 			</div>
-			<a href="/" class="button-main primary rounded-lg text-sm">Back to pipelines</a>
+			<a href="/" class="button-main primary rounded-lg text-sm">{t('pipelines.backToPipelines')}</a>
 		</div>
 	{:else if pipeline}
 		<Flow.ui.Flow {pipeline} />
 	{:else}
-		<div class="p-8 text-sm text-gray-500">Loading…</div>
+		<div class="p-8 text-sm text-gray-500">{t('pipelines.loading')}</div>
 	{/if}
 </div>

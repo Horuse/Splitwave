@@ -5,6 +5,7 @@
 	import Wrapper from '../node.svelte';
 	import { Backspace } from '$lib/components/icons';
 	import Slider from './_slider.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type DeclickNodeType = Node<DeclickNodeData, 'declick'>;
 	let { id, data }: NodeProps<DeclickNodeType> = $props();
@@ -30,10 +31,19 @@
 	}
 </script>
 
-<Wrapper label="Declick" icon={Backspace} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label={t('node.declick.label')}
+	icon={Backspace}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<Slider
-			label="Sensitivity"
+			label={t('node.declick.sensitivity')}
 			value={data.sensitivity}
 			min={0}
 			max={1}
@@ -43,7 +53,7 @@
 			ticks={[0, 0.25, 0.5, 0.75, 1]}
 			onChange={setSensitivity} />
 		<Slider
-			label="Max width"
+			label={t('node.declick.maxWidth')}
 			value={data.maxWidthMs ?? 2}
 			min={0.3}
 			max={5}
@@ -53,7 +63,7 @@
 			ticks={[1, 2, 3, 5]}
 			onChange={setMaxWidth} />
 		<span class="text-[9px] leading-tight text-neutral-500">
-			Sensitivity: higher catches smaller spikes. Max width caps how long a repaired click can be.
+			{t('node.declick.hint')}
 		</span>
 	</div>
 </Wrapper>

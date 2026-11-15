@@ -11,6 +11,7 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { Popover } from '$lib/modules/overlay/ui';
 	import { AnnouncementBanner } from '$lib/modules/announcements';
+	import { t } from '$lib/modules/i18n';
 
 	interface Props {
 		left?: Snippet;
@@ -61,8 +62,8 @@
 
 		<button
 			class="button-header size-7"
-			aria-label="Theme toggle"
-			title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`}
+			aria-label={t('header.themeToggle')}
+			title={t('header.themeTitle', { theme: t(`theme.${$themeStore}`) })}
 			onclick={cycleTheme}>
 			<svg class="size-4 fill-current" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"
 				><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm0-2V4a8 8 0 1 1 0 16Z" /></svg>
@@ -71,32 +72,32 @@
 		{#if customTitlebar}
 			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
 				{#snippet trigger()}
-					<button type="button" class="button-header size-7" aria-label="Menu">
+					<button type="button" class="button-header size-7" aria-label={t('header.menu')}>
 						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 							><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
 					</button>
 				{/snippet}
 
 				<div class="min-w-48 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg">
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={about}>About Splitwave</button>
+					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={about}>{t('header.about')}</button>
 					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={checkUpdates}
-						>Check for Updates…</button>
+						>{t('header.checkUpdates')}</button>
 					<div class="my-1 border-t border-neutral-300"></div>
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={undo}>Undo</button>
-					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={redo}>Redo</button>
+					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={undo}>{t('common.undo')}</button>
+					<button type="button" class="block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-200" onclick={redo}>{t('common.redo')}</button>
 				</div>
 			</Popover>
 
 			<div class="flex items-center gap-0.5">
-				<button class="button-header size-7" aria-label="Minimize" onclick={() => win?.minimize()}>
+				<button class="button-header size-7" aria-label={t('header.minimize')} onclick={() => win?.minimize()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M5 12h14" /></svg>
 				</button>
-				<button class="button-header size-7" aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
+				<button class="button-header size-7" aria-label={t('header.maximize')} onclick={() => win?.toggleMaximize()}>
 					<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
 				</button>
-				<button class="button-header size-7 hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
+				<button class="button-header size-7 hover:!bg-red-500 hover:!text-white" aria-label={t('common.close')} onclick={() => win?.close()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
 				</button>
@@ -110,10 +111,10 @@
 		transition:slide={{ duration: 150 }}
 		class="relative z-40 flex w-full items-center justify-between border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-600 dark:text-amber-400">
 		<div class="flex items-center gap-2">
-			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase">Safe Mode</span>
-			<span>Auto-starting audio pipeline was skipped because Splitwave crashed last time.</span>
+			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase">{t('header.safeModeBadge')}</span>
+			<span>{t('header.safeModeMessage')}</span>
 		</div>
-		<button type="button" class="btn-warning px-3 py-0.5 text-xs" onclick={() => (audioStore.safeMode = false)}> Dismiss </button>
+		<button type="button" class="btn-warning px-3 py-0.5 text-xs" onclick={() => (audioStore.safeMode = false)}> {t('common.dismiss')} </button>
 	</div>
 {/if}
 

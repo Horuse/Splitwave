@@ -14,6 +14,7 @@
 	import { SoundWave } from '$lib/components/icons';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
 	// loopback) need it neither.
@@ -77,7 +78,7 @@
 	});
 </script>
 
-<Wrapper label="System Audio" accent="input" icon={SoundWave} {srcTooltip}>
+<Wrapper label={t('node.systemAudio.label')} accent="input" icon={SoundWave} {srcTooltip}>
 	<div class="flex w-64 flex-col gap-2">
 		{#if showBanner}
 			<div
@@ -95,9 +96,9 @@
 						]}></span>
 					<span>
 						{#if permission?.state === 'denied'}
-							Screen Recording denied
+							{t('node.systemAudio.screenRecordingDenied')}
 						{:else}
-							Checking permission…
+							{t('node.systemAudio.checkingPermission')}
 						{/if}
 					</span>
 				</span>
@@ -106,13 +107,13 @@
 						type="button"
 						class="nodrag nopan shrink-0 rounded border border-red-400 bg-red-100 px-1.5 py-0.5 hover:bg-red-200"
 						onclick={openPrivacySettings}>
-						Open Settings
+						{t('node.systemAudio.openSettings')}
 					</button>
 				{:else}
 					<button
 						type="button"
 						class="nodrag nopan shrink-0 rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 hover:bg-neutral-200 disabled:opacity-50"
-						title="Re-check"
+						title={t('node.systemAudio.recheck')}
 						disabled={checking}
 						onclick={refreshPermission}>
 						⟳
@@ -123,7 +124,7 @@
 		{#if isMac}
 			<Toggle
 				size="sm"
-				label="Exclude this app"
+				label={t('node.systemAudio.excludeApp')}
 				checked={data.excludeCurrentApp ?? true}
 				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
 		{/if}
@@ -131,10 +132,19 @@
 			<span class="node-spec">{devInfo.specText}</span>
 		{:else}
 			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
-				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+				{devInfo.isLoading ? t('node.device.detecting') : t('node.device.detectFailed')}
 			</span>
 		{/if}
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider
+			label={t('node.slider.volume')}
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
 		<InputMeter nodeId={id} {channelCount} />
 	</div>
 </Wrapper>

@@ -13,6 +13,7 @@
 	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatHz, formatDuration, formatPct } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type AudioFileNodeType = Node<AudioFileNodeData, 'audioFile'>;
 	let { id, data }: NodeProps<AudioFileNodeType> = $props();
@@ -84,10 +85,10 @@
 
 	async function chooseFile() {
 		const path = await open({
-			title: 'Pick audio file',
+			title: t('node.audioFile.choose'),
 			multiple: false,
 			directory: false,
-			filters: [{ name: 'Audio', extensions: ['wav', 'flac', 'aif', 'aiff', 'mp3', 'm4a', 'aac', 'opus', 'ogg'] }]
+			filters: [{ name: t('node.audioFile.filterAudio'), extensions: ['wav', 'flac', 'aif', 'aiff', 'mp3', 'm4a', 'aac', 'opus', 'ogg'] }]
 		});
 		if (typeof path === 'string') {
 			flow.updateNodeData(id, { filePath: path });
@@ -153,7 +154,7 @@
 	}
 
 	function basename(p: string | null): string {
-		if (!p) return 'No file selected';
+		if (!p) return t('common.noFileSelected');
 		const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
 		return i >= 0 ? p.slice(i + 1) : p;
 	}
@@ -163,7 +164,9 @@
 		return i > 0 ? (p as string).slice(i + 1).toUpperCase() : '';
 	}
 
-	let channelLabel = $derived(channels <= 1 ? 'mono' : channels === 2 ? 'stereo' : `${channels} ch`);
+	let channelLabel = $derived(
+		channels <= 1 ? t('node.recording.mono') : channels === 2 ? t('node.recording.stereo') : t('node.recording.channelCount', { n: channels })
+	);
 
 	let currentSec = $derived(sampleRate > 0 ? frames / sampleRate : 0);
 	let totalSec = $derived(sampleRate > 0 ? totalFrames / sampleRate : 0);
@@ -180,12 +183,12 @@
 
 	let srcTooltip = $derived.by(() => {
 		if (sampleRate <= 0 || sampleRate === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatHz(sampleRate)} → ${formatHz(appSettings.pipelineSampleRate)}`;
+		return t('node.source.resampling', { from: formatHz(sampleRate), to: formatHz(appSettings.pipelineSampleRate) });
 	});
 </script>
 
 <Wrapper
-	label="Audio File"
+	label={t('node.audioFile.label')}
 	accent="input"
 	icon={MusicNote}
 	{srcTooltip}
@@ -201,7 +204,7 @@
 		</div>
 
 		{#if missing}
-			<span class="text-[10px] text-red-500">File not found</span>
+			<span class="text-[10px] text-red-500">{t('node.audioFile.missing')}</span>
 		{/if}
 
 		{#if sampleRate > 0}
@@ -217,9 +220,9 @@
 				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
 				onclick={chooseFile}>
 				<Folder class="size-3.5" />
-				Choose file
+				{t('node.audioFile.choose')}
 			</button>
-			<Tooltip text="Start playback automatically when the pipeline runs">
+			<Tooltip text={t('node.audioFile.autoStart')}>
 				<button
 					type="button"
 					class={['nodrag nopan button-main primary size-7 rounded-lg p-0', (data.autoStart ?? true) && 'active']}
@@ -244,17 +247,17 @@
 		<div class="flex items-center justify-between font-mono text-[11px]">
 			<span class="text-neutral-900 tabular-nums">{formatDuration(currentSec, 1)}</span>
 			<div class="flex items-center justify-center gap-1">
-				<Tooltip text="Stop and rewind to start">
+				<Tooltip text={t('node.audioFile.stop')}>
 					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={stop}>
 						<Stop class="size-3" />
 					</button>
 				</Tooltip>
-				<Tooltip text="Skip back 5 seconds">
+				<Tooltip text={t('node.audioFile.skipBack')}>
 					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipBack}>
 						<SkipBack5 class="size-3" />
 					</button>
 				</Tooltip>
-				<Tooltip text={playing ? 'Pause playback' : 'Play'}>
+				<Tooltip text={playing ? t('node.audioFile.pause') : t('node.audioFile.play')}>
 					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={togglePlayPause}>
 						{#if playing}
 							<Pause class="size-3" />
@@ -263,12 +266,12 @@
 						{/if}
 					</button>
 				</Tooltip>
-				<Tooltip text="Skip forward 5 seconds">
+				<Tooltip text={t('node.audioFile.skipForward')}>
 					<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipForward}>
 						<SkipForward5 class="size-3" />
 					</button>
 				</Tooltip>
-				<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
+				<Tooltip text={data.loopEnabled ? t('node.audioFile.loopOn') : t('node.audioFile.loopOff')}>
 					<button type="button" class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']} onclick={toggleLoop}>
 						<Loop class="size-3" />
 					</button>
@@ -277,6 +280,15 @@
 			<span class="text-neutral-900 tabular-nums">{formatDuration(totalSec, 1)}</span>
 		</div>
 
-		<Slider label="Volume" value={volumePct} min={0} max={100} step={1} format={formatPct} defaultValue={100} ticks={[25, 50, 75]} onChange={setVolume} />
+		<Slider
+			label={t('node.slider.volume')}
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
 	</div>
 </Wrapper>

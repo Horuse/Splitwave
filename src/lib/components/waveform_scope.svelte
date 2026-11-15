@@ -5,6 +5,7 @@
 	import { channelColor, channelLabel } from '$lib/modules/flow/utils';
 	import { methods } from '$lib/modules/audio/methods';
 	import { Add, Minus, ChevronDoubleRight } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	// Canvas waveform viewer shared by the Waveform and File Recording nodes:
 	// scope blocks are pre-binned into fixed segments, and the view
@@ -1351,14 +1352,14 @@
 	class:cursor-grab={pan && !dragging && !scrollbarDragging && !scrollbarHover}
 	style={fill ? 'height:100%' : `height:${H}px`}
 	role="img"
-	aria-label="Live waveform"
+	aria-label={t('waveform.live')}
 	onwheel={onWheel}
 	onmousedown={onDown}
 	ondblclick={onDblClick}>
 	<canvas bind:this={canvas} style="display:block;width:100%;height:100%" aria-hidden="true"></canvas>
 	{#if fileMode && totalSegs <= 0}
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">loading…</span>
+			<span class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">{t('waveform.loading')}</span>
 		</div>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1373,7 +1374,7 @@
 				class="flex h-4.5 items-center justify-center gap-0.5 rounded-md bg-neutral-900/40 px-1 text-white/70 backdrop-blur-[2px] hover:bg-neutral-900/60 hover:text-white"
 				onclick={jumpToEnd}
 				transition:blur={{ amount: 1 }}
-				title="Jump to live edge">
+				title={t('waveform.jumpToLive')}>
 				<ChevronDoubleRight class="size-2.5" />
 			</button>
 		{/if}
@@ -1382,13 +1383,13 @@
 				type="button"
 				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 				onclick={zoomOut}
-				title="Zoom out"><Minus class="size-2.5" /></button>
+				title={t('waveform.zoomOut')}><Minus class="size-2.5" /></button>
 			<span class="min-w-7 text-center font-mono text-[8px] text-white/70 tabular-nums">{zoomLabel}</span>
 			<button
 				type="button"
 				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 				onclick={zoomIn}
-				title="Zoom in"><Add class="size-2.5" /></button>
+				title={t('waveform.zoomIn')}><Add class="size-2.5" /></button>
 		</div>
 	</div>
 </div>

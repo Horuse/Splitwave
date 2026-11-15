@@ -8,6 +8,7 @@
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
 	import { formatFreq } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -77,13 +78,13 @@
 	let hasSignal = false;
 
 	function dbToY(db: number): number {
-		const t = (db - DB_FLOOR) / -DB_FLOOR; // 0 at floor, 1 at 0 dB
-		return plotH - Math.max(0, Math.min(1, t)) * (plotH - TOP_PAD);
+		const frac = (db - DB_FLOOR) / -DB_FLOOR; // 0 at floor, 1 at 0 dB
+		return plotH - Math.max(0, Math.min(1, frac)) * (plotH - TOP_PAD);
 	}
 
 	function freqX(f: number): number {
-		const t = Math.log(f / F_MIN) / Math.log(fMax / F_MIN);
-		return SCALE_W + plotW * Math.max(0, Math.min(1, t));
+		const frac = Math.log(f / F_MIN) / Math.log(fMax / F_MIN);
+		return SCALE_W + plotW * Math.max(0, Math.min(1, frac));
 	}
 
 	function updateBars(bars: number[], sr: number) {
@@ -162,11 +163,11 @@
 	<div class="flex shrink-0 items-center justify-between gap-2 px-3 pt-2 pb-1">
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			<DataBar class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
-			Spectrum
+			{t('node.spectrum.label')}
 		</span>
 		{#if !isPreview}
 			<label class="flex items-center gap-1.5 text-[9px] text-neutral-600">
-				<span class="shrink-0">Smooth</span>
+				<span class="shrink-0">{t('node.spectrum.smooth')}</span>
 				<input
 					type="range"
 					class="nodrag nopan nowheel w-[100px] accent-amber-500"
@@ -175,7 +176,7 @@
 					step="0.01"
 					value={smoothing}
 					oninput={(e) => setSmoothing(e.currentTarget.valueAsNumber)}
-					title={`Smoothing ${Math.round(smoothing * 100)}%`} />
+					title={t('node.spectrum.smoothingTitle', { pct: Math.round(smoothing * 100) })} />
 				<span class="flex items-baseline">
 					<input
 						type="number"
@@ -200,10 +201,7 @@
 		{/if}
 		<div bind:this={plotWrap} class="nowheel relative min-w-0 flex-1 self-stretch overflow-hidden rounded-[10px]">
 			<!-- Flat canvas for high-perf 60 FPS spectrum bars without DOM nodes -->
-			<canvas
-				bind:this={canvas}
-				class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]"
-				aria-hidden="true"></canvas>
+			<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]" aria-hidden="true"></canvas>
 
 			<!-- Crisp vector overlay for scales, axes and grid -->
 			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" class="pointer-events-none relative z-10" aria-hidden="true">
@@ -216,24 +214,24 @@
 				{/each}
 
 				<!-- frequency grid -->
-				{#each freqTicks as t (t.f)}
-					{@const x = freqX(t.f)}
+				{#each freqTicks as tick (tick.f)}
+					{@const x = freqX(tick.f)}
 					<line
 						x1={x}
 						y1={TOP_PAD}
 						x2={x}
 						y2={plotH}
-						stroke={t.major ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)'}
+						stroke={tick.major ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)'}
 						stroke-width="1"
 						shape-rendering="crispEdges" />
 					<text
 						{x}
 						y={plotH + 8}
-						fill={t.major ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.38)'}
+						fill={tick.major ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.38)'}
 						font-size="6.5"
 						font-family="monospace"
 						text-anchor="middle"
-						dominant-baseline="middle">{t.label}</text>
+						dominant-baseline="middle">{tick.label}</text>
 				{/each}
 
 				<line

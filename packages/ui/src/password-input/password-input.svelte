@@ -18,7 +18,7 @@
 	<input
 		type={visible ? 'text' : 'password'}
 		class={[
-			'nowheel h-6 w-full rounded border border-neutral-300 bg-neutral-50 pr-6 pl-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400',
+			'nowheel h-6 w-full rounded border border-(--lv-3) bg-neutral-50 pr-6 pl-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400',
 			cls
 		]}
 		{placeholder}

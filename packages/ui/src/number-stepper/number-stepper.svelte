@@ -45,10 +45,10 @@
 	}
 </script>
 
-<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-neutral-400 bg-neutral-100', className]}>
+<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--lv-4) bg-(--lv-1)', className]}>
 	<button
 		type="button"
-		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
+		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value <= min}
 		onclick={() => onchange(Math.max(min, value - step))}
 		aria-label="Decrease {label}">
@@ -56,7 +56,7 @@
 	</button>
 	<input
 		type="number"
-		class="h-6 {width} [appearance:textfield] border-x border-neutral-400 bg-transparent text-center font-mono text-[10px] tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+		class="h-6 {width} [appearance:textfield] border-x border-(--lv-4) bg-transparent text-center font-mono text-[10px] tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 		{disabled}
 		{min}
 		{max}
@@ -66,7 +66,7 @@
 		aria-label={label} />
 	<button
 		type="button"
-		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-neutral-300 disabled:cursor-not-allowed disabled:opacity-40"
+		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
 		disabled={disabled || value >= max}
 		onclick={() => onchange(Math.min(max, value + step))}
 		aria-label="Increase {label}">

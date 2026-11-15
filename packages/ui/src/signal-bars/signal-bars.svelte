@@ -42,7 +42,7 @@
 	{#each Array(bars) as _, i (i)}
 		<span
 			class="w-[3px] rounded-[1px]"
-			class:bg-neutral-300={i >= filled || color === 'unknown'}
+			class:bg-(--lv-3)={i >= filled || color === 'unknown'}
 			class:bg-green-500={i < filled && color === 'good'}
 			class:bg-yellow-500={i < filled && color === 'fair'}
 			class:bg-red-500={i < filled && color === 'poor'}

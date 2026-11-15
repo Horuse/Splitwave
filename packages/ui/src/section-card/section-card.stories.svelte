@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import IconPaint from '~icons/fluent/paint-brush-20-regular';
+	import IconPaint from '~icons/fluent/paint-brush-20-filled';
 	import { Chip } from '../chip';
 	import { Separator } from '../separator';
 	import { Toggle } from '../toggle';

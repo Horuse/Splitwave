@@ -38,7 +38,7 @@
 	</div>
 {/if}
 
-<div class={['nodrag nopan relative rounded-md border border-neutral-300 bg-neutral-100 p-0.5', className]}>
+<div class={['nodrag nopan relative rounded-md border border-(--lv-3) bg-(--lv-1) p-0.5', className]}>
 	{#if selectedIndex >= 0}
 		<!-- Offsets, not transform: a composited layer rasterises blurry under xyflow's zoom. -->
 		<div class="pointer-events-none absolute inset-0.5">

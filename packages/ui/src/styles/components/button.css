@@ -3,10 +3,10 @@
 		@apply inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 border font-medium whitespace-nowrap select-none;
 		@apply h-7 px-3 text-sm;
 		border-radius: var(--r, var(--radius-lg));
-		@apply border-neutral-400 bg-neutral-200 text-neutral-1000;
+		@apply border-(--lv-4) bg-(--lv-2) text-neutral-1000;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
-			@apply border-neutral-500 bg-neutral-300 text-neutral-1100;
+			@apply border-(--lv-5) bg-(--lv-3) text-neutral-1100;
 		}
 		&[data-active='true'] {
 			@apply border-neutral-800 bg-neutral-600 text-theme;
@@ -34,21 +34,21 @@
 	}
 
 	.btn-solid {
-		@apply border-neutral-600 bg-neutral-400 text-theme;
+		@apply border-neutral-600 bg-(--lv-4) text-theme;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
-			@apply border-neutral-700 bg-neutral-500 text-theme;
+			@apply border-neutral-700 bg-(--lv-5) text-theme;
 		}
 	}
 
 	.btn-ghost {
-		@apply border-transparent bg-neutral-200 text-neutral-900;
+		@apply border-transparent bg-(--lv-2) text-neutral-900;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
-			@apply border-transparent bg-neutral-300 text-theme;
+			@apply border-transparent bg-(--lv-3) text-theme;
 		}
 		&[data-active='true'] {
-			@apply border-transparent bg-neutral-500 text-theme;
+			@apply border-transparent bg-(--lv-5) text-theme;
 		}
 	}
 

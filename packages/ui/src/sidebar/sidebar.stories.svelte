@@ -1,10 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import IconFlow from '~icons/fluent/flow-20-regular';
-	import IconSpeaker from '~icons/fluent/speaker-2-20-regular';
-	import IconBook from '~icons/fluent/book-20-regular';
-	import IconHistory from '~icons/fluent/history-20-regular';
-	import IconSettings from '~icons/fluent/settings-20-regular';
+	import IconFlow from '~icons/fluent/flow-20-filled';
+	import IconSpeaker from '~icons/fluent/speaker-2-20-filled';
+	import IconBook from '~icons/fluent/book-20-filled';
+	import IconHistory from '~icons/fluent/history-20-filled';
+	import IconSettings from '~icons/fluent/settings-20-filled';
 	import Sidebar from './sidebar.svelte';
 	import SidebarItem from './sidebar-item.svelte';
 	import SidebarSection from './sidebar-section.svelte';

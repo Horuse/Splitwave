@@ -29,3 +29,23 @@
 
 	--color-contrast: oklch(1 0 0);
 }
+
+@theme {
+	--color-foreground: var(--color-neutral-100);
+}
+
+/* Control shades relative to the surface they sit on: a foreground block (card, sidebar) lifts them one step. */
+:root {
+	--lv-1: var(--color-neutral-100);
+	--lv-2: var(--color-neutral-200);
+	--lv-3: var(--color-neutral-300);
+	--lv-4: var(--color-neutral-400);
+	--lv-5: var(--color-neutral-500);
+}
+[data-layer='fg'] {
+	--lv-1: var(--color-neutral-200);
+	--lv-2: var(--color-neutral-300);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}

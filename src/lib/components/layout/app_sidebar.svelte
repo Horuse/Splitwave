@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { Sidebar, SidebarItem, SidebarSection } from '@splitwave/ui';
-	import IconFlow from '~icons/fluent/flow-20-regular';
-	import IconSpeaker from '~icons/fluent/speaker-2-20-regular';
-	import IconBook from '~icons/fluent/book-20-regular';
-	import IconHistory from '~icons/fluent/history-20-regular';
-	import IconSettings from '~icons/fluent/settings-20-regular';
-	import IconTheme from '~icons/fluent/dark-theme-20-regular';
+	import IconFlow from '~icons/fluent/flow-20-filled';
+	import IconSpeaker from '~icons/fluent/speaker-2-20-filled';
+	import IconBook from '~icons/fluent/book-20-filled';
+	import IconHistory from '~icons/fluent/history-20-filled';
+	import IconSettings from '~icons/fluent/settings-20-filled';
+	import IconTheme from '~icons/fluent/dark-theme-20-filled';
 	import { page } from '$app/state';
 	import { themeStore } from '$lib/modules/theme/stores';
 

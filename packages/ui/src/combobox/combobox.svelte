@@ -97,7 +97,7 @@
 	<button
 		type="button"
 		class={[
-			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-neutral-400 bg-neutral-100 px-2 text-left text-neutral-1100 hover:bg-neutral-200',
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-(--lv-4) bg-(--lv-1) px-2 text-left text-neutral-1100 hover:bg-(--lv-2)',
 			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
 		]}
 		onclick={() => (open ? closePanel() : openPanel())}>
@@ -106,7 +106,7 @@
 				<img src="data:image/png;base64,{selected.icon}" alt="" class="h-4 w-4 shrink-0" />
 			{/if}
 			{#if selected?.badge}
-				<span class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
+				<span class="shrink-0 rounded bg-(--lv-3) px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
 					{selected.badge}
 				</span>
 			{/if}
@@ -120,18 +120,18 @@
 	{#if open}
 		<div
 			transition:fly={{ duration: 200, y: 5 }}
-			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-neutral-400 bg-neutral-50 shadow-lg">
+			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-(--lv-4) bg-neutral-50 shadow-lg">
 			<input
 				bind:this={inputEl}
 				bind:value={search}
 				type="text"
-				class="nodrag nopan w-full border-b border-neutral-300 bg-neutral-100 px-2 py-1 text-sm outline-none"
+				class="nodrag nopan w-full border-b border-(--lv-3) bg-(--lv-1) px-2 py-1 text-sm outline-none"
 				placeholder="Filter…"
 				onkeydown={onKeyDown} />
 			<ul class="nodrag nopan nowheel max-h-48 overflow-y-auto">
 				{#if value !== null}
 					<li>
-						<button type="button" class="block w-full px-2 py-1 text-left text-xs text-neutral-900 hover:bg-neutral-200" onclick={() => pick(null)}>
+						<button type="button" class="block w-full px-2 py-1 text-left text-xs text-neutral-900 hover:bg-(--lv-2)" onclick={() => pick(null)}>
 							— Clear selection —
 						</button>
 					</li>
@@ -142,7 +142,7 @@
 							type="button"
 							class={[
 								'flex w-full items-center gap-1.5 px-2 py-1 text-left text-sm',
-								i === activeIndex ? 'bg-neutral-200 text-neutral-1000' : 'hover:bg-neutral-200',
+								i === activeIndex ? 'bg-(--lv-2) text-neutral-1000' : 'hover:bg-(--lv-2)',
 								opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
 							]}
 							onmouseenter={() => (activeIndex = i)}
@@ -151,7 +151,7 @@
 								<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
 							{/if}
 							{#if opt.badge}
-								<span class="shrink-0 rounded bg-neutral-300 px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
+								<span class="shrink-0 rounded bg-(--lv-3) px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
 									{opt.badge}
 								</span>
 							{/if}

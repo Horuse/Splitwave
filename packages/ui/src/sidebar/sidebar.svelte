@@ -5,7 +5,7 @@
 	let { header, footer, children, class: className }: { header?: Snippet; footer?: Snippet; children?: Snippet; class?: ClassValue } = $props();
 </script>
 
-<aside class={['sidebar', className]}>
+<aside data-layer="fg" class={['sidebar', className]}>
 	{@render header?.()}
 	<nav class="flex flex-col gap-0.5">
 		{@render children?.()}

@@ -52,7 +52,7 @@
 	transition:fade|global={{ duration: 150 }}
 	onclick={onBackdrop}>
 	<div
-		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-300 bg-neutral-100 shadow-2xl', WIDTH[size]]}
+		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-(--lv-3) bg-(--lv-1) shadow-2xl', WIDTH[size]]}
 		transition:fly|global={{ duration: 200, y: 8, easing: cubicOut }}
 		onclick={(e) => e.stopPropagation()}
 		role="presentation">
@@ -69,7 +69,7 @@
 					{#if canClose}
 						<button
 							type="button"
-							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-neutral-300"
+							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-(--lv-3)"
 							aria-label="Close"
 							onclick={() => onClose?.()}>
 							<svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">

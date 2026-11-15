@@ -26,7 +26,7 @@
 	onclick={() => onChange(!checked)}
 	class={[
 		'nodrag nopan flex items-center gap-2 text-left disabled:opacity-40',
-		hint && 'w-full justify-between rounded-xl border border-neutral-400 bg-neutral-100 p-3 hover:bg-neutral-200',
+		hint && 'w-full justify-between rounded-xl border border-(--lv-4) bg-(--lv-1) p-3 hover:bg-(--lv-2)',
 		className
 	]}>
 	{#if label}
@@ -39,7 +39,7 @@
 			{/if}
 		</span>
 	{/if}
-	<span class={['relative shrink-0 rounded-full transition-colors', track, checked ? 'bg-neutral-900' : 'bg-neutral-400']}>
+	<span class={['relative shrink-0 rounded-full transition-colors', track, checked ? 'bg-neutral-900' : 'bg-(--lv-4)']}>
 		<span class={['absolute top-0.5 rounded-full bg-background transition-all', knob, offset]}></span>
 	</span>
 </button>

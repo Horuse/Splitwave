@@ -139,7 +139,7 @@
 		<input
 			type="text"
 			inputmode="decimal"
-			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
+			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-(--lv-1) focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
 			value={editing ? draft : display(value)}
 			oninput={(e) => (draft = e.currentTarget.value)}
 			onfocus={startEdit}

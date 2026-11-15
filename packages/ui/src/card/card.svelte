@@ -6,6 +6,6 @@
 	let { dashed = false, class: className, children }: { dashed?: boolean; class?: ClassValue; children?: Snippet } = $props();
 </script>
 
-<div class={['card', dashed && 'card-dashed', className]} {@attach smoothRadius({ variable: '--smooth-r' })}>
+<div data-layer="fg" class={['card', dashed && 'card-dashed', className]} {@attach smoothRadius({ variable: '--smooth-r' })}>
 	{@render children?.()}
 </div>

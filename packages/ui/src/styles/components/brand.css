@@ -31,15 +31,15 @@
 	}
 
 	.card {
-		@apply relative border border-neutral-300 bg-neutral-100 text-theme;
+		@apply relative border border-neutral-300 bg-foreground text-theme;
 		border-radius: var(--smooth-r, 16px);
 	}
 	.card-dashed {
-		@apply border-dashed border-neutral-400;
+		@apply border-dashed border-(--lv-4);
 	}
 
 	.separator {
-		@apply border-0 border-t border-dashed border-neutral-400;
+		@apply border-0 border-t border-(--lv-3);
 	}
 	.separator-vertical {
 		@apply self-stretch border-t-0 border-l;

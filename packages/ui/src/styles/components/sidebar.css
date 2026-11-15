@@ -1,6 +1,6 @@
 @layer components {
 	.sidebar {
-		@apply flex h-full w-56 shrink-0 flex-col gap-1 border-r border-dashed border-neutral-300 bg-neutral-50 p-2;
+		@apply flex h-full w-56 shrink-0 flex-col gap-1 border-r border-neutral-300 bg-foreground p-2;
 	}
 	.sidebar-section {
 		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
@@ -10,13 +10,13 @@
 		border-radius: var(--r, 10px);
 
 		& > svg {
-			@apply size-4.5 shrink-0;
+			@apply block size-4.5 shrink-0;
 		}
 		&:hover {
-			@apply bg-neutral-200 text-theme;
+			@apply bg-(--lv-2) text-theme;
 		}
 		&[data-active='true'] {
-			@apply bg-neutral-200 font-medium text-theme;
+			@apply bg-(--lv-2) font-medium text-theme;
 
 			&::before {
 				content: '';

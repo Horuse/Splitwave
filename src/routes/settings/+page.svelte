@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { Chip, SectionCard, Separator } from '@splitwave/ui';
-	import IconPaint from '~icons/fluent/paint-brush-20-regular';
-	import IconGrid from '~icons/fluent/grid-20-regular';
-	import IconGauge from '~icons/fluent/gauge-20-regular';
-	import IconRecord from '~icons/fluent/record-20-regular';
-	import IconSync from '~icons/fluent/arrow-sync-20-regular';
-	import IconBookmark from '~icons/fluent/bookmark-20-regular';
-	import IconReset from '~icons/fluent/arrow-reset-20-regular';
+	import IconPaint from '~icons/fluent/paint-brush-20-filled';
+	import IconGrid from '~icons/fluent/grid-20-filled';
+	import IconGauge from '~icons/fluent/gauge-20-filled';
+	import IconRecord from '~icons/fluent/record-20-filled';
+	import IconSync from '~icons/fluent/arrow-sync-20-filled';
+	import IconBookmark from '~icons/fluent/bookmark-20-filled';
+	import IconReset from '~icons/fluent/arrow-reset-20-filled';
 	import { Button, NumberStepper, Toggle } from '@splitwave/ui';
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';

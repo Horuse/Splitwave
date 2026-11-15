@@ -1,6 +1,5 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
-@import '@fontsource-variable/jetbrains-mono';
 @import './theme.css';
 @import './brand.css';
 @import './components/smooth.css';
@@ -16,5 +15,5 @@
 
 @theme {
 	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+	--font-mono: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
 }

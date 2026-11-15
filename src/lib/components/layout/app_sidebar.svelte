@@ -3,6 +3,7 @@
 	import IconFlow from '~icons/fluent/flow-20-regular';
 	import IconSpeaker from '~icons/fluent/speaker-2-20-regular';
 	import IconBook from '~icons/fluent/book-20-regular';
+	import IconHistory from '~icons/fluent/history-20-regular';
 	import IconSettings from '~icons/fluent/settings-20-regular';
 	import IconTheme from '~icons/fluent/dark-theme-20-regular';
 	import { page } from '$app/state';
@@ -27,6 +28,7 @@
 	<SidebarItem label="Virtual devices" icon={IconSpeaker} href="/virtual-devices" active={page.route.id === '/virtual-devices'} />
 	<SidebarSection label="Resources" />
 	<SidebarItem label="Wiki" icon={IconBook} href="/wiki" active={page.route.id === '/wiki'} />
+	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />
 
 	{#snippet footer()}
 		<SidebarItem label="Theme: {$themeStore}" icon={IconTheme} onclick={cycleTheme} />

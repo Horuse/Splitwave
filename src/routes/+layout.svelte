@@ -12,6 +12,7 @@
 	import { UpdateBanner } from '$lib/modules/updater/ui';
 	import { DebugPanel } from '$lib/modules/debug';
 	import { loadAppInfo } from '$lib/modules/app_info';
+	import { watchSmoothRadius } from '@splitwave/ui';
 	import { ModalRender } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { AboutModal } from '$lib/modules/about/ui';
@@ -96,6 +97,8 @@
 		e.preventDefault();
 		logStore.open = !logStore.open;
 	}
+
+	onMount(() => watchSmoothRadius());
 
 	onMount(async () => {
 		logStore.installConsoleCapture();

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
+	import { smoothRadius } from '../attachments';
 	import { buttonVariants, type ButtonVariants } from './variants';
 
 	type Props = ButtonVariants &
@@ -31,11 +32,18 @@
 </script>
 
 {#if href}
-	<a bind:this={ref} {href} class={classes} data-active={active} aria-disabled={disabled || undefined} {...rest as HTMLAnchorAttributes}>
+	<a
+		bind:this={ref}
+		{href}
+		class={classes}
+		data-active={active}
+		{@attach smoothRadius({ variable: '--r', maxRatio: 0.35 })}
+		aria-disabled={disabled || undefined}
+		{...rest as HTMLAnchorAttributes}>
 		{@render children?.()}
 	</a>
 {:else}
-	<button bind:this={ref} {type} {disabled} class={classes} data-active={active} {...rest}>
+	<button bind:this={ref} {type} {disabled} class={classes} data-active={active} {@attach smoothRadius({ variable: '--r', maxRatio: 0.35 })} {...rest}>
 		{@render children?.()}
 	</button>
 {/if}

@@ -1,3 +1,4 @@
+export * from './attachments';
 export * from './button';
 export * from './toggle';
 export * from './segmented';

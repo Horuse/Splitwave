@@ -1,7 +1,8 @@
 @layer components {
 	.btn {
-		@apply inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border font-medium whitespace-nowrap select-none;
+		@apply inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 border font-medium whitespace-nowrap select-none;
 		@apply h-7 px-3 text-sm;
+		border-radius: var(--r, var(--radius-lg));
 		@apply border-neutral-400 bg-neutral-200 text-neutral-1000;
 
 		&:hover:not(:disabled, [aria-disabled='true']) {
@@ -17,10 +18,10 @@
 	}
 
 	.btn-xs {
-		@apply h-4 gap-1 rounded px-1 text-[9px];
+		@apply h-4 gap-1 px-1 text-[9px];
 	}
 	.btn-sm {
-		@apply h-6 rounded-md px-2 text-[10px];
+		@apply h-6 px-2 text-[10px];
 	}
 	.btn-md {
 		@apply h-7 px-3 text-sm;

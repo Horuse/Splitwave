@@ -22,7 +22,7 @@
 		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
 	}
 	.sidebar-item {
-		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 transition-[color,background-color,transform] duration-150 select-none;
+		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 transition-[color,background-color] duration-150 select-none;
 		border-radius: var(--r, 10px);
 
 		& > svg {

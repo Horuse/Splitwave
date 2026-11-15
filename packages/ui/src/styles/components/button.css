@@ -1,6 +1,6 @@
 @layer components {
 	.btn {
-		@apply inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 border font-medium whitespace-nowrap transition-[color,background-color,border-color,transform,box-shadow] duration-150 select-none;
+		@apply inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 border font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow] duration-150 select-none;
 		@apply h-7 px-3 text-sm;
 		border-radius: var(--r, var(--radius-lg));
 		@apply border-(--lv-3) bg-(--lv-2) text-neutral-1000;

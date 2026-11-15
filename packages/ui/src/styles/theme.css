@@ -42,10 +42,15 @@
 	--lv-4: var(--color-neutral-400);
 	--lv-5: var(--color-neutral-500);
 }
-[data-layer='fg'] {
+/* Dark: a foreground block is lighter, so its controls step up. Light: the block is near-white and controls keep page shades. */
+.dark [data-layer='fg'] {
 	--lv-1: var(--color-neutral-200);
 	--lv-2: var(--color-neutral-300);
 	--lv-3: var(--color-neutral-400);
 	--lv-4: var(--color-neutral-500);
 	--lv-5: var(--color-neutral-600);
+}
+
+:root:not(.dark) {
+	--color-foreground: var(--color-neutral-50);
 }

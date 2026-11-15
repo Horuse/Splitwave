@@ -97,7 +97,7 @@
 	<button
 		type="button"
 		class={[
-			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-(--lv-4) bg-(--lv-1) px-2 text-left text-neutral-1100 hover:bg-(--lv-2)',
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-(--lv-3) bg-(--lv-1) px-2 text-left text-neutral-1100 hover:bg-(--lv-2)',
 			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
 		]}
 		onclick={() => (open ? closePanel() : openPanel())}>
@@ -120,7 +120,7 @@
 	{#if open}
 		<div
 			transition:fly={{ duration: 200, y: 5 }}
-			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-(--lv-4) bg-neutral-50 shadow-lg">
+			class="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-md border border-(--lv-3) bg-neutral-50 shadow-lg">
 			<input
 				bind:this={inputEl}
 				bind:value={search}

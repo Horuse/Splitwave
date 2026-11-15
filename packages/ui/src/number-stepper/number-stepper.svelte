@@ -45,7 +45,7 @@
 	}
 </script>
 
-<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--lv-4) bg-(--lv-1)', className]}>
+<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--lv-3) bg-(--lv-1)', className]}>
 	<button
 		type="button"
 		class="flex h-6 w-6 items-center justify-center text-neutral-900 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"
@@ -56,7 +56,7 @@
 	</button>
 	<input
 		type="number"
-		class="h-6 {width} [appearance:textfield] border-x border-(--lv-4) bg-transparent text-center font-mono text-[10px] tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+		class="h-6 {width} [appearance:textfield] border-x border-(--lv-3) bg-transparent text-center font-mono text-[10px] tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 		{disabled}
 		{min}
 		{max}

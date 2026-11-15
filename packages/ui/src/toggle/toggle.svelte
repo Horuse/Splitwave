@@ -26,7 +26,7 @@
 	onclick={() => onChange(!checked)}
 	class={[
 		'nodrag nopan flex items-center gap-2 text-left disabled:opacity-40',
-		hint && 'w-full justify-between rounded-xl border border-(--lv-4) bg-(--lv-1) p-3 hover:bg-(--lv-2)',
+		hint && 'w-full justify-between rounded-xl border border-(--lv-3) bg-(--lv-1) p-3 hover:bg-(--lv-2)',
 		className
 	]}>
 	{#if label}

@@ -16,7 +16,7 @@
 </script>
 
 <Card class={['flex flex-col gap-5 p-6', className]}>
-	<header class="flex items-start gap-3">
+	<header class="flex items-center gap-3">
 		{#if Icon}
 			<span class="section-card-icon" {@attach smoothRadius({ variable: '--r' })}><Icon /></span>
 		{/if}

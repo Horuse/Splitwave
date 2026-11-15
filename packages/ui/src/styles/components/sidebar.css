@@ -2,6 +2,9 @@
 	.sidebar {
 		@apply flex h-full w-56 shrink-0 flex-col gap-1 border-r border-neutral-300 bg-foreground p-2;
 	}
+	.sidebar-item-nested {
+		@apply h-7 pl-9 text-[13px];
+	}
 	.sidebar-section {
 		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
 	}

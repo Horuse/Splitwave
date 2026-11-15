@@ -7,12 +7,13 @@
 		icon?: Component<{ class?: string }>;
 		href?: string;
 		active?: boolean;
+		nested?: boolean;
 		title?: string;
 		onclick?: () => void;
 		trailing?: Snippet;
 	};
 
-	let { label, icon: Icon, href, active = false, title, onclick, trailing }: Props = $props();
+	let { label, icon: Icon, href, active = false, nested = false, title, onclick, trailing }: Props = $props();
 	const radius = smoothRadius({ variable: '--r', maxRatio: 0.35 });
 </script>
 
@@ -23,11 +24,17 @@
 {/snippet}
 
 {#if href}
-	<a class="sidebar-item" {href} {title} data-active={active} aria-current={active ? 'page' : undefined} {@attach radius}>
+	<a
+		class={['sidebar-item', nested && 'sidebar-item-nested']}
+		{href}
+		{title}
+		data-active={active}
+		aria-current={active ? 'page' : undefined}
+		{@attach radius}>
 		{@render content()}
 	</a>
 {:else}
-	<button type="button" class="sidebar-item" {title} data-active={active} {onclick} {@attach radius}>
+	<button type="button" class={['sidebar-item', nested && 'sidebar-item-nested']} {title} data-active={active} {onclick} {@attach radius}>
 		{@render content()}
 	</button>
 {/if}

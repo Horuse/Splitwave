@@ -7,6 +7,7 @@
 	import IconSettings from '~icons/fluent/settings-20-filled';
 	import IconTheme from '~icons/fluent/dark-theme-20-filled';
 	import { page } from '$app/state';
+	import { articles } from '@splitwave/wiki';
 	import { themeStore } from '$lib/modules/theme/stores';
 
 	function cycleTheme() {
@@ -28,6 +29,11 @@
 	<SidebarItem label="Virtual devices" icon={IconSpeaker} href="/virtual-devices" active={page.route.id === '/virtual-devices'} />
 	<SidebarSection label="Resources" />
 	<SidebarItem label="Wiki" icon={IconBook} href="/wiki" active={page.route.id === '/wiki'} />
+	{#if page.route.id?.startsWith('/wiki')}
+		{#each articles as a (a.slug)}
+			<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
+		{/each}
+	{/if}
 	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />
 
 	{#snippet footer()}

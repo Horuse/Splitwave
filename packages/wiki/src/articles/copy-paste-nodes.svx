@@ -1,0 +1,15 @@
+---
+title: Select, copy and paste nodes
+description: Duplicate parts of a pipeline with the usual shortcuts.
+order: 2
+---
+
+<script>
+	import WikiVideo from '../wiki-video.svelte';
+	import mp4 from '../media/ctrl_copy_paste.mp4';
+	import webm from '../media/ctrl_copy_paste.webm';
+</script>
+
+Press **Ctrl+A** (Cmd+A) to select every node on the canvas. Copy with **Ctrl+C** and paste with **Ctrl+V** (Cmd on macOS) to duplicate the selection.
+
+<WikiVideo {mp4} {webm} />

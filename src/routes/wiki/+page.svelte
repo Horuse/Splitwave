@@ -1,46 +1,27 @@
 <script lang="ts">
+	import { Card } from '@splitwave/ui';
+	import { articles } from '@splitwave/wiki';
 	import Header from '$lib/components/layout/header.svelte';
-
-	const ENTRIES = [
-		{
-			title: 'Multi-select channels with Option',
-			video: '/wiki/alt_connect.mp4',
-			body: 'Hold Option (Alt on Windows/Linux) while picking channels to select several at once, then drag them together as one connection.'
-		},
-		{
-			title: 'Select, copy and paste nodes',
-			video: '/wiki/ctrl_copy_paste.mp4',
-			body: 'Press Ctrl+A (Cmd+A) to select every node on the canvas. Copy with Ctrl+C and paste with Ctrl+V (Cmd on macOS) to duplicate the selection.'
-		},
-		{
-			title: 'Box select with Shift',
-			video: '/wiki/shift_select.mp4',
-			body: 'Hold Shift to switch the canvas into box-select mode, then drag a rectangle over the nodes you want to select.'
-		},
-		{
-			title: 'Delete multiple connections at once',
-			video: '/wiki/shift_delete_edges.mp4',
-			body: 'Hold Shift and click each connection you want to remove, then press Delete to drop them all at once.'
-		}
-	];
 </script>
 
 <Header />
 
-<div class="min-h-0 flex-1 overflow-y-auto p-8">
-	<div class="flex max-w-2xl flex-col gap-8">
-		{#each ENTRIES as entry (entry.title)}
-			<section class="flex flex-col gap-3">
-				<div>
-					<h2 class="text-sm font-semibold text-theme">{entry.title}</h2>
-					<p class="text-xs text-neutral-900">{entry.body}</p>
-				</div>
+<div class="min-h-0 flex-1 overflow-y-auto">
+	<div class="mx-auto flex w-full max-w-3xl flex-col gap-5 p-8">
+		<div class="flex flex-col gap-1">
+			<h1 class="text-2xl font-semibold">Wiki</h1>
+			<p class="text-sm text-neutral-900">Tips and guides for building pipelines.</p>
+		</div>
 
-				<video autoplay loop muted playsinline class="w-full rounded-xl border border-neutral-400 bg-neutral-100">
-					<source src={entry.video} type="video/mp4" />
-					<source src={entry.video.replace('.mp4', '.webm')} type="video/webm" />
-				</video>
-			</section>
-		{/each}
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+			{#each articles as a (a.slug)}
+				<a href="/wiki/{a.slug}" class="block">
+					<Card class="flex h-full flex-col gap-1 p-5 hover:border-neutral-500">
+						<h2 class="text-sm font-semibold">{a.title}</h2>
+						<p class="text-xs text-neutral-900">{a.description}</p>
+					</Card>
+				</a>
+			{/each}
+		</div>
 	</div>
 </div>

@@ -1,10 +1,8 @@
 <script lang="ts">
-	import { getContext, untrack, type Component, type Snippet } from 'svelte';
+	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
-	import { MAIN_HANDLE, POWER_HANDLE, PREVIEW_CTX } from '../utils';
-	import ControlSocket from './_control_socket.svelte';
-	import { useControlInput } from '../control.svelte';
+	import { MAIN_HANDLE, PREVIEW_CTX } from '../utils';
 	import { CATEGORY_TEXT } from '../utils/accents';
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import { ArrowSwap, Hourglass } from '$lib/components/icons';
@@ -68,17 +66,6 @@
 
 	let chExpanded = $derived(channelIo && !!nodeId && !isPreview);
 
-	// Fixed for the mount: a node either can be bypassed or it cannot.
-	const power = untrack(() => (!isPreview && nodeId && onBypass ? useControlInput(nodeId, POWER_HANDLE) : null));
-	let powerWired = $derived(power?.current != null);
-
-	// A wired power input owns the bypass state; a click on the button is undone.
-	$effect(() => {
-		const on = power?.current;
-		if (on == null || bypassed === !on) return;
-		onBypass?.();
-	});
-
 	// A node that cannot keep up with the engine buffer runs at a larger block
 	// of its own; say so, the way the resampling icon flags a rate change.
 	let timing = $derived(nodeId ? latencyStore.node(nodeId) : undefined);
@@ -104,10 +91,6 @@
 
 <div class={['node-shell min-w-32 rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm', !wide && 'max-w-80']}>
 	<div class="relative mb-2 flex items-center justify-between gap-2">
-		{#if power}
-			<!-- Level with the title, clear of the channel sockets below. -->
-			<ControlSocket id={POWER_HANDLE} side="target" high={power.current ?? false} />
-		{/if}
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			{#if NodeIcon}
 				<NodeIcon class={['size-3 shrink-0', CATEGORY_TEXT[accent]]} />
@@ -139,8 +122,7 @@
 							? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
 							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
 					]}
-					title={powerWired ? 'Driven by the power input' : bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
-					disabled={powerWired}
+					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
 					onclick={onBypass}>
 					{bypassed ? 'BYP' : 'ON'}
 				</button>

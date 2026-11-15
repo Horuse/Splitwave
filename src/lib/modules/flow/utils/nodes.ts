@@ -64,14 +64,15 @@ import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
-import KeyInput from '../ui/condition/key_input.svelte';
-import Toggle from '../ui/condition/toggle.svelte';
-import Cycle from '../ui/condition/cycle.svelte';
-import Timer from '../ui/condition/timer.svelte';
-import If from '../ui/condition/if.svelte';
-import Switch from '../ui/condition/switch.svelte';
-import Select from '../ui/condition/select.svelte';
-import LevelTrigger from '../ui/condition/level_trigger.svelte';
+import KeyInput from '../ui/control/key_input.svelte';
+import Toggle from '../ui/control/toggle.svelte';
+import Logic from '../ui/control/logic.svelte';
+import Cycle from '../ui/control/cycle.svelte';
+import Timer from '../ui/control/timer.svelte';
+import If from '../ui/control/if.svelte';
+import Switch from '../ui/control/switch.svelte';
+import Select from '../ui/control/select.svelte';
+import LevelTrigger from '../ui/control/level_trigger.svelte';
 
 // MIME type used during drag-and-drop from the sidebar.
 export const DND_MIME = 'application/x-splitwave-nodekind';
@@ -160,7 +161,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	mute: entry<'mute'>({
 		kind: 'mute',
-		category: 'effect',
+		category: 'routing',
 		label: 'Mute',
 		description: 'Silence the signal.',
 		component: Mute,
@@ -341,7 +342,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	keyInput: entry<'keyInput'>({
 		kind: 'keyInput',
-		category: 'condition',
+		category: 'control',
 		label: 'Key Input',
 		description: 'A global shortcut as a control signal: high while the key is held, even with the app in the background.',
 		component: KeyInput,
@@ -350,7 +351,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	toggle: entry<'toggle'>({
 		kind: 'toggle',
-		category: 'condition',
+		category: 'control',
 		label: 'Toggle',
 		description: 'Flips its output each time the input goes high, and keeps it until the next press.',
 		component: Toggle,
@@ -359,7 +360,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	cycle: entry<'cycle'>({
 		kind: 'cycle',
-		category: 'condition',
+		category: 'control',
 		label: 'Cycle',
 		description: 'Steps through its outputs one press at a time and wraps around; only the current step is high.',
 		component: Cycle,
@@ -368,16 +369,25 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	timer: entry<'timer'>({
 		kind: 'timer',
-		category: 'condition',
+		category: 'control',
 		label: 'Timer',
 		description: 'Delay turns its output on a set time after start goes high; Repeat pulses it at that interval while start stays high.',
 		component: Timer,
 		icon: HourglassIcon,
 		defaultData: DEFAULT_NODE_DATA['timer']
 	}),
+	logic: entry<'logic'>({
+		kind: 'logic',
+		category: 'control',
+		label: 'Logic',
+		description: 'Combines control signals with a logic operator, such as NOT to invert one or AND to need two at once.',
+		component: Logic,
+		icon: ArrowRightIcon,
+		defaultData: DEFAULT_NODE_DATA['logic']
+	}),
 	if: entry<'if'>({
 		kind: 'if',
-		category: 'condition',
+		category: 'routing',
 		label: 'If',
 		description: 'Sends its input to the true output while the condition is high, to the false output otherwise, crossfading between them.',
 		component: If,
@@ -386,7 +396,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	switch: entry<'switch'>({
 		kind: 'switch',
-		category: 'condition',
+		category: 'routing',
 		label: 'Switch',
 		description: 'Sends its input to one of 2-8 outputs; each output has its own trigger, so one key per branch picks it.',
 		component: Switch,
@@ -395,7 +405,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	select: entry<'select'>({
 		kind: 'select',
-		category: 'condition',
+		category: 'routing',
 		label: 'Select',
 		description: 'Hears one of 2-8 inputs; each input has its own trigger, so one key per source picks it.',
 		component: Select,
@@ -404,7 +414,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	levelTrigger: entry<'levelTrigger'>({
 		kind: 'levelTrigger',
-		category: 'condition',
+		category: 'control',
 		label: 'Level Trigger',
 		description: 'High while its input is louder than the threshold, held a moment after it drops so speech does not flicker.',
 		component: LevelTrigger,
@@ -417,7 +427,7 @@ export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'condition'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'routing', 'control'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
@@ -425,7 +435,8 @@ export const categoryLabel: Record<NodeCategory, string> = {
 	monitor: 'Monitors',
 	network: 'Network',
 	effect: 'Effects',
-	condition: 'Conditions'
+	control: 'Control',
+	routing: 'Routing'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

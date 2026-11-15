@@ -63,7 +63,7 @@
 	}
 </script>
 
-<Wrapper label="If" icon={ArrowRight} accent="condition">
+<Wrapper label="If" icon={ArrowRight} accent="routing">
 	<div class="flex w-52 flex-col gap-3">
 		<SegmentedButtons
 			label="Operator"

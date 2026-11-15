@@ -16,7 +16,7 @@
 		)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Key Input', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Key Input', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

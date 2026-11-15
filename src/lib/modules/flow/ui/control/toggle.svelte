@@ -41,7 +41,7 @@
 	});
 </script>
 
-<Wrapper label="Toggle" icon={Loop} accent="condition">
+<Wrapper label="Toggle" icon={Loop} accent="control">
 	<div class="relative flex items-center justify-center gap-3">
 		<ControlSocket id={CONTROL_IN} side="target" high={input?.current ?? false} />
 		<button

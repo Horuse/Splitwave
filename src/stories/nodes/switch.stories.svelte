@@ -10,7 +10,7 @@
 		wiringArgs(2)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Switch', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Routing/Switch', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

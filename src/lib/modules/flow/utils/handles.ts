@@ -39,8 +39,6 @@ export function controlHandle(name: string): string {
 
 export const CONTROL_IN = controlHandle('in');
 export const CONTROL_OUT = controlHandle('out');
-/** High runs the node, low bypasses it. */
-export const POWER_HANDLE = controlHandle('power');
 /** High lets a Mute's audio through, low silences it. */
 export const OPEN_HANDLE = controlHandle('open');
 /** The inputs an If's logic operator reads. */

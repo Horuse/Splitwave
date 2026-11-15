@@ -78,7 +78,7 @@
 	}
 </script>
 
-<Wrapper label="Timer" icon={Hourglass} accent="condition">
+<Wrapper label="Timer" icon={Hourglass} accent="control">
 	<div class="flex w-52 flex-col gap-3">
 		<SegmentedButtons options={MODES} value={data.mode} onSelect={(mode) => set({ mode })} />
 		<Slider label="Time" value={data.ms} min={50} max={10000} step={50} format={formatTime} defaultValue={1000} onChange={(ms) => set({ ms })} />

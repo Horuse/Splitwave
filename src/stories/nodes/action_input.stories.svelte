@@ -4,7 +4,7 @@
 	import { CONTROL_OUT, controlHandle } from '$lib/modules/flow/utils';
 
 	const { Story } = defineMeta({
-		title: 'Nodes/Conditions/Action Input',
+		title: 'Nodes/Control/Action Input',
 		argTypes: { action: { control: 'inline-radio', options: ['stop', 'back', 'play', 'forward', 'loop'] } },
 		args: { action: 'play' }
 	});

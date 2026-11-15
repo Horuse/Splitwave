@@ -6,10 +6,11 @@
 		a: boolean;
 		b: boolean;
 		out: boolean;
-		/** Output the audio takes: 1 true, 2 false. */
-		route: number;
+		/** Output the audio takes: 1 true, 2 false. Absent on a signal-only gate,
+		 * whose output runs straight out instead of forking. */
+		route?: number;
 		/** Null while the inputs choose the route. */
-		onRoute: ((branch: number) => void) | null;
+		onRoute?: ((branch: number) => void) | null;
 	}
 	let { op, a, b, out, route, onRoute }: Props = $props();
 
@@ -60,24 +61,26 @@
 	{#if inverted}
 		<circle cx={tip + 4} cy="32" r="4" class={['shape', out && 'lit']} />
 	{/if}
-	<line x1={outStart} y1="32" x2={FORK} y2="32" class={['wire', out && 'lit']} />
+	<line x1={outStart} y1="32" x2={route === undefined ? 160 : FORK} y2="32" class={['wire', out && 'lit']} />
 
-	{#each BRANCHES as br (br.branch)}
-		{#if onRoute}
-			<g
-				class="group nodrag nopan cursor-pointer outline-none"
-				role="button"
-				tabindex="0"
-				aria-label={`Route to ${br.label}`}
-				onclick={() => onRoute?.(br.branch)}
-				onkeydown={(e) => pick(e, br.branch)}>
-				{@render branch(br)}
-			</g>
-		{:else}
-			<g>{@render branch(br)}</g>
-		{/if}
-	{/each}
-	<circle cx={FORK} cy="32" r="2.5" class={['joint', out && 'lit']} />
+	{#if route !== undefined}
+		{#each BRANCHES as br (br.branch)}
+			{#if onRoute}
+				<g
+					class="group nodrag nopan cursor-pointer outline-none"
+					role="button"
+					tabindex="0"
+					aria-label={`Route to ${br.label}`}
+					onclick={() => onRoute?.(br.branch)}
+					onkeydown={(e) => pick(e, br.branch)}>
+					{@render branch(br)}
+				</g>
+			{:else}
+				<g>{@render branch(br)}</g>
+			{/if}
+		{/each}
+		<circle cx={FORK} cy="32" r="2.5" class={['joint', out && 'lit']} />
+	{/if}
 </svg>
 
 <style>

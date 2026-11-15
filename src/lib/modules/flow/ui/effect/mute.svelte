@@ -5,7 +5,7 @@
 	import Wrapper from '../node.svelte';
 	import { SpeakerMute } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
-	import ControlPort from '../condition/_control_port.svelte';
+	import ControlPort from '../control/_control_port.svelte';
 	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { useControlInput } from '../../control.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -83,7 +83,7 @@
 	}
 </script>
 
-<Wrapper label="Mute" icon={SpeakerMute} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper label="Mute" icon={SpeakerMute} accent="routing" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<button
 		title={wired ? 'Driven by the open input' : 'Toggle mute'}
 		disabled={wired}

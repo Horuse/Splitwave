@@ -9,7 +9,7 @@
 		wiringArgs(2)
 	);
 
-	const { Story } = defineMeta({ title: 'Nodes/Conditions/Level Trigger', argTypes, args });
+	const { Story } = defineMeta({ title: 'Nodes/Control/Level Trigger', argTypes, args });
 </script>
 
 {#snippet template(a: Record<string, unknown>)}

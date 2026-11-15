@@ -43,7 +43,7 @@ export type { WavBitDepth } from './generated/WavBitDepth';
 import type { NodeKind } from './generated/NodeKind';
 import type { LogicOp } from '$lib/modules/flow/logic';
 
-export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'condition';
+export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'control' | 'routing';
 
 // xyflow requires node data to satisfy `Record<string, unknown>`; intersecting
 // gives generated types that constraint without us redeclaring fields.
@@ -103,6 +103,7 @@ export type ToggleNodeData = XyData<{ on: boolean }>;
 export type CycleNodeData = XyData<{ steps: number; step: number }>;
 export type TimerMode = 'delay' | 'repeat';
 export type TimerNodeData = XyData<{ mode: TimerMode; ms: number }>;
+export type LogicNodeData = XyData<{ op: LogicOp }>;
 // `op` combines the A and B inputs in the editor; the engine only sees `selected`.
 export type IfNodeData = XyData<IfData & { op?: LogicOp }>;
 export type SwitchNodeData = XyData<SwitchData>;
@@ -147,6 +148,7 @@ export type NodeDataMap = {
 	toggle: ToggleNodeData;
 	cycle: CycleNodeData;
 	timer: TimerNodeData;
+	logic: LogicNodeData;
 	if: IfNodeData;
 	switch: SwitchNodeData;
 	select: SelectNodeData;

@@ -1,0 +1,12 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"skipLibCheck": true,
+		"verbatimModuleSyntax": true,
+		"types": ["svelte", "unplugin-icons/types/svelte"]
+	},
+	"include": ["src/**/*.ts", "src/**/*.svelte", ".storybook/**/*.ts"]
+}

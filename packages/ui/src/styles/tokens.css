@@ -1,0 +1,108 @@
+/* Design tokens. Tune the four inputs in :root, everything else derives from them. */
+
+:root {
+	--hue: 258;
+	--accent-chroma: 0.17;
+	--tint-hue: 258;
+	--tint-chroma: 0.012;
+
+	--radius-panel: var(--radius-lg);
+
+	--layer: var(--color-surface-1);
+	--layer-next: var(--color-surface-2);
+	--line-mix: 12%;
+	--line-mix-strong: 20%;
+}
+
+@theme static {
+	--color-surface-0: oklch(0.955 var(--tint-chroma) var(--tint-hue));
+	--color-surface-1: oklch(0.985 var(--tint-chroma) var(--tint-hue));
+	--color-surface-2: oklch(0.945 var(--tint-chroma) var(--tint-hue));
+	--color-surface-3: oklch(0.905 var(--tint-chroma) var(--tint-hue));
+	--color-surface-4: oklch(0.865 var(--tint-chroma) var(--tint-hue));
+
+	--color-content: oklch(0.22 var(--tint-chroma) var(--tint-hue));
+	--color-muted: oklch(0.5 var(--tint-chroma) var(--tint-hue));
+	--color-subtle: oklch(0.65 var(--tint-chroma) var(--tint-hue));
+
+	--color-line: oklch(0.87 var(--tint-chroma) var(--tint-hue));
+	--color-line-strong: oklch(0.8 var(--tint-chroma) var(--tint-hue));
+
+	--color-accent: oklch(0.55 var(--accent-chroma) var(--hue));
+	--color-accent-hover: oklch(0.49 var(--accent-chroma) var(--hue));
+	--color-accent-soft: oklch(0.55 var(--accent-chroma) var(--hue) / 0.14);
+	--color-on-accent: oklch(0.99 0 0);
+
+	--color-danger: oklch(0.58 0.21 25);
+	--color-danger-soft: oklch(0.58 0.21 25 / 0.14);
+	--color-success: oklch(0.6 0.16 150);
+	--color-success-soft: oklch(0.6 0.16 150 / 0.14);
+	--color-warning: oklch(0.72 0.15 75);
+	--color-warning-soft: oklch(0.72 0.15 75 / 0.16);
+	--color-info: oklch(0.6 0.14 235);
+	--color-info-soft: oklch(0.6 0.14 235 / 0.14);
+
+	--color-signal: oklch(0.78 0.16 85);
+
+	--color-cat-input: oklch(0.55 0.13 160);
+	--color-cat-output: oklch(0.55 0.13 235);
+	--color-cat-monitor: oklch(0.62 0.14 80);
+	--color-cat-network: oklch(0.57 0.18 10);
+	--color-cat-effect: oklch(0.55 0.17 295);
+	--color-cat-control: oklch(0.62 0.14 105);
+	--color-cat-routing: oklch(0.56 0.11 195);
+}
+
+.dark {
+	--color-surface-0: oklch(0.16 var(--tint-chroma) var(--tint-hue));
+	--color-surface-1: oklch(0.2 var(--tint-chroma) var(--tint-hue));
+	--color-surface-2: oklch(0.245 var(--tint-chroma) var(--tint-hue));
+	--color-surface-3: oklch(0.285 var(--tint-chroma) var(--tint-hue));
+	--color-surface-4: oklch(0.325 var(--tint-chroma) var(--tint-hue));
+
+	--color-content: oklch(0.96 var(--tint-chroma) var(--tint-hue));
+	--color-muted: oklch(0.72 var(--tint-chroma) var(--tint-hue));
+	--color-subtle: oklch(0.56 var(--tint-chroma) var(--tint-hue));
+
+	--color-line: oklch(0.31 var(--tint-chroma) var(--tint-hue));
+	--color-line-strong: oklch(0.37 var(--tint-chroma) var(--tint-hue));
+	--line-mix: 8%;
+	--line-mix-strong: 15%;
+
+	--color-accent: oklch(0.66 var(--accent-chroma) var(--hue));
+	--color-accent-hover: oklch(0.72 var(--accent-chroma) var(--hue));
+	--color-accent-soft: oklch(0.66 var(--accent-chroma) var(--hue) / 0.2);
+
+	--color-signal: oklch(0.84 0.16 85);
+
+	--color-cat-input: oklch(0.76 0.14 160);
+	--color-cat-output: oklch(0.76 0.12 235);
+	--color-cat-monitor: oklch(0.82 0.14 85);
+	--color-cat-network: oklch(0.74 0.15 10);
+	--color-cat-effect: oklch(0.74 0.14 295);
+	--color-cat-control: oklch(0.84 0.13 105);
+	--color-cat-routing: oklch(0.76 0.1 195);
+}
+
+/* A container sets data-layer; controls inside read --layer-next, one step deeper than the parent. */
+[data-layer] {
+	--layer-hover: color-mix(in oklch, var(--layer), var(--color-content) 6%);
+	--layer-active: color-mix(in oklch, var(--layer), var(--color-content) 11%);
+	--layer-next-hover: color-mix(in oklch, var(--layer-next), var(--color-content) 6%);
+	--layer-next-active: color-mix(in oklch, var(--layer-next), var(--color-content) 11%);
+	--layer-line: color-mix(in oklch, var(--layer), var(--color-content) var(--line-mix));
+	--layer-line-strong: color-mix(in oklch, var(--layer), var(--color-content) var(--line-mix-strong));
+	--layer-next-line: color-mix(in oklch, var(--layer-next), var(--color-content) var(--line-mix));
+	--layer-next-line-strong: color-mix(in oklch, var(--layer-next), var(--color-content) var(--line-mix-strong));
+	background-color: var(--layer);
+}
+[data-layer='0'] { --layer: var(--color-surface-0); --layer-next: var(--color-surface-1); }
+[data-layer='1'] { --layer: var(--color-surface-1); --layer-next: var(--color-surface-2); }
+[data-layer='2'] { --layer: var(--color-surface-2); --layer-next: var(--color-surface-3); }
+[data-layer='3'] { --layer: var(--color-surface-3); --layer-next: var(--color-surface-4); }
+[data-layer='4'] { --layer: var(--color-surface-4); --layer-next: var(--color-surface-4); }
+
+@utility bg-layer { background-color: var(--layer); }
+@utility bg-layer-next { background-color: var(--layer-next); }
+@utility border-layer-line { border-color: var(--layer-line); }
+@utility border-layer-next-line { border-color: var(--layer-next-line); }

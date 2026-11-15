@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
+import Icons from 'unplugin-icons/vite';
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-	plugins: [tailwindcss(), sveltekit()],
+	plugins: [tailwindcss(), sveltekit(), Icons({ compiler: 'svelte' })],
 
 	// Packages that ship .svelte source -- let the Svelte plugin handle them
 	// instead of esbuild pre-bundling (which has no .svelte loader).

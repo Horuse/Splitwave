@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+@import './tokens.css';
+
+@source '../';
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+@layer base {
+	body {
+		background-color: var(--color-surface-0);
+		color: var(--color-content);
+		font-family: var(--font-sans);
+		font-size: 13px;
+	}
+}

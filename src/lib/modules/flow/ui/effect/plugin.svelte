@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { Slider, Toggle } from '@splitwave/ui';
+	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '$lib/modules/pipeline/types';
 	import type { PluginParam, PluginStatus } from '$lib/modules/audio/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { pluginCatalog } from '$lib/modules/audio/plugin_catalog.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Wrapper from '../node.svelte';
 	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
@@ -189,7 +188,7 @@
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex w-56 flex-col gap-2">
-		<Combobox
+		<Combobox class="nodrag nopan"
 			{options}
 			value={currentUid}
 			placeholder={data.name || (pluginCatalog.scanning ? 'Scanning…' : 'Select a plugin')}

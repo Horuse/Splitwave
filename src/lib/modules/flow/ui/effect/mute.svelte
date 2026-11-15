@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Slider, Toggle } from '@splitwave/ui';
+	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MuteNodeData } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
@@ -9,7 +9,6 @@
 	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { useControlInput } from '../../control.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import { getContext, onMount, untrack } from 'svelte';
 	import { formatPct } from '$lib/components/format';
 
@@ -115,7 +114,7 @@
 
 		{#if data.cueEnabled}
 			<span class="text-[10px] text-neutral-900">Plays on the output device</span>
-			<Combobox class="w-full" options={cueOptions} value={data.cueDeviceId ?? null} placeholder="— Select output —" onChange={setCueDevice}>
+			<Combobox class="nodrag nopan w-full" options={cueOptions} value={data.cueDeviceId ?? null} placeholder="— Select output —" onChange={setCueDevice}>
 				{#snippet footer(close)}
 					<RescanButton
 						onRescan={() => {

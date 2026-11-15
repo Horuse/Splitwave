@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { Button, Segmented, SignalBars } from '@splitwave/ui';
+	import { Button, PasswordInput, Segmented, SignalBars } from '@splitwave/ui';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
 	import type { WebRtcCollaboratorNodeData } from '$lib/modules/pipeline/types';
 	import type { OpusApplication, NetCodec } from '$lib/modules/pipeline/types';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { PasswordInput } from '$lib/modules/form/ui';
 	import { LossWindow } from '$lib/components/format';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
@@ -314,7 +313,7 @@
 		<hr class="border-neutral-300" />
 
 		{#if phase === 'idle'}
-			<PasswordInput bind:value={password} placeholder="Password (optional)" />
+			<PasswordInput class="nodrag nopan" bind:value={password} placeholder="Password (optional)" />
 			<Button size="sm" class="nodrag nopan font-mono" disabled={busy} onclick={createRoom}>
 				{busy ? 'creating…' : 'Create room'}
 			</Button>
@@ -326,7 +325,7 @@
 				maxlength={6}
 				bind:value={joinInput} />
 			<div class="flex gap-1">
-				<PasswordInput bind:value={joinPassword} placeholder="Password" />
+				<PasswordInput class="nodrag nopan" bind:value={joinPassword} placeholder="Password" />
 				<Button size="sm" class="nodrag nopan font-mono" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>
 					Join
 				</Button>

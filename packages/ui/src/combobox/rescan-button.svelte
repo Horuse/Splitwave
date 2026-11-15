@@ -1,6 +1,6 @@
 <script lang="ts">
-	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
-	import ComboboxAction from './combobox_action.svelte';
+	import IconRefresh from '~icons/fluent/arrow-clockwise-16-filled';
+	import ComboboxAction from './combobox-action.svelte';
 
 	interface Props {
 		onRescan: () => void | Promise<void>;
@@ -22,4 +22,4 @@
 	}
 </script>
 
-<ComboboxAction {label} icon={Refresh} iconClass={spinning ? 'animate-spin' : ''} onclick={run} />
+<ComboboxAction {label} icon={IconRefresh} iconClass={spinning ? 'animate-spin' : ''} onclick={run} />

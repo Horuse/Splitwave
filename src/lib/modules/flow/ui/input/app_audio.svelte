@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Slider } from '@splitwave/ui';
+	import { Combobox, RescanButton, Slider } from '@splitwave/ui';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { AppAudioNodeData } from '$lib/modules/pipeline/types';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -7,7 +7,6 @@
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
-	import { Combobox, RescanButton } from '$lib/modules/form/ui';
 	import Apps from '~icons/fluent/apps-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { onDestroy, onMount } from 'svelte';

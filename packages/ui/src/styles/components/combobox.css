@@ -1,0 +1,100 @@
+@layer components {
+	.combobox-trigger {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.25rem 0.5rem;
+		border: 1px solid var(--layer-next-line);
+		border-radius: var(--radius-md);
+		background-color: var(--layer-next);
+		font-size: 0.8125rem;
+		text-align: left;
+		color: var(--color-content);
+		cursor: pointer;
+
+		&:hover {
+			border-color: var(--layer-next-line-strong);
+		}
+		&[aria-expanded='true'] {
+			border-color: var(--color-accent);
+		}
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: 1px;
+		}
+	}
+	.combobox-sm {
+		padding-block: 0.125rem;
+		font-size: 0.625rem;
+	}
+
+	.combobox-panel {
+		position: absolute;
+		inset-inline: 0;
+		top: 100%;
+		z-index: 20;
+		margin-top: 0.25rem;
+		overflow: hidden;
+		border: 1px solid var(--color-line-strong);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface-2);
+	}
+	.combobox-filter {
+		width: 100%;
+		padding: 0.25rem 0.5rem;
+		border-bottom: 1px solid var(--color-line);
+		background-color: var(--color-surface-3);
+		font-size: 0.8125rem;
+		color: var(--color-content);
+		outline: none;
+	}
+	.combobox-option {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		width: 100%;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.8125rem;
+		text-align: left;
+		color: var(--color-muted);
+
+		&[data-active='true'] {
+			background-color: var(--color-surface-3);
+			color: var(--color-content);
+		}
+		&[aria-selected='true'] {
+			color: var(--color-content);
+			font-weight: 500;
+		}
+	}
+	.combobox-badge {
+		flex-shrink: 0;
+		padding-inline: 0.25rem;
+		border-radius: var(--radius-sm);
+		background-color: var(--color-surface-4);
+		font-size: 0.5625rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		color: var(--color-muted);
+	}
+	.combobox-action {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		width: 100%;
+		padding: 0.375rem 0.5rem;
+		border-top: 1px solid var(--color-line);
+		background-color: var(--color-surface-3);
+		font-size: 0.75rem;
+		font-weight: 500;
+		text-align: left;
+		color: var(--color-muted);
+
+		&:hover {
+			color: var(--color-content);
+			background-color: var(--color-surface-4);
+		}
+	}
+}

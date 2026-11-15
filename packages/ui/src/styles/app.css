@@ -7,6 +7,8 @@
 @import './components/segmented.css';
 @import './components/number-stepper.css';
 @import './components/slider.css';
+@import './components/input.css';
+@import './components/combobox.css';
 
 @source '../';
 @custom-variant dark (&:where(.dark, .dark *));

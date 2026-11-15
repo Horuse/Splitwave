@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { MeterBar } from '@splitwave/ui';
+	import { Combobox, MeterBar } from '@splitwave/ui';
 	import { LUFS_SILENT } from '$lib/modules/pipeline/generated/engine';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
@@ -10,7 +10,6 @@
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
-	import { Combobox } from '$lib/modules/form/ui';
 
 	type LufsMeterNodeType = Node<LufsMeterNodeData, 'lufsMeter'>;
 	let { id, data }: NodeProps<LufsMeterNodeType> = $props();
@@ -355,7 +354,7 @@
 
 		<!-- delivery profile -->
 		<div class="flex flex-col gap-0.5">
-			<Combobox options={PROFILES.map((p) => ({ value: p.id, label: p.label }))} value={profile.id} size="sm" onChange={setProfile} />
+			<Combobox class="nodrag nopan" options={PROFILES.map((p) => ({ value: p.id, label: p.label }))} value={profile.id} size="sm" onChange={setProfile} />
 			<span class="text-[8px] leading-tight text-neutral-500">{profile.note}</span>
 		</div>
 

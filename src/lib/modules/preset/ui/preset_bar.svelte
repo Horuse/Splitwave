@@ -1,5 +1,5 @@
 <script lang="ts" generics="K extends PresetKind">
-	import { Combobox, ComboboxAction } from '$lib/modules/form/ui';
+	import { Combobox, ComboboxAction } from '@splitwave/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import Delete from '~icons/fluent/delete-16-filled';
 	import Add from '~icons/fluent/add-24-filled';

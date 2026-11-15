@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Slider } from '@splitwave/ui';
+	import { Combobox, ComboboxAction, RescanButton, Slider } from '@splitwave/ui';
 	import { goto } from '$app/navigation';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MicrophoneNodeData } from '$lib/modules/pipeline/types';
@@ -9,7 +9,6 @@
 	import { useDeviceInfo } from '$lib/modules/audio';
 	import Wrapper from '../node.svelte';
 	import InputMeter from './_input_meter.svelte';
-	import { Combobox, ComboboxAction, RescanButton } from '$lib/modules/form/ui';
 	import Mic from '~icons/fluent/mic-16-filled';
 	import Add from '~icons/fluent/add-24-filled';
 	import { onNodeAction } from '$lib/modules/flow/utils';
@@ -70,7 +69,7 @@
 
 <Wrapper label="Microphone" accent="input" icon={Mic} {srcTooltip}>
 	<div class="flex w-50 flex-col gap-2">
-		<Combobox class="w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
+		<Combobox class="nodrag nopan w-full" {options} value={data.deviceId ?? null} placeholder="— Select microphone —" onChange={setDevice} onOpen={() => refresh()}>
 			{#snippet footer(close)}
 				<RescanButton onRescan={refresh} />
 				{#if !isWindows}

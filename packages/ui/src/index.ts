@@ -5,3 +5,6 @@ export * from './number-stepper';
 export * from './slider';
 export * from './meter-bar';
 export * from './signal-bars';
+export * from './input';
+export * from './password-input';
+export * from './combobox';

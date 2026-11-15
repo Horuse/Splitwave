@@ -86,6 +86,7 @@
 			| 'keepRunningOnDisconnect'
 			| 'pipelineSampleRate'
 			| 'bufferFrames'
+			| 'animatedNumbers'
 	>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
@@ -135,6 +136,12 @@
 				<span class="font-mono text-xs text-neutral-800 tabular-nums">%</span>
 				<Chip disabled={appSettings.uiScale === 100} onclick={() => appSettings.setUiScale(100)}>Reset</Chip>
 			</div>
+
+			<Toggle
+				checked={appSettings.animatedNumbers}
+				label="Animated numbers"
+				hint="Timers and latency roll their digits when they change. Off shows the new value at once."
+				onChange={() => setApp('animatedNumbers', !appSettings.animatedNumbers)} />
 
 			<Separator />
 

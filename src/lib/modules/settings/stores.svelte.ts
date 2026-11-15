@@ -17,6 +17,7 @@ interface Stored {
 	pipelineSampleRate: number;
 	bufferFrames: number;
 	uiScale: number;
+	animatedNumbers: boolean;
 }
 
 const DEFAULTS: Stored = {
@@ -30,7 +31,8 @@ const DEFAULTS: Stored = {
 	keepRunningOnDisconnect: true,
 	pipelineSampleRate: DEFAULT_SAMPLE_RATE,
 	bufferFrames: DEFAULT_BUFFER_FRAMES,
-	uiScale: 100
+	uiScale: 100,
+	animatedNumbers: true
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
@@ -67,6 +69,7 @@ class AppSettings {
 		(BUFFER_FRAME_PRESETS as readonly number[]).includes(this.#initial.bufferFrames) ? this.#initial.bufferFrames : DEFAULTS.bufferFrames
 	);
 	uiScale = $state(this.#initial.uiScale ?? 100);
+	animatedNumbers = $state(this.#initial.animatedNumbers ?? true);
 
 	persist(): void {
 		if (!browser) return;
@@ -81,7 +84,8 @@ class AppSettings {
 			keepRunningOnDisconnect,
 			pipelineSampleRate,
 			bufferFrames,
-			uiScale
+			uiScale,
+			animatedNumbers
 		} = this;
 		window.localStorage.setItem(
 			KEY,
@@ -96,7 +100,8 @@ class AppSettings {
 				keepRunningOnDisconnect,
 				pipelineSampleRate,
 				bufferFrames,
-				uiScale
+				uiScale,
+				animatedNumbers
 			})
 		);
 	}

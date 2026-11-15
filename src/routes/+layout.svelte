@@ -12,7 +12,7 @@
 	import { UpdateBanner } from '$lib/modules/updater/ui';
 	import { DebugPanel } from '$lib/modules/debug';
 	import { loadAppInfo } from '$lib/modules/app_info';
-	import { watchSmoothRadius } from '@splitwave/ui';
+	import { numberAnimations, watchSmoothRadius } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import { fade } from 'svelte/transition';
 	import AppSidebar from '$lib/components/layout/app_sidebar.svelte';
@@ -102,6 +102,10 @@
 	}
 
 	onMount(() => watchSmoothRadius());
+
+	$effect(() => {
+		numberAnimations.enabled = appSettings.animatedNumbers;
+	});
 
 	onMount(async () => {
 		logStore.installConsoleCapture();

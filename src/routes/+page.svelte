@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { goto } from '$app/navigation';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
@@ -83,20 +84,20 @@
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-semibold">Pipelines</h1>
 
-		<button class="button-main primary gap-1.5 p-6 py-2" onclick={createPipeline}>
+		<Button onclick={createPipeline}>
 			<Add class="size-4" />
 			New pipeline
-		</button>
+		</Button>
 	</div>
 
 	{#if pipelineStore.pipelines.length === 0}
 		<div class="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-400 py-16">
 			<SoundWave class="size-10 text-neutral-600" />
 			<p class="text-sm text-neutral-900">No pipelines yet. Create one to get started.</p>
-			<button class="button-main primary gap-1.5 py-1.5" onclick={createPipeline}>
+			<Button onclick={createPipeline}>
 				<Add class="size-4" />
 				New pipeline
-			</button>
+			</Button>
 		</div>
 	{:else}
 		<ul class="flex flex-col gap-4">
@@ -127,8 +128,8 @@
 						</div>
 					</svelte:element>
 					<div class="mx-4 flex h-full items-center gap-2 py-3.5">
-						<button
-							class={['btn-green py-2', !audioStore.isRunning && 'green', audioStore.isRunning && audioStore.runningPipelineId === p.id && 'red']}
+						<Button
+							tone={audioStore.isRunning && audioStore.runningPipelineId === p.id ? 'danger' : 'success'}
 							disabled={stale || !!busy || (audioStore.isRunning && audioStore.runningPipelineId !== p.id)}
 							onclick={(e) => toggle(p.id, e)}>
 							{#if busy === p.id}
@@ -140,11 +141,11 @@
 								<Play class="size-3.5" />
 								Activate
 							{/if}
-						</button>
-						<button class="btn-alert py-2" onclick={(e) => remove(p.id, p.name, e)} aria-label="Delete pipeline">
+						</Button>
+						<Button tone="danger" onclick={(e) => remove(p.id, p.name, e)} aria-label="Delete pipeline">
 							<Delete class="size-3.5" />
 							Delete
-						</button>
+						</Button>
 					</div>
 				</li>
 			{/each}

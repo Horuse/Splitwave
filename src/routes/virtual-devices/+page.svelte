@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
 	import { methods } from '$lib/modules/audio/methods';
@@ -153,11 +154,11 @@
 					</div>
 				</div>
 				{#if status?.installed}
-					<button class="btn-alert h-full py-1.5" onclick={uninstall}>Uninstall</button>
+					<Button tone="danger" class="h-full" onclick={uninstall}>Uninstall</Button>
 				{:else}
-					<button class="btn-alert h-full py-1.5" onclick={installDriver} disabled={installing}>
+					<Button tone="danger" class="h-full" onclick={installDriver} disabled={installing}>
 						{installing ? 'Installing...' : 'Install'}
-					</button>
+					</Button>
 				{/if}
 			</div>
 
@@ -172,10 +173,10 @@
 			<div class="flex flex-col gap-4">
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-medium">Devices</h2>
-					<button class="button-main primary gap-1.5 py-1.5" onclick={addDevice}>
+					<Button onclick={addDevice}>
 						<Add class="size-4" />
 						Add device
-					</button>
+					</Button>
 				</div>
 
 				{#if devices.length === 0}
@@ -198,9 +199,9 @@
 									<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">
 										{d.id.slice(0, 8)}
 									</span>
-									<button class="btn-alert px-2.5 py-2" onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
+									<Button tone="danger" onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
 										<Delete class="size-4" />
-									</button>
+									</Button>
 								</div>
 								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 									<div class="flex items-center gap-2">
@@ -275,9 +276,9 @@
 			{/if}
 
 			<div class="flex items-center gap-4">
-				<button class="button-main primary px-8 py-2" onclick={apply} disabled={applying}>
+				<Button onclick={apply} disabled={applying}>
 					{applying ? 'Applying...' : 'Apply'}
-				</button>
+				</Button>
 			</div>
 		{/if}
 	{/if}

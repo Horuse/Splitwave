@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import type { Snippet } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { themeStore } from '$lib/modules/theme/stores';
@@ -59,22 +60,18 @@
 	<div class="ml-auto flex flex-row items-center gap-4">
 		{@render right?.()}
 
-		<button
-			class="button-header size-7"
-			aria-label="Theme toggle"
-			title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`}
-			onclick={cycleTheme}>
+		<Button icon aria-label="Theme toggle" title={$themeStore === 'system' ? 'Theme: system' : `Theme: ${$themeStore}`} onclick={cycleTheme}>
 			<svg class="size-4 fill-current" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"
 				><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm0-2V4a8 8 0 1 1 0 16Z" /></svg>
-		</button>
+		</Button>
 
 		{#if customTitlebar}
 			<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
 				{#snippet trigger()}
-					<button type="button" class="button-header size-7" aria-label="Menu">
+					<Button icon type="button" aria-label="Menu">
 						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 							><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
-					</button>
+					</Button>
 				{/snippet}
 
 				<div class="min-w-48 overflow-hidden rounded-lg border border-neutral-400 bg-neutral-100 py-1 shadow-lg">
@@ -88,18 +85,18 @@
 			</Popover>
 
 			<div class="flex items-center gap-0.5">
-				<button class="button-header size-7" aria-label="Minimize" onclick={() => win?.minimize()}>
+				<Button icon aria-label="Minimize" onclick={() => win?.minimize()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M5 12h14" /></svg>
-				</button>
-				<button class="button-header size-7" aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
+				</Button>
+				<Button icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
 					<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
-				</button>
-				<button class="button-header size-7 hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
+				</Button>
+				<Button icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
 					<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
 						><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
-				</button>
+				</Button>
 			</div>
 		{/if}
 	</div>
@@ -113,7 +110,7 @@
 			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase">Safe Mode</span>
 			<span>Auto-starting audio pipeline was skipped because Splitwave crashed last time.</span>
 		</div>
-		<button type="button" class="btn-warning px-3 py-0.5 text-xs" onclick={() => (audioStore.safeMode = false)}> Dismiss </button>
+		<Button tone="warning" type="button" onclick={() => (audioStore.safeMode = false)}> Dismiss </Button>
 	</div>
 {/if}
 

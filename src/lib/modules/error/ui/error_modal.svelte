@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { errorStore } from '../stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
@@ -159,9 +160,9 @@
 		</div>
 
 		{#snippet footer()}
-			<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
-			<CopyButton text={() => buildDetails()} label="Copy details" class="button-main primary gap-3 rounded-lg" />
-			<button type="button" class="button-main red rounded-lg" onclick={reportOnGitHub}> Report on GitHub </button>
+			<Button onclick={dismiss}> Dismiss </Button>
+			<CopyButton text={() => buildDetails()} label="Copy details" />
+			<Button tone="danger" type="button" onclick={reportOnGitHub}> Report on GitHub </Button>
 		{/snippet}
 	</ModalShell>
 {/if}

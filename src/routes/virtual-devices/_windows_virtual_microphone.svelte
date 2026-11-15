@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { onMount } from 'svelte';
 	import { Plug } from '$lib/components/icons';
@@ -124,11 +125,11 @@
 			{/if}
 		</div>
 		{#if !checking && status?.state === 'notInstalled'}
-			<button type="button" class="button-main green rounded-lg" onclick={install} disabled={installing}>
+			<Button tone="success" type="button" onclick={install} disabled={installing}>
 				{installing ? 'Installing...' : 'Install virtual microphone'}
-			</button>
+			</Button>
 		{:else if !installing && (issue || needsRestart || incomplete || status?.state === 'unknownOwnership')}
-			<button type="button" class="button-main primary rounded-lg" onclick={() => loadStatus(true)}>Check again</button>
+			<Button onclick={() => loadStatus(true)}>Check again</Button>
 		{/if}
 	</div>
 

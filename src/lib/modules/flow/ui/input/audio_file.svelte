@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
@@ -213,20 +214,14 @@
 		{/if}
 
 		<div class="flex items-center gap-1">
-			<button
-				type="button"
-				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
-				onclick={chooseFile}>
+			<Button class="nodrag nopan flex-1" type="button" onclick={chooseFile}>
 				<Folder class="size-3.5" />
 				Choose file
-			</button>
+			</Button>
 			<Tooltip text="Start playback automatically when the pipeline runs">
-				<button
-					type="button"
-					class={['nodrag nopan button-main primary size-7 rounded-lg p-0', (data.autoStart ?? true) && 'active']}
-					onclick={toggleAutoStart}>
+				<Button icon class="nodrag nopan" active={data.autoStart ?? true} onclick={toggleAutoStart}>
 					<Autoplay class="size-3.5" />
-				</button>
+				</Button>
 			</Tooltip>
 		</div>
 
@@ -247,48 +242,45 @@
 			<div class="flex items-center justify-center gap-1">
 				<span class="relative flex">
 					<Tooltip text="Stop and rewind to start">
-						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={stop}>
+						<Button size="sm" icon class="nodrag nopan" type="button" disabled={!canControl} onclick={stop}>
 							<Stop class="size-3" />
-						</button>
+						</Button>
 					</Tooltip>
 					<ActionSocket nodeId={id} action="stop" onTrigger={stop} />
 				</span>
 				<span class="relative flex">
 					<Tooltip text="Skip back 5 seconds">
-						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipBack}>
+						<Button size="sm" icon class="nodrag nopan" type="button" disabled={!canControl} onclick={skipBack}>
 							<SkipBack5 class="size-3" />
-						</button>
+						</Button>
 					</Tooltip>
 					<ActionSocket nodeId={id} action="back" onTrigger={skipBack} />
 				</span>
 				<span class="relative flex">
 					<Tooltip text={playing ? 'Pause playback' : 'Play'}>
-						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={togglePlayPause}>
+						<Button size="sm" icon class="nodrag nopan" type="button" disabled={!canControl} onclick={togglePlayPause}>
 							{#if playing}
 								<Pause class="size-3" />
 							{:else}
 								<Play class="size-3" />
 							{/if}
-						</button>
+						</Button>
 					</Tooltip>
 					<ActionSocket nodeId={id} action="play" onTrigger={togglePlayPause} />
 				</span>
 				<span class="relative flex">
 					<Tooltip text="Skip forward 5 seconds">
-						<button type="button" class="nodrag nopan button-main primary size-6 rounded-lg p-0" disabled={!canControl} onclick={skipForward}>
+						<Button size="sm" icon class="nodrag nopan" type="button" disabled={!canControl} onclick={skipForward}>
 							<SkipForward5 class="size-3" />
-						</button>
+						</Button>
 					</Tooltip>
 					<ActionSocket nodeId={id} action="forward" onTrigger={skipForward} />
 				</span>
 				<span class="relative flex">
 					<Tooltip text={data.loopEnabled ? 'Looping on: restart at end' : 'Loop off: stop at end'}>
-						<button
-							type="button"
-							class={['nodrag nopan button-main primary size-6 rounded-lg p-0', data.loopEnabled && 'active']}
-							onclick={toggleLoop}>
+						<Button size="sm" icon class="nodrag nopan" active={data.loopEnabled} onclick={toggleLoop}>
 							<Loop class="size-3" />
-						</button>
+						</Button>
 					</Tooltip>
 					<ActionSocket nodeId={id} action="loop" onTrigger={toggleLoop} />
 				</span>

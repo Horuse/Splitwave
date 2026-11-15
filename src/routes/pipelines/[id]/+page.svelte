@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import type { Pipeline } from '$lib/modules/pipeline/types';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
@@ -81,7 +82,7 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-3">
-			<a href="/" class="button-header px-4 text-sm">← Back</a>
+			<Button href="/">← Back</Button>
 			{#if pipeline}
 				<div class="relative">
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
@@ -129,7 +130,7 @@
 				</span>
 				<span>Update Splitwave to open it.</span>
 			</div>
-			<a href="/" class="button-main primary rounded-lg text-sm">Back to pipelines</a>
+			<Button href="/">Back to pipelines</Button>
 		</div>
 	{:else if pipeline}
 		<Flow.ui.Flow {pipeline} />

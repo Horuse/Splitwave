@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '../../modal';
 	import Toggle from '$lib/components/toggle.svelte';
 
@@ -44,11 +45,11 @@
 	{/if}
 
 	<div class="flex justify-end gap-2">
-		<button type="button" class="button-main primary rounded-lg" onclick={() => close(false)}>
+		<Button onclick={() => close(false)}>
 			{cancelLabel}
-		</button>
-		<button type="button" class={['button-main rounded-lg', danger ? 'red' : 'green']} onclick={() => close(true)}>
+		</Button>
+		<Button tone={danger ? 'danger' : 'success'} onclick={() => close(true)}>
 			{confirmLabel}
-		</button>
+		</Button>
 	</div>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import { logStore } from '../stores.svelte';
@@ -120,8 +121,8 @@
 	</div>
 
 	{#snippet footer()}
-		<button type="button" class="button-main primary rounded-lg" onclick={() => logStore.clear()}> Clear </button>
+		<Button onclick={() => logStore.clear()}> Clear </Button>
 		<CopyButton text={() => asText(filtered)} label="Copy" />
-		<button type="button" class="button-main green rounded-lg" onclick={() => (logStore.open = false)}> Close </button>
+		<Button tone="success" type="button" onclick={() => (logStore.open = false)}> Close </Button>
 	{/snippet}
 </ModalShell>

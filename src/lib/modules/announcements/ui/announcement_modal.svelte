@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import Markdown from '$lib/components/markdown.svelte';
 	import { announcementStore } from '../stores.svelte';
@@ -55,14 +56,14 @@
 	</div>
 
 	<div class="flex items-center justify-end gap-2 px-5 pt-2 pb-4">
-		<button type="button" class="button-main primary rounded-lg" onclick={dismiss}>
+		<Button onclick={dismiss}>
 			{totalModals > 1 ? 'Next' : 'Close'}
-		</button>
+		</Button>
 
 		{#if announcement.action}
-			<button type="button" class="button-main secondary rounded-lg" onclick={performAction}>
+			<Button variant="solid" type="button" onclick={performAction}>
 				{announcement.action.label}
-			</button>
+			</Button>
 		{/if}
 	</div>
 </div>

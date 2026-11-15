@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { updaterStore } from '../stores.svelte';
 	import { installUpdate, skipVersion } from '../methods';
 	import { ModalShell } from '$lib/modules/overlay/ui';
@@ -117,16 +118,16 @@
 
 		{#snippet footer()}
 			{#if s.phase === 'up_to_date'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> OK </button>
+				<Button onclick={dismiss}> OK </Button>
 			{:else if s.phase === 'available'}
-				<button type="button" class="button-main primary rounded-lg" onclick={onSkip}> Skip this version </button>
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Later </button>
-				<button type="button" class="button-main green rounded-lg" onclick={installUpdate}> Install &amp; restart </button>
+				<Button onclick={onSkip}> Skip this version </Button>
+				<Button onclick={dismiss}> Later </Button>
+				<Button tone="success" type="button" onclick={installUpdate}> Install &amp; restart </Button>
 			{:else if s.phase === 'error'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> Dismiss </button>
-				<CopyButton text={s.message} label="Copy error" class="button-main red gap-3 rounded-lg" />
+				<Button onclick={dismiss}> Dismiss </Button>
+				<CopyButton text={s.message} label="Copy error" tone="danger" />
 			{:else if s.phase === 'unsupported'}
-				<button type="button" class="button-main primary rounded-lg" onclick={dismiss}> OK </button>
+				<Button onclick={dismiss}> OK </Button>
 			{/if}
 		{/snippet}
 	</ModalShell>

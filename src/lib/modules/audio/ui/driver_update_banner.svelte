@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { methods } from '$lib/modules/audio/methods';
 	import type { VirtualDriverStatus } from '$lib/modules/audio/types';
 
@@ -41,8 +42,8 @@
 				service). Your virtual devices are kept.
 			</p>
 		</div>
-		<button class="btn-warning h-full py-1.5" onclick={update} disabled={updating}>
+		<Button tone="warning" class="h-full" onclick={update} disabled={updating}>
 			{updating ? 'Updating...' : 'Update'}
-		</button>
+		</Button>
 	</div>
 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { useNodeConnections, useSvelteFlow, Position, type Node, type NodeProps } from '@xyflow/svelte';
 	import Handle from '../_handle.svelte';
@@ -316,9 +317,9 @@
 
 		{#if phase === 'idle'}
 			<PasswordInput bind:value={password} placeholder="Password (optional)" />
-			<button class="nodrag nopan button-main primary h-6 rounded-md px-2 font-mono text-[10px]" disabled={busy} onclick={createRoom}>
+			<Button size="sm" class="nodrag nopan font-mono" disabled={busy} onclick={createRoom}>
 				{busy ? 'creating…' : 'Create room'}
-			</button>
+			</Button>
 			<hr class="border-neutral-200" />
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
@@ -328,18 +329,14 @@
 				bind:value={joinInput} />
 			<div class="flex gap-1">
 				<PasswordInput bind:value={joinPassword} placeholder="Password" />
-				<button
-					class="nodrag nopan button-main primary h-6 rounded-md px-3 font-mono text-[10px]"
-					disabled={busy || joinInput.trim().length < 6}
-					onclick={joinRoom}>
+				<Button size="sm" class="nodrag nopan font-mono" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>
 					Join
-				</button>
+				</Button>
 			</div>
 		{:else if phase === 'hosting'}
 			<div class="flex items-center justify-between">
 				<span class="font-mono text-[9px] text-neutral-500">Room code</span>
-				<button class="nodrag nopan button-main secondary h-4 rounded px-1.5 font-mono text-[9px]" onclick={() => copy(roomCode)}
-					>{copied ? 'copied!' : 'copy'}</button>
+				<Button variant="solid" size="xs" class="nodrag nopan font-mono" onclick={() => copy(roomCode)}>{copied ? 'copied!' : 'copy'}</Button>
 			</div>
 			<div class="flex items-center justify-between rounded border border-neutral-300 bg-neutral-50 px-2 py-1">
 				<span class="font-mono text-base font-bold tracking-widest text-neutral-900">{roomCode}</span>
@@ -347,13 +344,13 @@
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
 			{/if}
-			<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={destroy}> Destroy </button>
+			<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={destroy}> Destroy </Button>
 		{:else if phase === 'joining'}
 			{#if peers.length === 0}
 				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={cancel}> Cancel </button>
+				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={cancel}> Cancel </Button>
 			{:else}
-				<button class="nodrag nopan button-main red h-6 rounded-md px-2 font-mono text-[10px]" onclick={leave}> Leave </button>
+				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={leave}> Leave </Button>
 			{/if}
 		{/if}
 
@@ -393,12 +390,14 @@
 						</span>
 					</div>
 					<div class="flex gap-1">
-						<button
-							class={['nodrag nopan button-main h-4 rounded px-1 font-mono text-[9px]', peer.muted ? 'secondary' : 'green']}
+						<Button
+							size="xs"
+							tone={peer.muted ? 'neutral' : 'success'}
+							class="nodrag nopan font-mono"
 							onclick={() => toggleMute(peer.peerId, peer.muted)}>
 							{peer.muted ? 'M' : 'ON'}
-						</button>
-						<button class="nodrag nopan button-main red h-4 rounded px-1 font-mono text-[9px]" onclick={() => disconnect(peer.peerId)}> x </button>
+						</Button>
+						<Button tone="danger" size="xs" class="nodrag nopan font-mono" onclick={() => disconnect(peer.peerId)}> x </Button>
 					</div>
 					<Handle type="source" id={peerHandle(peer.peerId)} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
 				</div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 
 	let { modalId, taken = [] }: ModalBaseProps & { taken?: string[] } = $props();
@@ -36,7 +37,7 @@
 	</div>
 
 	<div class="flex justify-end gap-2 px-5 pb-4">
-		<button type="button" class="button-main primary rounded-lg" onclick={() => modalManager.close(modalId, undefined)}> Cancel </button>
-		<button type="submit" class="button-main green rounded-lg" disabled={!valid}>Save</button>
+		<Button onclick={() => modalManager.close(modalId, undefined)}> Cancel </Button>
+		<Button tone="success" type="submit" disabled={!valid}>Save</Button>
 	</div>
 </form>

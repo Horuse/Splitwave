@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { audioStore } from '../stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 
@@ -28,7 +29,7 @@
 	}
 </script>
 
-<button class={['button-main primary rounded-lg px-4 py-0', !audioStore.isRunning && 'green', audioStore.isRunning && 'red']} disabled={busy} onclick={toggle}>
+<Button tone={audioStore.isRunning ? 'danger' : 'success'} disabled={busy} onclick={toggle}>
 	{#if busy}
 		…
 	{:else if audioStore.isRunning}
@@ -36,4 +37,4 @@
 	{:else}
 		Activate
 	{/if}
-</button>
+</Button>

@@ -1,16 +1,17 @@
 <script lang="ts">
+	import { Button, type ButtonVariants } from '@splitwave/ui';
 	import { Copy, Checkmark } from '$lib/components/icons';
 
 	let {
 		text,
 		label = 'Copy',
 		copiedLabel = 'Copied!',
-		class: className = 'button-main primary gap-3 rounded-lg'
+		tone
 	}: {
 		text: string | (() => string);
 		label?: string;
 		copiedLabel?: string;
-		class?: string;
+		tone?: ButtonVariants['tone'];
 	} = $props();
 
 	let copied = $state(false);
@@ -26,7 +27,7 @@
 	}
 </script>
 
-<button type="button" class={className} onclick={copy}>
+<Button {tone} onclick={copy}>
 	{#if copied}
 		<Checkmark class="size-4" />
 		{copiedLabel}
@@ -34,4 +35,4 @@
 		<Copy class="size-4" />
 		{label}
 	{/if}
-</button>
+</Button>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -657,18 +658,15 @@
 			{basename(data.filePath)}
 		</div>
 		<div class="flex gap-1">
-			<button
-				type="button"
-				class="nodrag nopan button-main primary flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg py-0 text-xs"
-				onclick={chooseFile}>
+			<Button class="nodrag nopan flex-1" type="button" onclick={chooseFile}>
 				<Folder class="size-3.5" />
 				Choose file
-			</button>
+			</Button>
 			<Tooltip
 				text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
-				<button type="button" class="nodrag nopan button-main primary size-7 shrink-0 rounded-lg p-0" disabled={!data.filePath} onclick={revealFolder}>
+				<Button icon class="nodrag nopan shrink-0" type="button" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
-				</button>
+				</Button>
 			</Tooltip>
 		</div>
 
@@ -820,13 +818,13 @@
 				{/if}
 			</span>
 			<Tooltip text={waveVisible ? 'Hide waveform' : 'Show waveform'}>
-				<button type="button" class="nodrag nopan button-main primary size-4 p-0" onclick={toggleWaveform}>
+				<Button size="xs" icon class="nodrag nopan" type="button" onclick={toggleWaveform}>
 					{#if waveVisible}
 						<EyeOff class="size-2.5" />
 					{:else}
 						<Eye class="size-2.5" />
 					{/if}
-				</button>
+				</Button>
 			</Tooltip>
 		</div>
 		{#if waveVisible}

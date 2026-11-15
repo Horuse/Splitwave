@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { fly } from 'svelte/transition';
 	import { invoke } from '@tauri-apps/api/core';
 	import type { Update } from '@tauri-apps/plugin-updater';
@@ -268,7 +269,7 @@
 		</div>
 	{/if}
 
-	<button type="button" class="button-header size-7 px-3 text-xs" onclick={() => (open = !open)} title="Dev triggers">
+	<Button icon type="button" onclick={() => (open = !open)} title="Dev triggers">
 		{open ? 'Close' : 'Dev'}
-	</button>
+	</Button>
 </div>

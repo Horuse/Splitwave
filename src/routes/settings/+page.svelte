@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
 	import { onMount } from 'svelte';
 	import Header from '$lib/components/layout/header.svelte';
@@ -387,6 +388,6 @@
 
 		<PresetsSection />
 
-		<button type="button" class="button-main primary self-start text-xs" onclick={() => resetAll()}> Reset to defaults </button>
+		<Button class="self-start" type="button" onclick={() => resetAll()}> Reset to defaults </Button>
 	</div>
 </div>

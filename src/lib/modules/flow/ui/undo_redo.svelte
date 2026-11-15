@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { onMount } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { ArrowUndo, ArrowRedo } from '$lib/components/icons';
@@ -46,10 +47,10 @@
 </script>
 
 <div class="flex items-center gap-1">
-	<button type="button" class="button-header size-7" class:active={undoActive} title="Undo (⌘Z)" disabled={!canUndo} onclick={onUndo}>
+	<Button icon active={undoActive} type="button" title="Undo (⌘Z)" disabled={!canUndo} onclick={onUndo}>
 		<ArrowUndo class="h-4 w-4" />
-	</button>
-	<button type="button" class="button-header size-7" class:active={redoActive} title="Redo (⇧⌘Z)" disabled={!canRedo} onclick={onRedo}>
+	</Button>
+	<Button icon active={redoActive} type="button" title="Redo (⇧⌘Z)" disabled={!canRedo} onclick={onRedo}>
 		<ArrowRedo class="h-4 w-4" />
-	</button>
+	</Button>
 </div>

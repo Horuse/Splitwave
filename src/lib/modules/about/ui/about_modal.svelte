@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Button } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
@@ -59,7 +60,7 @@
 		{/each}
 	</div>
 
-	<button type="button" class="button-main primary rounded-lg" onclick={close}>Close</button>
+	<Button onclick={close}>Close</Button>
 
 	<div class="flex flex-col items-center gap-1 text-center text-[10px] text-neutral-900">
 		<p>

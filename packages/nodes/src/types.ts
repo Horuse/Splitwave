@@ -164,6 +164,8 @@ export interface PipelineNode<K extends NodeKind = NodeKind> {
 	position: { x: number; y: number };
 	width?: number;
 	height?: number;
+	/** Last rendered size, for previews only; never fed back into the editor. */
+	measured?: { width: number; height: number };
 }
 
 export interface PipelineEdge {

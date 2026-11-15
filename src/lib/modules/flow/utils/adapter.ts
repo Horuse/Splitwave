@@ -35,7 +35,8 @@ export function fromXyNodes(xyNodes: XyNode[]): PipelineNode[] {
 				position: { x: n.position.x, y: n.position.y },
 				data: { ...(n.data as Record<string, unknown>) } as PipelineNode['data'],
 				...(n.width != null && { width: n.width }),
-				...(n.height != null && { height: n.height })
+				...(n.height != null && { height: n.height }),
+				...(n.measured?.width != null && n.measured.height != null && { measured: { width: n.measured.width, height: n.measured.height } })
 			}
 		];
 	});

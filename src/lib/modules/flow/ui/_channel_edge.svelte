@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { BaseEdge, getBezierPath, getSmoothStepPath, getStraightPath, type EdgeProps } from '@xyflow/svelte';
+	import { BaseEdge, type EdgeProps } from '@xyflow/svelte';
 	import { CONTROL_DASH, darken, handleColor, signalOf } from '$lib/modules/flow/utils';
-	import { edgeSettings } from '../edge_settings.svelte';
+	import { edgePath, edgeSettings } from '../edge_settings.svelte';
 	import { controlSignals } from '../control.svelte';
 
 	let { id, source, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, sourceHandleId, selected, markerEnd }: EdgeProps = $props();
@@ -13,19 +13,7 @@
 	let live = $derived(control && !!sourceHandleId && controlSignals.read(source, sourceHandleId));
 	let color = $derived(live ? 'var(--color-signal)' : handleColor(sourceHandleId));
 
-	let path = $derived.by(() => {
-		const p = { sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition };
-		switch (edgeSettings.shape) {
-			case 'straight':
-				return getStraightPath(p)[0];
-			case 'step':
-				return getSmoothStepPath({ ...p, borderRadius: 0 })[0];
-			case 'smoothstep':
-				return getSmoothStepPath(p)[0];
-			default:
-				return getBezierPath(p)[0];
-		}
-	});
+	let path = $derived(edgePath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition }));
 </script>
 
 <!-- BaseEdge stays underneath for xyflow's hit area and selection styling. -->

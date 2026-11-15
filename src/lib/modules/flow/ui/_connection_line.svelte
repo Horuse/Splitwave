@@ -1,24 +1,10 @@
 <script lang="ts">
-	import { getBezierPath, getSmoothStepPath, getStraightPath, useConnection } from '@xyflow/svelte';
+	import { useConnection } from '@xyflow/svelte';
 	import { CONTROL_DASH, channelColor, channelHandle, channelOf, signalOf } from '$lib/modules/flow/utils';
-	import { edgeSettings } from '../edge_settings.svelte';
+	import { edgePath } from '../edge_settings.svelte';
 	import { channelSelection } from '$lib/modules/flow/stores.svelte';
 
 	const connection = useConnection();
-
-	type Route = Parameters<typeof getBezierPath>[0];
-	function routeOf(p: Route): string {
-		switch (edgeSettings.shape) {
-			case 'straight':
-				return getStraightPath(p)[0];
-			case 'step':
-				return getSmoothStepPath({ ...p, borderRadius: 0 })[0];
-			case 'smoothstep':
-				return getSmoothStepPath(p)[0];
-			default:
-				return getBezierPath(p)[0];
-		}
-	}
 
 	let dash = $derived(signalOf(connection.current.fromHandle?.id) === 'control' ? CONTROL_DASH : undefined);
 
@@ -53,7 +39,7 @@
 		return points.map((p) => ({
 			ch: p.ch,
 			color: p.ch === null ? '#a3a3a3' : channelColor(p.ch - 1),
-			path: routeOf({
+			path: edgePath({
 				sourceX: p.x,
 				sourceY: p.y,
 				sourcePosition: c.fromPosition,

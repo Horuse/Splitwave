@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { getBezierPath, getSmoothStepPath, getStraightPath } from '@xyflow/svelte';
 
 export type EdgeShape = 'bezier' | 'smoothstep' | 'step' | 'straight';
 
@@ -43,3 +44,18 @@ class EdgeSettings {
 }
 
 export const edgeSettings = new EdgeSettings();
+
+type Route = Parameters<typeof getBezierPath>[0];
+
+export function edgePath(p: Route): string {
+	switch (edgeSettings.shape) {
+		case 'straight':
+			return getStraightPath(p)[0];
+		case 'step':
+			return getSmoothStepPath({ ...p, borderRadius: 0 })[0];
+		case 'smoothstep':
+			return getSmoothStepPath(p)[0];
+		default:
+			return getBezierPath(p)[0];
+	}
+}

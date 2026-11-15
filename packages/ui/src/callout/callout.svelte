@@ -1,0 +1,16 @@
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import type { ClassValue } from 'svelte/elements';
+
+	type Props = {
+		tone?: 'warning' | 'info' | 'success' | 'danger';
+		class?: ClassValue;
+		children?: Snippet;
+	};
+
+	let { tone = 'warning', class: className, children }: Props = $props();
+</script>
+
+<div class={['callout', tone !== 'warning' && `callout-${tone}`, className]} role="note">
+	{@render children?.()}
+</div>

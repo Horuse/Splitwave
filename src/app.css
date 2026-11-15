@@ -101,10 +101,6 @@
 }
 
 @layer components {
-    .warning-block {
-        @apply text-xs flex flex-col dark:border-amber-500/20 border-amber-600/50 border-dashed border gap-2 bg-amber-500/20 dark:bg-amber-500/10 p-4 rounded-2xl text-amber-600;
-    }
-
     .node-spec {
         @apply font-mono text-[9px] text-neutral-600;
     }

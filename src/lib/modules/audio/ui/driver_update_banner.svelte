@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Callout } from '@splitwave/ui';
 	import { methods } from '$lib/modules/audio/methods';
 	import type { VirtualDriverStatus } from '$lib/modules/audio/types';
 
@@ -34,7 +34,7 @@
 </script>
 
 {#if status?.needsUpdate}
-	<div class="warning-block flex flex-row items-end justify-between">
+	<Callout class="flex-row items-end justify-between">
 		<div class="flex flex-col gap-3">
 			<span class="text-base font-bold">Driver update required</span>
 			<p>
@@ -45,5 +45,5 @@
 		<Button tone="warning" class="h-full" onclick={update} disabled={updating}>
 			{updating ? 'Updating...' : 'Update'}
 		</Button>
-	</div>
+	</Callout>
 {/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, NumberStepper } from '@splitwave/ui';
+	import { Button, Callout, Input, NumberStepper } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
 	import { methods } from '$lib/modules/audio/methods';
@@ -268,10 +268,10 @@
 			</div>
 
 			{#if dirty}
-				<div class="warning-block">
+				<Callout>
 					<strong>Changes not applied</strong>
 					Press Apply to update the system audio devices.
-				</div>
+				</Callout>
 			{/if}
 
 			{#if error}

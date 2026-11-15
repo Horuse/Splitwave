@@ -9,6 +9,7 @@
 @import './components/slider.css';
 @import './components/input.css';
 @import './components/combobox.css';
+@import './components/callout.css';
 
 @source '../';
 @custom-variant dark (&:where(.dark, .dark *));

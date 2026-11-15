@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Toggle } from '@splitwave/ui';
+	import { Button, Callout, Toggle } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '../../modal';
 
 	interface Props {
@@ -36,7 +36,7 @@
 	<p class="text-sm text-neutral-1100">{message}</p>
 
 	{#if warning}
-		<div class="warning-block">{warning}</div>
+		<Callout>{warning}</Callout>
 	{/if}
 
 	{#if checkboxLabel}

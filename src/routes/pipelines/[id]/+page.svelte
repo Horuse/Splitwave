@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input } from '@splitwave/ui';
+	import { Button, Callout, Input } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import type { Pipeline } from '$lib/modules/pipeline/types';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
@@ -121,14 +121,14 @@
 		<div class="p-8 text-sm text-gray-500">Pipeline not found.</div>
 	{:else if stale}
 		<div class="flex w-full flex-col items-start gap-4 p-8">
-			<div class="warning-block max-w-xl">
+			<Callout class="max-w-xl">
 				<span class="font-semibold">This pipeline was saved by a newer version of Splitwave.</span>
 				<span>
 					Its layout is not known to this build, so opening it would mean guessing at routing this version cannot represent. It is left untouched and
 					can still be deleted.
 				</span>
 				<span>Update Splitwave to open it.</span>
-			</div>
+			</Callout>
 			<Button href="/">Back to pipelines</Button>
 		</div>
 	{:else if pipeline}

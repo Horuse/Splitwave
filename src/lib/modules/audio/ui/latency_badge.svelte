@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Tooltip } from '@splitwave/ui';
+	import { Tooltip, smoothRadius } from '@splitwave/ui';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import { formatLatencyMs as ms } from '@splitwave/nodes';
 	import { latencyStore } from '../latency.svelte';
@@ -12,48 +12,80 @@
 	let rows = $derived(
 		path
 			? [
-					['Input device', path.inputDeviceMs],
-					['Input queue', path.inputQueueMs],
-					['Processing', path.processingMs],
-					['Output adapter', path.outputAdapterMs],
-					['Output device', path.outputDeviceMs]
-				].filter(([, v]) => (v as number) > 0.05)
+					{ label: 'Input device', value: path.inputDeviceMs, color: 'bg-sky-500' },
+					{ label: 'Input queue', value: path.inputQueueMs, color: 'bg-violet-500' },
+					{ label: 'Processing', value: path.processingMs, color: 'bg-brand' },
+					{ label: 'Output adapter', value: path.outputAdapterMs, color: 'bg-emerald-500' },
+					{ label: 'Output device', value: path.outputDeviceMs, color: 'bg-teal-500' }
+				].filter((r) => r.value > 0.05)
 			: []
 	);
+	let sum = $derived(rows.reduce((a, r) => a + r.value, 0) || 1);
 </script>
 
 {#if report && path}
 	<Tooltip placement="bottom">
-		<span class={['flex items-center gap-1.5 rounded-md border bg-background px-2 py-0.5', strained ? 'border-amber-500' : 'border-theme/10']}>
-			<Gauge class={['h-3.5 w-3.5', strained ? 'text-amber-600' : 'text-neutral-500']} />
-			<span class="font-mono text-xs text-neutral-800 tabular-nums">
+		<span
+			class={['flex h-7 items-center gap-1.5 border px-2.5', strained ? 'border-amber-500/60 bg-amber-500/10' : 'border-(--lv-3) bg-(--lv-1)']}
+			style="border-radius: var(--r, 10px)"
+			{@attach smoothRadius({ variable: '--r' })}>
+			<Gauge class={['size-4', strained ? 'text-amber-600' : 'text-neutral-900']} />
+			<span class="text-xs text-neutral-1100 tabular-nums">
 				{ms(path.totalMs)}{path.hardwareIncluded ? '' : '+'} ms
 			</span>
 		</span>
 		{#snippet content()}
-			<div class="flex min-w-44 flex-col gap-0.5">
-				<span class="text-neutral-1200">Round-trip latency</span>
-				{#each rows as [label, value] (label)}
-					<span class="flex justify-between gap-4 tabular-nums">
-						<span>{label}</span><span>{ms(value as number)} ms</span>
+			<div class="flex w-64 flex-col gap-3 py-1">
+				<div class="flex flex-col gap-0.5">
+					<span class="text-neutral-900">Round-trip latency</span>
+					<span class="text-2xl font-semibold text-theme tabular-nums">
+						{ms(path.totalMs)}{path.hardwareIncluded ? '' : '+'}<span class="ml-1 text-sm font-normal text-neutral-900">ms</span>
 					</span>
-				{/each}
-				<span class="mt-1 flex justify-between gap-4 tabular-nums">
-					<span>Buffer</span>
-					<span>
-						{report.bufferFrames}{report.deviceBufferFrames !== null && report.deviceBufferFrames !== report.bufferFrames
-							? ` (device ${report.deviceBufferFrames})`
-							: ''} smp
+				</div>
+
+				<div class="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-full">
+					{#each rows as r (r.label)}
+						<span class={['h-full', r.color]} style="width: {(r.value / sum) * 100}%"></span>
+					{/each}
+				</div>
+
+				<div class="flex flex-col gap-1">
+					{#each rows as r (r.label)}
+						<span class="flex items-center gap-2 tabular-nums">
+							<span class={['size-2 shrink-0 rounded-full', r.color]}></span>
+							<span class="flex-1 text-neutral-1000">{r.label}</span>
+							<span class="text-neutral-1200">{ms(r.value)} ms</span>
+						</span>
+					{/each}
+				</div>
+
+				<div class="flex flex-col gap-1.5 border-t border-(--lv-3) pt-3">
+					<span class="flex items-center justify-between gap-4 tabular-nums">
+						<span class="text-neutral-1000">Buffer</span>
+						<span class="text-neutral-1200">
+							{report.bufferFrames}{report.deviceBufferFrames !== null && report.deviceBufferFrames !== report.bufferFrames
+								? ` (device ${report.deviceBufferFrames})`
+								: ''} samples
+						</span>
 					</span>
-				</span>
-				<span class="flex justify-between gap-4 tabular-nums">
-					<span>DSP load</span><span class={strained ? 'text-amber-600' : undefined}>{loadPct}%</span>
-				</span>
-				{#if report.overloads > 0}
-					<span class="text-amber-600">Audio dropped: raise the buffer size</span>
-				{/if}
-				{#if !path.hardwareIncluded}
-					<span>Device hardware latency not reported by the OS</span>
+					<span class="flex items-center gap-2 tabular-nums">
+						<span class="text-neutral-1000">DSP load</span>
+						<span class="h-1.5 flex-1 overflow-hidden rounded-full bg-(--lv-3)">
+							<span class={['block h-full', strained ? 'bg-amber-500' : 'bg-neutral-1000']} style="width: {Math.min(loadPct, 100)}%"></span>
+						</span>
+						<span class={['w-9 text-right', strained ? 'text-amber-600' : 'text-neutral-1200']}>{loadPct}%</span>
+					</span>
+				</div>
+
+				{#if report.overloads > 0 || !path.hardwareIncluded}
+					<div class="flex flex-col gap-1">
+						{#if report.overloads > 0}
+							<span class="text-amber-600">Audio dropped: raise the buffer size.</span>
+						{/if}
+						{#if !path.hardwareIncluded}
+							<span class="text-neutral-900">Device hardware latency is not reported by the OS.</span>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		{/snippet}

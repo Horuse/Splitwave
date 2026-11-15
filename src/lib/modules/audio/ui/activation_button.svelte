@@ -2,6 +2,8 @@
 	import { Button } from '@splitwave/ui';
 	import { audioStore } from '../stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import Play from '~icons/fluent/play-24-filled';
+	import Stop from '~icons/fluent/stop-24-filled';
 
 	let { pipelineId }: { pipelineId: string } = $props();
 
@@ -29,12 +31,12 @@
 	}
 </script>
 
-<Button tone={audioStore.isRunning ? 'danger' : 'success'} disabled={busy} onclick={toggle}>
-	{#if busy}
-		…
-	{:else if audioStore.isRunning}
+<Button tone={audioStore.isRunning ? 'danger' : 'brand'} loading={busy} loadingPosition="start" onclick={toggle}>
+	{#if audioStore.isRunning}
+		<Stop class="size-3.5" />
 		Stop
 	{:else}
-		Activate
+		<Play class="size-3.5" />
+		Run
 	{/if}
 </Button>

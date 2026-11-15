@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Callout, Input } from '@splitwave/ui';
+	import { Button, Callout, Input, Separator } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import type { Pipeline } from '@splitwave/nodes';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
@@ -11,6 +11,7 @@
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
 	import { isFromFuture } from '$lib/modules/pipeline/migrations';
+	import ArrowLeft from '~icons/fluent/arrow-left-16-filled';
 
 	let pipeline = $state<Pipeline | null>(null);
 	let notFound = $state(false);
@@ -82,7 +83,7 @@
 <Header>
 	{#snippet left()}
 		<div class="flex items-center gap-3">
-			<Button variant="ghost" href="/">← Back</Button>
+			<Button icon href="/" aria-label="Back to pipelines" title="Back to pipelines"><ArrowLeft class="size-4" /></Button>
 			{#if pipeline}
 				<div class="relative">
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
@@ -95,16 +96,19 @@
 	{/snippet}
 
 	{#snippet right()}
-		<div class="flex items-center gap-3">
-			{#if audioStore.isRunning}
-				<RunningTimer />
-				<LatencyBadge />
+		<div class="flex items-center gap-2">
+			{#if pipeline}
+				<SavedIndicator />
+				<UndoRedo />
+				<SnapshotHistory pipelineId={pipeline.id} />
+				<Separator vertical class="mx-1 h-5" />
 			{/if}
 			<PipelineRateBadge />
+			{#if audioStore.isRunning}
+				<LatencyBadge />
+				<span class="px-1 text-xs text-brand tabular-nums"><RunningTimer /></span>
+			{/if}
 			{#if pipeline}
-				<UndoRedo />
-				<SavedIndicator />
-				<SnapshotHistory pipelineId={pipeline.id} />
 				<ActivationButton pipelineId={pipeline.id} />
 			{/if}
 		</div>

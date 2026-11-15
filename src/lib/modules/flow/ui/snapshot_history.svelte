@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Menu, MenuItem, MenuSection, Popover } from '@splitwave/ui';
+	import { Button, Menu, MenuItem, MenuSection, Popover } from '@splitwave/ui';
+	import History from '~icons/fluent/history-16-filled';
 	import { onMount, onDestroy } from 'svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { methods as pipelineMethods, type Snapshot } from '$lib/modules/pipeline/methods';
@@ -36,15 +37,12 @@
 
 <Popover bind:open placement="bottom-end" offsetPx={6}>
 	{#snippet trigger()}
-		<button
-			type="button"
-			class="flex h-7 items-center gap-1.5 rounded-md border border-neutral-300 bg-neutral-100 px-3 text-xs text-neutral-1100 transition-colors hover:bg-neutral-200">
-			<span>History</span>
-			<span class="rounded bg-neutral-300 px-1 py-1 font-mono text-[10px] leading-none text-neutral-1000 tabular-nums">
-				{snapshots.length}
-			</span>
-			<ChevronDown class="h-3 w-3 opacity-60" />
-		</button>
+		<Button>
+			<History class="size-4" />
+			History
+			<span class="text-neutral-900 tabular-nums">{snapshots.length}</span>
+			<ChevronDown class="size-3 opacity-60" />
+		</Button>
 	{/snippet}
 
 	<Menu class="w-72">

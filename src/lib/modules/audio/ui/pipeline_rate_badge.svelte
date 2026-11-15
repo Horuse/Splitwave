@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { smoothRadius } from '@splitwave/ui';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import Pulse from '~icons/fluent/pulse-20-filled';
 	import { formatHz } from '@splitwave/nodes';
@@ -7,8 +8,10 @@
 </script>
 
 <span
-	class="flex items-center gap-1.5 rounded-md border border-theme/10 bg-background px-2 py-0.5"
+	class="flex h-7 items-center gap-1.5 border border-(--lv-3) bg-(--lv-1) px-2.5"
+	style="border-radius: var(--r, 10px)"
+	{@attach smoothRadius({ variable: '--r' })}
 	title="Pipeline sample rate: {appSettings.pipelineSampleRate.toLocaleString()} Hz. Internal effects, mixing, and routing process at this rate.">
-	<Pulse class="h-3.5 w-3.5 text-neutral-500" />
-	<span class="font-mono text-xs text-neutral-800 tabular-nums">{rateFormatted}</span>
+	<Pulse class="size-4 text-neutral-900" />
+	<span class="text-xs text-neutral-1100 tabular-nums">{rateFormatted}</span>
 </span>

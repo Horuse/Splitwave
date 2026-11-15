@@ -18,4 +18,4 @@
 	});
 </script>
 
-<span class="font-mono text-xs text-neutral-800 tabular-nums">{formatDuration(elapsed)}</span>
+<span class="tabular-nums">{formatDuration(elapsed)}</span>

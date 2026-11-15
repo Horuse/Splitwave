@@ -8,5 +8,6 @@ export const CATEGORY_TEXT: Record<NodeCategory, string> = {
 	monitor: 'text-amber-600 dark:text-amber-400',
 	network: 'text-rose-600 dark:text-rose-400',
 	effect: 'text-violet-600 dark:text-violet-400',
-	condition: 'text-yellow-600 dark:text-yellow-400'
+	condition: 'text-yellow-600 dark:text-yellow-400',
+	routing: 'text-teal-600 dark:text-teal-400'
 };

@@ -83,7 +83,7 @@
 	}
 </script>
 
-<Wrapper label="Mute" icon={SpeakerMute} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper label="Mute" icon={SpeakerMute} accent="routing" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<button
 		title={wired ? 'Driven by the open input' : 'Toggle mute'}
 		disabled={wired}

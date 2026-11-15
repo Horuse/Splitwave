@@ -33,7 +33,7 @@
 	}
 </script>
 
-<Wrapper label="Select" icon={ArrowSwap} accent="condition">
+<Wrapper label="Select" icon={ArrowSwap} accent="routing">
 	<div class="flex w-52 flex-col gap-3">
 		<div class="nodrag nopan flex items-center justify-between gap-2">
 			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>

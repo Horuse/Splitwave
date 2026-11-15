@@ -66,6 +66,7 @@ import NetReceiver from '../ui/input/net_receiver.svelte';
 import NetSender from '../ui/output/net_sender.svelte';
 import KeyInput from '../ui/condition/key_input.svelte';
 import Toggle from '../ui/condition/toggle.svelte';
+import Logic from '../ui/condition/logic.svelte';
 import Cycle from '../ui/condition/cycle.svelte';
 import Timer from '../ui/condition/timer.svelte';
 import If from '../ui/condition/if.svelte';
@@ -160,7 +161,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	mute: entry<'mute'>({
 		kind: 'mute',
-		category: 'effect',
+		category: 'routing',
 		label: 'Mute',
 		description: 'Silence the signal.',
 		component: Mute,
@@ -375,9 +376,18 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 		icon: HourglassIcon,
 		defaultData: DEFAULT_NODE_DATA['timer']
 	}),
+	logic: entry<'logic'>({
+		kind: 'logic',
+		category: 'condition',
+		label: 'Logic',
+		description: 'Combines control signals with a logic operator, such as NOT to invert one or AND to need two at once.',
+		component: Logic,
+		icon: ArrowRightIcon,
+		defaultData: DEFAULT_NODE_DATA['logic']
+	}),
 	if: entry<'if'>({
 		kind: 'if',
-		category: 'condition',
+		category: 'routing',
 		label: 'If',
 		description: 'Sends its input to the true output while the condition is high, to the false output otherwise, crossfading between them.',
 		component: If,
@@ -386,7 +396,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	switch: entry<'switch'>({
 		kind: 'switch',
-		category: 'condition',
+		category: 'routing',
 		label: 'Switch',
 		description: 'Sends its input to one of 2-8 outputs; each output has its own trigger, so one key per branch picks it.',
 		component: Switch,
@@ -395,7 +405,7 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	}),
 	select: entry<'select'>({
 		kind: 'select',
-		category: 'condition',
+		category: 'routing',
 		label: 'Select',
 		description: 'Hears one of 2-8 inputs; each input has its own trigger, so one key per source picks it.',
 		component: Select,
@@ -417,7 +427,7 @@ export const nodeTypes: NodeTypes = Object.fromEntries(Object.entries(registry).
 
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
-export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'condition'];
+export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'routing', 'condition'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
 	input: 'Inputs',
@@ -425,7 +435,8 @@ export const categoryLabel: Record<NodeCategory, string> = {
 	monitor: 'Monitors',
 	network: 'Network',
 	effect: 'Effects',
-	condition: 'Conditions'
+	condition: 'Conditions',
+	routing: 'Routing'
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

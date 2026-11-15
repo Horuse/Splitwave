@@ -8,7 +8,13 @@
 	import IconTheme from '~icons/fluent/dark-theme-20-filled';
 	import { page } from '$app/state';
 	import { articles } from '@splitwave/wiki';
+	import IconChevron from '~icons/fluent/chevron-right-16-filled';
 	import { themeStore } from '$lib/modules/theme/stores';
+
+	let wikiOpen = $state(false);
+	$effect(() => {
+		if (page.route.id?.startsWith('/wiki')) wikiOpen = true;
+	});
 
 	function cycleTheme() {
 		$themeStore = $themeStore === 'light' ? 'dark' : $themeStore === 'dark' ? 'system' : 'light';
@@ -28,11 +34,28 @@
 	<SidebarItem label="Pipelines" icon={IconFlow} href="/" active={page.route.id === '/'} />
 	<SidebarItem label="Virtual devices" icon={IconSpeaker} href="/virtual-devices" active={page.route.id === '/virtual-devices'} />
 	<SidebarSection label="Resources" />
-	<SidebarItem label="Wiki" icon={IconBook} href="/wiki" active={page.route.id === '/wiki'} />
-	{#if page.route.id?.startsWith('/wiki')}
-		{#each articles as a (a.slug)}
-			<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
-		{/each}
+	<SidebarItem label="Wiki" icon={IconBook} href="/wiki" active={page.route.id === '/wiki'}>
+		{#snippet trailing()}
+			<button
+				type="button"
+				class="sidebar-toggle"
+				aria-label={wikiOpen ? 'Collapse wiki' : 'Expand wiki'}
+				aria-expanded={wikiOpen}
+				onclick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					wikiOpen = !wikiOpen;
+				}}>
+				<IconChevron class={['size-3.5', wikiOpen && 'rotate-90']} />
+			</button>
+		{/snippet}
+	</SidebarItem>
+	{#if wikiOpen}
+		<div class="sidebar-group">
+			{#each articles as a (a.slug)}
+				<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
+			{/each}
+		</div>
 	{/if}
 	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />
 

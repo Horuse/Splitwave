@@ -18,8 +18,8 @@
 	type="button"
 	class={[
 		'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm',
-		danger ? 'text-red-700 dark:text-red-300' : 'text-neutral-1100',
-		disabled ? 'cursor-not-allowed opacity-40' : danger ? 'hover:bg-red-500/15' : 'hover:bg-neutral-200'
+		danger ? 'text-danger' : 'text-content',
+		disabled ? 'cursor-not-allowed opacity-40' : danger ? 'hover:bg-danger-soft' : 'hover:bg-surface-3'
 	]}
 	{disabled}
 	{onclick}
@@ -38,7 +38,7 @@
 		{/if}
 	</span>
 	{#if shortcut}
-		<span class="flex items-center gap-0.5 font-mono text-[10px] text-neutral-900">
+		<span class="flex items-center gap-0.5 font-mono text-[10px] text-subtle">
 			{@render shortcut()}
 		</span>
 	{/if}

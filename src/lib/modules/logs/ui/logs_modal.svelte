@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
-	import { ModalShell } from '$lib/modules/overlay/ui';
+	import { Button, Modal } from '@splitwave/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import { logStore } from '../stores.svelte';
 	import type { LogEntry } from '../types';
@@ -66,7 +65,7 @@
 	});
 </script>
 
-<ModalShell title="Logs" size="xl" onClose={() => (logStore.open = false)}>
+<Modal title="Logs" size="xl" onClose={() => (logStore.open = false)}>
 	{#snippet badge()}
 		<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
 			{filtered.length}
@@ -125,4 +124,4 @@
 		<CopyButton text={() => asText(filtered)} label="Copy" />
 		<Button tone="success" type="button" onclick={() => (logStore.open = false)}> Close </Button>
 	{/snippet}
-</ModalShell>
+</Modal>

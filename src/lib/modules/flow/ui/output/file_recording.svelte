@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, NumberStepper, Segmented } from '@splitwave/ui';
+	import { Button, NumberStepper, Segmented, Tooltip } from '@splitwave/ui';
 	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '$lib/modules/pipeline/generated/engine';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -31,7 +31,6 @@
 	import { formatHz, formatKhzValue, formatDuration, formatSize } from '$lib/components/format';
 	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
-	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
 	import { ConfirmModal } from '$lib/modules/overlay/ui';
 	import { platform } from '@tauri-apps/plugin-os';

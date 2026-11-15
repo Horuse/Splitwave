@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Slider } from '@splitwave/ui';
+	import { Button, Slider, Tooltip } from '@splitwave/ui';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy, onMount } from 'svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';
@@ -17,7 +17,6 @@
 	import Stop from '~icons/fluent/stop-24-filled';
 	import { Autoplay, SkipBack5, SkipForward5 } from '$lib/components/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
-	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatHz, formatDuration, formatPct } from '$lib/components/format';
 

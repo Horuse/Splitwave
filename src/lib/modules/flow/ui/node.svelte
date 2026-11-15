@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Tooltip } from '@splitwave/ui';
 	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
 	import { Handle, Position } from '@xyflow/svelte';
@@ -9,7 +10,6 @@
 	import Hourglass from '~icons/fluent/hourglass-16-filled';
 	import { latencyStore } from '$lib/modules/audio/latency.svelte';
 	import { formatLatencyMs } from '$lib/components/format';
-	import { Tooltip } from '$lib/modules/overlay/ui';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;

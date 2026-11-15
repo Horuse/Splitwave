@@ -1,5 +1,2 @@
-export * from './modal';
-export * from './tooltip';
-export * from './popover';
-export * from './context';
-export * from './menu';
+export { default as ModalRender } from './modal/render.svelte';
+export { default as ConfirmModal } from './modal/confirm.svelte';

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { modalManager } from '../../modal';
-	import Shell from './shell.svelte';
+	import { Modal as Shell } from '@splitwave/ui';
 </script>
 
 {#each modalManager.modals as entry (entry.id)}

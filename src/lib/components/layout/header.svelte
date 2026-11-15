@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Popover } from '@splitwave/ui';
 	import type { Snippet } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { themeStore } from '$lib/modules/theme/stores';
@@ -10,7 +10,6 @@
 	import { checkForUpdates } from '$lib/modules/updater';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
-	import { Popover } from '$lib/modules/overlay/ui';
 	import { AnnouncementBanner } from '$lib/modules/announcements';
 
 	interface Props {

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { fly, fade } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
+	import IconDismiss from '~icons/fluent/dismiss-16-filled';
 
 	export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -20,7 +19,7 @@
 
 	let {
 		title,
-		titleClass = 'text-sm font-semibold text-theme',
+		titleClass = 'text-sm font-semibold text-content',
 		description,
 		size = 'md',
 		canClose = true,
@@ -44,16 +43,9 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus a11y_click_events_have_key_events -->
-<div
-	class="fixed inset-0 z-100 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
-	style:z-index={zIndex}
-	role="dialog"
-	aria-modal="true"
-	transition:fade|global={{ duration: 150 }}
-	onclick={onBackdrop}>
+<div class="fixed inset-0 z-100 flex items-center justify-center bg-black/50 p-6" style:z-index={zIndex} role="dialog" aria-modal="true" onclick={onBackdrop}>
 	<div
-		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-300 bg-neutral-100 shadow-2xl', WIDTH[size]]}
-		transition:fly|global={{ duration: 200, y: 8, easing: cubicOut }}
+		class={['flex max-h-[85vh] w-full flex-col overflow-hidden rounded-xl border border-line-strong bg-surface-1', WIDTH[size]]}
 		onclick={(e) => e.stopPropagation()}
 		role="presentation">
 		{#if title || badge || canClose}
@@ -61,7 +53,7 @@
 				<div class="flex min-w-0 flex-col gap-0.5">
 					<h2 class={titleClass}>{title}</h2>
 					{#if description}
-						<p class="text-xs text-neutral-900">{description}</p>
+						<p class="text-xs text-muted">{description}</p>
 					{/if}
 				</div>
 				<div class="flex shrink-0 items-center gap-2">
@@ -69,13 +61,10 @@
 					{#if canClose}
 						<button
 							type="button"
-							class="-mr-1 rounded-lg p-1 text-neutral-1000 transition-colors hover:bg-neutral-300"
+							class="-mr-1 rounded-lg p-1 text-muted hover:bg-surface-3 hover:text-content"
 							aria-label="Close"
 							onclick={() => onClose?.()}>
-							<svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-								<path
-									d="M4.28 3.22a.75.75 0 0 0-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 1 0 1.06 1.06L8 9.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L9.06 8l3.72-3.72a.75.75 0 0 0-1.06-1.06L8 6.94 4.28 3.22Z" />
-							</svg>
+							<IconDismiss class="size-4" />
 						</button>
 					{/if}
 				</div>

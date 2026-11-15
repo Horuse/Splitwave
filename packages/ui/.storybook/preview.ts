@@ -20,6 +20,11 @@ const preview: Preview = {
 	initialGlobals: { theme: 'dark' },
 	decorators: [
 		(story, context) => {
+			if (!document.getElementById('overlays')) {
+				const host = document.createElement('div');
+				host.id = 'overlays';
+				document.body.append(host);
+			}
 			document.documentElement.classList.toggle('dark', context.globals.theme === 'dark');
 			return story();
 		}

@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { Tooltip } from '@splitwave/ui';
 	import Gauge from '~icons/fluent/gauge-16-filled';
-	import { Tooltip } from '$lib/modules/overlay/ui';
 	import { formatLatencyMs as ms } from '$lib/components/format';
 	import { latencyStore } from '../latency.svelte';
 

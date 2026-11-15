@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { onDestroy, onMount, type Snippet } from 'svelte';
-	import { fly } from 'svelte/transition';
 	import { createFloatingActions } from 'svelte-floating-ui';
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
 	import { portal } from 'svelte-portal';
-	import type { Placement } from '../../types';
+	import { OVERLAY_HOST, type Placement } from '../types';
 
 	interface Props {
 		open?: boolean;
@@ -61,7 +60,7 @@
 </div>
 
 {#if open}
-	<div bind:this={contentEl} use:portal={'#overlays'} use:floatingContent transition:fly={{ duration: 200, y: 5 }} class="z-[150]">
+	<div bind:this={contentEl} use:portal={OVERLAY_HOST} use:floatingContent class="z-[150]">
 		{@render children()}
 	</div>
 {/if}

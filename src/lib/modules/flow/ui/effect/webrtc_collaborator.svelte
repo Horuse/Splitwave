@@ -8,7 +8,7 @@
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
 	import { LossWindow } from '$lib/components/format';
 	import { modalManager } from '$lib/modules/overlay/modal';
-	import { ConfirmModal } from '$lib/modules/overlay/ui/modal';
+	import { ConfirmModal } from '$lib/modules/overlay/ui';
 	import Wrapper from '../node.svelte';
 	import PeopleTeam from '~icons/fluent/people-team-16-filled';
 	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '$lib/modules/flow/utils';

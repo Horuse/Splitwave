@@ -1,10 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { fade } from 'svelte/transition';
 	import { createFloatingActions } from 'svelte-floating-ui';
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
 	import { portal } from 'svelte-portal';
-	import type { Placement } from '../../types';
+	import { OVERLAY_HOST, type Placement } from '../types';
 
 	interface Props {
 		text?: string;
@@ -44,10 +43,9 @@
 
 {#if open}
 	<div
-		use:portal={'#overlays'}
+		use:portal={OVERLAY_HOST}
 		use:floatingContent
-		transition:fade={{ duration: 100 }}
-		class="pointer-events-none z-[200] rounded-md border border-neutral-700 bg-neutral-500 px-2 py-1 font-mono text-[10px] text-neutral-1200 shadow-md"
+		class="pointer-events-none z-[200] rounded-md border border-line-strong bg-surface-4 px-2 py-1 font-mono text-[10px] text-content"
 		role="tooltip">
 		{#if content}
 			{@render content()}

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onDestroy, onMount, type Snippet } from 'svelte';
-	import { fly } from 'svelte/transition';
 	import { createFloatingActions } from 'svelte-floating-ui';
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
 	import { portal } from 'svelte-portal';
+	import { OVERLAY_HOST } from '../types';
 
 	interface Props {
 		trigger: Snippet;
@@ -91,7 +91,7 @@
 </div>
 
 {#if open}
-	<div use:portal={'#overlays'} use:floatingContent data-overlay-context transition:fly={{ duration: 150, y: 4 }} class="z-[200]">
+	<div use:portal={OVERLAY_HOST} use:floatingContent data-overlay-context class="z-[200]">
 		{@render menu({ close })}
 	</div>
 {/if}

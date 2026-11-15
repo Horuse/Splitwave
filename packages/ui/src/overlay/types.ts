@@ -11,3 +11,5 @@ export type Placement =
 	| 'left'
 	| 'left-start'
 	| 'left-end';
+
+export const OVERLAY_HOST = '#overlays';

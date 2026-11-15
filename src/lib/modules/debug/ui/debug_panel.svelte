@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Menu, MenuItem, MenuSection, MenuSeparator } from '@splitwave/ui';
 	import { fly } from 'svelte/transition';
 	import { invoke } from '@tauri-apps/api/core';
 	import type { Update } from '@tauri-apps/plugin-updater';
@@ -7,7 +7,6 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { updaterStore, latestRelease } from '$lib/modules/updater';
 	import { getCachedAppInfo } from '$lib/modules/app_info';
-	import { Menu, MenuItem, MenuSection, MenuSeparator } from '$lib/modules/overlay/ui';
 	import { announcementStore, runModalQueue } from '$lib/modules/announcements';
 
 	let open = $state(false);

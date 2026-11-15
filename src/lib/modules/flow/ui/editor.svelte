@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Menu, MenuItem as OverlayMenuItem } from '@splitwave/ui';
 	import { Background, Controls, SvelteFlow, useSvelteFlow, type Edge as XyEdge, type Node as XyNode } from '@xyflow/svelte';
 	import { createId } from '@paralleldrive/cuid2';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -40,7 +41,6 @@
 	import Rewind from '~icons/fluent/rewind-16-filled';
 	import { channelCaps, channelSelection } from '../stores.svelte';
 	import { edgeSettings } from '../edge_settings.svelte';
-	import { Menu, MenuItem as OverlayMenuItem } from '$lib/modules/overlay/ui';
 	import type { Component } from 'svelte';
 
 	let { pipeline }: { pipeline: Pipeline } = $props();

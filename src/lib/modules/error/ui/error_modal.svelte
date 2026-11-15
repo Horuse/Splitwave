@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Modal } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { errorStore } from '../stores.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { formatAppInfo, getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
-	import { ModalShell } from '$lib/modules/overlay/ui/modal';
 	import CopyButton from '$lib/components/copy_button.svelte';
 
 	const REPO = 'Horuse/Splitwave';
@@ -107,7 +106,7 @@
 </script>
 
 {#if current}
-	<ModalShell
+	<Modal
 		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
 		titleClass={current.previousRun ? 'text-sm font-semibold text-amber-500' : 'text-sm font-semibold text-red-500'}
 		onClose={dismiss}>
@@ -164,5 +163,5 @@
 			<CopyButton text={() => buildDetails()} label="Copy details" />
 			<Button tone="danger" type="button" onclick={reportOnGitHub}> Report on GitHub </Button>
 		{/snippet}
-	</ModalShell>
+	</Modal>
 {/if}

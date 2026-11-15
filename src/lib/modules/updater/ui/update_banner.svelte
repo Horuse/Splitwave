@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Modal } from '@splitwave/ui';
 	import { updaterStore } from '../stores.svelte';
 	import { installUpdate, skipVersion } from '../methods';
-	import { ModalShell } from '$lib/modules/overlay/ui';
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import Markdown from '$lib/components/markdown.svelte';
 	import Checkmark from '~icons/fluent/checkmark-16-filled';
@@ -46,7 +45,7 @@
 </script>
 
 {#if s.phase === 'up_to_date' || s.phase === 'available' || s.phase === 'downloading' || s.phase === 'installing' || s.phase === 'unsupported' || s.phase === 'error'}
-	<ModalShell {title} {titleClass} canClose={s.phase !== 'installing'} onClose={dismiss}>
+	<Modal {title} {titleClass} canClose={s.phase !== 'installing'} onClose={dismiss}>
 		{#snippet badge()}
 			{#if s.phase === 'available' || s.phase === 'downloading'}
 				<div class="flex items-center gap-1.5">
@@ -130,5 +129,5 @@
 				<Button onclick={dismiss}> OK </Button>
 			{/if}
 		{/snippet}
-	</ModalShell>
+	</Modal>
 {/if}

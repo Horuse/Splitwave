@@ -13,6 +13,9 @@
 		@apply ml-[18px] flex flex-col gap-0.5 border-l border-(--lv-3) pl-2;
 	}
 	.sidebar-toggle {
+		& > svg {
+			@apply transition-transform duration-150;
+		}
 		@apply -mr-1 flex size-6 items-center justify-center rounded-md text-neutral-800 hover:bg-(--lv-3) hover:text-theme;
 	}
 	.sidebar-section {

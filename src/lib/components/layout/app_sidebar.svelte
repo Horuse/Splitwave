@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { slide } from 'svelte/transition';
 	import { Sidebar, SidebarItem, SidebarSection } from '@splitwave/ui';
 	import IconFlow from '~icons/fluent/flow-20-filled';
 	import IconSpeaker from '~icons/fluent/speaker-2-20-filled';
@@ -51,7 +52,7 @@
 		{/snippet}
 	</SidebarItem>
 	{#if wikiOpen}
-		<div class="sidebar-group">
+		<div class="sidebar-group" transition:slide={{ duration: 150 }}>
 			{#each articles as a (a.slug)}
 				<SidebarItem nested label={a.title} href="/wiki/{a.slug}" active={page.params.slug === a.slug} />
 			{/each}

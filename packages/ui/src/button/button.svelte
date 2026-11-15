@@ -31,14 +31,7 @@
 </script>
 
 {#if href}
-	<a
-		bind:this={ref}
-		{href}
-		class={classes}
-		data-active={active}
-		aria-disabled={disabled || undefined}
-		{...rest as HTMLAnchorAttributes}
-	>
+	<a bind:this={ref} {href} class={classes} data-active={active} aria-disabled={disabled || undefined} {...rest as HTMLAnchorAttributes}>
 		{@render children?.()}
 	</a>
 {:else}

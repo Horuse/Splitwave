@@ -5,6 +5,7 @@
 		--btn-h: 1.75rem;
 		--btn-px: 0.75rem;
 		--btn-fs: 0.8125rem;
+		--btn-text-mix: 30%;
 
 		display: inline-flex;
 		align-items: center;
@@ -20,7 +21,7 @@
 		white-space: nowrap;
 		cursor: pointer;
 		user-select: none;
-		color: color-mix(in oklch, var(--btn-c), var(--color-content) 30%);
+		color: color-mix(in oklch, var(--btn-c), var(--color-content) var(--btn-text-mix));
 		background-color: color-mix(in oklch, var(--btn-c) 9%, transparent);
 		border-color: color-mix(in oklch, var(--btn-c) 16%, transparent);
 
@@ -85,6 +86,7 @@
 	.btn-warning {
 		--btn-c: var(--color-warning);
 		--btn-on: oklch(0.2 0 0);
+		--btn-text-mix: 55%;
 	}
 
 	.btn-solid {

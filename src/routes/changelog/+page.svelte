@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fly } from 'svelte/transition';
 	import { onMount } from 'svelte';
 	import { Banner, Button, Callout, Card, Separator } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
@@ -61,26 +62,28 @@
 				</Button>
 			</Banner>
 
-			{#each rest as entry (entry.version)}
-				<Card class="flex flex-col gap-3 p-6">
-					<div class="flex items-baseline justify-between gap-4">
-						<div class="flex items-center gap-2">
-							<h3 class="text-lg font-medium">{entry.name}</h3>
-							{#if entry.prerelease}
-								<span class="rounded-full border border-dashed border-neutral-500 px-2 py-0.5 font-mono text-[10px] text-neutral-900"
-									>pre-release</span>
-							{/if}
-							{#if entry.version === installed}
-								<span class="rounded-full bg-brand-soft px-2 py-0.5 font-mono text-[10px] text-brand">installed</span>
-							{/if}
+			{#each rest as entry, i (entry.version)}
+				<div in:fly={{ y: 8, duration: 200, delay: Math.min(i, 8) * 40 }}>
+					<Card class="flex flex-col gap-3 p-6">
+						<div class="flex items-baseline justify-between gap-4">
+							<div class="flex items-center gap-2">
+								<h3 class="text-lg font-medium">{entry.name}</h3>
+								{#if entry.prerelease}
+									<span class="rounded-full border border-dashed border-neutral-500 px-2 py-0.5 font-mono text-[10px] text-neutral-900"
+										>pre-release</span>
+								{/if}
+								{#if entry.version === installed}
+									<span class="rounded-full bg-brand-soft px-2 py-0.5 font-mono text-[10px] text-brand">installed</span>
+								{/if}
+							</div>
+							<span class="shrink-0 font-mono text-xs text-neutral-900">{date(entry.publishedAt)}</span>
 						</div>
-						<span class="shrink-0 font-mono text-xs text-neutral-900">{date(entry.publishedAt)}</span>
-					</div>
-					{#if entry.notes}
-						<Separator />
-						<Markdown source={entry.notes} class="text-sm text-neutral-1100" />
-					{/if}
-				</Card>
+						{#if entry.notes}
+							<Separator />
+							<Markdown source={entry.notes} class="text-sm text-neutral-1100" />
+						{/if}
+					</Card>
+				</div>
 			{/each}
 		{:else}
 			<p class="text-sm text-neutral-900">No releases published yet.</p>

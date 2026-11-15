@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { slide } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
 	import { Button, Callout, Card, Chip, Input, NumberStepper, SectionCard, Separator, smoothRadius } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
@@ -178,58 +180,60 @@
 					</Card>
 				{:else}
 					{#each devices as d (d.id)}
-						<Card class="flex flex-col gap-4 p-5">
-							<div class="flex items-center gap-3">
-								<span class="section-card-icon" {@attach smoothRadius({ variable: '--r' })}><SoundWave /></span>
-								<Input
-									size="md"
-									class="flex-1 font-medium"
-									value={d.name}
-									oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
-								<span class="rounded-md bg-(--lv-2) px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">{d.id.slice(0, 8)}</span>
-								<Button tone="danger" icon onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
-									<Delete class="size-4" />
-								</Button>
-							</div>
-
-							<Separator />
-
-							<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-								<span class="w-24 text-xs text-neutral-900">Channels</span>
-								<NumberStepper
-									value={d.channels ?? 2}
-									min={1}
-									max={maxChannels}
-									step={1}
-									label="Channels"
-									onchange={(v) => setChannels(d.id, v)} />
-								<div class="flex items-center gap-1">
-									{#each [2, 8, 16, 32, 64] as preset (preset)}
-										<Chip mono selected={(d.channels ?? 2) === preset} onclick={() => setChannels(d.id, preset)}>{preset}</Chip>
-									{/each}
+						<div animate:flip={{ duration: 200 }} transition:slide={{ duration: 200 }}>
+							<Card class="flex flex-col gap-4 p-5">
+								<div class="flex items-center gap-3">
+									<span class="section-card-icon" {@attach smoothRadius({ variable: '--r' })}><SoundWave /></span>
+									<Input
+										size="md"
+										class="flex-1 font-medium"
+										value={d.name}
+										oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
+									<span class="rounded-md bg-(--lv-2) px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">{d.id.slice(0, 8)}</span>
+									<Button tone="danger" icon onclick={() => removeDevice(d.id)} aria-label="Remove device" title="Remove device">
+										<Delete class="size-4" />
+									</Button>
 								</div>
-								<span class="ml-auto text-[11px] text-neutral-800">Input + output, up to {maxChannels} channels</span>
-							</div>
 
-							<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-								<span class="w-24 text-xs text-neutral-900">Sample rate</span>
-								<NumberStepper
-									value={d.sampleRate ?? DEFAULT_SAMPLE_RATE}
-									min={8000}
-									max={384000}
-									step={1}
-									label="Sample rate"
-									onchange={(v) => setSampleRate(d.id, v)} />
-								<div class="flex items-center gap-1">
-									{#each [44100, 48000, 88200, 96000, 192000] as preset (preset)}
-										<Chip mono selected={(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === preset} onclick={() => setSampleRate(d.id, preset)}>
-											{formatHz(preset)}
-										</Chip>
-									{/each}
+								<Separator />
+
+								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+									<span class="w-24 text-xs text-neutral-900">Channels</span>
+									<NumberStepper
+										value={d.channels ?? 2}
+										min={1}
+										max={maxChannels}
+										step={1}
+										label="Channels"
+										onchange={(v) => setChannels(d.id, v)} />
+									<div class="flex items-center gap-1">
+										{#each [2, 8, 16, 32, 64] as preset (preset)}
+											<Chip mono selected={(d.channels ?? 2) === preset} onclick={() => setChannels(d.id, preset)}>{preset}</Chip>
+										{/each}
+									</div>
+									<span class="ml-auto text-[11px] text-neutral-800">Input + output, up to {maxChannels} channels</span>
 								</div>
-								<span class="ml-auto text-[11px] text-neutral-800">Match the project rate to avoid resampling</span>
-							</div>
-						</Card>
+
+								<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+									<span class="w-24 text-xs text-neutral-900">Sample rate</span>
+									<NumberStepper
+										value={d.sampleRate ?? DEFAULT_SAMPLE_RATE}
+										min={8000}
+										max={384000}
+										step={1}
+										label="Sample rate"
+										onchange={(v) => setSampleRate(d.id, v)} />
+									<div class="flex items-center gap-1">
+										{#each [44100, 48000, 88200, 96000, 192000] as preset (preset)}
+											<Chip mono selected={(d.sampleRate ?? DEFAULT_SAMPLE_RATE) === preset} onclick={() => setSampleRate(d.id, preset)}>
+												{formatHz(preset)}
+											</Chip>
+										{/each}
+									</div>
+									<span class="ml-auto text-[11px] text-neutral-800">Match the project rate to avoid resampling</span>
+								</div>
+							</Card>
+						</div>
 					{/each}
 				{/if}
 

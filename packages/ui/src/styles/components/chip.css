@@ -1,6 +1,6 @@
 @layer components {
 	.chip {
-		@apply inline-flex cursor-pointer flex-col items-center justify-center gap-1 border border-(--lv-3) bg-(--lv-1) px-3 py-1 text-[11px] font-medium text-neutral-1000 select-none hover:bg-(--lv-2);
+		@apply inline-flex cursor-pointer flex-col items-center justify-center gap-1 border border-(--lv-3) bg-(--lv-1) px-3 py-1 text-[11px] font-medium text-neutral-1000 transition-[color,background-color,border-color,transform] duration-150 select-none hover:bg-(--lv-2);
 		border-radius: var(--r, 8px);
 
 		&[data-selected='true'] {

@@ -1,6 +1,6 @@
 @layer components {
 	.input {
-		@apply flex h-6.5 items-center rounded-lg bg-(--lv-1) px-2.5 text-neutral-800 transition-all hover:bg-(--lv-2) hover:text-theme focus:outline-none;
+		@apply flex h-6.5 items-center rounded-lg bg-(--lv-1) px-2.5 text-neutral-800 transition-colors duration-150 hover:bg-(--lv-2) hover:text-theme focus:outline-none;
 
 		&[aria-invalid='true'] {
 			@apply ring-1 ring-red-500;

@@ -31,7 +31,7 @@
 	}
 
 	.card {
-		@apply relative border border-neutral-300 bg-foreground text-theme;
+		@apply relative border border-neutral-300 bg-foreground text-theme transition-colors duration-150;
 		border-radius: var(--smooth-r, 16px);
 	}
 	.card-dashed {

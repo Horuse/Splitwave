@@ -14,6 +14,7 @@
 	import { loadAppInfo } from '$lib/modules/app_info';
 	import { watchSmoothRadius } from '@splitwave/ui';
 	import { page } from '$app/state';
+	import { fade } from 'svelte/transition';
 	import AppSidebar from '$lib/components/layout/app_sidebar.svelte';
 	import { ModalRender } from '$lib/modules/overlay/ui';
 	import { modalManager } from '$lib/modules/overlay/modal';
@@ -144,7 +145,15 @@
 		<AppSidebar />
 	{/if}
 	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
-		{@render children()}
+		{#if page.route.id === '/pipelines/[id]'}
+			{@render children()}
+		{:else}
+			{#key page.url.pathname}
+				<div class="flex min-h-0 flex-1 flex-col" in:fade={{ duration: 150 }}>
+					{@render children()}
+				</div>
+			{/key}
+		{/if}
 	</main>
 </div>
 

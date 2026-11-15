@@ -22,7 +22,7 @@
 		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
 	}
 	.sidebar-item {
-		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 select-none;
+		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 transition-[color,background-color,transform] duration-150 select-none;
 		border-radius: var(--r, 10px);
 
 		& > svg {
@@ -37,8 +37,20 @@
 			&::before {
 				content: '';
 				@apply absolute top-1/2 -left-2 h-2 w-1 -translate-y-1/2 rounded-r-full;
+				animation: sidebar-marker-in 200ms ease-out;
 				background-color: var(--color-brand);
 			}
 		}
+	}
+}
+
+@keyframes sidebar-marker-in {
+	from {
+		opacity: 0;
+		transform: translate(-4px, -50%);
+	}
+	to {
+		opacity: 1;
+		transform: translate(0, -50%);
 	}
 }

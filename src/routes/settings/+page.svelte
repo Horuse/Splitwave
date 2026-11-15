@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { slide } from 'svelte/transition';
 	import { Chip, SectionCard, Separator } from '@splitwave/ui';
 	import IconPaint from '~icons/fluent/paint-brush-20-filled';
 	import IconGrid from '~icons/fluent/grid-20-filled';
@@ -166,7 +167,7 @@
 				onChange={() => setApp('snapToGrid', !appSettings.snapToGrid)} />
 
 			{#if appSettings.snapToGrid}
-				<div class="flex items-center gap-2 pl-1">
+				<div class="flex items-center gap-2 pl-1" transition:slide={{ duration: 150 }}>
 					<span class="text-xs text-neutral-900">Grid size</span>
 					{#each GRID_SIZES as size (size)}
 						<Chip mono selected={appSettings.gridSize === size} onclick={() => setApp('gridSize', size)}>{size}</Chip>
@@ -214,7 +215,7 @@
 				</div>
 
 				{#if customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
-					<div class="flex items-center gap-2 pt-1 pl-1">
+					<div class="flex items-center gap-2 pt-1 pl-1" transition:slide={{ duration: 150 }}>
 						<span class="text-xs text-neutral-900">Custom frequency</span>
 						<NumberStepper
 							value={appSettings.pipelineSampleRate}

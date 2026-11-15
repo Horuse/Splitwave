@@ -26,6 +26,8 @@ const preview: Preview = {
 				document.body.append(host);
 			}
 			document.documentElement.classList.toggle('dark', context.globals.theme === 'dark');
+			document.body.style.background = 'var(--color-background)';
+			document.body.style.color = 'var(--color-theme)';
 			return story();
 		}
 	]

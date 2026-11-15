@@ -1,6 +1,6 @@
 @theme {
-	--color-brand: oklch(0.7 0.19 45);
-	--color-brand-strong: oklch(0.64 0.21 40);
-	--color-brand-soft: oklch(0.7 0.19 45 / 0.15);
+	--color-brand: oklch(0.72 0.18 55);
+	--color-brand-strong: oklch(0.66 0.19 50);
+	--color-brand-soft: oklch(0.72 0.18 55 / 0.16);
 	--color-on-brand: oklch(0.99 0 0);
 }

@@ -15,6 +15,8 @@ export * from './banner';
 export * from './card';
 export * from './separator';
 export * from './sidebar';
+export * from './scroll-area';
+export * from './animated-number';
 export * from './chip';
 export * from './section-card';
 export * from './nav-tree';

@@ -8,6 +8,7 @@
 @import './components/callout.css';
 @import './components/brand.css';
 @import './components/sidebar.css';
+@import './components/scroll-area.css';
 @import './components/chip.css';
 
 @source '../';

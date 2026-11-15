@@ -1,0 +1,47 @@
+@layer components {
+	.scroll-area {
+		@apply relative min-h-0 overflow-hidden;
+	}
+
+	/* Higher specificity so scrollbar utilities on the viewport cannot bring the native bar back. */
+	.scroll-area > .scroll-area-viewport {
+		@apply h-full overflow-y-auto;
+		scrollbar-width: none;
+		&::-webkit-scrollbar {
+			display: none;
+		}
+	}
+
+	.scroll-area-track {
+		@apply absolute top-1 right-0 bottom-1 z-20 flex w-3.5 justify-center;
+		--thumb: 0.375rem;
+		--thumb-hover: 0.5rem;
+
+		&[data-size='sm'] {
+			--thumb: 0.25rem;
+			--thumb-hover: 0.375rem;
+		}
+		&[data-size='lg'] {
+			--thumb: 0.5rem;
+			--thumb-hover: 0.625rem;
+		}
+		&[data-size='xl'] {
+			--thumb: 0.625rem;
+			--thumb-hover: 0.75rem;
+		}
+	}
+
+	.scroll-area-thumb {
+		@apply cursor-default rounded-full bg-theme/25 opacity-0 transition-[opacity,width,background-color] duration-150;
+		width: var(--thumb);
+	}
+	.scroll-area:hover .scroll-area-thumb,
+	.scroll-area-track[data-active] .scroll-area-thumb,
+	.scroll-area-track[data-visibility='always'] .scroll-area-thumb {
+		@apply opacity-100;
+	}
+	.scroll-area-track:hover .scroll-area-thumb {
+		@apply bg-theme/40;
+		width: var(--thumb-hover);
+	}
+}

@@ -3,6 +3,7 @@
 	import { fly } from 'svelte/transition';
 	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
 	import { smoothRadius } from '../attachments';
+	import { ScrollArea } from '../scroll-area';
 
 	interface Option {
 		value: string;
@@ -133,51 +134,53 @@
 				style="border-radius: var(--menu-item-r, 10px)"
 				placeholder="Filter…"
 				onkeydown={onKeyDown} />
-			<ul class="nodrag nopan nowheel flex max-h-48 flex-col overflow-y-auto">
-				{#if value !== null}
-					<li>
-						<button
-							type="button"
-							class="block w-full px-2.5 py-1.5 text-left text-xs text-neutral-900 hover:bg-(--lv-3)"
-							style="border-radius: var(--menu-item-r, 10px)"
-							onclick={() => pick(null)}>
-							Clear selection
-						</button>
-					</li>
-				{/if}
-				{#each filtered as opt, i (opt.value)}
-					<li>
-						<button
-							type="button"
-							style="border-radius: var(--menu-item-r, 10px)"
-							class={[
-								'flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm',
-								i === activeIndex ? 'bg-(--lv-3) text-neutral-1000' : 'hover:bg-(--lv-3)',
-								opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
-							]}
-							onmouseenter={() => (activeIndex = i)}
-							onclick={() => pick(opt)}>
-							{#if opt.icon}
-								<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
-							{/if}
-							{#if opt.badge}
-								<span class="shrink-0 rounded bg-(--lv-3) px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
-									{opt.badge}
-								</span>
-							{/if}
-							<span class="flex min-w-0 flex-col">
-								<span class="truncate">{opt.label}</span>
-								{#if opt.subtitle}
-									<span class="truncate text-[10px] text-neutral-900">{opt.subtitle}</span>
+			<ScrollArea viewportClass="nodrag nopan nowheel max-h-48">
+				<ul class="flex flex-col">
+					{#if value !== null}
+						<li>
+							<button
+								type="button"
+								class="block w-full px-2.5 py-1.5 text-left text-xs text-neutral-900 hover:bg-(--lv-3)"
+								style="border-radius: var(--menu-item-r, 10px)"
+								onclick={() => pick(null)}>
+								Clear selection
+							</button>
+						</li>
+					{/if}
+					{#each filtered as opt, i (opt.value)}
+						<li>
+							<button
+								type="button"
+								style="border-radius: var(--menu-item-r, 10px)"
+								class={[
+									'flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-sm',
+									i === activeIndex ? 'bg-(--lv-3) text-neutral-1000' : 'hover:bg-(--lv-3)',
+									opt.value === value ? 'font-medium text-neutral-1100' : 'text-neutral-1000'
+								]}
+								onmouseenter={() => (activeIndex = i)}
+								onclick={() => pick(opt)}>
+								{#if opt.icon}
+									<img src="data:image/png;base64,{opt.icon}" alt="" class="h-4 w-4 shrink-0" />
 								{/if}
-							</span>
-						</button>
-					</li>
-				{/each}
-				{#if filtered.length === 0}
-					<li class="px-2.5 py-1.5 text-xs text-neutral-900">{emptyHint}</li>
-				{/if}
-			</ul>
+								{#if opt.badge}
+									<span class="shrink-0 rounded bg-(--lv-3) px-1 text-[9px] font-semibold text-neutral-1000 uppercase">
+										{opt.badge}
+									</span>
+								{/if}
+								<span class="flex min-w-0 flex-col">
+									<span class="truncate">{opt.label}</span>
+									{#if opt.subtitle}
+										<span class="truncate text-[10px] text-neutral-900">{opt.subtitle}</span>
+									{/if}
+								</span>
+							</button>
+						</li>
+					{/each}
+					{#if filtered.length === 0}
+						<li class="px-2.5 py-1.5 text-xs text-neutral-900">{emptyHint}</li>
+					{/if}
+				</ul>
+			</ScrollArea>
 			{#if footer}
 				{@render footer(closePanel)}
 			{/if}

@@ -5,5 +5,5 @@ import Icons from 'unplugin-icons/vite';
 
 export default defineConfig({
 	plugins: [tailwindcss(), svelte(), Icons({ compiler: 'svelte' })],
-	optimizeDeps: { exclude: ['svelte-portal', 'svelte-floating-ui'] }
+	optimizeDeps: { exclude: ['svelte-portal', 'svelte-floating-ui', '@number-flow/svelte'] }
 });

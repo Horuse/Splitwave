@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { writable } from 'svelte/store';
 	import { fade } from 'svelte/transition';
 	import { arrow as arrowMiddleware, createFloatingActions } from 'svelte-floating-ui';
@@ -24,7 +24,7 @@
 	let open = $state(false);
 	let openTimer: ReturnType<typeof setTimeout> | undefined;
 
-	let actual = $state<Placement>(placement);
+	let actual = $state<Placement>('top');
 	let arrowPos = $state<{ x?: number; y?: number }>({});
 	let arrowEl = $state<SVGSVGElement>();
 	const arrowStore = writable<SVGSVGElement | undefined>(undefined);
@@ -33,7 +33,7 @@
 	const [floatingRef, floatingContent] = createFloatingActions({
 		strategy: 'fixed',
 		placement,
-		middleware: [offset(offsetPx), flip(), shift({ padding: 6 }), ...(arrow ? [arrowMiddleware({ element: arrowStore, padding: 8 })] : [])],
+		middleware: [offset(offsetPx), flip(), shift({ padding: 6 }), ...(untrack(() => arrow) ? [arrowMiddleware({ element: arrowStore, padding: 8 })] : [])],
 		onComputed: ({ placement: p, middlewareData }) => {
 			actual = p as Placement;
 			arrowPos = { x: middlewareData.arrow?.x, y: middlewareData.arrow?.y };

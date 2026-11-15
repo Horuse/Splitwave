@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, NumberStepper } from '@splitwave/ui';
+	import { Button, Input, NumberStepper } from '@splitwave/ui';
 	import { createId } from '@paralleldrive/cuid2';
 	import { LazyStore } from '@tauri-apps/plugin-store';
 	import { methods } from '$lib/modules/audio/methods';
@@ -194,8 +194,9 @@
 									<div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-neutral-300">
 										<SoundWave class="size-4.5 text-sky-600 dark:text-sky-400" />
 									</div>
-									<input
-										class="input-base h-8 flex-1 font-medium"
+									<Input
+										size="md"
+										class="flex-1 font-medium"
 										value={d.name}
 										oninput={(e) => rename(d.id, (e.currentTarget as HTMLInputElement).value)} />
 									<span class="rounded-md bg-neutral-300 px-2 py-1 font-mono text-xs text-neutral-900 tabular-nums">

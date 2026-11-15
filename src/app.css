@@ -105,10 +105,6 @@
         @apply text-xs flex flex-col dark:border-amber-500/20 border-amber-600/50 border-dashed border gap-2 bg-amber-500/20 dark:bg-amber-500/10 p-4 rounded-2xl text-amber-600;
     }
 
-    .input-base {
-        @apply focus:outline-none px-2.5 bg-neutral-100 hover:bg-neutral-200 hover:text-theme transition-all text-neutral-800 rounded-lg h-6.5 flex justify-center items-center;
-    }
-
     .node-spec {
         @apply font-mono text-[9px] text-neutral-600;
     }

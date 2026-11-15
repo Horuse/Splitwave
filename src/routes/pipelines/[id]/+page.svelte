@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '@splitwave/ui';
+	import { Button, Input } from '@splitwave/ui';
 	import { page } from '$app/state';
 	import type { Pipeline } from '$lib/modules/pipeline/types';
 	import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
@@ -88,13 +88,12 @@
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
 						{pipeline.name}
 					</span>
-					<input
-						bind:this={nameInput}
+					<Input
+						bind:ref={nameInput}
 						bind:value={pipeline.name}
 						oninput={onNameInput}
 						maxlength={MAX_NAME_LENGTH}
-						class="input-base !transition-none"
-						style:width="{nameWidth}px" />
+						style="width:{nameWidth}px" />
 				</div>
 			{/if}
 		</div>

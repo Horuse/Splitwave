@@ -62,7 +62,7 @@
 <Header />
 
 <div bind:this={scroller} class="min-h-0 flex-1 overflow-y-auto" onscroll={updateActive}>
-	<div class="mx-auto flex w-full max-w-5xl gap-10 p-8">
+	<div class="flex w-full gap-10 p-8">
 		<article
 			class="flex min-w-0 flex-1 flex-col text-sm leading-relaxed text-neutral-1100 [&_h2]:mt-8 [&_h2]:scroll-mt-6 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-theme [&_h3]:mt-6 [&_h3]:scroll-mt-6 [&_h3]:font-semibold [&_h3]:text-theme [&_p]:mt-3 [&_strong]:font-semibold [&_strong]:text-theme [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5">
 			<nav class="flex flex-wrap items-center gap-1 text-xs text-neutral-900">

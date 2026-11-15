@@ -8,7 +8,7 @@
 <Header />
 
 <div class="min-h-0 flex-1 overflow-y-auto">
-	<div class="mx-auto flex w-full max-w-3xl flex-col gap-5 p-8">
+	<div class="flex w-full flex-col gap-5 p-8">
 		<div class="flex flex-col gap-1">
 			<h1 class="text-2xl font-semibold">Wiki</h1>
 			<p class="text-sm text-neutral-900">Tips and guides for building pipelines.</p>

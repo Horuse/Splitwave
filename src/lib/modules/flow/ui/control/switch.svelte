@@ -6,7 +6,7 @@
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import InputColumn from './_input_column.svelte';
 	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import OutputRow from './_output_row.svelte';
 	import { useSelectOutput } from './_select_output';
 	import { PREVIEW_CTX, selectHandle } from '$lib/modules/flow/utils';

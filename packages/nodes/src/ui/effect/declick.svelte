@@ -1,32 +1,34 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DeclickNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import Wrapper from '../node.svelte';
 	import Backspace from '~icons/fluent/backspace-24-filled';
 
 	type DeclickNodeType = Node<DeclickNodeData, 'declick'>;
 	let { id, data }: NodeProps<DeclickNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function setSensitivity(v: number) {
 		const patch = { sensitivity: v };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function setMaxWidth(v: number) {
 		const patch = { maxWidthMs: v };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 </script>
 

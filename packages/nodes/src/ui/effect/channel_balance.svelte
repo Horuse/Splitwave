@@ -1,20 +1,22 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { Balance } from '$lib/components/icons';
+	import Wrapper from '../node.svelte';
+	import { Balance } from '../icons';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
 	let { id, data }: NodeProps<ChannelBalanceNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 	let linked = $state(false);
 
 	function patchData(patch: Partial<ChannelBalanceNodeData>) {
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function toggleBypass() {

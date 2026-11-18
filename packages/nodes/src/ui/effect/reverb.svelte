@@ -1,22 +1,24 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ReverbNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { Reverb } from '$lib/components/icons';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import Wrapper from '../node.svelte';
+	import { Reverb } from '../icons';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 
 	type ReverbNodeType = Node<ReverbNodeData, 'reverb'>;
 	let { id, data }: NodeProps<ReverbNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function patch<K extends keyof ReverbNodeData>(key: K, value: ReverbNodeData[K]) {
 		const p = { [key]: value } as Partial<ReverbNodeData>;
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function pctFmt(v: number): string {
@@ -25,7 +27,7 @@
 
 	function applyPreset(p: PresetData<'reverb'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {

@@ -5,7 +5,7 @@
 	import type { CycleNodeData } from '@splitwave/nodes';
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowRedo from '~icons/fluent/arrow-redo-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import { NEXT_HANDLE, PREVIEW_CTX, RESET_HANDLE, parsePort, stepHandle } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
 	import { MAX_BRANCHES, MIN_BRANCHES } from './_branches.svelte';

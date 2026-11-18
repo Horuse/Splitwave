@@ -5,7 +5,7 @@
 	import type { IfNodeData } from '@splitwave/nodes';
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowRight from '~icons/fluent/arrow-right-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import GateGlyph from './_gate_glyph.svelte';
 	import InputColumn from './_input_column.svelte';
 	import OutputRow from './_output_row.svelte';

@@ -6,7 +6,7 @@
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ChannelHandles from '@splitwave/nodes/ui/_channel_handles.svelte';
 	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import { useSelectOutput } from './_select_output';
 	import { MAX_BRANCHES, MIN_BRANCHES, pruneBranches, useBranchTriggers } from './_branches.svelte';
 	import { PREVIEW_CTX, selectHandle } from '$lib/modules/flow/utils';

@@ -1,29 +1,30 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseSuppressorNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import Wrapper from '../node.svelte';
 	import Wand from '~icons/fluent/wand-16-filled';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
-	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 	import { formatHz } from '@splitwave/nodes';
 
 	type NoiseSuppressorNodeType = Node<NoiseSuppressorNodeData, 'noiseSuppressor'>;
 	let { id, data }: NodeProps<NoiseSuppressorNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function patch<K extends keyof NoiseSuppressorNodeData>(key: K, value: NoiseSuppressorNodeData[K]) {
 		const p = { [key]: value } as Partial<NoiseSuppressorNodeData>;
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function applyPreset(p: PresetData<'noiseSuppressor'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
@@ -43,8 +44,8 @@
 	}
 
 	let srcTooltip = $derived.by(() => {
-		if (appSettings.pipelineSampleRate === 48_000) return undefined;
-		return `Internal model runs at ${formatHz(48_000)} (resampled from ${formatHz(appSettings.pipelineSampleRate)} and back)`;
+		if (engine.sampleRate === 48_000) return undefined;
+		return `Internal model runs at ${formatHz(48_000)} (resampled from ${formatHz(engine.sampleRate)} and back)`;
 	});
 </script>
 

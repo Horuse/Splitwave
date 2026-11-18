@@ -1,8 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 import { createId } from '@paralleldrive/cuid2';
-import type { Preset, PresetData, PresetKind } from './types';
-import { FACTORY_PRESETS } from './factory';
-import { PRESET_VERSION, isOutdated } from './version';
+import { FACTORY_PRESETS, PRESET_VERSION, isOutdated, type Preset, type PresetData, type PresetKind } from '@splitwave/nodes';
 
 const STORE_FILE = 'presets.json';
 const KEY_PREFIX = 'preset:';

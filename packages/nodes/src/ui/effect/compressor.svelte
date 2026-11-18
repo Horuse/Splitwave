@@ -1,29 +1,31 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { CompressorNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils';
-	import { Compressor } from '$lib/components/icons';
+	import Wrapper from '../node.svelte';
+	import { SIDECHAIN_HANDLE } from '../utils';
+	import { Compressor } from '../icons';
 	import GrBar from './_gr_bar.svelte';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 
 	type CompressorNodeType = Node<CompressorNodeData, 'compressor'>;
 	let { id, data }: NodeProps<CompressorNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function patch<K extends keyof CompressorNodeData>(key: K, value: CompressorNodeData[K]) {
 		const p = { [key]: value } as Partial<CompressorNodeData>;
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function applyPreset(p: PresetData<'compressor'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function ratioFmt(v: number): string {

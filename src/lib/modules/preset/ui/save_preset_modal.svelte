@@ -37,7 +37,7 @@
 	</div>
 
 	<div class="flex justify-end gap-2 px-5 pb-4">
-		<Button onclick={() => modalManager.close(modalId, undefined)}> Cancel </Button>
+		<Button onclick={() => modalManager.close(modalId, undefined)}>Cancel</Button>
 		<Button tone="success" type="submit" disabled={!valid}>Save</Button>
 	</div>
 </form>

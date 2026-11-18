@@ -1,19 +1,20 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { MuteNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import Wrapper from '../node.svelte';
 	import SpeakerMute from '~icons/fluent/speaker-mute-16-filled';
-	import ControlPort from '../control/_control_port.svelte';
-	import { OPEN_HANDLE, PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import { useControlInput } from '../../control.svelte';
-	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import ControlPort from '../_control_port.svelte';
+	import { OPEN_HANDLE, PREVIEW_CTX } from '../utils';
+	import { useControlInput } from '../state/control.svelte';
 	import { getContext, onMount, untrack } from 'svelte';
 	import { formatPct } from '@splitwave/nodes';
 
 	type MuteNodeType = Node<MuteNodeData, 'mute'>;
 	let { id, data }: NodeProps<MuteNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
@@ -28,9 +29,9 @@
 		if (!current || current.muted === muted) return;
 		const patch = { muted };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 		if (current.cueEnabled && current.cueDeviceId) {
-			audioMethods.playCue(current.cueDeviceId, muted, (current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100, beep).catch(() => {});
+			engine.playCue(current.cueDeviceId, muted, (current.cueVolume ?? CUE_VOLUME_DEFAULT) / 100, beep).catch(() => {});
 		}
 	}
 
@@ -55,11 +56,11 @@
 		untrack(() => setMuted(!high, true));
 	});
 
-	let cueOptions = $derived(audioStore.outputDevices.map((d) => ({ value: d.id, label: d.name })));
-	let cueMissing = $derived(!!data.cueDeviceId && !audioStore.outputDevices.some((d) => d.id === data.cueDeviceId));
+	let cueOptions = $derived(engine.outputDevices.map((d) => ({ value: d.id, label: d.name })));
+	let cueMissing = $derived(!!data.cueDeviceId && !engine.outputDevices.some((d) => d.id === data.cueDeviceId));
 
 	onMount(() => {
-		if (audioStore.outputDevices.length === 0) audioStore.refreshOutputDevices();
+		if (engine.outputDevices.length === 0) engine.refreshOutputDevices();
 	});
 
 	function setCueEnabled(enabled: boolean) {
@@ -77,7 +78,7 @@
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 </script>
 
@@ -119,7 +120,7 @@
 					<RescanButton
 						onRescan={() => {
 							close();
-							audioStore.refreshOutputDevices();
+							engine.refreshOutputDevices();
 						}} />
 				{/snippet}
 			</Combobox>

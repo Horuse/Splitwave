@@ -35,7 +35,7 @@ import {
 	FileRecord as FileRecordIcon,
 	Reverb as ReverbIcon,
 	Saturator as SaturatorIcon
-} from '$lib/components/icons';
+} from '@splitwave/nodes/icons';
 import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '@splitwave/nodes';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
@@ -44,22 +44,22 @@ import AudioFile from '../ui/input/audio_file.svelte';
 import Speaker from '../ui/output/speaker.svelte';
 import FileRecording from '../ui/output/file_recording.svelte';
 import Gain from '@splitwave/nodes/ui/effect/gain.svelte';
-import Mute from '../ui/effect/mute.svelte';
-import ChannelBalance from '../ui/effect/channel_balance.svelte';
-import Saturator from '../ui/effect/saturator.svelte';
-import Eq from '../ui/effect/eq.svelte';
+import Mute from '@splitwave/nodes/ui/effect/mute.svelte';
+import ChannelBalance from '@splitwave/nodes/ui/effect/channel_balance.svelte';
+import Saturator from '@splitwave/nodes/ui/effect/saturator.svelte';
+import Eq from '@splitwave/nodes/ui/effect/eq.svelte';
 import LevelMeter from '@splitwave/nodes/ui/effect/level_meter.svelte';
 import LufsMeter from '../ui/effect/lufs_meter.svelte';
 import Waveform from '../ui/effect/waveform.svelte';
 import Spectrum from '../ui/effect/spectrum.svelte';
-import Limiter from '../ui/effect/limiter.svelte';
-import Compressor from '../ui/effect/compressor.svelte';
-import NoiseGate from '../ui/effect/noise_gate.svelte';
-import Delay from '../ui/effect/delay.svelte';
-import Reverb from '../ui/effect/reverb.svelte';
-import NoiseSuppressor from '../ui/effect/noise_suppressor.svelte';
-import Declick from '../ui/effect/declick.svelte';
-import DeEsser from '../ui/effect/de_esser.svelte';
+import Limiter from '@splitwave/nodes/ui/effect/limiter.svelte';
+import Compressor from '@splitwave/nodes/ui/effect/compressor.svelte';
+import NoiseGate from '@splitwave/nodes/ui/effect/noise_gate.svelte';
+import Delay from '@splitwave/nodes/ui/effect/delay.svelte';
+import Reverb from '@splitwave/nodes/ui/effect/reverb.svelte';
+import NoiseSuppressor from '@splitwave/nodes/ui/effect/noise_suppressor.svelte';
+import Declick from '@splitwave/nodes/ui/effect/declick.svelte';
+import DeEsser from '@splitwave/nodes/ui/effect/de_esser.svelte';
 import Plugin from '../ui/effect/plugin.svelte';
 import WebRtcCollaborator from '../ui/effect/webrtc_collaborator.svelte';
 import NetReceiver from '../ui/input/net_receiver.svelte';

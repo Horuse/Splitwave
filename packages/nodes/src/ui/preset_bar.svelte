@@ -1,12 +1,10 @@
 <script lang="ts" generics="K extends PresetKind">
 	import { Combobox, ComboboxAction } from '@splitwave/ui';
-	import { modalManager } from '$lib/modules/overlay/modal';
 	import Delete from '~icons/fluent/delete-16-filled';
 	import Add from '~icons/fluent/add-24-filled';
 	import type { NodeDataMap } from '@splitwave/nodes';
-	import { methods } from '../methods';
-	import type { Preset, PresetData, PresetKind } from '../types';
-	import SavePresetModal from './save_preset_modal.svelte';
+	import type { Preset, PresetData, PresetKind } from '../presets';
+	import { getEnginePort } from '../engine';
 
 	interface Props {
 		kind: K;
@@ -16,11 +14,13 @@
 
 	let { kind, data, onApply }: Props = $props();
 
+	const presetStore = getEnginePort().presets;
+
 	let presets = $state<Preset[]>([]);
 	let selectedId = $state<string | null>(null);
 
 	async function reload() {
-		presets = await methods.list(kind);
+		presets = await presetStore.list(kind);
 	}
 	$effect(() => {
 		kind;
@@ -50,19 +50,16 @@
 	}
 
 	async function save() {
-		const name = await modalManager.open<string>('Save preset', SavePresetModal, {
-			size: 'sm',
-			taken: presets.filter((p) => !p.builtin).map((p) => p.name)
-		});
+		const name = await presetStore.promptName(presets.filter((p) => !p.builtin).map((p) => p.name));
 		if (!name) return;
-		const created = await methods.create(kind, name, strip(data));
+		const created = await presetStore.create(kind, name, strip(data));
 		await reload();
 		selectedId = created.id;
 	}
 
 	async function remove() {
 		if (!active || active.builtin) return;
-		await methods.remove(active.id);
+		await presetStore.remove(active.id);
 		selectedId = null;
 		await reload();
 	}

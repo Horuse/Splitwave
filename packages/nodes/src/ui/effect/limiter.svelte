@@ -1,28 +1,30 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LimiterNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { Limiter } from '$lib/components/icons';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import Wrapper from '../node.svelte';
+	import { Limiter } from '../icons';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 	import GrBar from './_gr_bar.svelte';
 
 	type LimiterNodeType = Node<LimiterNodeData, 'limiter'>;
 	let { id, data }: NodeProps<LimiterNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function setCeiling(v: number) {
 		const patch = { ceilingDb: v };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 	function setRelease(v: number) {
 		const patch = { releaseMs: v };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 	function setLookahead(v: number) {
 		flow.updateNodeData(id, { lookaheadMs: v });
@@ -30,13 +32,13 @@
 
 	function applyPreset(p: PresetData<'limiter'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	// Ceiling transfer curve

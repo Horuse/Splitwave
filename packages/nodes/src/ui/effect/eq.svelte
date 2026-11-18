@@ -1,16 +1,18 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { EQ_CROSSOVER_FREQS } from '@splitwave/nodes/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { EqNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
+	import Wrapper from '../node.svelte';
 	import Sliders from '~icons/fluent/options-16-filled';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 	import { formatFreq, formatGain } from '@splitwave/nodes';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
@@ -30,13 +32,13 @@
 	function patchGains(gains: number[]) {
 		const patch = { gainsDb: gains };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch as Record<string, unknown>).catch(() => {});
+		engine.updateEffect(id, patch as Record<string, unknown>).catch(() => {});
 	}
 
 	function toggleBypass() {
 		const patch = { bypassed: !data.bypassed };
 		flow.updateNodeData(id, patch);
-		audioMethods.updateEffect(id, patch).catch(() => {});
+		engine.updateEffect(id, patch).catch(() => {});
 	}
 
 	function setBand(i: number, db: number) {

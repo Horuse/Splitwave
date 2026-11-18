@@ -5,7 +5,7 @@
 	import type { LogicNodeData } from '@splitwave/nodes';
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import ArrowRight from '~icons/fluent/arrow-right-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import GateGlyph from './_gate_glyph.svelte';
 	import { A_HANDLE, B_HANDLE, CONTROL_OUT, PREVIEW_CTX } from '$lib/modules/flow/utils';
 	import { evaluate, LOGIC_OPS, usesB, type LogicOp } from '@splitwave/nodes';

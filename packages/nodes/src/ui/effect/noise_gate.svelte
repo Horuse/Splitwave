@@ -1,31 +1,31 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
-	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy } from 'svelte';
-	import { tauriListen } from '$lib/utils/tauri_event';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseGateNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { SIDECHAIN_HANDLE } from '$lib/modules/flow/utils';
-	import { NoiseGate } from '$lib/components/icons';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import Wrapper from '../node.svelte';
+	import { SIDECHAIN_HANDLE } from '../utils';
+	import { NoiseGate } from '../icons';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 
 	type NoiseGateNodeType = Node<NoiseGateNodeData, 'noiseGate'>;
 	let { id, data }: NodeProps<NoiseGateNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function patch<K extends keyof NoiseGateNodeData>(key: K, value: NoiseGateNodeData[K]) {
 		const p = { [key]: value } as Partial<NoiseGateNodeData>;
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function applyPreset(p: PresetData<'noiseGate'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {
@@ -35,7 +35,7 @@
 	let stateGain = $state(1);
 	let gateState = $derived(stateGain > 0.85 ? 'open' : stateGain > 0.15 ? 'hold' : 'closed');
 
-	tauriListen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
+	engine.listen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
 		if (p.nodeId !== id) return;
 		stateGain = Math.max(0, Math.min(1, p.grLin));
 	});

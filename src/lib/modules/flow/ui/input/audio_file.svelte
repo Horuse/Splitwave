@@ -15,7 +15,7 @@
 	import Pause from '~icons/fluent/pause-24-filled';
 	import Play from '~icons/fluent/play-24-filled';
 	import Stop from '~icons/fluent/stop-24-filled';
-	import { Autoplay, SkipBack5, SkipForward5 } from '$lib/components/icons';
+	import { Autoplay, SkipBack5, SkipForward5 } from '@splitwave/nodes/icons';
 	import { onNodeAction } from '$lib/modules/flow/utils';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
 	import { formatHz, formatDuration, formatPct } from '@splitwave/nodes';

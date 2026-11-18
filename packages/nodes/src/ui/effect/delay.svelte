@@ -1,23 +1,25 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
 	import { MAX_DELAY_MS } from '@splitwave/nodes/generated/engine';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { DelayNodeData } from '@splitwave/nodes';
-	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import Wrapper from '@splitwave/nodes/ui/node.svelte';
-	import { Delay } from '$lib/components/icons';
-	import { PresetBar } from '$lib/modules/preset/ui';
-	import type { PresetData } from '$lib/modules/preset';
+	import Wrapper from '../node.svelte';
+	import { Delay } from '../icons';
+	import PresetBar from '../preset_bar.svelte';
+	import type { PresetData } from '../../presets';
 
 	type DelayNodeType = Node<DelayNodeData, 'delay'>;
 	let { id, data }: NodeProps<DelayNodeType> = $props();
+
+	const engine = getEnginePort();
 
 	const flow = useSvelteFlow();
 
 	function patch<K extends keyof DelayNodeData>(key: K, value: DelayNodeData[K]) {
 		const p = { [key]: value } as Partial<DelayNodeData>;
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function pctFmt(v: number): string {
@@ -26,7 +28,7 @@
 
 	function applyPreset(p: PresetData<'delay'>) {
 		flow.updateNodeData(id, p);
-		audioMethods.updateEffect(id, p).catch(() => {});
+		engine.updateEffect(id, p).catch(() => {});
 	}
 
 	function toggleBypass() {

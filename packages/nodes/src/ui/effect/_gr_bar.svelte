@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { getEnginePort } from '../../engine';
 	import { onMount, onDestroy } from 'svelte';
-	import { tauriListen } from '$lib/utils/tauri_event';
+
+	const engine = getEnginePort();
 
 	let { nodeId, horizontal = false }: { nodeId: string; horizontal?: boolean } = $props();
 
@@ -24,7 +26,7 @@
 		rafId = requestAnimationFrame(tick);
 	}
 
-	tauriListen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
+	engine.listen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
 		if (p.nodeId !== nodeId) return;
 		const lin = Math.max(1e-6, Math.min(1, p.grLin));
 		targetGrDb = -20 * Math.log10(lin);

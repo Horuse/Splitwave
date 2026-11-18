@@ -5,7 +5,7 @@
 	import type { LevelTriggerNodeData } from '@splitwave/nodes';
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Gauge from '~icons/fluent/gauge-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import { CONTROL_OUT } from '$lib/modules/flow/utils';
 	import { controlSignals } from '../../control.svelte';
 	import { tauriListen } from '$lib/utils/tauri_event';

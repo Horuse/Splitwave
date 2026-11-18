@@ -5,7 +5,7 @@
 	import type { TimerMode, TimerNodeData } from '@splitwave/nodes';
 	import Wrapper from '@splitwave/nodes/ui/node.svelte';
 	import Hourglass from '~icons/fluent/hourglass-16-filled';
-	import ControlPort from './_control_port.svelte';
+	import ControlPort from '@splitwave/nodes/ui/_control_port.svelte';
 	import { CONTROL_OUT, PREVIEW_CTX, START_HANDLE } from '$lib/modules/flow/utils';
 	import { controlSignals, useControlInput } from '../../control.svelte';
 

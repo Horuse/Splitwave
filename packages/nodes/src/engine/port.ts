@@ -1,5 +1,16 @@
 import { getContext, setContext } from 'svelte';
 import type { NodeTiming } from '../generated/NodeTiming';
+import type { Preset, PresetData, PresetKind } from '../presets';
+import type { AudioDevice } from './types';
+
+/** Where user presets live; factory presets ship in the package. */
+export interface PresetStore {
+	list(kind: PresetKind): Promise<Preset[]>;
+	create<K extends PresetKind>(kind: K, name: string, data: PresetData<K>): Promise<Preset<K>>;
+	remove(id: string): Promise<void>;
+	/** Asks the user for a name; null when they cancel. */
+	promptName(taken: string[]): Promise<string | null>;
+}
 
 /**
  * Everything a node needs from the host. The desktop app backs it with the
@@ -17,6 +28,10 @@ export interface EnginePort {
 	updateEffect(nodeId: string, patch: Record<string, unknown>): Promise<void>;
 	/** Subscribes to an engine event. Called during component init it also unsubscribes on destroy. */
 	listen<T>(event: string, handler: (payload: T) => void): () => void;
+	readonly outputDevices: AudioDevice[];
+	refreshOutputDevices(): Promise<void>;
+	playCue(deviceId: string, muted: boolean, gain: number, beep?: boolean): Promise<void>;
+	readonly presets: PresetStore;
 }
 
 const KEY = Symbol('engine-port');

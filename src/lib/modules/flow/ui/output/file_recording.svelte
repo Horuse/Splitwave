@@ -26,7 +26,7 @@
 	import Folder from '~icons/fluent/folder-16-filled';
 	import FolderOpen from '~icons/fluent/folder-open-16-filled';
 	import Pulse from '~icons/fluent/pulse-20-filled';
-	import { FileRecord } from '$lib/components/icons';
+	import { FileRecord } from '@splitwave/nodes/icons';
 	import { RECORDING_FORMATS } from '@splitwave/nodes';
 	import { formatHz, formatKhzValue, formatDuration, formatSize } from '@splitwave/nodes';
 	import { onNodeAction, channelOf } from '$lib/modules/flow/utils';

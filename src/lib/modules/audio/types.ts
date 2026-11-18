@@ -1,19 +1,7 @@
 import type { PipelineEdge, PipelineNode } from '@splitwave/nodes';
 
-export type DeviceKind = 'input' | 'output';
-
-export interface AudioDevice {
-	id: string;
-	name: string;
-	kind: DeviceKind;
-}
-
-export interface AudioApplication {
-	bundleId: string;
-	name: string;
-	/** Base64-encoded PNG icon (data URL body, no scheme prefix). */
-	icon?: string | null;
-}
+import type { DeviceKind } from '@splitwave/nodes/engine';
+export type { AudioApplication, AudioDevice, DeviceKind } from '@splitwave/nodes/engine';
 
 export interface PluginDescriptor {
 	uid: string;

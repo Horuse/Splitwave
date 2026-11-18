@@ -25,6 +25,11 @@
 			"svelte": "./src/ui/*",
 			"types": "./src/ui/*",
 			"default": "./src/ui/*"
+		},
+		"./icons": {
+			"svelte": "./src/ui/icons/index.ts",
+			"types": "./src/ui/icons/index.ts",
+			"default": "./src/ui/icons/index.ts"
 		}
 	},
 	"peerDependencies": {

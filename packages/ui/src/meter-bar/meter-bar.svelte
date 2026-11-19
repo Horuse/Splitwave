@@ -54,7 +54,8 @@
 	}
 
 	let hoverLineStyle = $derived(
-		orientation === 'vertical' ? `left: 0; right: 0; height: 1px; top: ${hoverPos}px;` : `top: 0; bottom: 0; width: 1px; left: ${hoverPos}px;`
+		// Centred on the pointer, where the readout is measured; a 1px line drawn from it would sit half a pixel off.
+		orientation === 'vertical' ? `left: 0; right: 0; height: 1px; top: ${hoverPos - 0.5}px;` : `top: 0; bottom: 0; width: 1px; left: ${hoverPos - 0.5}px;`
 	);
 </script>
 

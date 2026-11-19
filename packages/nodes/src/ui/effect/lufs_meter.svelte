@@ -6,6 +6,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LufsMeterNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
+	import DbScale from '../graph/db_scale.svelte';
 	import Gauge from '~icons/fluent/gauge-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import { onNodeAction } from '../utils';
@@ -18,7 +19,7 @@
 
 	const LUFS_FLOOR = -40; // bar scale floor
 
-	const BAR_W = 42; // px per channel bar — wide enough for "-15.2"
+	const BAR_W = 30;
 	const BAR_H = 235; // bars and their scale rail must stay the same height
 
 	const RMS_FLOOR = -80; // noise floor sits near -60, so the LUFS scale is too short
@@ -93,9 +94,6 @@
         #eab308 55%, #eab308 80%,
         #f97316 80%, #f97316 92%,
         #ef4444 92%, #ef4444 100%)`;
-
-	const LUFS_TICKS = [0, -6, -12, -18, -23, -30, -40];
-	const RMS_TICKS = [0, -12, -18, -23, -40, -60, -80];
 
 	let profile = $derived(PROFILES.find((p) => p.id === (data.profile ?? 'free')) ?? PROFILES[0]);
 
@@ -273,11 +271,11 @@
 							type="button"
 							onclick={resetPeaks}
 							{title}
-							class="nodrag nopan relative flex items-stretch overflow-hidden rounded-sm border border-neutral-300"
+							class="nodrag nopan relative flex items-stretch gap-1"
 							style="width: {BAR_W * bars.length}px; height: {BAR_H}px;">
 							{#each bars as bar, i (bar.label)}
 								<MeterBar
-									class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
+									class="flex-1 overflow-hidden rounded-sm"
 									orientation="vertical"
 									gradient={LUFS_GRADIENT}
 									ghost
@@ -299,22 +297,15 @@
 							{/if}
 						</button>
 
-						<div class="relative w-7 text-[8px] text-neutral-700 select-none" style="height: {BAR_H}px;">
-							{#each ticks as db (db)}
-								<div class="absolute left-0 flex items-center" style="bottom: {dbToPct(db, floor)}%; height: 1px;">
-									<div class="h-px w-1.5 shrink-0 bg-neutral-400"></div>
-									<span class="ml-0.5 leading-none">{db}</span>
-								</div>
-							{/each}
-						</div>
+						<DbScale min={floor} height={BAR_H} marks={ticks} />
 					</div>
 
-					<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {BAR_W * bars.length}px;">
-						{#each bars as bar, i (bar.label)}
-							<div class={['flex flex-1 flex-col items-center py-0.5', i > 0 && 'border-l border-neutral-300']}>
-								<span class="text-[7px] leading-none text-neutral-500">{bar.label}</span>
-								<span class="text-[8px] leading-tight tabular-nums">{format(bar.val)}</span>
-								<span class="text-[7px] leading-none text-neutral-400">{unit}</span>
+					<div class="flex gap-1 pt-1" style="width: {BAR_W * bars.length}px;">
+						{#each bars as bar (bar.label)}
+							<div class="flex flex-1 flex-col items-center">
+								<span class="text-[8px] leading-none text-neutral-600">{bar.label}</span>
+								<span class="text-[9px] leading-tight text-neutral-1000 tabular-nums">{format(bar.val)}</span>
+								<span class="text-[7px] leading-none text-neutral-500">{unit}</span>
 							</div>
 						{/each}
 					</div>
@@ -322,31 +313,19 @@
 			{/snippet}
 
 			<div class="flex flex-col gap-0.5">
-				{@render group(lufsBars, LUFS_FLOOR, LUFS_TICKS, profile.target ?? null, null, 'Reset peaks', 'LUFS')}
+				{@render group(lufsBars, LUFS_FLOOR, profile.target != null ? [profile.target] : [], profile.target ?? null, null, 'Reset peaks', 'LUFS')}
 				<div class="h-3 text-center text-[8px] leading-3 font-semibold {targetClass(integrated, profile.target)}" style="width: {BAR_W * 3}px;">
 					{targetDelta(integrated, profile.target) ?? ''}
 				</div>
 			</div>
 
-			{@render group(rmsBars, RMS_FLOOR, RMS_TICKS, null, profile.rmsRange ?? null, 'Reset peaks', 'dBFS')}
-
-			<!-- Program stats -->
-			<div class="flex flex-col gap-1" style="width: {BAR_W * 2}px;">
-				{#each [{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) }, { label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) }, { label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) }, { label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }, { label: 'Sample Peak', unit: 'dBFS', val: format(samplePeak) }, { label: 'DC Offset', unit: 'dBFS', val: formatDc(dcOffset) }, { label: 'Correlation', unit: '', val: correlation.toFixed(2) }, { label: 'Clipped', unit: 'smp', val: String(clips) }] as stat (stat.label)}
-					<div class="flex flex-col rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
-						<span class="text-[7px] leading-none text-neutral-500">{stat.label}</span>
-						<span class="text-[11px] leading-tight font-semibold text-neutral-900 tabular-nums">
-							{stat.val}<span class="ml-0.5 text-[7px] font-normal text-neutral-400">{stat.unit}</span>
-						</span>
-					</div>
-				{/each}
-			</div>
+			{@render group(rmsBars, RMS_FLOOR, profile.rmsRange ? [...profile.rmsRange] : [], null, profile.rmsRange ?? null, 'Reset peaks', 'dBFS')}
 		</div>
 
 		<button
 			type="button"
 			onclick={resetPeaks}
-			class="nodrag nopan flex items-center justify-center gap-1 rounded-sm border border-neutral-300 bg-neutral-100 py-1 text-[8px] text-neutral-900 transition-colors hover:bg-neutral-200 hover:text-theme"
+			class="nodrag nopan flex items-center justify-center gap-1 rounded-md bg-(--lv-1) py-1 text-[9px] text-neutral-900 hover:bg-(--lv-2)"
 			title="Clear held peaks and the true-peak maximum">
 			<Refresh class="size-2.5" />
 			Reset peaks
@@ -366,13 +345,24 @@
 		{#if checks.length > 0}
 			<div class="flex flex-col gap-0.5">
 				{#each checks as c (c.label)}
-					<div class="flex items-center gap-1.5 rounded-sm border border-neutral-300 bg-neutral-100 px-1.5 py-1">
+					<div class="flex items-center gap-1.5 py-0.5">
 						<span class={['size-1.5 shrink-0 rounded-full', !measured ? 'bg-neutral-400' : c.ok ? 'bg-green-500' : 'bg-red-500']}></span>
-						<span class="flex-1 text-[8px] text-neutral-900">{c.label}</span>
-						<span class="text-[8px] text-neutral-500 tabular-nums">{c.want}</span>
+						<span class="flex-1 text-[9px] text-neutral-900">{c.label}</span>
+						<span class="text-[9px] text-neutral-600 tabular-nums">{c.want}</span>
 					</div>
 				{/each}
 			</div>
 		{/if}
+		<!-- Program stats -->
+		<div class="grid grid-cols-2 gap-x-4">
+			{#each [{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) }, { label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) }, { label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) }, { label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }, { label: 'Sample Peak', unit: 'dBFS', val: format(samplePeak) }, { label: 'DC Offset', unit: 'dBFS', val: formatDc(dcOffset) }, { label: 'Correlation', unit: '', val: correlation.toFixed(2) }, { label: 'Clipped', unit: 'smp', val: String(clips) }] as stat (stat.label)}
+				<div class="flex items-baseline justify-between gap-2 border-b border-theme/5 py-1 [&:nth-last-child(-n+2)]:border-b-0">
+					<span class="text-[9px] leading-none text-neutral-700">{stat.label}</span>
+					<span class="text-[11px] leading-none text-neutral-1000 tabular-nums">
+						{stat.val}<span class="ml-0.5 text-[8px] text-neutral-500">{stat.unit}</span>
+					</span>
+				</div>
+			{/each}
+		</div>
 	</div>
 </Wrapper>

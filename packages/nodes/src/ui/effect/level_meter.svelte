@@ -5,6 +5,7 @@
 	import { type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelMeterNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
+	import DbScale from '../graph/db_scale.svelte';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { onNodeAction, channelColor, channelLabel } from '../utils';
 	import { formatDb } from '@splitwave/nodes';
@@ -18,8 +19,6 @@
 	const HOLD_FALL_DB_PER_SEC = 20;
 	const BAR_W = 30;
 
-	const minorTicks = Array.from({ length: 60 }, (_, i) => -i);
-	const minorTickPos = minorTicks.map((db) => ({ db, pct: dbToPct(db), major: db % 3 === 0 }));
 
 	const METER_GRADIENT = `linear-gradient(to top,
         #22c55e 0%, #22c55e 70%,
@@ -199,13 +198,6 @@
 		</div>
 
 		<!-- dB scale, level with the bars under the clip row. -->
-		<div class="relative mt-3 h-72 w-7 font-mono text-[8px] text-neutral-600 select-none">
-			{#each minorTickPos as t (t.db)}
-				<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
-					<div class={['h-px shrink-0', t.major ? 'w-1.5 bg-neutral-500' : 'w-1 bg-neutral-300']}></div>
-					{#if t.major}<span class="ml-0.5 leading-none">{t.db}</span>{/if}
-				</div>
-			{/each}
-		</div>
+		<div class="mt-3"><DbScale min={DB_FLOOR} height={288} /></div>
 	</div>
 </Wrapper>

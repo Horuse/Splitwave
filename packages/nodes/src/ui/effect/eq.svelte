@@ -178,7 +178,11 @@
 	onBypass={toggleBypass}
 	collapsed={data.collapsed}>
 	{#snippet summary()}
-		<svg viewBox="0 0 {CURVE_W} {CURVE_H}" class="block h-8 w-72 rounded-md border border-theme/5 bg-neutral-100" aria-hidden="true"
+		<svg
+			viewBox="0 0 {CURVE_W} {CURVE_H}"
+			preserveAspectRatio="none"
+			class="block h-8 w-72 rounded-md border border-theme/5 bg-neutral-100"
+			aria-hidden="true"
 			><line x1="0" y1={dbToY(0)} x2={CURVE_W} y2={dbToY(0)} class="stroke-neutral-500" stroke-width="0.5" /><path
 				d={curvePath}
 				class="stroke-signal"

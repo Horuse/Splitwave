@@ -52,16 +52,18 @@
 	}
 </script>
 
-<Wrapper label="Logic" icon={ArrowRight} accent="control">
+<Wrapper label="Logic" icon={ArrowRight} accent="control" nodeId={id} collapsible collapsed={data.collapsed}>
 	<div class="flex w-52 flex-col gap-3">
-		<Segmented
-			class="nodrag nopan"
-			label="Operator"
-			note={LOGIC_OPS.find((o) => o.op === op)?.hint}
-			options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}
-			columns={4}
-			value={op}
-			onSelect={setOp} />
+		{#if !data.collapsed}
+			<Segmented
+				class="nodrag nopan"
+				label="Operator"
+				note={LOGIC_OPS.find((o) => o.op === op)?.hint}
+				options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}
+				columns={4}
+				value={op}
+				onSelect={setOp} />
+		{/if}
 
 		<!-- Full width, so the output column ends on the node edge where its socket belongs. -->
 		<div class="flex items-center justify-between gap-1">

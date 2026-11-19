@@ -45,6 +45,8 @@
 		selfGrowing?: boolean;
 		/** What a collapsed node still shows; a node without one cannot collapse. */
 		summary?: Snippet;
+		/** The node collapses its own content (its sockets live in it); the frame only draws the button. */
+		collapsible?: boolean;
 		collapsed?: boolean;
 		children?: Snippet;
 	}
@@ -68,6 +70,7 @@
 		wide = false,
 		selfGrowing = false,
 		summary,
+		collapsible = false,
 		collapsed = false,
 		children
 	}: Props = $props();
@@ -85,8 +88,8 @@
 
 	const flow = isPreview ? null : useSvelteFlow();
 	const updateInternals = isPreview ? null : useUpdateNodeInternals();
-	let canCollapse = $derived(!!summary && !!nodeId && !isPreview);
-	let showSummary = $derived(canCollapse && collapsed);
+	let canCollapse = $derived((!!summary || collapsible) && !!nodeId && !isPreview);
+	let showSummary = $derived(canCollapse && collapsed && !!summary);
 
 	function toggleCollapsed() {
 		if (!nodeId || !flow) return;

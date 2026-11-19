@@ -63,16 +63,18 @@
 	}
 </script>
 
-<Wrapper label="If" icon={ArrowRight} accent="routing">
+<Wrapper label="If" icon={ArrowRight} accent="routing" nodeId={id} collapsible collapsed={data.collapsed}>
 	<div class="flex w-52 flex-col gap-3">
-		<Segmented
-			class="nodrag nopan"
-			label="Operator"
-			note={LOGIC_OPS.find((o) => o.op === op)?.hint}
-			options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}
-			columns={4}
-			value={op}
-			onSelect={setOp} />
+		{#if !data.collapsed}
+			<Segmented
+				class="nodrag nopan"
+				label="Operator"
+				note={LOGIC_OPS.find((o) => o.op === op)?.hint}
+				options={LOGIC_OPS.map((o) => ({ label: o.label, value: o.op }))}
+				columns={4}
+				value={op}
+				onSelect={setOp} />
+		{/if}
 
 		<div class="flex items-center gap-1">
 			<div class={['flex h-14 w-5 shrink-0 flex-col', two ? 'justify-between py-1.5' : 'justify-center']}>

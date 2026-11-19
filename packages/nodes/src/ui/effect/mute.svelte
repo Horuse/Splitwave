@@ -130,6 +130,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Cue volume"
+				info="Level of the short cue played on the cue device when mute turns on or off."
 				value={data.cueVolume ?? CUE_VOLUME_DEFAULT}
 				min={0}
 				max={100}

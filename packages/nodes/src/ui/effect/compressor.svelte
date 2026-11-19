@@ -120,6 +120,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Threshold"
+				info="Level where compression starts. Anything louder than this gets turned down; quieter parts pass untouched. The green line on the graph shows where your signal is now."
 				value={data.thresholdDb}
 				min={-60}
 				max={0}
@@ -131,6 +132,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Ratio"
+				info="How hard levels above the threshold are turned down. At 4:1, a signal 8 dB over the threshold comes out only 2 dB over it."
 				value={data.ratio}
 				min={1}
 				max={20}
@@ -142,6 +144,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Attack"
+				info="How fast the compressor reacts once the level crosses the threshold. Short attack catches transients; longer attack lets the punch of a hit through."
 				value={data.attackMs}
 				min={0.1}
 				max={100}
@@ -153,6 +156,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Release"
+				info="How fast the compressor lets go after the level falls back. Too short can flutter, too long keeps the signal squashed."
 				value={data.releaseMs}
 				min={10}
 				max={1000}
@@ -164,6 +168,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Knee"
+				info="Width of the soft zone around the threshold where compression fades in gradually instead of starting at once. 0 dB is a hard knee."
 				value={data.kneeDb}
 				min={0}
 				max={24}
@@ -175,6 +180,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Makeup"
+				info="Gain added after compression, to win back the loudness the compressor took away."
 				value={data.makeupDb}
 				min={0}
 				max={24}

@@ -54,7 +54,11 @@
 
 {#snippet branch(br: (typeof BRANCHES)[number])}
 	<path d={br.d} class={wire(route === br.branch)} />
-	<text x="160" y={br.y + (br.branch === 1 ? -4 : 11)} text-anchor="end" class={['font-mono text-[9px] group-focus-visible/route:underline', route === br.branch ? 'fill-signal' : 'fill-neutral-900']}>{br.label}</text>
+	<text
+		x="160"
+		y={br.y + (br.branch === 1 ? -4 : 11)}
+		text-anchor="end"
+		class={['font-mono text-[9px] group-focus-visible/route:underline', route === br.branch ? 'fill-signal' : 'fill-neutral-900']}>{br.label}</text>
 	<path d={br.d} class="fill-none stroke-transparent stroke-[14]" />
 {/snippet}
 
@@ -93,4 +97,3 @@
 		<circle cx={FORK} cy="32" r="2.5" class={out ? 'fill-signal' : 'fill-neutral-600'} />
 	{/if}
 </svg>
-

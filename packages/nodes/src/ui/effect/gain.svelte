@@ -36,6 +36,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Level"
+			info="Raises or lowers the whole signal by this many dB. +6 dB is about twice as loud, -6 dB about half. Green is safe, amber and red risk clipping later on."
 			value={data.gainDb}
 			min={-24}
 			max={24}

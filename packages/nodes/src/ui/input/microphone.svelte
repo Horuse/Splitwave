@@ -105,6 +105,7 @@
 				<Slider
 					class="nodrag nopan nowheel"
 					label="Gain"
+					info="Hardware input gain of the device itself, set in the OS. It changes the level before anything in the pipeline sees it."
 					value={gainPct}
 					min={0}
 					max={100}

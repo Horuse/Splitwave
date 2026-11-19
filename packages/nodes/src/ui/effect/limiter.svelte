@@ -92,6 +92,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Ceiling"
+				info="The highest level the output may reach. Any peak above it is turned down so it lands exactly on the ceiling. -0.3 to -1 dB leaves room for converters."
 				value={data.ceilingDb}
 				min={-12}
 				max={0}
@@ -103,6 +104,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Lookahead"
+				info="How far ahead the limiter looks for peaks. It starts turning down before a peak arrives, so the gain change is smooth. More lookahead is cleaner but adds this much delay."
 				value={data.lookaheadMs}
 				min={1}
 				max={20}
@@ -114,6 +116,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Release"
+				info="How fast the level comes back after a peak. Short release is louder but can pump; long release is smoother."
 				value={data.releaseMs}
 				min={10}
 				max={500}

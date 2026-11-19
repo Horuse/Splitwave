@@ -73,6 +73,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Ceiling"
+			info="The level the curve flattens toward. Peaks are rounded off smoothly near it instead of clipping hard."
 			value={data.thresholdDb}
 			min={-24}
 			max={0}
@@ -84,6 +85,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Drive"
+			info="Pushes the signal into the curve. More drive means more rounding and more harmonics, so a warmer and denser sound."
 			value={data.driveDb}
 			min={0}
 			max={24}

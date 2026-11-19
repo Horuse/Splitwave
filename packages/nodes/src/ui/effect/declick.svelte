@@ -37,6 +37,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Sensitivity"
+			info="How easily a short burst counts as a click. Higher catches quieter clicks but may touch sharp consonants or percussion."
 			value={data.sensitivity}
 			min={0}
 			max={1}
@@ -48,6 +49,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Max width"
+			info="Longest click that gets repaired. Wider settings fix longer pops but add that much delay to the signal."
 			value={data.maxWidthMs ?? 2}
 			min={0.3}
 			max={5}

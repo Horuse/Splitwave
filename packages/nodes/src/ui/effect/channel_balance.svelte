@@ -59,6 +59,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Left"
+			info="Gain of the left channel in dB."
 			value={data.leftGainDb}
 			min={-24}
 			max={24}
@@ -70,6 +71,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Right"
+			info="Gain of the right channel in dB. With Link inverse on, moving one side moves the other the opposite way."
 			value={data.rightGainDb}
 			min={-24}
 			max={24}

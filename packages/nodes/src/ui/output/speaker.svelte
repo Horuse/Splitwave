@@ -110,6 +110,7 @@
 				<Slider
 					class="nodrag nopan nowheel"
 					label="Volume"
+					info="Hardware volume of the output device, set in the OS. The meter shows the signal before this volume."
 					value={volumePct}
 					min={0}
 					max={100}

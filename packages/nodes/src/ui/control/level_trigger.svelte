@@ -65,6 +65,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Threshold"
+			info="Output goes high while the input is louder than this level."
 			value={data.thresholdDb}
 			min={DB_FLOOR}
 			max={0}
@@ -75,6 +76,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Hold"
+			info="How long the output stays high after the input drops below the threshold, so speech does not flicker it."
 			value={data.holdMs}
 			min={0}
 			max={2000}

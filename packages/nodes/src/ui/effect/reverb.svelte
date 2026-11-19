@@ -94,7 +94,14 @@
 		<PresetBar kind="reverb" {data} onApply={applyPreset} />
 
 		<div class="nowheel nodrag w-52">
-			<ParamGraph x={[0, T_MAX]} y={[-1, 1]} xTicks={T_MAX > 2 ? [1, 2, 3] : T_MAX > 1 ? [0.5, 1, 1.5] : [0.25, 0.5]} yTicks={[0]} yFormat={() => ''} xLabel="s" height={80}>
+			<ParamGraph
+				x={[0, T_MAX]}
+				y={[-1, 1]}
+				xTicks={T_MAX > 2 ? [1, 2, 3] : T_MAX > 1 ? [0.5, 1, 1.5] : [0.25, 0.5]}
+				yTicks={[0]}
+				yFormat={() => ''}
+				xLabel="s"
+				height={80}>
 				{#snippet children({ x, y })}
 					<line x1={x(0)} y1={y(1)} x2={x(0)} y2={y(-1)} class="stroke-neutral-600" stroke-width="2" />
 					{#each bars as b (b.t)}
@@ -119,6 +126,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Room"
+				info="Size of the virtual room. Bigger rooms give a longer tail (RT60 on the graph)."
 				value={data.roomSize}
 				min={0}
 				max={1}
@@ -130,6 +138,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Damping"
+				info="How much the walls absorb high frequencies. More damping gives a darker, softer and shorter tail."
 				value={data.damping}
 				min={0}
 				max={1}
@@ -141,6 +150,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Width"
+				info="Stereo spread of the reverb. 0% is a mono tail, 100% makes left and right tails fully different."
 				value={data.width}
 				min={0}
 				max={1}
@@ -152,6 +162,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Mix"
+				info="Blend between the original and the reverb. 0% is dry only, 100% reverb only; the original gets quieter as the mix rises."
 				value={data.mix}
 				min={0}
 				max={1}

@@ -163,6 +163,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Threshold"
+				info="The gate opens when the signal is at or above this level and closes below it. Set it just above the noise between words."
 				value={data.thresholdDb}
 				min={-80}
 				max={0}
@@ -174,6 +175,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Range"
+				info="How much the gate turns the signal down while closed. -80 dB is near silence; -10 dB only softens the gaps."
 				value={data.rangeDb}
 				min={-80}
 				max={0}
@@ -185,6 +187,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Attack"
+				info="How fast the gate opens when the signal crosses the threshold. Very short attack can click; a few ms is smooth."
 				value={data.attackMs}
 				min={0.1}
 				max={50}
@@ -196,6 +199,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Hold"
+				info="How long the gate stays open after the signal drops below the threshold, so word endings and short pauses are not chopped."
 				value={data.holdMs}
 				min={0}
 				max={500}
@@ -207,6 +211,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Release"
+				info="How fast the gate closes after the hold time ends. Longer release fades out tails naturally."
 				value={data.releaseMs}
 				min={10}
 				max={1000}

@@ -62,8 +62,8 @@
 		<div class="nowheel nodrag w-52">
 			<ParamGraph x={[0, MAX_DELAY_MS]} y={[0, 1.1]} xTicks={[500, 1000, 1500]} yTicks={[0.5, 1]} xLabel="ms" height={72}>
 				{#snippet children({ x, y })}
-					<line x1={x(0)} y1={y(0)} x2={x(0)} y2={y(1)} class="stroke-neutral-600" stroke-width="2" />
-					<circle cx={x(0)} cy={y(1)} r="2.5" class="fill-neutral-600" />
+					<line x1={x(0)} y1={y(0)} x2={x(0)} y2={y(1 - data.mix)} class="stroke-neutral-600" stroke-width="2" />
+					<circle cx={x(0)} cy={y(1 - data.mix)} r="2.5" class="fill-neutral-600" />
 					{#each taps as tap, i (i)}
 						<line x1={x(tap.t)} y1={y(0)} x2={x(tap.t)} y2={y(tap.amp)} class="stroke-signal" stroke-width="1.5" />
 						<circle cx={x(tap.t)} cy={y(tap.amp)} r="2" class="fill-signal" />
@@ -81,6 +81,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Time"
+				info="Time between the original sound and each echo."
 				value={data.timeMs}
 				min={1}
 				max={MAX_DELAY_MS}
@@ -92,6 +93,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Feedback"
+				info="How much of each echo is fed back to make the next one. Higher feedback means more, longer-lasting repeats."
 				value={data.feedback}
 				min={0}
 				max={0.95}
@@ -103,6 +105,7 @@
 			<Slider
 				class="nodrag nopan nowheel"
 				label="Mix"
+				info="Blend between the original and the echoes. 0% is dry only, 100% echoes only; the original gets quieter as the mix rises."
 				value={data.mix}
 				min={0}
 				max={1}

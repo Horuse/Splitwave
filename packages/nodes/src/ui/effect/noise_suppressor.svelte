@@ -67,6 +67,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Attenuation"
+			info="Most the noise may be turned down, in dB. Lower values keep some room tone and sound more natural; 100 removes as much as possible."
 			value={data.attenuationLimitDb}
 			min={0}
 			max={100}
@@ -78,6 +79,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Post-filter"
+			info="Extra cleanup after the model for leftover noise between words. Small values are enough; high values can thin the voice."
 			value={data.postFilterBeta ?? 0}
 			min={0}
 			max={0.05}
@@ -89,6 +91,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Min thresh"
+			info="Below this estimated signal-to-noise ratio the frame is treated as pure noise and fully suppressed."
 			value={data.minThreshDb ?? -10}
 			min={-15}
 			max={35}
@@ -100,6 +103,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Max ERB thresh"
+			info="Above this signal-to-noise ratio the coarse band stage is skipped, so clean speech passes unprocessed."
 			value={data.maxErbThreshDb ?? 30}
 			min={-15}
 			max={35}
@@ -111,6 +115,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Max DF thresh"
+			info="Above this signal-to-noise ratio the fine deep-filter stage is skipped. Keep it at or below Max ERB thresh."
 			value={data.maxDfThreshDb ?? 20}
 			min={-15}
 			max={35}

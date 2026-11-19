@@ -82,6 +82,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Time"
+			info="Delay mode: how long after start goes high the output turns on. Repeat mode: the pulse interval while start stays high."
 			value={data.ms}
 			min={50}
 			max={10000}

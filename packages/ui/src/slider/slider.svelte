@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import Info from '~icons/fluent/info-12-regular';
+	import Tooltip from '../overlay/tooltip/tooltip.svelte';
 
 	interface Props {
 		label: string;
@@ -13,13 +15,15 @@
 		defaultValue?: number;
 		/** Optional canonical positions to render as small tick marks. */
 		ticks?: number[];
+		/** What the parameter does here; shows an info mark beside the label. */
+		info?: string;
 		/** Colours the numeric readout so an effect can flag a risky value. */
 		tone?: 'default' | 'success' | 'warning' | 'danger';
 		class?: string;
 		onChange: (v: number) => void;
 	}
 
-	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, tone = 'default', class: className, onChange }: Props = $props();
+	let { label, value, min, max, step = 0.1, unit = '', format, defaultValue, ticks, info, tone = 'default', class: className, onChange }: Props = $props();
 
 	const TONE = { default: 'text-neutral-900', success: 'text-emerald-700', warning: 'text-amber-600', danger: 'text-red-500' } as const;
 	let valueClass = $derived(TONE[tone]);
@@ -162,7 +166,19 @@
 
 <div class={['flex flex-col gap-1 text-[11px] text-neutral-1000', className]}>
 	<span class="flex items-baseline justify-between">
-		<span>{label}</span>
+		<span class="flex items-center gap-1">
+			{label}
+			{#if info}
+				<Tooltip>
+					<span class="flex cursor-help text-neutral-600 hover:text-neutral-900" aria-label="About {label}">
+						<Info class="size-3" />
+					</span>
+					{#snippet content()}
+						<span class="block max-w-56 leading-snug">{info}</span>
+					{/snippet}
+				</Tooltip>
+			{/if}
+		</span>
 		<input
 			type="text"
 			inputmode="decimal"

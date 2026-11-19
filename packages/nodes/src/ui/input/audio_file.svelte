@@ -292,6 +292,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Volume"
+			info="Playback level of the file before it enters the pipeline. 100% is the file as recorded."
 			value={volumePct}
 			min={0}
 			max={100}

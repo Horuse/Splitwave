@@ -91,6 +91,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Volume"
+			info="Level of the captured app as it enters the pipeline. The app keeps playing at its own volume."
 			value={volumePct}
 			min={0}
 			max={100}

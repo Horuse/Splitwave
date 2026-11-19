@@ -135,6 +135,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Volume"
+			info="Level of the captured system mix as it enters the pipeline. Does not change what you hear from the system itself."
 			value={volumePct}
 			min={0}
 			max={100}

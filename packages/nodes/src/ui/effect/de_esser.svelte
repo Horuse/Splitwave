@@ -111,6 +111,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Frequency"
+			info="Where the sibilant band starts. Only content above this frequency is compressed. 5 to 8 kHz covers most voices."
 			value={data.frequency}
 			min={2000}
 			max={16000}
@@ -123,6 +124,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Threshold"
+			info="Level of the high band where the de-esser starts turning it down. Lower catches more 's' sounds."
 			value={data.thresholdDb}
 			min={-80}
 			max={0}
@@ -134,6 +136,7 @@
 		<Slider
 			class="nodrag nopan nowheel"
 			label="Ratio"
+			info="How hard the high band is turned down once it passes the threshold. The rest of the voice is not touched."
 			value={data.ratio}
 			min={1}
 			max={12}

@@ -11,6 +11,16 @@
 			"default": "./src/index.ts"
 		},
 		"./generated/*": "./src/generated/*.ts",
+		"./catalog": {
+			"svelte": "./src/ui/catalog.ts",
+			"types": "./src/ui/catalog.ts",
+			"default": "./src/ui/catalog.ts"
+		},
+		"./node-types": {
+			"svelte": "./src/ui/node_types.ts",
+			"types": "./src/ui/node_types.ts",
+			"default": "./src/ui/node_types.ts"
+		},
 		"./engine": {
 			"svelte": "./src/engine/index.ts",
 			"types": "./src/engine/index.ts",

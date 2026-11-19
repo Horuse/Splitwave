@@ -1,16 +1,19 @@
 <script lang="ts">
-	import { setContext } from 'svelte';
+	import { setContext, untrack } from 'svelte';
 	import { SvelteFlowProvider } from '@xyflow/svelte';
 	import type { NodeKind } from '@splitwave/nodes';
 	import { PREVIEW_CTX } from '$lib/modules/flow/utils';
-	import { categoryLabel, categoryOrder, kindsByCategory, registry } from '$lib/modules/flow/utils/nodes';
+	import { categoryLabel, categoryOrder, kindsByCategory, nodeTypes, registry } from '$lib/modules/flow/utils/nodes';
 	import { startSignal, type SignalOptions } from './signal';
-	import { setEnginePort } from '@splitwave/nodes/engine';
+	import { createDemoPort, setEnginePort, startSignal as startDemoSignal } from '@splitwave/nodes/engine';
 	import { appEnginePort } from '$lib/modules/audio/engine_port.svelte';
 
-	setEnginePort(appEnginePort);
+	/** `demo` renders through the package's own port, as the landing page will: no Tauri, no app stores. */
+	let { signal, demo = false }: { signal: SignalOptions; demo?: boolean } = $props();
 
-	let { signal }: { signal: SignalOptions } = $props();
+	const demoPort = createDemoPort();
+	// The port is fixed for the component's life, like a host's.
+	setEnginePort(untrack(() => demo) ? demoPort : appEnginePort);
 
 	setContext(PREVIEW_CTX, true);
 
@@ -28,7 +31,10 @@
 	$effect(() => {
 		const stops = categoryOrder
 			.flatMap((cat) => kindsByCategory[cat])
-			.map((kind) => startSignal({ nodeId: idFor(kind), wideScope: kind === 'spectrum', running: false }, signal));
+			.map((kind) => {
+				const targets = { nodeId: idFor(kind), wideScope: kind === 'spectrum', running: false };
+				return demo ? startDemoSignal(targets, signal, demoPort.emit) : startSignal(targets, signal);
+			});
 		return () => stops.forEach((stop) => stop());
 	});
 </script>
@@ -40,7 +46,7 @@
 				<h2 class="text-xs font-semibold tracking-wider text-neutral-900 uppercase">{categoryLabel[cat]}</h2>
 				<div class="flex flex-wrap items-start gap-6">
 					{#each kindsByCategory[cat] as kind (kind)}
-						{@const Comp = registry[kind].component}
+						{@const Comp = nodeTypes[kind]}
 						<div data-node-kind={kind}>
 							<Comp id={idFor(kind)} data={dataFor(kind)} />
 						</div>

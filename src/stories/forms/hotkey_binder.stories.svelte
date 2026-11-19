@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { fn } from 'storybook/test';
-	import HotkeyBinder from '$lib/modules/flow/ui/_hotkey_binder.svelte';
+	import HotkeyBinder from '@splitwave/nodes/ui/control/_hotkey_binder.svelte';
 	import Controlled from '../harness/controlled.svelte';
 
 	const { Story } = defineMeta({

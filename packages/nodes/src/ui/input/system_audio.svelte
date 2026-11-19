@@ -1,0 +1,148 @@
+<script lang="ts">
+	import { Slider, Toggle } from '@splitwave/ui';
+	import { getContext, onMount } from 'svelte';
+	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
+	import type { SystemAudioNodeData } from '@splitwave/nodes';
+	import { PREVIEW_CTX } from '../utils';
+	import Wrapper from '../node.svelte';
+	import InputMeter from './_input_meter.svelte';
+	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
+	import { formatPct } from '@splitwave/nodes';
+	import { getEnginePort, type CapturePermission } from '../../engine';
+
+	const engine = getEnginePort();
+
+	// Self-exclusion is macOS-only; Linux (PipeWire) and Windows (WASAPI
+	// loopback) need it neither.
+	// Preview renders in a plain browser with no OS plugin; treat it as macOS.
+	const isPreview = getContext(PREVIEW_CTX) === true;
+	const isMac = isPreview || engine.os === 'macos';
+
+	type SystemAudioNodeType = Node<SystemAudioNodeData, 'systemAudio'>;
+	let { id, data }: NodeProps<SystemAudioNodeType> = $props();
+
+	const flow = useSvelteFlow();
+	const updateNodeInternals = useUpdateNodeInternals();
+
+	const devInfo = engine.deviceInfo({ kind: 'system' });
+
+	let permission = $state<CapturePermission | null>(null);
+	let checking = $state(false);
+
+	// Core Audio process taps have no preflight API: the grant is requested on
+	// the first capture and a refusal surfaces as a pipeline error. Only the
+	// ScreenCaptureKit path (macOS < 14.4) can be checked up front.
+	let showBanner = $derived(permission !== null && permission.kind === 'screenrecording' && permission.state !== 'allowed');
+
+	async function refreshPermission() {
+		checking = true;
+		try {
+			permission = await engine.audio.checkCapturePermission();
+		} catch {
+			permission = { kind: 'none', state: 'unknown' };
+		} finally {
+			checking = false;
+		}
+	}
+
+	onMount(() => {
+		if (isMac && !isPreview) refreshPermission();
+	});
+
+	async function openPrivacySettings() {
+		try {
+			await engine.openUrl('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+		} catch {
+			// fall through silently -- not all hosts support deep links
+		}
+	}
+
+	function setVolume(pct: number) {
+		const scalar = Math.max(0, Math.min(1, pct / 100));
+		flow.updateNodeData(id, { volume: scalar });
+		engine.audio.setInputVolume(id, scalar).catch(() => {});
+	}
+
+	let volumePct = $derived((data.volume ?? 1) * 100);
+
+	let channelCount = $derived(devInfo.channels);
+	let srcTooltip = $derived(devInfo.resamplingTooltip);
+
+	$effect(() => {
+		const _ = channelCount;
+		updateNodeInternals(id);
+	});
+</script>
+
+<Wrapper label="System Audio" accent="input" icon={SoundWave} {srcTooltip}>
+	<div class="flex w-64 flex-col gap-2">
+		{#if showBanner}
+			<div
+				class={[
+					'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
+					permission?.state === 'denied' && 'border-red-300 bg-red-50 text-red-700',
+					permission?.state === 'unknown' && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
+				]}>
+				<span class="flex items-center gap-1.5">
+					<span
+						class={[
+							'inline-block h-2 w-2 rounded-full',
+							permission?.state === 'denied' && 'bg-red-500',
+							permission?.state === 'unknown' && 'bg-neutral-500'
+						]}></span>
+					<span>
+						{#if permission?.state === 'denied'}
+							Screen Recording denied
+						{:else}
+							Checking permission…
+						{/if}
+					</span>
+				</span>
+				{#if permission?.state === 'denied'}
+					<button
+						type="button"
+						class="nodrag nopan shrink-0 rounded border border-red-400 bg-red-100 px-1.5 py-0.5 hover:bg-red-200"
+						onclick={openPrivacySettings}>
+						Open Settings
+					</button>
+				{:else}
+					<button
+						type="button"
+						class="nodrag nopan shrink-0 rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 hover:bg-neutral-200 disabled:opacity-50"
+						title="Re-check"
+						disabled={checking}
+						onclick={refreshPermission}>
+						⟳
+					</button>
+				{/if}
+			</div>
+		{/if}
+		{#if isMac}
+			<Toggle
+				class="nodrag nopan"
+				size="sm"
+				label="Exclude this app"
+				checked={data.excludeCurrentApp ?? true}
+				onChange={(v) => flow.updateNodeData(id, { excludeCurrentApp: v })} />
+		{/if}
+		{#if devInfo.info}
+			<span class="node-spec">{devInfo.specText}</span>
+		{:else}
+			<span class={['node-spec', devInfo.isLoading ? 'text-neutral-500' : 'text-red-500']}>
+				{devInfo.isLoading ? 'Detecting format…' : 'Unable to detect format'}
+			</span>
+		{/if}
+		<Slider
+			class="nodrag nopan nowheel"
+			label="Volume"
+			value={volumePct}
+			min={0}
+			max={100}
+			step={1}
+			format={formatPct}
+			defaultValue={100}
+			ticks={[25, 50, 75]}
+			onChange={setVolume} />
+		<InputMeter nodeId={id} {channelCount} />
+	</div>
+</Wrapper>

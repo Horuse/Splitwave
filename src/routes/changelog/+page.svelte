@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fly } from 'svelte/transition';
 	import { onMount } from 'svelte';
-	import { Banner, Button, Callout, Card, Separator } from '@splitwave/ui';
+	import { Button, Callout, Card, Separator } from '@splitwave/ui';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import Header from '$lib/components/layout/header.svelte';
 	import Markdown from '$lib/components/markdown.svelte';
@@ -55,21 +55,24 @@
 		{:else if !entries}
 			<p class="text-sm text-neutral-900">Loading releases...</p>
 		{:else if latest}
-			<Banner class="flex flex-col gap-3 px-8 pt-10 pb-16">
-				<div class="flex items-center gap-2 font-mono text-xs text-white/80">
-					<span>Latest release</span>
-					<span>{date(latest.publishedAt)}</span>
-					{#if latest.prerelease}<span class="rounded-full bg-white/20 px-2 py-0.5">pre-release</span>{/if}
-					{#if latest.version === installed}<span class="rounded-full bg-white/20 px-2 py-0.5">installed</span>{/if}
+			<Card class="flex flex-col gap-3 p-6">
+				<div class="flex flex-wrap items-center gap-2 text-xs">
+					<span class="rounded-full bg-brand-soft px-2 py-0.5 font-medium text-brand">Latest</span>
+					{#if latest.prerelease}
+						<span class="rounded-full border border-dashed border-neutral-500 px-2 py-0.5 font-mono text-[10px] text-neutral-900">pre-release</span>
+					{/if}
+					{#if latest.version === installed}
+						<span class="rounded-full bg-(--lv-2) px-2 py-0.5 font-mono text-[10px] text-neutral-1000">installed</span>
+					{/if}
+					<span class="ml-auto font-mono text-neutral-900">{date(latest.publishedAt)}</span>
 				</div>
-				<h2 class="text-3xl font-medium">{latest.name}</h2>
+				<h2 class="text-2xl font-semibold text-neutral-1200">{latest.name}</h2>
 				{#if latest.notes}
-					<Markdown source={latest.notes} class="max-w-2xl text-sm text-white/90" />
+					<Separator />
+					<Markdown source={latest.notes} class="text-sm text-neutral-1100" />
 				{/if}
-				<Button class="mt-2 self-start border-transparent bg-white text-black hover:bg-white/90" onclick={() => openUrl(latest.url).catch(() => {})}>
-					View on GitHub
-				</Button>
-			</Banner>
+				<Button class="mt-1 self-start" onclick={() => openUrl(latest.url).catch(() => {})}>View on GitHub</Button>
+			</Card>
 
 			{#each rest as entry, i (entry.version)}
 				<div in:fly={{ y: 8, duration: 200, delay: Math.min(i, 8) * 40 }}>

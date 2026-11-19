@@ -45,13 +45,16 @@
 		children
 	}: Props = $props();
 
-	// Room on the left and bottom for tick labels, inside the same viewBox.
+	// Room on the left and bottom for tick labels. The data range is also
+	// inset from the top and right, so a curve ending in that corner keeps its
+	// full stroke and marker instead of being cut by the clip.
 	const PAD_L = 18;
 	const PAD_B = 10;
+	const INSET = 5;
 
 	let scale = $derived<GraphScale>({
-		x: (v) => PAD_L + ((v - xr[0]) / (xr[1] - xr[0])) * (width - PAD_L),
-		y: (v) => ((yr[1] - v) / (yr[1] - yr[0])) * (height - PAD_B),
+		x: (v) => PAD_L + ((v - xr[0]) / (xr[1] - xr[0])) * (width - PAD_L - INSET),
+		y: (v) => INSET + ((yr[1] - v) / (yr[1] - yr[0])) * (height - PAD_B - INSET),
 		width,
 		height
 	});

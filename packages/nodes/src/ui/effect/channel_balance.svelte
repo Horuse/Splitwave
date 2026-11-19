@@ -4,7 +4,6 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
-	import ParamGraph from '../graph/param_graph.svelte';
 	import { Balance } from '../icons';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
@@ -51,22 +50,10 @@
 
 <Wrapper label="Channel Balance" icon={Balance} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
-		<div class="nowheel nodrag">
-			<ParamGraph x={[0, 2]} y={[-24, 24]} yTicks={[-12, 0, 12]} yFormat={(v) => (v > 0 ? `+${v}` : `${v}`)} height={72}>
-				{#snippet children({ x, y })}
-					<line x1={x(0)} y1={y(0)} x2={x(2)} y2={y(0)} class="stroke-neutral-500" stroke-width="0.6" />
-					{#each [{ at: 0.5, db: data.leftGainDb, name: 'L', cls: 'fill-red-500' }, { at: 1.5, db: data.rightGainDb, name: 'R', cls: 'fill-blue-500' }] as ch (ch.name)}
-						<rect x={x(ch.at) - 14} y={Math.min(y(0), y(ch.db))} width="28" height={Math.max(1, Math.abs(y(ch.db) - y(0)))} rx="2" class={ch.cls} />
-						<text x={x(ch.at)} y={y(ch.db) + (ch.db >= 0 ? -3 : 8)} text-anchor="middle" class="fill-neutral-900 font-mono" font-size="7">
-							{ch.name}
-							{ch.db > 0 ? '+' : ''}{ch.db.toFixed(1)}
-						</text>
-					{/each}
-				{/snippet}
-				{#snippet badge()}
-					<span>{panLabel()}</span>
-				{/snippet}
-			</ParamGraph>
+		<div class="flex items-baseline justify-between text-[10px] text-neutral-800">
+			<span>L</span>
+			<span class="font-mono tabular-nums">{panLabel()}</span>
+			<span>R</span>
 		</div>
 
 		<Slider

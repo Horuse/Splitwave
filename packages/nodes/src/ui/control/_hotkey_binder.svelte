@@ -15,8 +15,7 @@
 
 	let binding = $state(false);
 
-	const CAP = 'flex h-[26px] min-w-7 items-center justify-center rounded-md border bg-neutral-100 px-2 text-xs font-medium group-hover:bg-neutral-200';
-	const HELD = 'border-signal bg-signal/18 text-signal';
+	const CAP = 'flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-xs font-medium';
 
 	// Modifiers are named the way this platform's keyboard prints them.
 	const os = engine.os;
@@ -54,22 +53,29 @@
 </script>
 
 <button
+	type="button"
 	title={binding ? 'Press a key. Esc cancels, Delete clears' : 'Click to bind a global shortcut'}
-	class="group nodrag nopan flex cursor-pointer gap-1"
+	class={[
+		'nodrag nopan flex min-h-14 w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border bg-(--field-bg,var(--lv-1)) px-2 py-2',
+		binding ? 'border-dashed border-signal/60' : 'border-theme/5 hover:border-(--lv-4)'
+	]}
 	onclick={() => (binding = !binding)}>
-	{#if binding || caps.length === 0}
-		<span class={[CAP, 'min-w-24 text-[10px]', binding ? 'border-primary text-primary' : 'border-neutral-400 text-neutral-900']}
-			>{binding ? 'press a key' : 'bind key'}</span>
+	{#if binding}
+		<span class="text-xs text-signal">Press a key...</span>
+		<span class="text-[9px] text-neutral-600">Esc cancels · Delete clears</span>
+	{:else if caps.length === 0}
+		<span class="text-xs text-neutral-700">Click to bind a key</span>
 	{:else}
-		{#each caps as cap, i (i)}
-			<span class={[CAP, cap.modifier && 'text-[10px]', held ? HELD : ['border-neutral-400', cap.modifier ? 'text-neutral-1000' : 'text-neutral-1200']]}
-				>{cap.label}</span>
-		{/each}
+		<span class="flex flex-wrap items-center justify-center gap-1">
+			{#each caps as cap, i (i)}
+				<span class={[CAP, cap.modifier && 'text-[10px]', held ? 'bg-signal text-neutral-50' : 'bg-(--lv-2) text-neutral-1100']}>{cap.label}</span>
+			{/each}
+		</span>
 	{/if}
 </button>
 
 {#if error}
-	<p class="mt-1 w-40 text-[10px] break-words text-red-500">{error}</p>
+	<p class="mt-1 text-[10px] break-words text-red-500">{error}</p>
 {/if}
 
 <svelte:window onkeydown={binding ? capture : undefined} />

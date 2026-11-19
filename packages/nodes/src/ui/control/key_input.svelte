@@ -52,14 +52,20 @@
 </script>
 
 <Wrapper label="Key Input" icon={KeyCommand} accent="control">
-	<div class="flex flex-col gap-2 pb-1">
+	<div class="flex w-52 flex-col gap-2">
 		<Segmented class="nodrag nopan" options={SOURCES} value={source} onSelect={(next) => set({ source: next })} />
-		<div class="relative flex flex-col">
-			{#if source === 'keyboard'}
-				<HotkeyBinder {hotkey} error={shortcut.error} onChange={(next) => set({ hotkey: next })} {held} />
-			{:else}
-				<MidiBinder binding={data.midi} {learning} onLearn={(next) => (learning = next)} onClear={() => set({ midi: undefined })} {held} />
-			{/if}
+		{#if source === 'keyboard'}
+			<HotkeyBinder {hotkey} error={shortcut.error} onChange={(next) => set({ hotkey: next })} {held} />
+		{:else}
+			<MidiBinder binding={data.midi} {learning} onLearn={(next) => (learning = next)} onClear={() => set({ midi: undefined })} {held} />
+		{/if}
+		<!-- Output state, with the socket on the node edge. -->
+		<div class="relative flex min-h-5 items-center justify-between text-[10px]">
+			<span class="text-neutral-700">Output</span>
+			<span class={['flex items-center gap-1.5 font-mono', held ? 'text-signal' : 'text-neutral-600']}>
+				<span class={['size-1.5 rounded-full', held ? 'bg-signal' : 'bg-neutral-500']}></span>
+				{held ? 'Pressed' : 'Released'}
+			</span>
 			<ControlSocket id={CONTROL_OUT} side="source" high={held} />
 		</div>
 	</div>

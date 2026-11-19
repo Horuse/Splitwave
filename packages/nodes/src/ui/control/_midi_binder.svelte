@@ -25,20 +25,28 @@
 </script>
 
 <button
+	type="button"
 	title={learning ? 'Press a note or move a control. Esc cancels, Delete clears' : 'Click to learn a MIDI control'}
 	class={[
-		'nodrag nopan flex h-[26px] min-w-24 cursor-pointer items-center justify-center rounded-md border px-2 text-[11px] font-medium',
-		held
-			? 'border-signal bg-signal/18 text-signal'
-			: learning
-				? 'border-primary bg-neutral-100 text-primary'
-				: 'border-neutral-400 bg-neutral-100 text-neutral-1200 hover:bg-neutral-200'
+		'nodrag nopan flex min-h-14 w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border bg-(--field-bg,var(--lv-1)) px-2 py-2',
+		learning ? 'border-dashed border-signal/60' : 'border-theme/5 hover:border-(--lv-4)'
 	]}
 	onclick={() => onLearn(!learning)}>
-	{learning ? 'play a note' : binding ? formatMidi(binding) : 'learn MIDI'}
+	{#if learning}
+		<span class="text-xs text-signal">Play a note or move a control...</span>
+		<span class="text-[9px] text-neutral-600">Esc cancels · Delete clears</span>
+	{:else if binding}
+		<span
+			class={[
+				'flex h-6 items-center rounded-md px-2 font-mono text-xs font-medium',
+				held ? 'bg-signal text-neutral-50' : 'bg-(--lv-2) text-neutral-1100'
+			]}>
+			{formatMidi(binding)}
+		</span>
+		<span class="max-w-full truncate text-[9px] text-neutral-600" title={binding.device}>{binding.device}</span>
+	{:else}
+		<span class="text-xs text-neutral-700">Click to learn MIDI</span>
+	{/if}
 </button>
-{#if binding && !learning}
-	<p class="mt-1 w-40 truncate text-[10px] text-neutral-800" title={binding.device}>{binding.device}</p>
-{/if}
 
 <svelte:window onkeydown={learning ? capture : undefined} />

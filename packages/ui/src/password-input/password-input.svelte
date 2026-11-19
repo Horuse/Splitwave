@@ -18,7 +18,7 @@
 	<input
 		type={visible ? 'text' : 'password'}
 		class={[
-			'nowheel h-6 w-full rounded border border-(--lv-3) bg-neutral-50 pr-6 pl-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400',
+			'nowheel h-7 w-full rounded-lg border border-theme/5 bg-(--field-bg,var(--lv-1)) pr-7 pl-2.5 font-mono text-[11px] text-neutral-1100 outline-none placeholder:text-neutral-600 focus:border-(--lv-4)',
 			cls
 		]}
 		{placeholder}
@@ -26,7 +26,7 @@
 	<button
 		type="button"
 		tabindex={-1}
-		class="absolute top-1/2 right-1 flex -translate-y-1/2 text-neutral-500 transition-colors duration-150 hover:text-neutral-800"
+		class="absolute top-1/2 right-2 flex -translate-y-1/2 text-neutral-500 transition-colors duration-150 hover:text-neutral-800"
 		title={visible ? 'Hide password' : 'Show password'}
 		onclick={() => (visible = !visible)}>
 		{#if visible}

@@ -4,7 +4,7 @@
 	import { useNodeConnections, useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NetSenderNodeData, NetCodec, OpusApplication } from '@splitwave/nodes';
 	import { formatHz, formatRate, formatKhzValue } from '@splitwave/nodes';
-	import { channelOf } from '../utils';
+	import { CAPTION, FIELD, channelOf } from '../utils';
 	import Wrapper from '../node.svelte';
 	import ArrowUpload from '~icons/fluent/arrow-upload-16-filled';
 	import { getEnginePort } from '../../engine';
@@ -160,38 +160,29 @@
 </script>
 
 <Wrapper label="Net Sender" icon={ArrowUpload} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
-	<div class="nodrag nopan flex w-48 flex-col gap-2">
-		<!-- target -->
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Target IP</span>
-			<input
-				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
-				placeholder="192.168.1.20"
-				value={data.targetIp ?? ''}
-				onchange={(e) => setTargetIp(e.currentTarget.value)} />
-		</div>
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
-			<input
-				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800"
-				type="number"
-				min="1"
-				max="65535"
-				value={data.port}
-				onchange={(e) => setPort(e.currentTarget.value)} />
+	<div class="nodrag nopan flex w-52 flex-col gap-2">
+		<!-- Target: address and UDP port on one line. -->
+		<div class="flex flex-col gap-1">
+			<span class={CAPTION}>Target</span>
+			<div class="grid grid-cols-[1fr_4.5rem] gap-1">
+				<input class={FIELD} placeholder="192.168.1.20" value={data.targetIp ?? ''} onchange={(e) => setTargetIp(e.currentTarget.value)} />
+				<input class={FIELD} type="number" min="1" max="65535" title="UDP port" value={data.port} onchange={(e) => setPort(e.currentTarget.value)} />
+			</div>
 		</div>
 
-		<!-- throughput -->
-		<div class="node-spec flex items-center justify-between">
-			<span>Sending</span>
-			<span class="tabular-nums">{formatRate(rate)}</span>
+		<div class="flex items-center justify-between font-mono text-[10px]">
+			<span class="flex items-center gap-1.5 text-neutral-700">
+				<span class={['size-1.5 rounded-full', rate > 0 ? 'bg-emerald-500' : 'bg-neutral-500']}></span>
+				{rate > 0 ? 'Sending' : 'Idle'}
+			</span>
+			<span class="text-neutral-1000 tabular-nums">{formatRate(rate)}</span>
 		</div>
 
-		<hr class="border-neutral-300" />
+		<div class="border-t border-theme/5"></div>
 
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
+			<span class={CAPTION}>Codec</span>
 			<Segmented
 				class="nodrag nopan"
 				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
@@ -202,7 +193,7 @@
 		{#if data.codec === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
+				<span class={CAPTION}>Bitrate (kbps)</span>
 				<Segmented
 					class="nodrag nopan"
 					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
@@ -212,7 +203,7 @@
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
+				<span class={CAPTION}>Mode</span>
 				<Segmented
 					class="nodrag nopan"
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
@@ -232,7 +223,7 @@
 					columns={3} />
 				{#if rateSelection === 'custom'}
 					<div class="flex items-center justify-end gap-1">
-						<span class="font-mono text-[9px] text-neutral-500">Hz</span>
+						<span class={CAPTION}>Hz</span>
 						<NumberStepper
 							class="nodrag nopan"
 							value={data.sampleRate ?? engine.sampleRate}

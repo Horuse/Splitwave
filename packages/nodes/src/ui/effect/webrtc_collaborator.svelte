@@ -8,7 +8,12 @@
 	import { LossWindow } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import PeopleTeam from '~icons/fluent/people-team-16-filled';
-	import { MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '../utils';
+	import Copy from '~icons/fluent/copy-16-regular';
+	import Checkmark from '~icons/fluent/checkmark-16-filled';
+	import Speaker from '~icons/fluent/speaker-2-16-filled';
+	import SpeakerMute from '~icons/fluent/speaker-mute-16-filled';
+	import Dismiss from '~icons/fluent/dismiss-16-filled';
+	import { CAPTION, FIELD, MAIN_HANDLE, channelColor, channelLabel, channelOf, handleEdgeStyle, parsePort, peerHandle } from '../utils';
 	import { formatHz } from '@splitwave/nodes';
 	import { getEnginePort } from '../../engine';
 
@@ -276,19 +281,13 @@
 
 <Wrapper label="WebRTC" icon={PeopleTeam} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
-		<!-- device / participant name -->
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Name</span>
-			<input
-				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
-				placeholder="This device"
-				value={data.name ?? ''}
-				onchange={(e) => setName(e.currentTarget.value)} />
+		<div class="flex flex-col gap-1">
+			<span class={CAPTION}>Your name</span>
+			<input class={FIELD} placeholder="This device" value={data.name ?? ''} onchange={(e) => setName(e.currentTarget.value)} />
 		</div>
 
-		<!-- codec -->
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
+		<div class="flex flex-col gap-1">
+			<span class={CAPTION}>Codec</span>
 			<Segmented
 				class="nodrag nopan"
 				options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))}
@@ -297,19 +296,16 @@
 		</div>
 
 		{#if (data.codec ?? 'opus') === 'opus'}
-			<!-- bitrate -->
-			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
+			<div class="flex flex-col gap-1">
+				<span class={CAPTION}>Bitrate (kbps)</span>
 				<Segmented
 					class="nodrag nopan"
 					options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))}
 					value={data.opusBitrate}
 					onSelect={setBitrate} />
 			</div>
-
-			<!-- application -->
-			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
+			<div class="flex flex-col gap-1">
+				<span class={CAPTION}>Mode</span>
 				<Segmented
 					class="nodrag nopan"
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
@@ -318,107 +314,127 @@
 			</div>
 		{/if}
 
-		<hr class="border-neutral-300" />
+		<div class="border-t border-theme/5"></div>
 
 		{#if phase === 'idle'}
-			<PasswordInput class="nodrag nopan" bind:value={password} placeholder="Password (optional)" />
-			<Button size="sm" class="nodrag nopan font-mono" disabled={busy} onclick={createRoom}>
-				{busy ? 'creating…' : 'Create room'}
-			</Button>
-			<hr class="border-neutral-200" />
-			<input
-				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
-				placeholder="Room code"
-				inputmode="numeric"
-				maxlength={6}
-				bind:value={joinInput} />
-			<div class="flex gap-1">
-				<PasswordInput class="nodrag nopan" bind:value={joinPassword} placeholder="Password" />
-				<Button size="sm" class="nodrag nopan font-mono" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>Join</Button>
+			<!-- Host a room, or join one by code. -->
+			<div class="flex flex-col gap-1">
+				<span class={CAPTION}>Host a room</span>
+				<PasswordInput class="nodrag nopan" bind:value={password} placeholder="Password (optional)" />
+				<Button size="sm" class="nodrag nopan" disabled={busy} onclick={createRoom}>{busy ? 'Creating...' : 'Create room'}</Button>
 			</div>
-		{:else if phase === 'hosting'}
-			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">Room code</span>
-				<Button variant="solid" size="xs" class="nodrag nopan font-mono" onclick={() => copy(roomCode)}>{copied ? 'copied!' : 'copy'}</Button>
+			<div class="flex items-center gap-2 text-[10px] text-neutral-600">
+				<div class="flex-1 border-t border-theme/5"></div>
+				or
+				<div class="flex-1 border-t border-theme/5"></div>
 			</div>
-			<div class="flex items-center justify-between rounded border border-neutral-300 bg-neutral-50 px-2 py-1">
-				<span class="font-mono text-base font-bold tracking-widest text-neutral-900">{roomCode}</span>
+			<div class="flex flex-col gap-1">
+				<span class={CAPTION}>Join by code</span>
+				<input class={[FIELD, 'tracking-widest uppercase']} placeholder="ABC123" maxlength={6} bind:value={joinInput} />
+				<div class="flex gap-1">
+					<PasswordInput class="nodrag nopan" bind:value={joinPassword} placeholder="Password" />
+					<Button size="sm" class="nodrag nopan" disabled={busy || joinInput.trim().length < 6} onclick={joinRoom}>Join</Button>
+				</div>
 			</div>
-			{#if peers.length === 0}
-				<p class="font-mono text-[9px] text-neutral-500">Waiting for peer…</p>
+		{:else}
+			{#if phase === 'hosting'}
+				<!-- The code to share, copyable in one click. -->
+				<div class="flex items-center gap-2 rounded-lg border border-theme/5 bg-(--field-bg,var(--lv-1)) py-1.5 pr-1.5 pl-3">
+					<div class="flex flex-1 flex-col gap-0.5">
+						<span class="text-[9px] text-neutral-600">Room code</span>
+						<span class="font-mono text-lg leading-none font-semibold tracking-[0.25em] text-neutral-1100">{roomCode}</span>
+					</div>
+					<Button size="sm" icon class="nodrag nopan" title="Copy room code" onclick={() => copy(roomCode)}>
+						{#if copied}<Checkmark class="size-3.5" />{:else}<Copy class="size-3.5" />{/if}
+					</Button>
+				</div>
 			{/if}
-			<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={destroy}>Destroy</Button>
-		{:else if phase === 'joining'}
-			{#if peers.length === 0}
-				<p class="font-mono text-[9px] text-neutral-500">Connecting…</p>
-				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={cancel}>Cancel</Button>
-			{:else}
-				<Button tone="danger" size="sm" class="nodrag nopan font-mono" onclick={leave}>Leave</Button>
-			{/if}
+			<div class="flex items-center justify-between gap-2">
+				<span
+					class={[
+						'flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[10px]',
+						peers.length > 0 ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'
+					]}>
+					<span class={['size-1.5 rounded-full', peers.length > 0 ? 'bg-emerald-500' : 'bg-amber-500']}></span>
+					{peers.length > 0 ? `${peers.length} connected` : phase === 'hosting' ? 'Waiting for peer' : 'Connecting'}
+				</span>
+				{#if phase === 'hosting'}
+					<Button tone="danger" size="sm" class="nodrag nopan" onclick={destroy}>Close room</Button>
+				{:else if peers.length === 0}
+					<Button tone="danger" size="sm" class="nodrag nopan" onclick={cancel}>Cancel</Button>
+				{:else}
+					<Button tone="danger" size="sm" class="nodrag nopan" onclick={leave}>Leave</Button>
+				{/if}
+			</div>
 		{/if}
 
 		{#if error}
-			<p class="font-mono text-[9px] text-red-600">{error}</p>
-		{/if}
-
-		<!-- added latency: one buffer serves every peer, unlike the per-peer ping -->
-		{#if peers.length > 0}
-			<div class="flex items-center justify-between">
-				<span class="font-mono text-[9px] text-neutral-500">delay</span>
-				<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
-					{bufferMs ? `${bufferMs}ms` : '--'}
-				</span>
-			</div>
+			<p class="text-[10px] text-red-500">{error}</p>
 		{/if}
 
 		{#if phase !== 'idle' || peers.length > 0}
-			<hr class="border-neutral-300" />
-			{#if phase !== 'idle'}
-				<div class="relative flex min-h-5 items-center justify-between gap-1">
-					<span class="truncate font-mono text-[9px] text-neutral-500">all peers</span>
-					<span class="shrink-0 font-mono text-[9px] text-neutral-400">mixed</span>
-					<Handle type="source" id={MAIN_HANDLE} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
-				</div>
-			{/if}
-			{#each peers as peer (peer.peerId)}
-				<!-- peer header + this peer's full mix -->
-				<div class="relative flex min-h-5 items-center justify-between gap-1">
-					<span class="truncate font-mono text-[9px] text-neutral-700">
-						{peer.name || peer.peerId.slice(0, 10)}
-					</span>
-					<div class="flex shrink-0 items-center gap-1">
-						<SignalBars loss={quality[peer.peerId]?.loss ?? null} ping={quality[peer.peerId]?.ping ?? null} />
-						<span class="font-mono text-[9px] text-neutral-400 tabular-nums">
-							{quality[peer.peerId]?.ping ? `${quality[peer.peerId].ping}ms` : '--'}
-						</span>
+			<div class="flex flex-col">
+				{#if peers.length > 0}
+					<!-- One buffer serves every peer, unlike the per-peer ping. -->
+					<div class="flex items-center justify-between py-1 font-mono text-[10px]">
+						<span class="text-neutral-700">Added delay</span>
+						<span class="text-neutral-1000 tabular-nums">{bufferMs ? `${bufferMs} ms` : '--'}</span>
 					</div>
-					<div class="flex gap-1">
+				{/if}
+				{#if phase !== 'idle'}
+					<div class="relative flex min-h-6 items-center justify-between gap-1 border-t border-theme/5 py-1">
+						<span class="text-[10px] text-neutral-900">All peers</span>
+						<span class="mr-2 text-[9px] text-neutral-600">mixed</span>
+						<Handle type="source" id={MAIN_HANDLE} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
+					</div>
+				{/if}
+				{#each peers as peer (peer.peerId)}
+					<!-- Peer header and this peer's full mix. -->
+					<div class="relative flex min-h-7 items-center gap-1.5 border-t border-theme/5 py-1">
+						<span
+							class="flex size-5 shrink-0 items-center justify-center rounded-full bg-(--lv-2) text-[10px] font-semibold text-neutral-1000 uppercase">
+							{(peer.name || peer.peerId).slice(0, 1)}
+						</span>
+						<span class="min-w-0 flex-1 truncate text-[11px] text-neutral-1000">{peer.name || peer.peerId.slice(0, 10)}</span>
+						<span class="flex shrink-0 items-center gap-1 font-mono text-[9px] text-neutral-600 tabular-nums">
+							<SignalBars loss={quality[peer.peerId]?.loss ?? null} ping={quality[peer.peerId]?.ping ?? null} />
+							{quality[peer.peerId]?.ping ? `${quality[peer.peerId].ping} ms` : '--'}
+						</span>
 						<Button
 							size="xs"
-							tone={peer.muted ? 'neutral' : 'success'}
-							class="nodrag nopan font-mono"
+							icon
+							class="nodrag nopan"
+							active={!peer.muted}
+							title={peer.muted ? 'Unmute peer' : 'Mute peer'}
 							onclick={() => toggleMute(peer.peerId, peer.muted)}>
-							{peer.muted ? 'M' : 'ON'}
+							{#if peer.muted}<SpeakerMute class="size-3" />{:else}<Speaker class="size-3" />{/if}
 						</Button>
-						<Button tone="danger" size="xs" class="nodrag nopan font-mono" onclick={() => disconnect(peer.peerId)}>x</Button>
-					</div>
-					<Handle type="source" id={peerHandle(peer.peerId)} position={Position.Right} class="handle" style={handleEdgeStyle('#a3a3a3', 'source')} />
-				</div>
-				<!-- per-channel outputs for this peer -->
-				{#each peer.channels as c (c)}
-					<div class="relative flex min-h-5 items-center justify-end gap-1">
-						<span class="shrink-0 font-mono text-[9px]" style="color:{channelColor(c)}">
-							{channelLabel(c, peer.channels.length)}
-						</span>
+						<Button size="xs" icon tone="danger" class="nodrag nopan" title="Disconnect peer" onclick={() => disconnect(peer.peerId)}>
+							<Dismiss class="size-3" />
+						</Button>
 						<Handle
 							type="source"
-							id={peerHandle(peer.peerId, c)}
+							id={peerHandle(peer.peerId)}
 							position={Position.Right}
 							class="handle"
-							style={handleEdgeStyle(channelColor(c), 'source')} />
+							style={handleEdgeStyle('#a3a3a3', 'source')} />
 					</div>
+					<!-- Per-channel outputs for this peer. -->
+					{#each peer.channels as c (c)}
+						<div class="relative flex min-h-5 items-center justify-end gap-1 pr-2">
+							<span class="shrink-0 font-mono text-[9px]" style="color:{channelColor(c)}">
+								{channelLabel(c, peer.channels.length)}
+							</span>
+							<Handle
+								type="source"
+								id={peerHandle(peer.peerId, c)}
+								position={Position.Right}
+								class="handle"
+								style={handleEdgeStyle(channelColor(c), 'source')} />
+						</div>
+					{/each}
 				{/each}
-			{/each}
+			</div>
 		{/if}
 	</div>
 </Wrapper>

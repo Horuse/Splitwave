@@ -6,7 +6,7 @@
 	import { formatHz, formatRate, formatPct, LossWindow } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import ArrowDownload from '~icons/fluent/arrow-download-16-filled';
-	import { channelOf } from '../utils';
+	import { CAPTION, FIELD, channelOf } from '../utils';
 	import { getEnginePort } from '../../engine';
 
 	const engine = getEnginePort();
@@ -143,60 +143,32 @@
 	maxChannels={MAX_CHANNELS}
 	minChannels={received}
 	selfGrowing>
-	<div class="nodrag nopan flex w-48 flex-col gap-2">
-		<!-- port -->
-		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
-			<input
-				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800"
-				type="number"
-				min="1"
-				max="65535"
-				value={data.port}
-				onchange={(e) => setPort(e.currentTarget.value)} />
+	<div class="nodrag nopan flex w-52 flex-col gap-2">
+		<div class="flex flex-col gap-1">
+			<span class={CAPTION}>Listen on UDP port</span>
+			<input class={FIELD} type="number" min="1" max="65535" value={data.port} onchange={(e) => setPort(e.currentTarget.value)} />
 		</div>
 
-		<!-- stream info -->
-		<div class="node-spec flex flex-col gap-1">
-			<div class="flex items-center justify-between">
-				<span>codec</span>
-				<span>
-					{codecLabel ?? 'waiting...'}
-				</span>
-			</div>
-			{#if opusModeLabel}
-				<div class="flex items-center justify-between">
-					<span>mode</span>
-					<span>
-						{opusModeLabel}
-					</span>
+		<!-- Stream state, one row per fact. -->
+		<div class="flex flex-col font-mono text-[10px]">
+			{#snippet row(label: string, value: string)}
+				<div class="flex items-baseline justify-between gap-2 border-b border-theme/5 py-1 last:border-b-0">
+					<span class="text-neutral-700">{label}</span>
+					<span class="truncate text-neutral-1000 tabular-nums">{value}</span>
 				</div>
-			{/if}
-			<div class="flex items-center justify-between">
-				<span>stream</span>
-				<span class="tabular-nums">
-					{detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${received} ch` : ''}` : '--'}
-				</span>
-			</div>
-		</div>
-
-		<!-- quality + throughput -->
-		<div class="node-spec flex items-center justify-between">
-			<div class="flex items-center gap-1">
-				<SignalBars {loss} />
-				<span class="tabular-nums">
+			{/snippet}
+			{@render row('Codec', codecLabel ?? 'waiting...')}
+			{#if opusModeLabel}{@render row('Mode', opusModeLabel)}{/if}
+			{@render row('Stream', detectedSampleRate ? `${formatHz(detectedSampleRate)}${received > 0 ? ` · ${received} ch` : ''}` : '--')}
+			<div class="flex items-center justify-between gap-2 border-b border-theme/5 py-1">
+				<span class="text-neutral-700">Loss</span>
+				<span class="flex items-center gap-1.5 text-neutral-1000 tabular-nums">
+					<SignalBars {loss} />
 					{loss == null ? '--' : formatPct(loss * 100, 1)}
 				</span>
 			</div>
-			<span class="tabular-nums">{formatRate(rate)}</span>
-		</div>
-
-		<!-- added latency -->
-		<div class="flex items-center justify-between">
-			<span class="font-mono text-[9px] text-neutral-500">delay</span>
-			<span class="font-mono text-[9px] text-neutral-500 tabular-nums">
-				{bufferMs ? `${bufferMs}ms` : '--'}
-			</span>
+			{@render row('Rate', formatRate(rate))}
+			{@render row('Added delay', bufferMs ? `${bufferMs} ms` : '--')}
 		</div>
 	</div>
 </Wrapper>

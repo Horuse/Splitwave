@@ -40,6 +40,7 @@
 		"@tauri-apps/plugin-store": "^2.4.3",
 		"@tauri-apps/plugin-updater": "^2.10.1",
 		"@xyflow/svelte": "^1.5.2",
+		"pele": "1.13.0",
 		"prettier-plugin-svelte": "^3.5.2",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"semver": "^7.8.5",

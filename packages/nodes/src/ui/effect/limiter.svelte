@@ -48,9 +48,9 @@
 	const X_MIN = -24;
 	const X_MAX = 6;
 
-	// Brickwall: while it reduces, the output sits at the ceiling, so the input
-	// is the ceiling plus the reduction.
-	let liveIn = $derived(gr.db > 0.2 ? data.ceilingDb + gr.db : null);
+	function outAt(xDb: number): number {
+		return Math.min(xDb, data.ceilingDb);
+	}
 </script>
 
 <Wrapper label="Limiter" icon={Limiter} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
@@ -76,9 +76,9 @@
 						class="stroke-signal"
 						stroke-width="1.5"
 						stroke-linejoin="round" />
-					{#if liveIn !== null}
-						<line x1={x(liveIn)} y1={y(liveIn)} x2={x(liveIn)} y2={y(data.ceilingDb)} class="stroke-red-500" stroke-width="1.5" />
-						<circle cx={x(liveIn)} cy={y(data.ceilingDb)} r="2.5" class="fill-signal stroke-neutral-100" stroke-width="1" />
+					{#if gr.inDb !== null}
+						<line x1={x(gr.inDb)} y1="0" x2={x(gr.inDb)} y2="200" class="stroke-emerald-500" stroke-width="1" />
+						<circle cx={x(gr.inDb)} cy={y(outAt(gr.inDb))} r="2.5" class="fill-emerald-500 stroke-neutral-100" stroke-width="1" />
 					{/if}
 				{/snippet}
 				{#snippet badge()}

@@ -58,21 +58,6 @@
 		return xDb - reductionAt(xDb) + data.makeupDb;
 	}
 
-	// The curve only rises from the knee on, so the reduction the engine reports
-	// pins down the input level that produced it.
-	let liveIn = $derived.by(() => {
-		if (gr.db < 0.2 || data.ratio <= 1) return null;
-		let lo = data.thresholdDb - data.kneeDb / 2;
-		let hi = 24;
-		if (reductionAt(hi) < gr.db) return null;
-		for (let i = 0; i < 30; i++) {
-			const mid = (lo + hi) / 2;
-			if (reductionAt(mid) < gr.db) lo = mid;
-			else hi = mid;
-		}
-		return (lo + hi) / 2;
-	});
-
 	const STEPS = 90;
 	function curve(sx: (v: number) => number, sy: (v: number) => number): string {
 		return Array.from({ length: STEPS + 1 }, (_, i) => {
@@ -114,9 +99,12 @@
 						stroke-width="0.7"
 						stroke-dasharray="2 2" />
 					<polyline points={curve(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
-					{#if liveIn !== null}
-						<line x1={x(liveIn)} y1={y(liveIn + data.makeupDb)} x2={x(liveIn)} y2={y(outAt(liveIn))} class="stroke-red-500" stroke-width="1.5" />
-						<circle cx={x(liveIn)} cy={y(outAt(liveIn))} r="2.5" class="fill-signal stroke-neutral-100" stroke-width="1" />
+					{#if gr.inDb !== null}
+						<line x1={x(gr.inDb)} y1="0" x2={x(gr.inDb)} y2="200" class="stroke-emerald-500" stroke-width="1" />
+						<circle cx={x(gr.inDb)} cy={y(outAt(gr.inDb))} r="2.5" class="fill-emerald-500 stroke-neutral-100" stroke-width="1" />
+					{/if}
+					{#if gr.inDb !== null && gr.db > 0.2}
+						<line x1={x(gr.inDb)} y1={y(gr.inDb + data.makeupDb)} x2={x(gr.inDb)} y2={y(outAt(gr.inDb))} class="stroke-red-500" stroke-width="2" />
 					{/if}
 				{/snippet}
 				{#snippet badge()}

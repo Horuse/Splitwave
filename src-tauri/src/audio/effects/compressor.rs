@@ -20,6 +20,8 @@ pub struct CompressorEffect {
     ramps: [Ramp; 4],
     /// Min gain (0-1 linear, no makeup) across the last block. 1.0 = no GR.
     pub gr_lin: Arc<AtomicU32>,
+    /// Peak detector level of the last block, linear; the UI draws it on the curve.
+    pub in_lin: Arc<AtomicU32>,
 }
 
 fn curve_ramps(
@@ -66,6 +68,7 @@ impl CompressorEffect {
                 sample_rate,
                 envelope: 0.0,
                 gr_lin: gr_lin.clone(),
+                in_lin: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             },
             control,
             gr_lin,
@@ -94,6 +97,7 @@ impl CompressorEffect {
             sample_rate,
             envelope: 0.0,
             gr_lin,
+            in_lin: Arc::new(AtomicU32::new(0.0f32.to_bits())),
         }
     }
 
@@ -121,6 +125,7 @@ impl CompressorEffect {
         let main_buf = &mut main[..frames * 2];
         let side = sidechain.filter(|s| s.len() >= frames * 2);
         let mut block_min_gr = 1.0f32;
+        let mut block_peak_env = 0.0f32;
         let ratio_settled = self.ramps[1].is_settled();
         let makeup_settled = self.ramps[3].is_settled();
         let settled_inv_ratio = 1.0 / self.ramps[1].value();
@@ -152,6 +157,7 @@ impl CompressorEffect {
                 self.envelope += (detected - self.envelope) * release_coeff;
             }
 
+            block_peak_env = block_peak_env.max(self.envelope);
             let env_db = if self.envelope < 1e-6 {
                 -120.0
             } else {
@@ -183,6 +189,7 @@ impl CompressorEffect {
             };
         }
         store_f32(&self.gr_lin, block_min_gr);
+        store_f32(&self.in_lin, block_peak_env);
     }
 }
 

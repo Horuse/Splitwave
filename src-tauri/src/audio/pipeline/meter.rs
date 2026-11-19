@@ -407,7 +407,12 @@ pub(super) fn spawn_meter_thread(
                 for g in &gr_handles {
                     let gr_lin =
                         f32::from_bits(g.gr_lin.load(std::sync::atomic::Ordering::Relaxed));
-                    host.emit(GR_EVENT, json!({ "nodeId": g.node_id, "grLin": gr_lin }));
+                    let in_lin =
+                        f32::from_bits(g.in_lin.load(std::sync::atomic::Ordering::Relaxed));
+                    host.emit(
+                        GR_EVENT,
+                        json!({ "nodeId": g.node_id, "grLin": gr_lin, "inLin": in_lin }),
+                    );
                 }
                 for s in &scopes {
                     if s.is_spectrum() {

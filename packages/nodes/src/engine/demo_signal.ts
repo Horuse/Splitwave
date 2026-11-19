@@ -219,7 +219,7 @@ export function startSignal(targets: SignalTargets, opts: SignalOptions, emit: E
 		emit('audio://meter', { nodeId, peaks: st.map((s) => s.peak), rms: st.map((s) => s.rms) });
 
 		const grDb = opts.gainReduction * (opts.signalMotion ? 0.5 + 0.5 * Math.abs(Math.sin(2 * Math.PI * 0.3 * t)) : 1);
-		emit('audio://gr', { nodeId, grLin: dbToAmp(-grDb) });
+		emit('audio://gr', { nodeId, grLin: dbToAmp(-grDb), inLin: st[0].peak });
 
 		const peakDb = ampToDb(st[0].peak);
 		const rmsDb = ampToDb(st[0].rms);

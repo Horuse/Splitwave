@@ -22,6 +22,8 @@ pub struct NoiseGateEffect {
     hold_remaining: u32,
     /// Current gate gain (0-1 linear) written each block. 1.0 = fully open.
     pub state_gain: Arc<AtomicU32>,
+    /// Peak detector level of the last block, linear; the UI draws it on the curve.
+    pub in_lin: Arc<AtomicU32>,
 }
 
 /// Envelope-detector release time constant; short enough for fast gate
@@ -55,6 +57,7 @@ impl NoiseGateEffect {
                 current_gain: 1.0,
                 hold_remaining: 0,
                 state_gain: state_gain.clone(),
+                in_lin: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             },
             control,
             state_gain,
@@ -81,6 +84,7 @@ impl NoiseGateEffect {
             current_gain: 1.0,
             hold_remaining: 0,
             state_gain,
+            in_lin: Arc::new(AtomicU32::new(0.0f32.to_bits())),
         }
     }
 
@@ -110,6 +114,7 @@ impl NoiseGateEffect {
 
         let main_buf = &mut main[..frames * 2];
         let side = sidechain.filter(|s| s.len() >= frames * 2);
+        let mut block_peak_env = 0.0f32;
         for (f, frame) in main_buf.chunks_exact_mut(2).enumerate() {
             let detected = match side {
                 Some(s) => s[f * 2].abs().max(s[f * 2 + 1].abs()),
@@ -122,6 +127,7 @@ impl NoiseGateEffect {
                 detector_release_coeff
             };
             self.envelope += (detected - self.envelope) * coeff;
+            block_peak_env = block_peak_env.max(self.envelope);
 
             let target_gain = if self.envelope >= threshold_lin {
                 self.hold_remaining = hold_samples;
@@ -144,6 +150,7 @@ impl NoiseGateEffect {
             frame[1] *= self.current_gain;
         }
         store_f32(&self.state_gain, self.current_gain);
+        store_f32(&self.in_lin, block_peak_env);
     }
 }
 

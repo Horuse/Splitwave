@@ -57,13 +57,16 @@ use saturator::SaturatorEffect;
 pub(crate) use util::Ramp;
 pub use waveform::{WaveformEffect, WaveformHandle};
 
-/// Shared atom for a dynamic-gain effect (compressor / noise gate / limiter).
-/// The audio thread writes the block's minimum gain each block; the meter tick
-/// thread reads it and emits `audio://gr` to the frontend.
+/// Shared atoms for a dynamic-gain effect (compressor / noise gate / limiter).
+/// The audio thread writes the block's minimum gain and its detector's peak
+/// level each block; the meter tick thread reads both and emits `audio://gr`
+/// to the frontend, which draws where the signal sits on the transfer curve.
 #[derive(Clone)]
 pub struct GrHandle {
     pub node_id: String,
     pub gr_lin: Arc<AtomicU32>,
+    /// Peak detector level of the last block, linear.
+    pub in_lin: Arc<AtomicU32>,
 }
 
 pub trait Effect: Send {
@@ -753,24 +756,19 @@ pub fn instantiate_effect(
                 // Republished on every rebuild: without this the meter thread
                 // loses the handle after the first reconcile and the readout
                 // freezes at its initial value.
+                let e = LimiterEffect::from_state(
+                    ceiling.clone(),
+                    release_ms.clone(),
+                    lookahead_frames,
+                    sample_rate,
+                    gr_arc.clone(),
+                );
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc.clone(),
+                    in_lin: e.in_lin.clone(),
                 };
-                mk(
-                    RuntimeEffect::Limiter(LimiterEffect::from_state(
-                        ceiling.clone(),
-                        release_ms.clone(),
-                        lookahead_frames,
-                        sample_rate,
-                        gr_arc,
-                    )),
-                    None,
-                    None,
-                    None,
-                    Some(gr),
-                    None,
-                )
+                mk(RuntimeEffect::Limiter(e), None, None, None, Some(gr), None)
             }
             _ => {
                 let (e, c, gr_arc) = LimiterEffect::new(d, sample_rate);
@@ -781,6 +779,7 @@ pub fn instantiate_effect(
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc,
+                    in_lin: e.in_lin.clone(),
                 };
                 mk(
                     RuntimeEffect::Limiter(e),
@@ -812,21 +811,23 @@ pub fn instantiate_effect(
                 // Republished on every rebuild: without this the meter thread
                 // loses the handle after the first reconcile and the readout
                 // freezes at its initial value.
+                let e = CompressorEffect::from_state(
+                    threshold_db.clone(),
+                    ratio.clone(),
+                    attack_ms.clone(),
+                    release_ms.clone(),
+                    knee_db.clone(),
+                    makeup_db.clone(),
+                    sample_rate,
+                    gr_arc.clone(),
+                );
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc.clone(),
+                    in_lin: e.in_lin.clone(),
                 };
                 mk(
-                    RuntimeEffect::Compressor(CompressorEffect::from_state(
-                        threshold_db.clone(),
-                        ratio.clone(),
-                        attack_ms.clone(),
-                        release_ms.clone(),
-                        knee_db.clone(),
-                        makeup_db.clone(),
-                        sample_rate,
-                        gr_arc,
-                    )),
+                    RuntimeEffect::Compressor(e),
                     None,
                     None,
                     None,
@@ -843,6 +844,7 @@ pub fn instantiate_effect(
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc,
+                    in_lin: e.in_lin.clone(),
                 };
                 mk(
                     RuntimeEffect::Compressor(e),
@@ -873,20 +875,22 @@ pub fn instantiate_effect(
                 // Republished on every rebuild: without this the meter thread
                 // loses the handle after the first reconcile and the readout
                 // freezes at its initial value.
+                let e = NoiseGateEffect::from_state(
+                    threshold_db.clone(),
+                    range_db.clone(),
+                    attack_ms.clone(),
+                    hold_ms.clone(),
+                    release_ms.clone(),
+                    sample_rate,
+                    gr_arc.clone(),
+                );
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc.clone(),
+                    in_lin: e.in_lin.clone(),
                 };
                 mk(
-                    RuntimeEffect::NoiseGate(NoiseGateEffect::from_state(
-                        threshold_db.clone(),
-                        range_db.clone(),
-                        attack_ms.clone(),
-                        hold_ms.clone(),
-                        release_ms.clone(),
-                        sample_rate,
-                        gr_arc,
-                    )),
+                    RuntimeEffect::NoiseGate(e),
                     None,
                     None,
                     None,
@@ -903,6 +907,7 @@ pub fn instantiate_effect(
                 let gr = GrHandle {
                     node_id: node_id.to_string(),
                     gr_lin: gr_arc,
+                    in_lin: e.in_lin.clone(),
                 };
                 mk(
                     RuntimeEffect::NoiseGate(e),

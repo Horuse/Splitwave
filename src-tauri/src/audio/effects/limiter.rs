@@ -27,6 +27,8 @@ pub struct LimiterEffect {
     current_gain: f32,
     /// Min gain during the last block (1.0 = no limiting).
     pub gr_lin: Arc<AtomicU32>,
+    /// Peak detector level of the last block, linear; the UI draws it on the curve.
+    pub in_lin: Arc<AtomicU32>,
 }
 
 /// Largest of the last `capacity` values pushed, in constant time per push:
@@ -118,6 +120,7 @@ impl LimiterEffect {
             held_sum: window as f64,
             current_gain: 1.0,
             gr_lin,
+            in_lin: Arc::new(AtomicU32::new(0.0f32.to_bits())),
         }
     }
 }
@@ -132,6 +135,7 @@ impl Effect for LimiterEffect {
         let window = self.held.len();
         let stereo = &mut samples[..frames * 2];
         let mut block_min_gr = 1.0f32;
+        let mut block_peak = 0.0f32;
         for f in 0..frames {
             let l_in = stereo[f * 2];
             let r_in = stereo[f * 2 + 1];
@@ -151,6 +155,7 @@ impl Effect for LimiterEffect {
             // window, then averaged over it: every frame averaged in saw the
             // emerging one, so the average never asks for more than it needs.
             let peak = self.peaks.push(l_in.abs().max(r_in.abs()));
+            block_peak = block_peak.max(peak);
             let need = if peak > ceiling { ceiling / peak } else { 1.0 };
             self.held_sum += need as f64 - self.held[self.held_pos] as f64;
             self.held[self.held_pos] = need;
@@ -173,6 +178,7 @@ impl Effect for LimiterEffect {
             stereo[f * 2 + 1] = r_out * self.current_gain;
         }
         store_f32(&self.gr_lin, block_min_gr);
+        store_f32(&self.in_lin, block_peak);
     }
 
     fn latency_frames(&self) -> usize {

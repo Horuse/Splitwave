@@ -90,6 +90,10 @@
 						stroke-width="0.7"
 						stroke-dasharray="2 2" />
 					<polyline points={curve(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
+					{#if gr.inDb !== null}
+						<line x1={x(gr.inDb)} y1="0" x2={x(gr.inDb)} y2="200" class="stroke-emerald-500" stroke-width="1" />
+						<circle cx={x(gr.inDb)} cy={y(outAt(gr.inDb))} r="2.5" class="fill-emerald-500 stroke-neutral-100" stroke-width="1" />
+					{/if}
 				{/snippet}
 				{#snippet badge()}
 					<span class="flex items-center gap-1">

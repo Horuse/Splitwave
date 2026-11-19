@@ -254,7 +254,8 @@
 </script>
 
 <Wrapper label="Loudness" icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide>
-	<div class="flex w-fit flex-col gap-1.5 font-mono text-[10px]">
+	<!-- Fixed width: live numbers below must not resize the node as they change. -->
+	<div class="flex w-68 flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">
 			{#snippet group(
 				bars: { label: string; val: number; hold: number | null }[],
@@ -356,9 +357,9 @@
 		<!-- Program stats -->
 		<div class="grid grid-cols-2 gap-x-4">
 			{#each [{ label: 'True Peak', unit: 'dBTP', val: format(tpMax) }, { label: 'Loudness Range', unit: 'LU', val: lra.toFixed(1) }, { label: 'Peak / Loudness', unit: 'LU', val: ratio(tpMax, integrated) }, { label: 'Dynamic Range', unit: 'LU', val: ratio(tpMax, shortterm) }, { label: 'Sample Peak', unit: 'dBFS', val: format(samplePeak) }, { label: 'DC Offset', unit: 'dBFS', val: formatDc(dcOffset) }, { label: 'Correlation', unit: '', val: correlation.toFixed(2) }, { label: 'Clipped', unit: 'smp', val: String(clips) }] as stat (stat.label)}
-				<div class="flex items-baseline justify-between gap-2 border-b border-theme/5 py-1 [&:nth-last-child(-n+2)]:border-b-0">
-					<span class="text-[9px] leading-none text-neutral-700">{stat.label}</span>
-					<span class="text-[11px] leading-none text-neutral-1000 tabular-nums">
+				<div class="flex min-w-0 items-baseline justify-between gap-2 border-b border-theme/5 py-1 [&:nth-last-child(-n+2)]:border-b-0">
+					<span class="truncate text-[9px] leading-none text-neutral-700">{stat.label}</span>
+					<span class="shrink-0 text-[11px] leading-none text-neutral-1000 tabular-nums">
 						{stat.val}<span class="ml-0.5 text-[8px] text-neutral-500">{stat.unit}</span>
 					</span>
 				</div>

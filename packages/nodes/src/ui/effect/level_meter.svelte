@@ -68,10 +68,10 @@
 	}
 
 	function dbTextClass(db: number): string {
-		if (!isFinite(db) || db <= DB_FLOOR) return 'text-neutral-400';
+		if (!isFinite(db) || db <= DB_FLOOR) return 'text-neutral-500';
 		if (db >= -1) return 'text-red-500';
 		if (db >= -6) return 'text-amber-500';
-		return 'text-neutral-700';
+		return 'text-neutral-900';
 	}
 
 	let unlistenReset: (() => void) | undefined;
@@ -148,88 +148,64 @@
 </script>
 
 <Wrapper label="Level Meter" accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide>
-	<div class="flex w-fit flex-col gap-1">
-		<div class="flex gap-1.5">
-			<div class="flex flex-col gap-0.5">
-				<!-- Clip row -->
-				<div class="flex h-2 overflow-hidden rounded-sm border border-neutral-300" style="width: {channelCount * BAR_W}px;">
-					{#each clipVals as c, i (i)}
-						<button
-							type="button"
-							class="flex-1 transition-colors {c ? 'bg-red-600 shadow-[inset_0_0_4px_#fca5a5]' : 'bg-neutral-200'} {i > 0
-								? 'border-l border-neutral-300'
-								: ''}"
-							onclick={resetPeaks}
-							aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"></button>
-					{/each}
-				</div>
-
-				<!-- Bars -->
-				<div
-					class="relative flex h-72 cursor-crosshair overflow-hidden rounded-sm border border-neutral-300"
-					style="width: {channelCount * BAR_W}px; --bar-h: 288px;"
-					onclick={resetPeaks}
-					onkeydown={handleBarKey}
-					role="button"
-					tabindex="0"
-					aria-label="Level meter — click to reset peaks, hover to read level">
-					{#each barVals as p, i (i)}
-						<MeterBar
-							class="flex-1 {i > 0 ? 'border-l border-neutral-300' : ''}"
-							orientation="vertical"
-							gradient={METER_GRADIENT}
-							ghost
-							hover
-							{hoverLabel}
-							pct={dbToPct(p)}>
-							<div class="absolute right-0 left-0 h-px bg-white/80 mix-blend-overlay" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;">
-							</div>
-							{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
-								<div
-									class="absolute right-0 left-0 h-0.5 bg-white shadow-[0_0_2px_white]"
-									style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);">
-								</div>
-							{/if}
-						</MeterBar>
-					{/each}
-				</div>
-			</div>
-
-			<!-- dB scale -->
-			<div class="relative h-72 w-8 font-mono text-[9px] text-neutral-900 select-none" style="margin-top: 10px;">
-				{#each minorTickPos as t (t.db)}
-					<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
-						<div class="shrink-0 bg-neutral-700 {t.major ? 'w-2' : 'w-1'}" style="height: 1px;"></div>
-						{#if t.major}<span class="mb-px ml-0.5 leading-none">{t.db}</span>{/if}
-					</div>
+	<div class="flex gap-2">
+		<div class="flex flex-col gap-1.5" style="width: {channelCount * BAR_W}px;">
+			<!-- Clip lamps: click to reset peaks. -->
+			<div class="flex gap-1">
+				{#each clipVals as c, i (i)}
+					<button
+						type="button"
+						class={['h-1.5 flex-1 rounded-full', c ? 'bg-red-500' : 'bg-neutral-300']}
+						onclick={resetPeaks}
+						aria-label="Clip {channelLabel(i, channelCount)} (click to reset)"></button>
 				{/each}
-				<div class="absolute bottom-0 left-2.5 leading-none">dB</div>
+			</div>
+
+			<div
+				class="flex h-72 cursor-crosshair gap-1"
+				onclick={resetPeaks}
+				onkeydown={handleBarKey}
+				role="button"
+				tabindex="0"
+				aria-label="Level meter: click to reset peaks, hover to read level">
+				{#each barVals as p, i (i)}
+					<MeterBar class="flex-1 overflow-hidden rounded-sm" orientation="vertical" gradient={METER_GRADIENT} ghost hover {hoverLabel} pct={dbToPct(p)}>
+						<div class="absolute right-0 left-0 h-px bg-white/70" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;"></div>
+						{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
+							<div class="absolute right-0 left-0 h-0.5 bg-white" style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);"></div>
+						{/if}
+					</MeterBar>
+				{/each}
+			</div>
+
+			<!-- Live level and max per channel, each under its bar; click a max to reset peaks. -->
+			<div class="grid gap-x-1 gap-y-0.5 font-mono text-[9px] tabular-nums" style="grid-template-columns: repeat({channelCount}, minmax(0, 1fr));">
+				{#each barVals as _, i (i)}
+					<span class="text-center leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
+				{/each}
+				{#each barVals as db, i (i)}
+					<span class={['text-center leading-tight', dbTextClass(db)]}>{formatDb(db, DB_FLOOR)}</span>
+				{/each}
+				{#each maxVals as db, i (i)}
+					<button
+						type="button"
+						onclick={resetPeaks}
+						title="Reset peaks"
+						class={['rounded-sm bg-(--lv-1) text-center leading-tight hover:bg-(--lv-2)', dbTextClass(db)]}>
+						{formatDb(db, DB_FLOOR)}
+					</button>
+				{/each}
 			</div>
 		</div>
 
-		<!-- Live dB readout -->
-		<div class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-100" style="width: {channelCount * BAR_W}px;">
-			{#each barVals as db, i (i)}
-				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
-					<span class="text-[7px] leading-none" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db, DB_FLOOR)}</span>
+		<!-- dB scale, level with the bars under the clip row. -->
+		<div class="relative mt-3 h-72 w-7 font-mono text-[8px] text-neutral-600 select-none">
+			{#each minorTickPos as t (t.db)}
+				<div class="absolute left-0 flex items-center" style="bottom: {t.pct}%; height: 1px;">
+					<div class={['h-px shrink-0', t.major ? 'w-1.5 bg-neutral-500' : 'w-1 bg-neutral-300']}></div>
+					{#if t.major}<span class="ml-0.5 leading-none">{t.db}</span>{/if}
 				</div>
 			{/each}
 		</div>
-
-		<!-- Max peak readout -->
-		<button
-			type="button"
-			onclick={resetPeaks}
-			title="Reset peaks"
-			class="flex overflow-hidden rounded-sm border border-neutral-300 bg-neutral-200 transition-colors hover:opacity-80"
-			style="width: {channelCount * BAR_W}px;">
-			{#each maxVals as db, i (i)}
-				<div class="flex flex-1 flex-col items-center py-0.5 {i > 0 ? 'border-l border-neutral-300' : ''}">
-					<span class="text-[7px] leading-none text-neutral-500">{channelLabel(i, channelCount)}</span>
-					<span class="font-mono text-[8px] leading-tight tabular-nums {dbTextClass(db)}">{formatDb(db, DB_FLOOR)}</span>
-				</div>
-			{/each}
-		</button>
 	</div>
 </Wrapper>

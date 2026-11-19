@@ -45,7 +45,7 @@
 	}
 </script>
 
-<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--lv-3) bg-(--lv-1)', className]}>
+<div class={['nodrag nopan flex items-center overflow-hidden rounded-md border border-(--field-border,var(--lv-3)) bg-(--field-bg,var(--lv-1))', className]}>
 	<button
 		type="button"
 		class="flex h-6 w-6 items-center justify-center text-neutral-900 transition-colors duration-150 hover:bg-(--lv-3) disabled:cursor-not-allowed disabled:opacity-40"

@@ -149,10 +149,12 @@
 								class="fill-amber-500/10" />
 						{/if}
 						<polyline points={envelope(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
+						<line x1={x(0)} y1={y(-gr.db)} x2={x(spanMs)} y2={y(-gr.db)} class="stroke-emerald-500" stroke-width="1" />
 					{/snippet}
 					{#snippet badge()}
 						<span class="text-neutral-600">signal</span>
 						<span class="text-amber-500">hold</span>
+						<span class="text-emerald-500">now</span>
 						<span>gate gain over time</span>
 					{/snippet}
 				</ParamGraph>

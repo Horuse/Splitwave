@@ -16,13 +16,14 @@
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
-	// xyflow positions handles through the node context; standalone we place them
-	// against the wrapper the call site already made relative.
+	// Same anchoring as xyflow's own handle CSS (edge at 0, centred on it with a
+	// -50% shift), so an edge offset from the call site lands the socket on the
+	// node border here exactly as it does on the canvas.
 	const PLACEMENT: Record<Position, string> = {
-		left: '-left-1 top-1/2 -translate-y-1/2',
-		right: '-right-1 top-1/2 -translate-y-1/2',
-		top: '-top-1 left-1/2 -translate-x-1/2',
-		bottom: '-bottom-1 left-1/2 -translate-x-1/2'
+		left: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2',
+		right: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2',
+		top: 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2',
+		bottom: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2'
 	};
 </script>
 

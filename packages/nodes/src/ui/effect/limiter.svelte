@@ -8,6 +8,8 @@
 	import PresetBar from '../preset_bar.svelte';
 	import type { PresetData } from '../../presets';
 	import GrBar from './_gr_bar.svelte';
+	import ParamGraph from '../graph/param_graph.svelte';
+	import { useGainReduction } from '../state/gain_reduction.svelte';
 
 	type LimiterNodeType = Node<LimiterNodeData, 'limiter'>;
 	let { id, data }: NodeProps<LimiterNodeType> = $props();
@@ -41,20 +43,14 @@
 		engine.updateEffect(id, patch).catch(() => {});
 	}
 
-	// Ceiling transfer curve
-	const W = 130,
-		H = 36;
-	const DB_MIN = -24,
-		DB_MAX = 6;
+	const gr = useGainReduction(() => id);
 
-	function toSvg(db: number): number {
-		return ((db - DB_MIN) / (DB_MAX - DB_MIN)) * W;
-	}
-	function toSvgY(db: number): number {
-		return H - ((db - DB_MIN) / (DB_MAX - DB_MIN)) * H;
-	}
+	const X_MIN = -24;
+	const X_MAX = 6;
 
-	let ceilingSvgX = $derived(toSvg(data.ceilingDb));
+	// Brickwall: while it reduces, the output sits at the ceiling, so the input
+	// is the ceiling plus the reduction.
+	let liveIn = $derived(gr.db > 0.2 ? data.ceilingDb + gr.db : null);
 </script>
 
 <Wrapper label="Limiter" icon={Limiter} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
@@ -62,23 +58,33 @@
 		<PresetBar kind="limiter" {data} onApply={applyPreset} />
 
 		<div class="nowheel nodrag flex w-50 flex-col gap-1">
-			<svg width="100%" viewBox="0 0 {W} {H}" class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none">
-				{#each [-18, -12, -6, 0] as db}
+			<ParamGraph x={[X_MIN, X_MAX]} y={[X_MIN, X_MAX]} xTicks={[-18, -12, -6, 0]} yTicks={[-18, -12, -6, 0]} xLabel="in dB" yLabel="out" height={80}>
+				{#snippet children({ x, y })}
+					<rect x={x(data.ceilingDb)} y="0" width="200" height="200" class="fill-red-500/10" />
+					<line x1={x(X_MIN)} y1={y(X_MIN)} x2={x(X_MAX)} y2={y(X_MAX)} class="stroke-neutral-500" stroke-width="0.6" stroke-dasharray="2 2" />
 					<line
-						x1={toSvg(db)}
-						y1={0}
-						x2={toSvg(db)}
-						y2={H}
-						stroke="currentColor"
-						stroke-width="0.5"
-						class={db === 0 ? 'text-neutral-400' : 'text-neutral-300'} />
-					<text x={toSvg(db)} y={H - 2} font-size="6" fill="currentColor" class="text-neutral-400" text-anchor="middle">{db}</text>
-				{/each}
-				<rect x={0} y={0} width={ceilingSvgX} height={H} fill="#22c55e" opacity="0.08" />
-				<rect x={ceilingSvgX} y={0} width={W - ceilingSvgX} height={H} fill="#ef4444" opacity="0.08" />
-				<line x1={ceilingSvgX} y1={0} x2={ceilingSvgX} y2={H} stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,2" />
-				<text x={ceilingSvgX + 2} y={8} font-size="7" fill="#ef4444">{data.ceilingDb.toFixed(1)} dB</text>
-			</svg>
+						x1={x(X_MIN)}
+						y1={y(data.ceilingDb)}
+						x2={x(X_MAX)}
+						y2={y(data.ceilingDb)}
+						class="stroke-red-500"
+						stroke-width="0.7"
+						stroke-dasharray="2 2" />
+					<polyline
+						points="{x(X_MIN)},{y(X_MIN)} {x(data.ceilingDb)},{y(data.ceilingDb)} {x(X_MAX)},{y(data.ceilingDb)}"
+						fill="none"
+						class="stroke-signal"
+						stroke-width="1.5"
+						stroke-linejoin="round" />
+					{#if liveIn !== null}
+						<line x1={x(liveIn)} y1={y(liveIn)} x2={x(liveIn)} y2={y(data.ceilingDb)} class="stroke-red-500" stroke-width="1.5" />
+						<circle cx={x(liveIn)} cy={y(data.ceilingDb)} r="2.5" class="fill-signal stroke-neutral-100" stroke-width="1" />
+					{/if}
+				{/snippet}
+				{#snippet badge()}
+					<span class="text-red-500">ceil {data.ceilingDb.toFixed(1)} dB</span>
+				{/snippet}
+			</ParamGraph>
 			<GrBar nodeId={id} horizontal />
 		</div>
 

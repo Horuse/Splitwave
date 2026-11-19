@@ -7,6 +7,8 @@
 	import { SIDECHAIN_HANDLE } from '../utils';
 	import { Compressor } from '../icons';
 	import GrBar from './_gr_bar.svelte';
+	import ParamGraph from '../graph/param_graph.svelte';
+	import { useGainReduction } from '../state/gain_reduction.svelte';
 	import PresetBar from '../preset_bar.svelte';
 	import type { PresetData } from '../../presets';
 
@@ -36,50 +38,48 @@
 		patch('bypassed', !data.bypassed);
 	}
 
-	// Transfer curve math
-	const W = 130,
-		H = 60;
-	const X_MIN = -60,
-		X_MAX = 0;
-	const Y_MIN = -60,
-		Y_MAX = 12;
+	const gr = useGainReduction(() => id);
 
-	function xToSvg(db: number): number {
-		return ((db - X_MIN) / (X_MAX - X_MIN)) * W;
-	}
-	function yToSvg(db: number): number {
-		return H - ((db - Y_MIN) / (Y_MAX - Y_MIN)) * H;
-	}
+	const X_MIN = -60;
+	const X_MAX = 0;
 
-	function transferOut(xDb: number): number {
+	/** Reduction the static curve applies at input `xDb`, before makeup. */
+	function reductionAt(xDb: number): number {
 		const halfKnee = data.kneeDb / 2;
 		const over = xDb - data.thresholdDb;
-		let gr = 0;
 		if (data.kneeDb > 0 && over > -halfKnee && over < halfKnee) {
-			const x = over + halfKnee;
-			gr = ((1 - 1 / data.ratio) * x * x) / (2 * data.kneeDb);
-		} else if (over > 0) {
-			gr = over * (1 - 1 / data.ratio);
+			const k = over + halfKnee;
+			return ((1 - 1 / data.ratio) * k * k) / (2 * data.kneeDb);
 		}
-		return xDb - gr + data.makeupDb;
+		return over > 0 ? over * (1 - 1 / data.ratio) : 0;
 	}
 
-	const N = 80;
-	let curvePath = $derived(
-		Array.from({ length: N + 1 }, (_, i) => {
-			const xDb = X_MIN + (i / N) * (X_MAX - X_MIN);
-			const yDb = Math.max(Y_MIN, Math.min(Y_MAX, transferOut(xDb)));
-			return `${xToSvg(xDb).toFixed(1)},${yToSvg(yDb).toFixed(1)}`;
-		}).join(' ')
-	);
+	function outAt(xDb: number): number {
+		return xDb - reductionAt(xDb) + data.makeupDb;
+	}
 
-	// Unity line endpoints
-	const unityStart = `${xToSvg(X_MIN)},${yToSvg(X_MIN + 0)}`;
-	const unityEnd = `${xToSvg(X_MAX)},${yToSvg(X_MAX)}`;
+	// The curve only rises from the knee on, so the reduction the engine reports
+	// pins down the input level that produced it.
+	let liveIn = $derived.by(() => {
+		if (gr.db < 0.2 || data.ratio <= 1) return null;
+		let lo = data.thresholdDb - data.kneeDb / 2;
+		let hi = 24;
+		if (reductionAt(hi) < gr.db) return null;
+		for (let i = 0; i < 30; i++) {
+			const mid = (lo + hi) / 2;
+			if (reductionAt(mid) < gr.db) lo = mid;
+			else hi = mid;
+		}
+		return (lo + hi) / 2;
+	});
 
-	// Grid lines
-	const xGridLines = [-40, -20];
-	const yGridLines = [-40, -20, 0];
+	const STEPS = 90;
+	function curve(sx: (v: number) => number, sy: (v: number) => number): string {
+		return Array.from({ length: STEPS + 1 }, (_, i) => {
+			const xDb = X_MIN + (i / STEPS) * (X_MAX - X_MIN);
+			return `${sx(xDb).toFixed(1)},${sy(outAt(xDb)).toFixed(1)}`;
+		}).join(' ');
+	}
 </script>
 
 <Wrapper
@@ -97,39 +97,34 @@
 		<PresetBar kind="compressor" {data} onApply={applyPreset} />
 
 		<div class="nowheel nodrag flex w-52 flex-col gap-1">
-			<svg width="100%" viewBox="0 0 {W} {H}" class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none">
-				{#each xGridLines as x}
-					<line x1={xToSvg(x)} y1={0} x2={xToSvg(x)} y2={H} stroke="currentColor" stroke-width="0.5" class="text-neutral-300" />
-				{/each}
-				{#each yGridLines as y}
+			<ParamGraph x={[X_MIN, X_MAX]} y={[X_MIN, 12]} xTicks={[-48, -36, -24, -12]} yTicks={[-48, -24, 0]} xLabel="in dB" yLabel="out">
+				{#snippet children({ x, y })}
+					{@const kneeLo = data.thresholdDb - data.kneeDb / 2}
+					{@const kneeHi = data.thresholdDb + data.kneeDb / 2}
+					{#if data.kneeDb > 0}
+						<rect x={x(kneeLo)} y="0" width={x(kneeHi) - x(kneeLo)} height="200" class="fill-neutral-200" />
+					{/if}
+					<line x1={x(X_MIN)} y1={y(X_MIN)} x2={x(X_MAX)} y2={y(X_MAX)} class="stroke-neutral-500" stroke-width="0.6" stroke-dasharray="2 2" />
 					<line
-						x1={0}
-						y1={yToSvg(y)}
-						x2={W}
-						y2={yToSvg(y)}
-						stroke="currentColor"
-						stroke-width="0.5"
-						class={y === 0 ? 'text-neutral-400' : 'text-neutral-300'} />
-				{/each}
-				<line
-					x1={xToSvg(data.thresholdDb)}
-					y1={0}
-					x2={xToSvg(data.thresholdDb)}
-					y2={H}
-					stroke="#f59e0b"
-					stroke-width="0.8"
-					stroke-dasharray="2,2"
-					opacity="0.7" />
-				<polyline
-					points="{unityStart} {unityEnd}"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="0.7"
-					class="text-neutral-400"
-					stroke-dasharray="3,2" />
-				<polyline points={curvePath} fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" />
-				<text x={xToSvg(-30)} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-400" text-anchor="middle">in dB</text>
-			</svg>
+						x1={x(data.thresholdDb)}
+						y1="0"
+						x2={x(data.thresholdDb)}
+						y2="200"
+						class="stroke-amber-500"
+						stroke-width="0.7"
+						stroke-dasharray="2 2" />
+					<polyline points={curve(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
+					{#if liveIn !== null}
+						<line x1={x(liveIn)} y1={y(liveIn + data.makeupDb)} x2={x(liveIn)} y2={y(outAt(liveIn))} class="stroke-red-500" stroke-width="1.5" />
+						<circle cx={x(liveIn)} cy={y(outAt(liveIn))} r="2.5" class="fill-signal stroke-neutral-100" stroke-width="1" />
+					{/if}
+				{/snippet}
+				{#snippet badge()}
+					<span>
+						thr {data.thresholdDb.toFixed(1)} · {data.ratio.toFixed(1)}:1
+					</span>
+				{/snippet}
+			</ParamGraph>
 			<GrBar nodeId={id} horizontal />
 		</div>
 

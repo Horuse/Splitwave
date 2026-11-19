@@ -3,6 +3,7 @@
 	import { Slider } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SaturatorNodeData } from '@splitwave/nodes';
+	import ParamGraph from '../graph/param_graph.svelte';
 	import Wrapper from '../node.svelte';
 	import { Saturator } from '../icons';
 	import PresetBar from '../preset_bar.svelte';
@@ -37,37 +38,29 @@
 		engine.updateEffect(id, patch).catch(() => {});
 	}
 
-	// Transfer curve mirrors `SaturatorEffect` in effects.rs: y = c·tanh(x·d/c).
-	const CURVE_W = 120;
-	const CURVE_H = 60;
-	const X_MIN = -1.2;
-	const X_MAX = 1.2;
+	// Transfer curve mirrors `SaturatorEffect` in effects.rs: y = c*tanh(x*d/c).
+	let c = $derived(Math.pow(10, data.thresholdDb / 20));
+	let d = $derived(Math.pow(10, data.driveDb / 20));
 
-	function xPx(x: number): number {
-		return ((x - X_MIN) / (X_MAX - X_MIN)) * CURVE_W;
-	}
-	function yPx(y: number): number {
-		return CURVE_H - ((y - X_MIN) / (X_MAX - X_MIN)) * CURVE_H;
+	function shape(v: number): number {
+		return c * Math.tanh((v * d) / c);
 	}
 
-	function curvePath(thresholdDb: number, driveDb: number): string {
-		const c = Math.pow(10, thresholdDb / 20);
-		const d = Math.pow(10, driveDb / 20);
-		const steps = 60;
-		let path = '';
-		for (let i = 0; i <= steps; i++) {
-			const x = X_MIN + (X_MAX - X_MIN) * (i / steps);
-			const y = c * Math.tanh((x * d) / c);
-			path += `${i === 0 ? 'M' : 'L'} ${xPx(x).toFixed(2)} ${yPx(y).toFixed(2)} `;
-		}
-		return path;
+	const STEPS = 64;
+	function transfer(sx: (v: number) => number, sy: (v: number) => number): string {
+		return Array.from({ length: STEPS + 1 }, (_, i) => {
+			const v = -1.2 + (2.4 * i) / STEPS;
+			return `${sx(v).toFixed(1)},${sy(shape(v)).toFixed(1)}`;
+		}).join(' ');
 	}
 
-	function ceilingY(): number {
-		return yPx(Math.pow(10, data.thresholdDb / 20));
-	}
-	function ceilingYNeg(): number {
-		return yPx(-Math.pow(10, data.thresholdDb / 20));
+	/** One cycle of a full-scale sine, before (`raw`) or after the curve. */
+	function cycle(sx: (v: number) => number, sy: (v: number) => number, raw: boolean): string {
+		return Array.from({ length: STEPS + 1 }, (_, i) => {
+			const t = i / STEPS;
+			const v = 0.9 * Math.sin(2 * Math.PI * t);
+			return `${sx(t).toFixed(1)},${sy(raw ? v : shape(v)).toFixed(1)}`;
+		}).join(' ');
 	}
 </script>
 
@@ -75,32 +68,21 @@
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="saturator" {data} onApply={applyPreset} />
 
-		<div class="flex items-start gap-2">
-			<svg
-				viewBox="0 0 {CURVE_W} {CURVE_H}"
-				class="h-16 w-32 shrink-0 rounded border border-neutral-300 bg-neutral-100"
-				role="img"
-				aria-label="Transfer curve preview">
-				<line x1={xPx(0)} y1="0" x2={xPx(0)} y2={CURVE_H} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
-				<line x1="0" y1={yPx(0)} x2={CURVE_W} y2={yPx(0)} stroke="rgb(156 163 175)" stroke-width="0.3" stroke-dasharray="2 2" />
-				<line x1={xPx(X_MIN)} y1={yPx(X_MIN)} x2={xPx(X_MAX)} y2={yPx(X_MAX)} stroke="rgb(163 163 163)" stroke-width="0.4" stroke-dasharray="1 2" />
-				<line x1="0" y1={ceilingY()} x2={CURVE_W} y2={ceilingY()} stroke="rgb(239 68 68)" stroke-width="0.3" stroke-dasharray="1 1" opacity="0.5" />
-				<line
-					x1="0"
-					y1={ceilingYNeg()}
-					x2={CURVE_W}
-					y2={ceilingYNeg()}
-					stroke="rgb(239 68 68)"
-					stroke-width="0.3"
-					stroke-dasharray="1 1"
-					opacity="0.5" />
-				<path d={curvePath(data.thresholdDb, data.driveDb)} stroke="rgb(245 158 11)" stroke-width="1.2" fill="none" />
-			</svg>
-			<div class="my-auto flex flex-col gap-0.5 text-[9px] text-neutral-900">
-				<span class="rounded bg-neutral-200 font-mono leading-tight">tanh</span>
-				<span class="opacity-60">in → out</span>
-				<span class="opacity-60">unity dashed</span>
-			</div>
+		<div class="nowheel nodrag grid w-52 grid-cols-2 gap-2">
+			<ParamGraph x={[-1.2, 1.2]} y={[-1.2, 1.2]} xTicks={[-1, 0, 1]} yTicks={[-1, 1]} xLabel="in" width={110} height={96}>
+				{#snippet children({ x, y })}
+					<rect x="0" y="0" width="200" height={y(c)} class="fill-red-500/10" />
+					<rect x="0" y={y(-c)} width="200" height="200" class="fill-red-500/10" />
+					<line x1={x(-1.2)} y1={y(-1.2)} x2={x(1.2)} y2={y(1.2)} class="stroke-neutral-500" stroke-width="0.6" stroke-dasharray="2 2" />
+					<polyline points={transfer(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" />
+				{/snippet}
+			</ParamGraph>
+			<ParamGraph x={[0, 1]} y={[-1.2, 1.2]} yTicks={[-1, 1]} xLabel="sine" width={110} height={96}>
+				{#snippet children({ x, y })}
+					<polyline points={cycle(x, y, true)} fill="none" class="stroke-neutral-500" stroke-width="0.8" stroke-dasharray="2 2" />
+					<polyline points={cycle(x, y, false)} fill="none" class="stroke-signal" stroke-width="1.5" />
+				{/snippet}
+			</ParamGraph>
 		</div>
 
 		<Slider

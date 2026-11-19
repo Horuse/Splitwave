@@ -59,6 +59,15 @@
 	--lv-4: var(--color-neutral-600);
 	--lv-5: var(--color-neutral-700);
 }
+/* A menu opened inside a node takes the node's recessed field shade, so it reads as part of the select, not a lighter sheet. */
+.dark [data-layer='popover'] [data-layer='popover'] {
+	--color-popover: var(--color-neutral-100);
+	--lv-1: var(--color-neutral-200);
+	--lv-2: var(--color-neutral-300);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}
 
 :root:not(.dark) {
 	--color-foreground: var(--color-neutral-50);

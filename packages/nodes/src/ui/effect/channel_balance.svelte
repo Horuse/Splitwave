@@ -4,6 +4,7 @@
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { ChannelBalanceNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
+	import ParamGraph from '../graph/param_graph.svelte';
 	import { Balance } from '../icons';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
@@ -46,30 +47,26 @@
 		if (Math.abs(d) < 0.05) return 'Center';
 		return d > 0 ? `${d.toFixed(1)} dB R` : `${(-d).toFixed(1)} dB L`;
 	}
-
-	// Map the L/R delta to a [-1, +1] indicator position. The 48 dB span
-	// matches the slider range (-24..+24 each side).
-	function panNorm(): number {
-		return Math.max(-1, Math.min(1, diff() / 48));
-	}
 </script>
 
 <Wrapper label="Channel Balance" icon={Balance} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
-		<div class="flex flex-col gap-0.5 text-[10px] text-neutral-1000">
-			<div class="flex items-baseline justify-between">
-				<span class="opacity-60">L</span>
-				<span class="font-mono text-neutral-900 tabular-nums">{panLabel()}</span>
-				<span class="opacity-60">R</span>
-			</div>
-			<div class="relative h-2 w-full overflow-hidden rounded border border-neutral-300 bg-neutral-200">
-				<div class="absolute top-0 bottom-0 left-1/2 w-px bg-neutral-500"></div>
-				{#if panNorm() >= 0}
-					<div class="absolute top-0 bottom-0 left-1/2 bg-emerald-500/60" style="width: {panNorm() * 50}%;"></div>
-				{:else}
-					<div class="absolute top-0 right-1/2 bottom-0 bg-emerald-500/60" style="width: {-panNorm() * 50}%;"></div>
-				{/if}
-			</div>
+		<div class="nowheel nodrag">
+			<ParamGraph x={[0, 2]} y={[-24, 24]} yTicks={[-12, 0, 12]} yFormat={(v) => (v > 0 ? `+${v}` : `${v}`)} height={72}>
+				{#snippet children({ x, y })}
+					<line x1={x(0)} y1={y(0)} x2={x(2)} y2={y(0)} class="stroke-neutral-500" stroke-width="0.6" />
+					{#each [{ at: 0.5, db: data.leftGainDb, name: 'L', cls: 'fill-red-500' }, { at: 1.5, db: data.rightGainDb, name: 'R', cls: 'fill-blue-500' }] as ch (ch.name)}
+						<rect x={x(ch.at) - 14} y={Math.min(y(0), y(ch.db))} width="28" height={Math.max(1, Math.abs(y(ch.db) - y(0)))} rx="2" class={ch.cls} />
+						<text x={x(ch.at)} y={y(ch.db) + (ch.db >= 0 ? -3 : 8)} text-anchor="middle" class="fill-neutral-900 font-mono" font-size="7">
+							{ch.name}
+							{ch.db > 0 ? '+' : ''}{ch.db.toFixed(1)}
+						</text>
+					{/each}
+				{/snippet}
+				{#snippet badge()}
+					<span>{panLabel()}</span>
+				{/snippet}
+			</ParamGraph>
 		</div>
 
 		<Slider
@@ -96,9 +93,7 @@
 			onChange={setRight} />
 
 		<div class="flex items-center justify-between text-[10px] text-neutral-1000">
-			<button type="button" class="nodrag nopan rounded border border-neutral-300 bg-neutral-100 px-2 py-0.5 hover:bg-neutral-200" onclick={center}>
-				Center
-			</button>
+			<button type="button" class="nodrag nopan rounded-md bg-(--lv-1) px-2 py-0.5 hover:bg-(--lv-2)" onclick={center}> Center </button>
 			<Toggle class="nodrag nopan" size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />
 		</div>
 	</div>

@@ -170,27 +170,30 @@
 	<div class="flex w-72 flex-col gap-1.5">
 		<PresetBar kind="eq" {data} onApply={applyPreset} />
 
-		<svg
-			viewBox="0 0 {CURVE_W} {CURVE_H}"
-			class="h-16 w-full rounded border border-neutral-300 bg-neutral-100"
-			role="img"
-			aria-label="EQ frequency response">
-			{#each dbGrid as db (db)}
-				<line
-					x1="0"
-					y1={dbToY(db)}
-					x2={CURVE_W}
-					y2={dbToY(db)}
-					stroke="rgb(156 163 175)"
-					stroke-width="0.3"
-					stroke-dasharray={db === 0 ? '' : '2 2'}
-					opacity={db === 0 ? 0.6 : 0.3} />
-			{/each}
-			<path d={curvePath} stroke="rgb(245 158 11)" stroke-width="1.5" fill="none" />
-			{#each FREQUENCIES as freq (freq)}
-				<circle cx={freqToX(freq)} cy={dbToY(combinedDbAt(freq))} r="2" fill="rgb(245 158 11)" />
-			{/each}
-		</svg>
+		<div class="overflow-hidden rounded-md border border-theme/5 bg-neutral-100">
+			<svg viewBox="0 0 {CURVE_W} {CURVE_H}" class="block h-20 w-full" role="img" aria-label="EQ frequency response">
+				{#each dbGrid as db (db)}
+					<line x1="0" y1={dbToY(db)} x2={CURVE_W} y2={dbToY(db)} class={db === 0 ? 'stroke-neutral-500' : 'stroke-neutral-300'} stroke-width="0.5" />
+					{#if db !== 0}
+						<text x="3" y={dbToY(db) - 1.5} class="fill-neutral-500 font-mono" font-size="6">{db > 0 ? '+' : ''}{db}</text>
+					{/if}
+				{/each}
+				{#each [100, 1000, 10000] as f (f)}
+					<line x1={freqToX(f)} y1="0" x2={freqToX(f)} y2={CURVE_H} class="stroke-neutral-300" stroke-width="0.5" />
+					<text x={freqToX(f) + 2} y={CURVE_H - 2} class="fill-neutral-500 font-mono" font-size="6">{formatFreq(f)}</text>
+				{/each}
+				<path d="{curvePath} L {CURVE_W} {dbToY(0)} L 0 {dbToY(0)} Z" class="fill-signal/15" />
+				<path d={curvePath} class="stroke-signal" stroke-width="1.5" fill="none" />
+				{#each FREQUENCIES as freq, i (freq)}
+					{@const g = data.gainsDb[i] ?? 0}
+					<circle
+						cx={freqToX(freq)}
+						cy={dbToY(combinedDbAt(freq))}
+						r="2.2"
+						class={g > 0 ? 'fill-signal' : g < 0 ? 'fill-sky-500' : 'fill-neutral-600'} />
+				{/each}
+			</svg>
+		</div>
 
 		<div class="flex gap-0.5">
 			{#each FREQUENCIES as freq, i (freq)}
@@ -200,7 +203,7 @@
 					<input
 						type="text"
 						inputmode="decimal"
-						class="nodrag nopan w-full rounded-sm bg-transparent text-center font-mono text-[8px] text-neutral-1000 tabular-nums focus:bg-neutral-100 focus:ring-1 focus:ring-amber-500 focus:outline-none"
+						class="nodrag nopan w-full rounded-sm bg-transparent text-center font-mono text-[8px] text-neutral-1000 tabular-nums focus:bg-(--lv-1) focus:ring-1 focus:ring-(--lv-4) focus:outline-none"
 						value={editingBand === i ? draft : formatGain(gain)}
 						oninput={(e) => (draft = e.currentTarget.value)}
 						onfocus={(e) => startEdit(i, e)}
@@ -208,7 +211,7 @@
 						onkeydown={onEditKeyDown} />
 					<div
 						bind:this={faderEls[i]}
-						class="nodrag nopan nowheel relative h-36 w-4 cursor-ns-resize rounded-sm border border-neutral-300 bg-neutral-100"
+						class="nodrag nopan nowheel relative h-36 w-4 cursor-ns-resize rounded-md border border-theme/5 bg-neutral-100"
 						style="touch-action: none;"
 						onpointerdown={(e) => onFaderPointerDown(i, e)}
 						onpointermove={(e) => onFaderPointerMove(i, e)}
@@ -223,7 +226,7 @@
 						aria-valuemax={GAIN_MAX}
 						aria-valuenow={gain}>
 						<!-- Recessed travel slot the cap rides in. -->
-						<div class="pointer-events-none absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-[1px] bg-neutral-400/60"></div>
+						<div class="pointer-events-none absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-full bg-neutral-300"></div>
 						{#each [12, 6, -6, -12] as tick (tick)}
 							<div
 								class="pointer-events-none absolute left-1 h-px w-1.5 -translate-y-1/2 bg-neutral-500/40"
@@ -238,12 +241,12 @@
 						<div class="pointer-events-none absolute top-1/2 right-1 left-1 h-px -translate-y-1/2 bg-neutral-600/70"></div>
 						<!-- Boost/cut fill from the 0 dB detent to the cap. -->
 						<div
-							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2 {gain >= 0 ? 'bg-amber-500' : 'bg-sky-500'}"
+							class="pointer-events-none absolute left-1/2 w-1 -translate-x-1/2 rounded-full {gain >= 0 ? 'bg-signal' : 'bg-sky-500'}"
 							style={gain >= 0 ? `top: ${capTop}%; bottom: 50%;` : `top: 50%; bottom: ${100 - capTop}%;`}>
 						</div>
 						<!-- Physical fader cap: slightly wider than the track, with a grip line. -->
 						<div
-							class="pointer-events-none absolute left-1/2 h-2.5 w-[166%] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-neutral-500/60 bg-neutral-300"
+							class="pointer-events-none absolute left-1/2 h-2 w-[150%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-400 bg-white"
 							style="top: {capTop}%;">
 						</div>
 					</div>

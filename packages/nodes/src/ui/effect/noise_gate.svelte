@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { getEnginePort } from '../../engine';
 	import { Slider } from '@splitwave/ui';
-	import { onDestroy } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { NoiseGateNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
@@ -9,6 +8,8 @@
 	import { NoiseGate } from '../icons';
 	import PresetBar from '../preset_bar.svelte';
 	import type { PresetData } from '../../presets';
+	import ParamGraph from '../graph/param_graph.svelte';
+	import { useGainReduction } from '../state/gain_reduction.svelte';
 
 	type NoiseGateNodeType = Node<NoiseGateNodeData, 'noiseGate'>;
 	let { id, data }: NodeProps<NoiseGateNodeType> = $props();
@@ -32,48 +33,33 @@
 		patch('bypassed', !data.bypassed);
 	}
 
-	let stateGain = $state(1);
-	let gateState = $derived(stateGain > 0.85 ? 'open' : stateGain > 0.15 ? 'hold' : 'closed');
+	const gr = useGainReduction(() => id);
+	let gateState = $derived<'open' | 'hold' | 'closed'>(gr.gain > 0.85 ? 'open' : gr.gain > 0.15 ? 'hold' : 'closed');
 
-	engine.listen<{ nodeId: string; grLin: number }>('audio://gr', (p) => {
-		if (p.nodeId !== id) return;
-		stateGain = Math.max(0, Math.min(1, p.grLin));
-	});
+	const STATE = {
+		open: { label: 'Open', class: 'text-emerald-500' },
+		hold: { label: 'Hold', class: 'text-amber-500' },
+		closed: { label: 'Closed', class: 'text-neutral-600' }
+	} as const;
 
-	const W = 150,
-		H = 70;
-	const X_MIN = -80,
-		X_MAX = 0;
-	const Y_MIN = -80,
-		Y_MAX = 6;
+	const X_MIN = -80;
+	const X_MAX = 0;
+	// Width of the drawn transition below the threshold, dB.
+	const ZONE = 3;
 
-	function xToSvg(db: number): number {
-		return ((db - X_MIN) / (X_MAX - X_MIN)) * W;
-	}
-	function yToSvg(db: number): number {
-		return H - ((db - Y_MIN) / (Y_MAX - Y_MIN)) * H;
+	function outAt(xDb: number): number {
+		if (xDb >= data.thresholdDb) return xDb;
+		const t = Math.max(0, Math.min(1, (xDb - (data.thresholdDb - ZONE)) / ZONE));
+		return xDb + data.rangeDb * (1 - t * t);
 	}
 
-	let gatePath = $derived(() => {
-		const thr = data.thresholdDb;
-		const range = data.rangeDb;
-		const pts: string[] = [];
-		for (let i = 0; i <= 100; i++) {
-			const xDb = X_MIN + (i / 100) * (X_MAX - X_MIN);
-			let yDb: number;
-			if (xDb >= thr) {
-				yDb = xDb;
-			} else {
-				// linear transition zone around threshold (±3 dB)
-				const zone = 3;
-				const t = Math.max(0, Math.min(1, (xDb - (thr - zone)) / zone));
-				const rangeOffset = range - xDb;
-				yDb = xDb + rangeOffset * (1 - t * t);
-			}
-			pts.push(`${xToSvg(xDb).toFixed(1)},${yToSvg(Math.max(Y_MIN, Math.min(Y_MAX, yDb))).toFixed(1)}`);
-		}
-		return pts.join(' ');
-	});
+	const STEPS = 100;
+	function curve(sx: (v: number) => number, sy: (v: number) => number): string {
+		return Array.from({ length: STEPS + 1 }, (_, i) => {
+			const xDb = X_MIN + (i / STEPS) * (X_MAX - X_MIN);
+			return `${sx(xDb).toFixed(1)},${sy(outAt(xDb)).toFixed(1)}`;
+		}).join(' ');
+	}
 </script>
 
 <Wrapper
@@ -90,55 +76,28 @@
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="noiseGate" {data} onApply={applyPreset} />
 
-		<div class="nowheel nodrag flex items-end gap-3">
-			<svg width={W} height={H} class="overflow-visible rounded border border-neutral-300 bg-neutral-100 select-none">
-				{#each [-60, -40, -20] as x}
-					<line x1={xToSvg(x)} y1={0} x2={xToSvg(x)} y2={H} stroke="currentColor" stroke-width="0.5" class="text-neutral-300" />
-				{/each}
-				{#each [-60, -40, -20, 0] as y}
+		<div class="nowheel nodrag w-52">
+			<ParamGraph x={[X_MIN, X_MAX]} y={[X_MIN - 40, 6]} xTicks={[-60, -40, -20]} yTicks={[-80, -40, 0]} xLabel="in dB" yLabel="out">
+				{#snippet children({ x, y })}
+					<rect x={x(X_MIN)} y="0" width={x(data.thresholdDb) - x(X_MIN)} height="200" class="fill-neutral-200" />
+					<line x1={x(X_MIN)} y1={y(X_MIN)} x2={x(X_MAX)} y2={y(X_MAX)} class="stroke-neutral-500" stroke-width="0.6" stroke-dasharray="2 2" />
 					<line
-						x1={0}
-						y1={yToSvg(y)}
-						x2={W}
-						y2={yToSvg(y)}
-						stroke="currentColor"
-						stroke-width="0.5"
-						class={y === 0 ? 'text-neutral-400' : 'text-neutral-300'} />
-				{/each}
-				<line
-					x1={xToSvg(data.thresholdDb)}
-					y1={0}
-					x2={xToSvg(data.thresholdDb)}
-					y2={H}
-					stroke="#f59e0b"
-					stroke-width="0.8"
-					stroke-dasharray="2,2"
-					opacity="0.7" />
-				<line
-					x1={xToSvg(X_MIN)}
-					y1={yToSvg(X_MIN)}
-					x2={xToSvg(X_MAX)}
-					y2={yToSvg(X_MAX)}
-					stroke="currentColor"
-					stroke-width="0.7"
-					class="text-neutral-400"
-					stroke-dasharray="3,2" />
-				<polyline points={gatePath()} fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" />
-			</svg>
-
-			<div class="my-auto flex flex-col items-center gap-1.5 select-none">
-				{#each [{ label: 'Open', state: 'open', color: 'bg-green-500' }, { label: 'Hold', state: 'hold', color: 'bg-amber-400' }, { label: 'Closed', state: 'closed', color: 'bg-neutral-400' }] as item}
-					<div class="flex items-center gap-1.5">
-						<div
-							class="size-2 rounded-full border border-neutral-300 {gateState === item.state ? item.color : 'bg-neutral-200'}
-							{gateState === item.state && item.state === 'open' ? 'shadow-[0_0_4px_#22c55e]' : ''}
-							{gateState === item.state && item.state === 'hold' ? 'shadow-[0_0_4px_#fbbf24]' : ''}
-						">
-						</div>
-						<span class="text-[8px] text-neutral-500">{item.label}</span>
-					</div>
-				{/each}
-			</div>
+						x1={x(data.thresholdDb)}
+						y1="0"
+						x2={x(data.thresholdDb)}
+						y2="200"
+						class="stroke-amber-500"
+						stroke-width="0.7"
+						stroke-dasharray="2 2" />
+					<polyline points={curve(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
+				{/snippet}
+				{#snippet badge()}
+					<span class="flex items-center gap-1">
+						<span class={STATE[gateState].class}>{STATE[gateState].label}</span>
+						{#if gr.db > 0.2}<span class="text-neutral-800">-{gr.db.toFixed(1)}</span>{/if}
+					</span>
+				{/snippet}
+			</ParamGraph>
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">

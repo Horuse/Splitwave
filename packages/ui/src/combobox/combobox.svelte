@@ -2,7 +2,6 @@
 	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import ChevronDown from '~icons/fluent/chevron-down-16-filled';
-	import { smoothRadius } from '../attachments';
 	import { ScrollArea } from '../scroll-area';
 
 	interface Option {
@@ -99,7 +98,7 @@
 	<button
 		type="button"
 		class={[
-			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-md border border-(--lv-3) bg-(--lv-1) px-2 text-left text-neutral-1100 transition-colors duration-150 hover:bg-(--lv-2)',
+			'nodrag nopan flex w-full items-center justify-between gap-2 rounded-lg border border-theme/5 bg-(--field-bg,var(--lv-1)) px-2.5 text-left text-neutral-1100 transition-colors duration-150 hover:bg-(--lv-2)',
 			size === 'sm' ? 'py-0.5 text-[10px]' : 'py-1 text-sm'
 		]}
 		onclick={() => (open ? closePanel() : openPanel())}>
@@ -123,14 +122,12 @@
 		<div
 			transition:fly={{ duration: 200, y: 5 }}
 			data-layer="popover"
-			class="absolute top-full right-0 left-0 z-20 mt-1 flex flex-col gap-1 overflow-hidden border border-neutral-400 bg-popover p-1 shadow-lg"
-			style="border-radius: calc(var(--menu-item-r, 10px) + 5px)"
-			{@attach smoothRadius({ variable: '--menu-item-r', side: 28 })}>
+			class="absolute top-full right-0 left-0 z-20 mt-1 flex flex-col gap-1 overflow-hidden rounded-[10px] border border-theme/10 bg-popover p-1 [--menu-item-r:5px]">
 			<input
 				bind:this={inputEl}
 				bind:value={search}
 				type="text"
-				class="nodrag nopan w-full border border-(--lv-3) bg-(--lv-2) px-2.5 py-1 text-sm outline-none"
+				class="nodrag nopan w-full border border-(--lv-3) bg-(--lv-1) px-2.5 py-1 text-sm outline-none"
 				style="border-radius: var(--menu-item-r, 10px)"
 				placeholder="Filter…"
 				onkeydown={onKeyDown} />
@@ -182,7 +179,9 @@
 				</ul>
 			</ScrollArea>
 			{#if footer}
-				{@render footer(closePanel)}
+				<div class="flex flex-col border-t border-theme/5 pt-1">
+					{@render footer(closePanel)}
+				</div>
 			{/if}
 		</div>
 	{/if}

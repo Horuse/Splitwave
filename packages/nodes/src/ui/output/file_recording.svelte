@@ -645,17 +645,24 @@
 
 <Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
 	<div class="flex w-64 flex-col gap-1.5">
-		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
-			{basename(data.filePath)}
-		</div>
-		<div class="flex gap-1">
-			<Button class="nodrag nopan flex-1" type="button" onclick={chooseFile}>
-				<Folder class="size-3.5" />
-				Choose file
-			</Button>
+		<!-- File: name over what will be written, picker and reveal beside it. -->
+		<div class="flex items-center gap-2 rounded-lg border border-theme/5 bg-neutral-100 py-1.5 pr-1.5 pl-2.5">
+			<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+				<span class={['truncate text-xs', data.filePath ? 'text-neutral-1100' : 'text-neutral-700']} title={data.filePath ?? undefined}>
+					{basename(data.filePath)}
+				</span>
+				<span class="truncate font-mono text-[9px] text-neutral-600">
+					{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)} · {formatHz(targetSampleRate)} · {channelLabel}
+				</span>
+			</div>
+			<Tooltip text="Choose file">
+				<Button size="sm" icon class="nodrag nopan" type="button" onclick={chooseFile}>
+					<Folder class="size-3.5" />
+				</Button>
+			</Tooltip>
 			<Tooltip
 				text={isMac ? 'Reveal the recording in Finder' : isWindows ? 'Reveal the recording in File Explorer' : 'Reveal the recording in file manager'}>
-				<Button icon class="nodrag nopan shrink-0" type="button" disabled={!data.filePath} onclick={revealFolder}>
+				<Button size="sm" icon class="nodrag nopan shrink-0" type="button" disabled={!data.filePath} onclick={revealFolder}>
 					<FolderOpen class="size-3.5" />
 				</Button>
 			</Tooltip>
@@ -799,31 +806,27 @@
 				onSelect={setAiffBitDepth} />
 		{/if}
 
-		<div class="flex items-baseline justify-between font-mono text-[11px]">
-			<span class={recording ? 'text-red-500' : 'text-neutral-900'}>
-				{recording ? '● REC' : '○'}
+		<div class="flex items-center justify-between font-mono text-[11px]">
+			<span
+				class={[
+					'flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-semibold',
+					recording ? 'bg-red-500/15 text-red-500' : 'bg-(--lv-1) text-neutral-700'
+				]}>
+				<span class={['size-1.5 rounded-full', recording ? 'bg-red-500' : 'bg-neutral-500']}></span>
+				{recording ? 'REC' : 'IDLE'}
 			</span>
 			<div class="flex items-baseline gap-1.5 tabular-nums">
 				<span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
 				{#if estSize > 0}
-					<span class="node-spec">·</span>
-					<span class="node-spec">{formatSize(estSize)}</span>
+					<span class="text-neutral-600">{formatSize(estSize)}</span>
 				{/if}
 			</div>
-		</div>
-		<div class="node-spec flex items-center justify-between">
-			<span class="truncate">
-				{formatLabelFor(recording && committedFormat !== null ? committedFormat : data.format)}
-			</span>
-			<span class="shrink-0 pl-2">
-				{formatHz(targetSampleRate)} · {channelLabel}
-			</span>
 		</div>
 		{#if dirty}
 			<div class="text-[9px] text-amber-600">changes pending - restart or choose new file</div>
 		{/if}
 
-		<div class="flex items-center justify-between border-t border-neutral-200 pt-1">
+		<div class="flex items-center justify-between border-t border-theme/5 pt-1.5">
 			<span class="node-spec flex items-center gap-1">
 				<Pulse class="size-3" />
 				Waveform

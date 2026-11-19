@@ -61,7 +61,9 @@
 		<div class="flex flex-col gap-1">
 			<div class="relative h-1.5 rounded-full bg-(--lv-1)">
 				<div class={['absolute inset-y-0 left-0 rounded-full', high ? 'bg-signal' : 'bg-neutral-600']} style="width: {toPct(levelDb)}%;"></div>
-				<span class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-neutral-1100" style="left: {toPct(data.thresholdDb)}%"></span>
+				<span
+					class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-neutral-1100"
+					style="left: {toPct(data.thresholdDb)}%"></span>
 			</div>
 			<div class="flex justify-between font-mono text-[9px] text-neutral-600 tabular-nums">
 				<span>{DB_FLOOR}</span>

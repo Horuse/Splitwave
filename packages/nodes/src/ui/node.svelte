@@ -2,11 +2,13 @@
 	import { Tooltip } from '@splitwave/ui';
 	import { getContext, type Component, type Snippet } from 'svelte';
 	import type { ClassValue } from 'svelte/elements';
-	import { Handle, Position } from '@xyflow/svelte';
+	import { Handle, Position, useSvelteFlow, useUpdateNodeInternals } from '@xyflow/svelte';
 	import { MAIN_HANDLE, PREVIEW_CTX, CATEGORY_TEXT } from './utils';
 	import type { NodeCategory } from '@splitwave/nodes';
 	import ArrowSwap from '~icons/fluent/arrow-swap-16-filled';
 	import Hourglass from '~icons/fluent/hourglass-16-filled';
+	import ChevronUp from '~icons/fluent/chevron-up-16-regular';
+	import ChevronDown from '~icons/fluent/chevron-down-16-regular';
 	import { getEnginePort } from '../engine';
 	import { formatLatencyMs } from '@splitwave/nodes';
 	import ChannelHandles from './_channel_handles.svelte';
@@ -41,6 +43,9 @@
 		/** Meters widen with every channel, so they opt out of the node width cap. */
 		wide?: boolean;
 		selfGrowing?: boolean;
+		/** What a collapsed node still shows; a node without one cannot collapse. */
+		summary?: Snippet;
+		collapsed?: boolean;
 		children?: Snippet;
 	}
 
@@ -62,6 +67,8 @@
 		minChannels,
 		wide = false,
 		selfGrowing = false,
+		summary,
+		collapsed = false,
 		children
 	}: Props = $props();
 
@@ -75,6 +82,18 @@
 		if (!block || engine.bufferFrames === null || !timing!.sampleRate) return undefined;
 		return `Runs in ${block}-frame blocks (buffer ${engine.bufferFrames}), adding ${formatLatencyMs((timing!.latencyFrames * 1000) / timing!.sampleRate)} ms`;
 	});
+
+	const flow = isPreview ? null : useSvelteFlow();
+	const updateInternals = isPreview ? null : useUpdateNodeInternals();
+	let canCollapse = $derived(!!summary && !!nodeId && !isPreview);
+	let showSummary = $derived(canCollapse && collapsed);
+
+	function toggleCollapsed() {
+		if (!nodeId || !flow) return;
+		flow.updateNodeData(nodeId, { collapsed: !collapsed });
+		// Sockets keep their ids but move with the new height; xyflow re-reads them here.
+		requestAnimationFrame(() => updateInternals?.(nodeId));
+	}
 
 	function pos(p: InputHandleConfig['position']): Position {
 		if (p === 'bottom') return Position.Bottom;
@@ -93,7 +112,10 @@
 <!-- Concentric corners: 6px controls + 16px padding = 22px. The padding also sets where channel sockets sit (edgeOffset). -->
 <div
 	data-layer="popover"
-	class={['node-shell min-w-32 rounded-[22px] border border-theme/5 bg-neutral-200 p-4 [--field-bg:var(--color-neutral-100)] [--field-border:var(--color-neutral-300)]', !wide && 'max-w-80']}>
+	class={[
+		'node-shell min-w-32 rounded-[22px] border border-theme/5 bg-neutral-200 p-4 [--field-bg:var(--color-neutral-100)] [--field-border:var(--color-neutral-300)]',
+		!wide && 'max-w-80'
+	]}>
 	<div class="relative mb-2 flex items-center justify-between gap-2">
 		<span class="flex items-center gap-1.5 text-xs font-medium text-neutral-1000">
 			{#if NodeIcon}
@@ -117,6 +139,16 @@
 		</span>
 		<div class="flex items-center gap-1">
 			{#if badge}{@render badge()}{/if}
+			{#if canCollapse}
+				<button
+					type="button"
+					class="nodrag nopan flex size-5 items-center justify-center rounded-md text-neutral-700 hover:bg-(--lv-2) hover:text-neutral-1000"
+					title={collapsed ? 'Show all settings' : 'Collapse to summary'}
+					aria-expanded={!collapsed}
+					onclick={toggleCollapsed}>
+					{#if collapsed}<ChevronDown class="size-3.5" />{:else}<ChevronUp class="size-3.5" />{/if}
+				</button>
+			{/if}
 			{#if onBypass}
 				<button
 					type="button"
@@ -138,7 +170,11 @@
 			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
 		{/if}
 		<div class={['min-w-0 flex-1', bypassed && 'opacity-40']}>
-			{@render children?.()}
+			{#if showSummary}
+				{@render summary?.()}
+			{:else}
+				{@render children?.()}
+			{/if}
 		</div>
 		{#if chExpanded && nodeId && hasOutput}
 			<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />

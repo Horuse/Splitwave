@@ -29,13 +29,27 @@
 	function toggleBypass() {
 		set({ bypassed: !data.bypassed });
 	}
-
 </script>
 
-<Wrapper label="De-esser" icon={SoundWave} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="De-esser"
+	icon={SoundWave}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>{formatHz(data.frequency)}</span><span>thr {data.thresholdDb.toFixed(0)} dB</span><span>{data.ratio.toFixed(1)}:1</span>
+		</div>
+	{/snippet}
+
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="deEsser" {data} onApply={applyPreset} />
-
 
 		<Slider
 			class="nodrag nopan nowheel"

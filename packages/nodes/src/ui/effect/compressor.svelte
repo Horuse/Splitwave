@@ -77,7 +77,17 @@
 	nodeId={id}
 	inputs={[{ id: SIDECHAIN_HANDLE, label: 'Sidechain', position: 'bottom' }]}
 	bypassed={data.bypassed}
-	onBypass={toggleBypass}>
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 flex-col gap-1">
+			<GrBar nodeId={id} horizontal />
+			<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+				<span>thr {data.thresholdDb.toFixed(1)} dB</span><span>{data.ratio.toFixed(1)}:1</span>
+			</div>
+		</div>
+	{/snippet}
+
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="compressor" {data} onApply={applyPreset} />
 

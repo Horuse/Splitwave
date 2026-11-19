@@ -142,7 +142,14 @@
 	nodeId={id}
 	maxChannels={MAX_CHANNELS}
 	minChannels={received}
-	selfGrowing>
+	selfGrowing
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>:{data.port} {codecLabel ?? 'waiting'}</span><span>{formatRate(rate)}</span>
+		</div>
+	{/snippet}
+
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<div class="flex flex-col gap-1">
 			<span class={CAPTION}>Listen on UDP port</span>

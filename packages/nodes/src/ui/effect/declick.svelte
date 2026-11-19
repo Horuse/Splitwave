@@ -32,7 +32,23 @@
 	}
 </script>
 
-<Wrapper label="Declick" icon={Backspace} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Declick"
+	icon={Backspace}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>sensitivity {Math.round(data.sensitivity * 100)}%</span><span>{data.maxWidthMs.toFixed(1)} ms</span>
+		</div>
+	{/snippet}
+
 	<div class="flex w-50 flex-col gap-1.5">
 		<Slider
 			class="nodrag nopan nowheel"

@@ -89,7 +89,23 @@
 	});
 </script>
 
-<Wrapper label="Reverb" icon={Reverb} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Reverb"
+	icon={Reverb}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>RT60 {rt60.toFixed(1)} s</span><span>mix {Math.round(data.mix * 100)}%</span>
+		</div>
+	{/snippet}
+
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="reverb" {data} onApply={applyPreset} />
 

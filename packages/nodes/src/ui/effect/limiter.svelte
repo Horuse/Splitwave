@@ -53,7 +53,26 @@
 	}
 </script>
 
-<Wrapper label="Limiter" icon={Limiter} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Limiter"
+	icon={Limiter}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 flex-col gap-1">
+			<GrBar nodeId={id} horizontal />
+			<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+				<span>ceiling</span><span>{data.ceilingDb.toFixed(1)} dB</span>
+			</div>
+		</div>
+	{/snippet}
+
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="limiter" {data} onApply={applyPreset} />
 

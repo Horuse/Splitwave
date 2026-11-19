@@ -45,9 +45,15 @@ import type { LogicOp } from './logic';
 
 export type NodeCategory = 'input' | 'output' | 'monitor' | 'network' | 'effect' | 'control' | 'routing';
 
+/** Editor-only fields every node may carry; the engine never reads them. */
+export interface NodeUiData {
+	/** Shows only the node's summary row. Absent in older pipelines, which open expanded. */
+	collapsed?: boolean;
+}
+
 // xyflow requires node data to satisfy `Record<string, unknown>`; intersecting
 // gives generated types that constraint without us redeclaring fields.
-type XyData<T> = T & Record<string, unknown>;
+type XyData<T> = T & NodeUiData & Record<string, unknown>;
 
 export type MicrophoneNodeData = XyData<MicrophoneData>;
 export type SystemAudioNodeData = XyData<SystemAudioData>;

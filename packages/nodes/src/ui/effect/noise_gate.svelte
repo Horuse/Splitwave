@@ -100,7 +100,15 @@
 	nodeId={id}
 	inputs={[{ id: SIDECHAIN_HANDLE, label: 'Sidechain', position: 'bottom' }]}
 	bypassed={data.bypassed}
-	onBypass={toggleBypass}>
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span class={STATE[gateState].class}>{STATE[gateState].label}</span><span
+				>thr {data.thresholdDb.toFixed(0)} dB{gr.db > 0.2 ? ` · -${gr.db.toFixed(1)}` : ''}</span>
+		</div>
+	{/snippet}
+
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="noiseGate" {data} onApply={applyPreset} />
 

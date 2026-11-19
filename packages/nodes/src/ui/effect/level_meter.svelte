@@ -19,12 +19,13 @@
 	const HOLD_FALL_DB_PER_SEC = 20;
 	const BAR_W = 30;
 
-
 	const METER_GRADIENT = `linear-gradient(to top,
         #22c55e 0%, #22c55e 70%,
         #eab308 70%, #eab308 90%,
         #f97316 90%, #f97316 95%,
         #ef4444 95%, #ef4444 100%)`;
+
+	const METER_GRADIENT_H = METER_GRADIENT.replace('to top', 'to right');
 
 	interface MeterTick {
 		nodeId: string;
@@ -146,7 +147,18 @@
 	});
 </script>
 
-<Wrapper label="Level Meter" accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide>
+<Wrapper label="Level Meter" accent="monitor" icon={DataBar} hasInput hasOutput channelIo nodeId={id} wide collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 flex-col gap-1">
+			{#each barVals as p, i (i)}
+				<div class="flex items-center gap-1.5 font-mono text-[9px] tabular-nums">
+					<span class="w-3" style="color: {channelColor(i)}">{channelLabel(i, channelCount)}</span>
+					<MeterBar class="h-1.5 flex-1 overflow-hidden rounded-full" orientation="horizontal" gradient={METER_GRADIENT_H} ghost pct={dbToPct(p)} />
+					<span class={['w-9 text-right', dbTextClass(p)]}>{formatDb(p, DB_FLOOR)}</span>
+				</div>
+			{/each}
+		</div>
+	{/snippet}
 	<div class="flex gap-2">
 		<div class="flex flex-col gap-1.5" style="width: {channelCount * BAR_W}px;">
 			<!-- Clip lamps: click to reset peaks. -->
@@ -168,7 +180,14 @@
 				tabindex="0"
 				aria-label="Level meter: click to reset peaks, hover to read level">
 				{#each barVals as p, i (i)}
-					<MeterBar class="flex-1 overflow-hidden rounded-sm" orientation="vertical" gradient={METER_GRADIENT} ghost hover {hoverLabel} pct={dbToPct(p)}>
+					<MeterBar
+						class="flex-1 overflow-hidden rounded-sm"
+						orientation="vertical"
+						gradient={METER_GRADIENT}
+						ghost
+						hover
+						{hoverLabel}
+						pct={dbToPct(p)}>
 						<div class="absolute right-0 left-0 h-px bg-white/70" style="bottom: {dbToPct(displayRms[i] ?? -Infinity)}%;"></div>
 						{#if isFinite(holdPeaks[i]) && holdPeaks[i] > DB_FLOOR}
 							<div class="absolute right-0 left-0 h-0.5 bg-white" style="bottom: calc({dbToPct(holdPeaks[i])}% - 1px);"></div>

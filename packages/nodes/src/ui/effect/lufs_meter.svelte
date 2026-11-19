@@ -253,7 +253,13 @@
 	});
 </script>
 
-<Wrapper label="Loudness" icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide>
+<Wrapper label="Loudness" icon={Gauge} accent="monitor" hasInput hasOutput channelIo nodeId={id} maxChannels={2} wide collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>M {format(momentary)}</span><span>S {format(shortterm)}</span><span class="text-neutral-1100">I {format(integrated)} LUFS</span>
+		</div>
+	{/snippet}
+
 	<!-- Fixed width: live numbers below must not resize the node as they change. -->
 	<div class="flex w-68 flex-col gap-1.5 font-mono text-[10px]">
 		<div class="flex gap-3">

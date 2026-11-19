@@ -59,7 +59,14 @@
 	nodeId={id}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}
-	{srcTooltip}>
+	{srcTooltip}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>attenuation</span><span>{Math.round(data.attenuationLimitDb)} dB</span>
+		</div>
+	{/snippet}
+
 	<div class="flex w-52 flex-col gap-1.5">
 		<PresetBar kind="noiseSuppressor" {data} onApply={applyPreset} />
 

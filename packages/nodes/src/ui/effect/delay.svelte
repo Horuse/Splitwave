@@ -55,7 +55,23 @@
 	let repeats = $derived(data.feedback <= 0 ? 1 : Math.max(1, Math.ceil(Math.log(0.0316 / Math.max(data.mix, 1e-3)) / Math.log(data.feedback)) + 1));
 </script>
 
-<Wrapper label="Delay" icon={Delay} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label="Delay"
+	icon={Delay}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span>{Math.round(data.timeMs)} ms</span><span>fb {Math.round(data.feedback * 100)}%</span><span>mix {Math.round(data.mix * 100)}%</span>
+		</div>
+	{/snippet}
+
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="delay" {data} onApply={applyPreset} />
 

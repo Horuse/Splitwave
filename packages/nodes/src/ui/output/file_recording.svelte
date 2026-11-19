@@ -643,7 +643,18 @@
 	});
 </script>
 
-<Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap}>
+<Wrapper label="File Recording" icon={FileRecord} accent="output" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={slotCap} collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-64 items-center justify-between gap-2 font-mono text-[10px] tabular-nums">
+			<span
+				class={[
+					'flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-semibold',
+					recording ? 'bg-red-500/15 text-red-500' : 'bg-(--lv-1) text-neutral-700'
+				]}><span class={['size-1.5 rounded-full', recording ? 'bg-red-500' : 'bg-neutral-500']}></span>{recording ? 'REC' : 'IDLE'}</span
+			><span class="truncate text-neutral-900">{basename(data.filePath)}</span><span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
+		</div>
+	{/snippet}
+
 	<div class="flex w-64 flex-col gap-1.5">
 		<!-- File: name over what will be written, picker and reveal beside it. -->
 		<div class="flex items-center gap-2 rounded-lg border border-theme/5 bg-neutral-100 py-1.5 pr-1.5 pl-2.5">

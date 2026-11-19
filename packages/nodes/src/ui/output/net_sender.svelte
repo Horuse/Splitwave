@@ -159,7 +159,22 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper
+	label="Net Sender"
+	icon={ArrowUpload}
+	accent="network"
+	{srcTooltip}
+	hasInput
+	channelIo
+	nodeId={id}
+	maxChannels={MAX_CHANNELS}
+	collapsed={data.collapsed}>
+	{#snippet summary()}
+		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
+			<span class="truncate">{data.targetIp || 'no target'}:{data.port}</span><span>{formatRate(rate)}</span>
+		</div>
+	{/snippet}
+
 	<div class="nodrag nopan flex w-52 flex-col gap-2">
 		<!-- Target: address and UDP port on one line. -->
 		<div class="flex flex-col gap-1">

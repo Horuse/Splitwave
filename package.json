@@ -70,6 +70,7 @@
 		"vite": "^6.0.3"
 	},
 	"workspaces": [
-		"packages/*"
+		"packages/*",
+		"apps/*"
 	]
 }

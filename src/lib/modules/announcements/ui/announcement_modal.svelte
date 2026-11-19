@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { Button } from '@splitwave/ui';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
-	import Markdown from '$lib/components/markdown.svelte';
 	import { announcementStore } from '../stores.svelte';
-	import { handleAnnouncementAction } from '../methods';
+	import { handleAnnouncementAction, openAnnouncementDetails } from '../methods';
 	import type { Announcement } from '../types';
 
 	interface Props extends ModalBaseProps {
@@ -31,6 +30,12 @@
 		}
 	}
 
+	/** The modal is a preview; the article opens on its own page. */
+	function readMore(): void {
+		dismiss();
+		openAnnouncementDetails(announcement);
+	}
+
 	async function performAction(): Promise<void> {
 		try {
 			await handleAnnouncementAction(announcement);
@@ -48,17 +53,17 @@
 		{/if}
 		<p class="mb-3 text-xs leading-relaxed {messageClass}">{announcement.message}</p>
 
-		{#if announcement.markdown}
-			<Markdown
-				source={announcement.markdown}
-				class="max-h-80 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3.5 text-xs leading-relaxed text-neutral-1100" />
-		{/if}
+
 	</div>
 
 	<div class="flex items-center justify-end gap-2 px-5 pt-2 pb-4">
 		<Button onclick={dismiss}>
 			{totalModals > 1 ? 'Next' : 'Close'}
 		</Button>
+
+		{#if announcement.markdown}
+			<Button variant={announcement.action ? 'soft' : 'solid'} type="button" onclick={readMore}>Read more</Button>
+		{/if}
 
 		{#if announcement.action}
 			<Button variant="solid" type="button" onclick={performAction}>

@@ -114,6 +114,14 @@ describe('blocks', () => {
 		expect(inlineText(t.rows[0][0])).toBe('a | b');
 	});
 
+	test('two trailing spaces break a paragraph line', () => {
+		expect(para(parseMarkdown('one  \ntwo')[0])).toEqual([
+			{ kind: 'text', text: 'one' },
+			{ kind: 'br' },
+			{ kind: 'text', text: 'two' }
+		]);
+	});
+
 	test('raw html stays text', () => {
 		const [p] = parseMarkdown('<script>alert(1)</script>');
 		expect(inlineText(para(p))).toBe('<script>alert(1)</script>');

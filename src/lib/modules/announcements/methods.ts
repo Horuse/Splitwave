@@ -1,5 +1,6 @@
 import { arch, platform } from '@tauri-apps/plugin-os';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { goto } from '$app/navigation';
 import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 import { modalManager } from '$lib/modules/overlay/modal';
 import { announcementStore } from './stores.svelte';
@@ -45,6 +46,7 @@ export async function fetchAnnouncements(url: string = DEFAULT_ANNOUNCEMENTS_URL
 		const data = parseAnnouncementsPayload(await response.json());
 		if (!data) return;
 
+		announcementStore.all = sortAnnouncements(data.announcements.filter((item) => matchesAnnouncement(item, context)));
 		const matching = data.announcements.filter((item) => matchesAnnouncement(item, context, announcementStore.dismissed));
 
 		const sorted = sortAnnouncements(matching);
@@ -96,15 +98,9 @@ export async function runModalQueue(): Promise<void> {
 	}
 }
 
+/** The full article lives on its own page; banners and modals only preview it. */
 export function openAnnouncementDetails(announcement: Announcement): void {
-	modalManager
-		.open(announcement.title, AnnouncementModal, {
-			announcement,
-			totalModals: 1,
-			canClose: true,
-			onClose: () => dismissAnnouncement(announcement)
-		})
-		.catch(() => {});
+	goto(`/announcements/${encodeURIComponent(announcement.id)}`).catch(() => {});
 }
 
 export async function handleAnnouncementAction(announcement: Announcement): Promise<void> {

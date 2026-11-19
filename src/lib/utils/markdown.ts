@@ -363,7 +363,7 @@ function parseBlocks(lines: string[]): Block[] {
 		}
 
 		// Paragraph: consecutive lines until a blank line or another block.
-		const para: string[] = [line.trim()];
+		const para: string[] = [line.replace(/^\s+/, '')];
 		i++;
 		while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) {
 			// Keep the trailing spaces: two of them mark a hard break.

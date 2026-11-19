@@ -85,12 +85,12 @@
 		</div>
 
 		<div class="flex shrink-0 items-center gap-2 pl-3">
-			{#if active.type === 'both' || active.markdown}
+			{#if active.markdown}
 				<button
 					type="button"
 					class="rounded px-2.5 py-0.5 text-xs font-medium transition-colors {buttonClass}"
 					onclick={() => active && openAnnouncementDetails(active)}>
-					Details
+					Read more
 				</button>
 			{/if}
 

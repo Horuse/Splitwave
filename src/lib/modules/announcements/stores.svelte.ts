@@ -2,6 +2,24 @@ import { browser } from '$app/environment';
 import type { Announcement } from './types';
 
 const DISMISSED_KEY = 'announcements:dismissed';
+const SEEN_KEY = 'announcements:seen';
+
+function loadSeen(): Set<string> {
+	if (!browser) return new Set();
+	try {
+		const parsed: unknown = JSON.parse(window.localStorage.getItem(SEEN_KEY) ?? '[]');
+		return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []);
+	} catch {
+		return new Set();
+	}
+}
+
+function saveSeen(ids: Set<string>): void {
+	if (!browser) return;
+	try {
+		window.localStorage.setItem(SEEN_KEY, JSON.stringify([...ids]));
+	} catch {}
+}
 
 function loadDismissed(): Record<string, number> {
 	if (!browser) return {};
@@ -32,6 +50,25 @@ class AnnouncementStore {
 	isModalActive = $state(false);
 	dismissed = $state<Record<string, number>>(loadDismissed());
 	isLoading = $state(false);
+	/** Every announcement for this install, dismissed ones included: the list page shows them all. */
+	all = $state<Announcement[]>([]);
+	/** Ids the user has opened or listed; anything else lights the "new" dot. */
+	seen = $state<Set<string>>(loadSeen());
+
+	unreadCount = $derived(this.all.filter((a) => !this.seen.has(a.id)).length);
+
+	isUnread(id: string): boolean {
+		return !this.seen.has(id);
+	}
+
+	markSeen(ids: string[]): void {
+		const missing = ids.filter((id) => !this.seen.has(id));
+		if (missing.length === 0) return;
+		const next = new Set(this.seen);
+		for (const id of missing) next.add(id);
+		this.seen = next;
+		saveSeen(next);
+	}
 
 	activeBanner = $derived.by(() => {
 		if (this.bannerQueue.length === 0) return null;

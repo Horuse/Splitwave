@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { announcementStore } from '$lib/modules/announcements';
+	import { changelogSeen } from '$lib/modules/changelog';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { NavTree, Sidebar, SidebarItem, SidebarSection, type NavNode } from '@splitwave/ui';
@@ -60,7 +62,17 @@
 			<NavTree items={wikiNav} activeId={page.params.slug} />
 		</div>
 	{/if}
-	<SidebarItem label="Changelog" icon={IconHistory} href="/changelog" active={page.route.id === '/changelog'} />
+	<SidebarItem
+		label="What's new"
+		icon={IconHistory}
+		href="/changelog"
+		active={page.route.id === '/changelog' || (page.route.id?.startsWith('/announcements') ?? false)}>
+		{#snippet trailing()}
+			{#if changelogSeen.unread || announcementStore.unreadCount > 0}
+				<span class="ml-auto size-1.5 shrink-0 rounded-full bg-brand" aria-label="New"></span>
+			{/if}
+		{/snippet}
+	</SidebarItem>
 
 	{#snippet footer()}
 		<SidebarItem label="Theme: {$themeStore}" icon={IconTheme} onclick={cycleTheme} />

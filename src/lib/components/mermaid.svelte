@@ -12,7 +12,7 @@
 		let live = true;
 		failed = false;
 		import('pele/lazy')
-			.then(({ mountAsync }) => mountAsync(el, source, { onError: () => (failed = true) }))
+			.then(({ mountAsync }) => mountAsync(el, source, { autoDirection: false, onError: () => (failed = true) }))
 			.then((m) => {
 				if (live) mounted = m;
 				else m.destroy();

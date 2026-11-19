@@ -23,6 +23,7 @@
 	import { LogsModal } from '$lib/modules/logs/ui';
 	import { platform } from '@tauri-apps/plugin-os';
 	import { initAnnouncements } from '$lib/modules/announcements';
+	import { initChangelogWatch } from '$lib/modules/changelog';
 
 	const isDev = import.meta.env.DEV;
 
@@ -119,6 +120,7 @@
 		} catch {}
 		pipelineStore.refresh().catch(() => {});
 		initAnnouncements();
+		initChangelogWatch();
 		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
 		listen<string>('menu://action', (e) => handleMenu(e.payload))
 			.then((fn) => {

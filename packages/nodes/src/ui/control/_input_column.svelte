@@ -5,7 +5,7 @@
 </script>
 
 <div class="flex flex-col gap-0.5">
-	<span class="font-mono text-[9px] text-neutral-500">in</span>
+	<span class="text-[10px] text-neutral-700">in</span>
 	{#if live}
 		<ChannelHandles {nodeId} side="target" labelled />
 	{/if}

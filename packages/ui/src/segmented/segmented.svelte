@@ -33,8 +33,8 @@
 
 {#if label || note}
 	<div class="flex items-baseline justify-between gap-2">
-		{#if label}<span class="font-mono text-[9px] text-neutral-500">{label}</span>{/if}
-		{#if note}<span class="font-mono text-[9px] text-neutral-400">{note}</span>{/if}
+		{#if label}<span class="text-[10px] text-neutral-700">{label}</span>{/if}
+		{#if note}<span class="text-[10px] text-neutral-600">{note}</span>{/if}
 	</div>
 {/if}
 

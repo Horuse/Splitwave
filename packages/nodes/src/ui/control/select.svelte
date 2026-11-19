@@ -35,7 +35,7 @@
 <Wrapper label="Select" icon={ArrowSwap} accent="routing">
 	<div class="flex w-52 flex-col gap-3">
 		<div class="nodrag nopan flex items-center justify-between gap-2">
-			<span class="font-mono text-[9px] text-neutral-500">Inputs</span>
+			<span class="text-[10px] text-neutral-700">Inputs</span>
 			<NumberStepper class="nodrag nopan" value={data.inputs} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Inputs" onchange={setInputs} />
 		</div>
 		<Segmented
@@ -58,7 +58,7 @@
 				{/each}
 			</div>
 			<div class="flex flex-col items-end gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">out</span>
+				<span class="text-[10px] text-neutral-700">out</span>
 				{#if !isPreview}
 					<ChannelHandles {nodeId} side="source" labelled />
 				{/if}

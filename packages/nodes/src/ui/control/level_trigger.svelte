@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { MeterBar, Slider } from '@splitwave/ui';
+	import { Slider } from '@splitwave/ui';
 	import { untrack } from 'svelte';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { LevelTriggerNodeData } from '@splitwave/nodes';
@@ -57,10 +57,17 @@
 
 <Wrapper label="Level Trigger" icon={Gauge} accent="control" hasInput channelIo nodeId={id}>
 	<div class="flex w-48 flex-col gap-2">
-		<div class="relative">
-			<MeterBar class="h-2 rounded-sm" pct={toPct(levelDb)} fillClass={high ? 'bg-yellow-500' : 'bg-neutral-600'} />
-			<!-- Threshold marker -->
-			<span class="pointer-events-none absolute -top-0.5 -bottom-0.5 w-px bg-neutral-1100" style="left:{toPct(data.thresholdDb)}%"></span>
+		<!-- Input level against the threshold; the fill lights up while the output is high. -->
+		<div class="flex flex-col gap-1">
+			<div class="relative h-1.5 rounded-full bg-(--lv-1)">
+				<div class={['absolute inset-y-0 left-0 rounded-full', high ? 'bg-signal' : 'bg-neutral-600']} style="width: {toPct(levelDb)}%;"></div>
+				<span class="pointer-events-none absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-neutral-1100" style="left: {toPct(data.thresholdDb)}%"></span>
+			</div>
+			<div class="flex justify-between font-mono text-[9px] text-neutral-600 tabular-nums">
+				<span>{DB_FLOOR}</span>
+				<span class={high ? 'text-signal' : 'text-neutral-900'}>{isFinite(levelDb) ? `${levelDb.toFixed(1)} dB` : '-inf'}</span>
+				<span>0</span>
+			</div>
 		</div>
 		<Slider
 			class="nodrag nopan nowheel"

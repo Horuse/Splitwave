@@ -63,7 +63,8 @@
 			value={op}
 			onSelect={setOp} />
 
-		<div class="flex items-center gap-1">
+		<!-- Full width, so the output column ends on the node edge where its socket belongs. -->
+		<div class="flex items-center justify-between gap-1">
 			<div class={['flex h-14 w-5 shrink-0 flex-col', two ? 'justify-between py-1.5' : 'justify-center']}>
 				<ControlPort id={A_HANDLE} side="target" label="A" high={a} />
 				{#if two}

@@ -82,7 +82,7 @@
 <Wrapper label="Cycle" icon={ArrowRedo} accent="control">
 	<div class="flex w-52 flex-col gap-3">
 		<div class="nodrag nopan flex items-center justify-between gap-2">
-			<span class="font-mono text-[9px] text-neutral-500">Steps</span>
+			<span class="text-[10px] text-neutral-700">Steps</span>
 			<NumberStepper class="nodrag nopan" value={data.steps} min={MIN_BRANCHES} max={MAX_BRANCHES} label="Steps" onchange={setSteps} />
 		</div>
 		<div class="flex items-start justify-between gap-4">

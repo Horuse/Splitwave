@@ -50,14 +50,14 @@
 			aria-checked={on}
 			aria-label="Toggle"
 			class={[
-				'nodrag nopan relative flex h-[26px] w-[72px] cursor-pointer rounded-md border bg-neutral-100',
-				on ? 'border-signal' : 'border-neutral-400'
+				'nodrag nopan relative flex h-7 w-20 cursor-pointer rounded-lg border bg-(--field-bg,var(--lv-1))',
+				on ? 'border-signal/60' : 'border-theme/5'
 			]}
 			onclick={flip}>
 			<!-- The knob covers the state the switch is not in. -->
-			<span class="flex flex-1 items-center justify-center font-mono text-[10px] font-semibold text-neutral-1000">OFF</span>
-			<span class={['flex flex-1 items-center justify-center font-mono text-[10px] font-semibold', on ? 'text-signal' : 'text-neutral-1000']}>ON</span>
-			<span class={['absolute inset-y-0.5 w-[calc(50%-3px)] rounded', on ? 'left-0.5 bg-signal' : 'left-[calc(50%+1px)] bg-neutral-400']}></span>
+			<span class="flex flex-1 items-center justify-center text-[10px] font-semibold text-neutral-700">Off</span>
+			<span class={['flex flex-1 items-center justify-center text-[10px] font-semibold', on ? 'text-signal' : 'text-neutral-700']}>On</span>
+			<span class={['absolute inset-y-0.5 w-[calc(50%-3px)] rounded-md', on ? 'left-0.5 bg-signal' : 'left-[calc(50%+1px)] bg-(--lv-3)']}></span>
 		</button>
 		<ControlSocket id={CONTROL_OUT} side="source" high={on} />
 	</div>

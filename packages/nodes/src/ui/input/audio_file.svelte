@@ -140,18 +140,36 @@
 		flow.updateNodeData(id, { autoStart: !data.autoStart });
 	}
 
-	function onScrub(e: Event) {
-		const target = e.target as HTMLInputElement;
-		const target_frame = Number(target.value);
-		if (!Number.isFinite(target_frame)) return;
-		scrubValue = target_frame;
-		frames = target_frame;
-		if (engine.isRunning) {
-			engine.audio.seekAudioFile(id, target_frame).catch(() => {});
-		}
+	let scrubEl: HTMLDivElement | undefined = $state();
+	let canScrub = $derived(!!data.filePath && totalFrames > 0);
+	let playedPct = $derived(totalFrames > 0 ? Math.min(100, ((scrubValue ?? frames) / totalFrames) * 100) : 0);
+
+	// The rail is inset by the thumb radius, like Slider, so the thumb never overhangs.
+	function frameAt(clientX: number): number {
+		const r = scrubEl!.getBoundingClientRect();
+		const inner = r.width - 14;
+		const ratio = inner > 0 ? (clientX - r.left - 7) / inner : 0;
+		return Math.round(Math.max(0, Math.min(1, ratio)) * totalFrames);
 	}
 
-	function clearScrub() {
+	function seekTo(target: number) {
+		scrubValue = target;
+		frames = target;
+		if (engine.isRunning) engine.audio.seekAudioFile(id, target).catch(() => {});
+	}
+
+	function scrubDown(e: PointerEvent) {
+		if (!canScrub || e.button !== 0) return;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		seekTo(frameAt(e.clientX));
+	}
+
+	function scrubMove(e: PointerEvent) {
+		if (!(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
+		seekTo(frameAt(e.clientX));
+	}
+
+	function scrubUp() {
 		scrubValue = null;
 	}
 
@@ -199,44 +217,62 @@
 	maxChannels={channels || undefined}
 	selfGrowing>
 	<div class="flex w-64 flex-col gap-2">
-		<div class="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-1000" title={data.filePath ?? undefined}>
-			{basename(data.filePath)}
-		</div>
-
-		{#if missing}
-			<span class="text-[10px] text-red-500">File not found</span>
-		{/if}
-
-		{#if sampleRate > 0}
-			<div class="node-spec flex justify-between">
-				<span>{formatHz(sampleRate)} · {channelLabel}</span>
-				<span class="tabular-nums">{extension(data.filePath)}</span>
+		<!-- File: name over its format, picker and autostart beside it. -->
+		<div class="flex items-center gap-2 rounded-lg border border-theme/5 bg-neutral-100 py-1.5 pr-1.5 pl-2.5">
+			<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+				<span class={['truncate text-xs', data.filePath ? 'text-neutral-1100' : 'text-neutral-700']} title={data.filePath ?? undefined}>
+					{basename(data.filePath)}
+				</span>
+				{#if missing}
+					<span class="text-[10px] text-red-500">File not found</span>
+				{:else if data.filePath}
+					<span class="truncate font-mono text-[9px] text-neutral-600">
+						{[extension(data.filePath), sampleRate > 0 && formatHz(sampleRate), sampleRate > 0 && channelLabel].filter(Boolean).join(' · ')}
+					</span>
+				{/if}
 			</div>
-		{/if}
-
-		<div class="flex items-center gap-1">
-			<Button class="nodrag nopan flex-1" type="button" onclick={chooseFile}>
-				<Folder class="size-3.5" />
-				Choose file
-			</Button>
+			<Tooltip text="Choose file">
+				<Button size="sm" icon class="nodrag nopan" type="button" onclick={chooseFile}>
+					<Folder class="size-3.5" />
+				</Button>
+			</Tooltip>
 			<Tooltip text="Start playback automatically when the pipeline runs">
-				<Button icon class="nodrag nopan" active={data.autoStart ?? true} onclick={toggleAutoStart}>
+				<Button size="sm" icon class="nodrag nopan" active={data.autoStart ?? true} onclick={toggleAutoStart}>
 					<Autoplay class="size-3.5" />
 				</Button>
 			</Tooltip>
 		</div>
 
-		<input
-			type="range"
-			class="nodrag nopan nowheel h-1 w-full cursor-pointer accent-neutral-900 disabled:opacity-40"
-			min="0"
-			max={Math.max(totalFrames, 1)}
-			value={scrubValue ?? frames}
-			disabled={!data.filePath || totalFrames === 0}
-			oninput={onScrub}
-			onpointerup={clearScrub}
-			onpointercancel={clearScrub}
-			onkeyup={clearScrub} />
+		<!-- Scrubber: same track as Slider, the played part filled. -->
+		<div
+			bind:this={scrubEl}
+			class={['nodrag nopan nowheel relative h-4 touch-none select-none', canScrub ? 'cursor-pointer' : 'opacity-40']}
+			onpointerdown={scrubDown}
+			onpointermove={scrubMove}
+			onpointerup={scrubUp}
+			onpointercancel={scrubUp}
+			role="slider"
+			tabindex="0"
+			aria-label="Position"
+			aria-valuemin={0}
+			aria-valuemax={Math.max(totalFrames, 1)}
+			aria-valuenow={scrubValue ?? frames}>
+			<div class="absolute inset-x-[7px] inset-y-0">
+				<div class="absolute inset-x-[-7px] top-1/2 h-1 -translate-y-1/2 rounded-full bg-(--lv-3)"></div>
+				<div class="absolute top-1/2 left-[-7px] h-1 -translate-y-1/2 rounded-full bg-neutral-900" style="width: calc({playedPct}% + 7px);"></div>
+				<div
+					class="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-400 bg-white"
+					style="left: {playedPct}%;">
+				</div>
+				{#if scrubValue !== null && sampleRate > 0}
+					<span
+						class="pointer-events-none absolute bottom-full z-[60] mb-1.5 -translate-x-1/2 rounded-md border border-theme/5 bg-(--lv-2) px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap text-neutral-1000 tabular-nums"
+						style="left: {playedPct}%;">
+						{formatDuration(scrubValue / sampleRate, 1)}
+					</span>
+				{/if}
+			</div>
+		</div>
 
 		<div class="flex items-center justify-between font-mono text-[11px]">
 			<span class="text-neutral-900 tabular-nums">{formatDuration(currentSec, 1)}</span>

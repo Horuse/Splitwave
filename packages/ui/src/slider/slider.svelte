@@ -24,10 +24,14 @@
 	const TONE = { default: 'text-neutral-900', success: 'text-emerald-700', warning: 'text-amber-600', danger: 'text-red-500' } as const;
 	let valueClass = $derived(TONE[tone]);
 
+	/** Value under the pointer while dragging; the engine hears it once per frame. */
 	let ghost = $state<number | null>(null);
+	let shown = $derived(ghost ?? value);
 
 	let editing = $state(false);
 	let draft = $state('');
+
+	let rail: HTMLDivElement | undefined = $state();
 
 	function startEdit(e: FocusEvent) {
 		editing = true;
@@ -77,6 +81,10 @@
 		}
 	}
 
+	onDestroy(() => {
+		if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf);
+	});
+
 	function display(v: number): string {
 		if (format) return format(v);
 		const fixed = step >= 1 ? 0 : 1;
@@ -87,26 +95,45 @@
 		return Math.max(min, Math.min(max, v));
 	}
 
-	function leftPct(v: number): number {
-		return ((v - min) / (max - min)) * 100;
+	function snap(v: number): number {
+		const n = Math.round((v - min) / step) * step + min;
+		// Strip float noise so 0.1 steps read 0.3, not 0.30000000000000004.
+		return clamp(Number(n.toFixed(6)));
 	}
 
-	function onInput(e: Event) {
-		const next = Number((e.currentTarget as HTMLInputElement).value);
-		if (!Number.isNaN(next)) {
-			ghost = next;
-			scheduleEmit(next);
-		}
+	function pct(v: number): number {
+		return ((clamp(v) - min) / (max - min)) * 100;
 	}
 
-	function clearGhost() {
+	function valueAt(clientX: number): number {
+		const r = rail!.getBoundingClientRect();
+		const ratio = r.width > 0 ? (clientX - r.left) / r.width : 0;
+		return snap(min + Math.max(0, Math.min(1, ratio)) * (max - min));
+	}
+
+	function move(v: number) {
+		if (v === (ghost ?? value)) return;
+		ghost = v;
+		scheduleEmit(v);
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		if (e.button !== 0 || !rail) return;
+		e.preventDefault();
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		(e.currentTarget as HTMLElement).querySelector<HTMLElement>('[role=slider]')?.focus();
+		move(valueAt(e.clientX));
+	}
+
+	function onPointerMove(e: PointerEvent) {
+		if (!(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
+		move(valueAt(e.clientX));
+	}
+
+	function release() {
 		flushEmit();
 		ghost = null;
 	}
-
-	onDestroy(() => {
-		if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf);
-	});
 
 	function onDoubleClick(e: MouseEvent) {
 		if (defaultValue === undefined) return;
@@ -114,13 +141,13 @@
 		onChange(clamp(defaultValue));
 	}
 
-	// Replace native <input range> arrow stepping so Shift = fine, Alt = coarse.
+	// Shift = fine, Alt = coarse.
 	function onKeyDown(e: KeyboardEvent) {
 		const dir = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : 0;
 		if (dir !== 0) {
 			e.preventDefault();
 			const mul = e.altKey ? 10 : e.shiftKey ? 0.1 : 1;
-			onChange(clamp(value + dir * step * mul));
+			onChange(clamp(Number((value + dir * step * mul).toFixed(6))));
 			return;
 		}
 		if (e.key === 'Home') {
@@ -133,46 +160,62 @@
 	}
 </script>
 
-<label class={['flex flex-col gap-0.5 text-[11px] text-neutral-1000', className]}>
+<div class={['flex flex-col gap-1 text-[11px] text-neutral-1000', className]}>
 	<span class="flex items-baseline justify-between">
 		<span>{label}</span>
 		<input
 			type="text"
 			inputmode="decimal"
-			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-(--lv-1) focus:ring-1 focus:ring-amber-500 focus:outline-none {valueClass}"
+			aria-label="{label} value"
+			class="nodrag nopan w-14 rounded bg-transparent text-right font-mono tabular-nums focus:bg-(--lv-1) focus:ring-1 focus:ring-(--lv-4) focus:outline-none {valueClass}"
 			value={editing ? draft : display(value)}
 			oninput={(e) => (draft = e.currentTarget.value)}
 			onfocus={startEdit}
 			onblur={commitEdit}
 			onkeydown={onEditKeyDown} />
 	</span>
-	<div class="relative pt-1 pb-2">
-		<input
-			type="range"
-			class="nodrag nopan nowheel w-full accent-amber-500"
-			{min}
-			{max}
-			{step}
-			{value}
-			oninput={onInput}
-			onpointerup={clearGhost}
-			onpointercancel={clearGhost}
-			onblur={clearGhost}
-			ondblclick={onDoubleClick}
-			onkeydown={onKeyDown} />
-		{#if ticks && ticks.length > 0}
-			<div class="pointer-events-none absolute inset-x-0 bottom-0 h-1.5">
+
+	<!-- The rail is inset by the thumb radius, so the thumb, fill, ticks and
+	     tooltip all share one coordinate space and the thumb never overhangs. -->
+	<div
+		class={['nodrag nopan nowheel relative h-4 cursor-pointer touch-none select-none', ticks?.length && 'mb-2']}
+		onpointerdown={onPointerDown}
+		onpointermove={onPointerMove}
+		onpointerup={release}
+		onpointercancel={release}
+		ondblclick={onDoubleClick}
+		role="presentation">
+		<div bind:this={rail} class="absolute inset-x-[7px] inset-y-0">
+			<div class="absolute inset-x-[-7px] top-1/2 h-1 -translate-y-1/2 rounded-full bg-(--lv-3)"></div>
+			<div class="absolute top-1/2 left-[-7px] h-1 -translate-y-1/2 rounded-full bg-neutral-900" style="width: calc({pct(shown)}% + 7px);"></div>
+
+			{#if ticks?.length}
 				{#each ticks as t (t)}
-					<span class="absolute top-0 h-1.5 w-px bg-neutral-700/50" style="left: {leftPct(t)}%;"></span>
+					<span class="absolute top-full mt-1 h-1.5 w-px -translate-x-1/2 bg-neutral-700/50" style="left: {pct(t)}%;"></span>
 				{/each}
+			{/if}
+
+			<div
+				role="slider"
+				tabindex="0"
+				aria-label={label}
+				aria-valuemin={min}
+				aria-valuemax={max}
+				aria-valuenow={value}
+				aria-valuetext={display(value)}
+				class="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-400 bg-white outline-none"
+				style="left: {pct(shown)}%;"
+				onkeydown={onKeyDown}
+				onblur={release}>
 			</div>
-		{/if}
-		{#if ghost !== null}
-			<span
-				class="pointer-events-none absolute -top-0.5 z-10 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[9px] leading-tight text-white shadow"
-				style="left: {leftPct(ghost)}%;">
-				{display(ghost)}
-			</span>
-		{/if}
+
+			{#if ghost !== null}
+				<span
+					class="pointer-events-none absolute bottom-full z-[60] mb-1.5 -translate-x-1/2 rounded-md border border-theme/5 bg-(--lv-2) px-1.5 py-0.5 font-mono text-[10px] leading-tight whitespace-nowrap text-neutral-1000 tabular-nums"
+					style="left: {pct(ghost)}%;">
+					{display(ghost)}
+				</span>
+			{/if}
+		</div>
 	</div>
-</label>
+</div>

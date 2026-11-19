@@ -41,8 +41,6 @@
 		/** Meters widen with every channel, so they opt out of the node width cap. */
 		wide?: boolean;
 		selfGrowing?: boolean;
-		/** New frame under review on Gain; becomes the only frame once approved. */
-		refined?: boolean;
 		children?: Snippet;
 	}
 
@@ -64,7 +62,6 @@
 		minChannels,
 		wide = false,
 		selfGrowing = false,
-		refined = false,
 		children
 	}: Props = $props();
 
@@ -93,22 +90,12 @@
 	}
 </script>
 
-<!-- Refined corners are concentric: 6px controls + 16px padding = 22px. The padding also sets where channel sockets sit (edgeOffset). -->
-<div
-	data-layer={refined ? 'popover' : undefined}
-	class={[
-		'node-shell min-w-32',
-		refined ? 'rounded-[22px] border border-theme/5 bg-neutral-200 p-4' : 'rounded-2xl border border-neutral-400 bg-neutral-200 p-4 shadow-sm',
-		!wide && 'max-w-80'
-	]}>
-	<div class={['relative flex items-center justify-between gap-2', 'mb-2']}>
-		<span
-			class={[
-				'flex items-center gap-1.5',
-				refined ? 'text-xs font-medium text-neutral-1000' : 'text-[10px] font-semibold tracking-wider text-neutral-900 uppercase'
-			]}>
+<!-- Concentric corners: 6px controls + 16px padding = 22px. The padding also sets where channel sockets sit (edgeOffset). -->
+<div data-layer="popover" class={['node-shell min-w-32 rounded-[22px] border border-theme/5 bg-neutral-200 p-4', !wide && 'max-w-80']}>
+	<div class="relative mb-2 flex items-center justify-between gap-2">
+		<span class="flex items-center gap-1.5 text-xs font-medium text-neutral-1000">
 			{#if NodeIcon}
-				<NodeIcon class={[refined ? 'size-3.5' : 'size-3', 'shrink-0', CATEGORY_TEXT[accent]]} />
+				<NodeIcon class={['size-3.5 shrink-0', CATEGORY_TEXT[accent]]} />
 			{/if}
 			{label}
 			{#if srcTooltip}
@@ -131,20 +118,13 @@
 			{#if onBypass}
 				<button
 					type="button"
-					class={refined
-						? [
-								'nodrag nopan flex h-5 items-center rounded-md px-1.5 text-[10px] font-medium',
-								bypassed ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/25' : 'bg-(--lv-2) text-neutral-900 hover:bg-(--lv-3)'
-							]
-						: [
-								'nodrag nopan flex h-4 items-center rounded border px-1.5 font-mono text-[9px] transition-colors',
-								bypassed
-									? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
-									: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
-							]}
+					class={[
+						'nodrag nopan flex h-5 items-center rounded-md px-1.5 text-[10px] font-medium',
+						bypassed ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/25' : 'bg-(--lv-2) text-neutral-900 hover:bg-(--lv-3)'
+					]}
 					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
 					onclick={onBypass}>
-					{#if refined}{bypassed ? 'Bypassed' : 'On'}{:else}{bypassed ? 'BYP' : 'ON'}{/if}
+					{bypassed ? 'Bypassed' : 'On'}
 				</button>
 			{/if}
 		</div>

@@ -155,14 +155,14 @@
 	});
 </script>
 
-<div class={['flex flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
+<div data-layer="popover" class={['flex flex-col rounded-[22px] border border-theme/5 bg-neutral-200', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
 	{#if !isPreview}
 		<NodeResizer minWidth={200} maxWidth={1400} minHeight={110} maxHeight={1400} />
 	{/if}
 
 	<div class="flex shrink-0 items-center justify-between gap-2 px-3 pt-2 pb-1">
-		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
-			<DataBar class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
+		<span class="flex items-center gap-1.5 text-xs font-medium text-neutral-1000">
+			<DataBar class={['size-3.5 shrink-0', CATEGORY_TEXT.monitor]} />
 			Spectrum
 		</span>
 		{#if !isPreview}

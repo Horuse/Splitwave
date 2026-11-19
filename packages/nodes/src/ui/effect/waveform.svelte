@@ -42,15 +42,16 @@
 </script>
 
 <div
-	class={['flex min-w-64 flex-col rounded-2xl border border-neutral-400 bg-neutral-200 shadow-sm', isPreview ? 'h-40 w-80' : 'h-full w-full']}
+	data-layer="popover"
+	class={['flex min-w-64 flex-col rounded-[22px] border border-theme/5 bg-neutral-200', isPreview ? 'h-40 w-80' : 'h-full w-full']}
 	style:min-height={`${nodeMinHeight}px`}>
 	{#if !isPreview}
 		<NodeResizer minWidth={256} maxWidth={1200} minHeight={nodeMinHeight} maxHeight={1200} />
 	{/if}
 
 	<div class="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
-		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
-			<Pulse class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
+		<span class="flex items-center gap-1.5 text-xs font-medium text-neutral-1000">
+			<Pulse class={['size-3.5 shrink-0', CATEGORY_TEXT.monitor]} />
 			Waveform
 		</span>
 	</div>

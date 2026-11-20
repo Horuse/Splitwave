@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { jsonLdTag } from '#lib/json_ld.js';
 	// Drop a screenshot named <file>.webp (or .png) into src/lib/assets/faq/ and it
 	// replaces the placeholder; until then the dashed box says what to capture.
 	const images = import.meta.glob<string>('../assets/faq/*.{webp,png}', {
@@ -93,7 +94,7 @@
 		}
 	];
 
-	const jsonLd = JSON.stringify({
+	const jsonLd = jsonLdTag({
 		'@context': 'https://schema.org',
 		'@type': 'FAQPage',
 		mainEntity: faqs.map(({ q, a }) => ({
@@ -105,7 +106,7 @@
 </script>
 
 <svelte:head>
-	{@html `<script type="application/ld+json">${jsonLd}</script>`}
+	{@html jsonLd}
 </svelte:head>
 
 <section class="mx-auto max-w-3xl px-6 pb-24">

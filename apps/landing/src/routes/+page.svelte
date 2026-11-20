@@ -8,11 +8,12 @@
 	import Platforms from '#lib/components/Platforms.svelte';
 	import Faq from '#lib/components/Faq.svelte';
 	import FinalCta from '#lib/components/FinalCta.svelte';
+	import { jsonLdTag } from '#lib/json_ld.js';
 
 	let { data } = $props();
 
 	const jsonLd = $derived(
-		JSON.stringify({
+		jsonLdTag({
 			'@context': 'https://schema.org',
 			'@type': 'SoftwareApplication',
 			name: 'Splitwave',
@@ -44,7 +45,7 @@
 </script>
 
 <svelte:head>
-	{@html `<script type="application/ld+json">${jsonLd}</script>`}
+	{@html jsonLd}
 </svelte:head>
 
 <main class="flex flex-col gap-16">

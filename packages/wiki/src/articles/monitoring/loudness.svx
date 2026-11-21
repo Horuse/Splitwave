@@ -1,0 +1,44 @@
+---
+title: Loudness metering (LUFS)
+description: Measure loudness in LUFS with Splitwave's EBU R128 meter and check streams, podcasts and broadcasts against Spotify, Apple, ACX and ATSC targets.
+order: 1
+---
+
+Peak meters tell you whether audio clips; **loudness meters** tell you how loud it *sounds*. Streaming services and broadcasters normalise by loudness, measured in **LUFS** (LKFS in the US), so hitting their target keeps your audio from being turned down or sounding quiet next to others.
+
+## What the meter shows
+
+| Reading | Meaning |
+| --- | --- |
+| M (Momentary) | Loudness over the last 400 ms. Reacts fast. |
+| S (Short-term) | Loudness over the last 3 s. Good for riding levels. |
+| I (Integrated) | Loudness of everything since the last reset. This is the number targets refer to. |
+| True Peak | The highest peak between samples, in dBTP. |
+| Loudness Range | How much the loudness varies over time, in LU. |
+| Peak / Loudness | Difference between true peak and integrated loudness. |
+| RMS and Floor | Average level and the noise floor, used by ACX checks. |
+
+Click **Reset peaks** to start a new measurement.
+
+## Delivery profiles
+
+Pick a profile and the meter checks your audio against it, with a green or red mark per requirement.
+
+| Profile | Integrated | True peak |
+| --- | --- | --- |
+| EBU R128 | -23 LUFS | -1 dBTP |
+| ITU-R BS.1770 | -23 LUFS | -1 dBTP |
+| ATSC A/85 | -24 LKFS | -2 dBTP |
+| AES TD1008 | -16 LUFS | -1 dBTP |
+| Apple | -16 LUFS | -1 dBTP |
+| Spotify | -14 LUFS | -1 dBTP |
+| ACX (audiobooks) | RMS -23 to -18 dB, peak -3 dB, floor -60 dB | |
+
+Integrated loudness passes when it is within 1 LU of the target.
+
+## Hitting a target
+
+1. Put the Loudness meter last, after your [Limiter](/wiki/effects/limiter).
+2. Play a representative section and watch **I** settle.
+3. Raise or lower the level before the limiter (Gain or the Compressor's makeup) until **I** reaches the target.
+4. Set the limiter's ceiling at or below the profile's true peak.

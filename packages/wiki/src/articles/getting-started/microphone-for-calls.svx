@@ -1,0 +1,38 @@
+---
+title: Clean up your microphone for Discord, Zoom and OBS
+description: Remove background noise, even out your level and send the result to any app as a virtual microphone with Splitwave.
+order: 1
+---
+
+A raw microphone picks up fans, keyboards and room noise, and its level jumps between quiet and loud. This guide builds a chain that fixes all three and hands the result to Discord, Zoom, OBS or any other app as if it were a microphone.
+
+## What you will build
+
+```
+Microphone -> Noise Suppressor -> Noise Gate -> Compressor -> Limiter -> Speaker (virtual device)
+```
+
+## 1. Create a virtual device
+
+Open **Virtual devices** in the sidebar and add one, for example "Splitwave Mic". It appears in your system as an audio device that exists only in software. On Windows, Splitwave can set up VB-CABLE for this from the same page.
+
+## 2. Add the nodes
+
+1. **Microphone**: pick your physical mic.
+2. **Noise Suppressor**: removes steady and changing background noise from speech with a neural model. It runs at 48 kHz mono internally; Splitwave resamples and downmixes for you.
+3. **Noise Gate**: silences what is left between your words. Set **Threshold** just above the noise you hear in pauses. See [Noise Gate](/wiki/effects/noise-gate).
+4. **Compressor**: evens out loud and quiet parts. Start with **Threshold** around -24 dB and **Ratio** 3:1. See [Compressor](/wiki/effects/compressor).
+5. **Limiter**: catches peaks so nothing clips. A **Ceiling** of -1 dB is a safe default. See [Limiter](/wiki/effects/limiter).
+6. **Speaker**: choose the virtual device you created as its output device.
+
+Connect them left to right and press **Run**.
+
+## 3. Pick it in your app
+
+In Discord, Zoom or OBS, choose the virtual device as the microphone input. Turn off the app's own noise suppression and automatic gain, so the two do not fight.
+
+## Check what you send
+
+Add a **Level Meter** after the Limiter to see your level, or route a second cable to your headphones through another Speaker node to listen to exactly what the app receives.
+
+> **Tip:** order matters: suppress noise before the gate, so the gate sees a cleaner signal and opens only for speech.

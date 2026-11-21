@@ -1,0 +1,40 @@
+---
+title: Getting started
+description: How Splitwave routes audio - pipelines, nodes and cables - and how to run your first one.
+order: 0
+---
+
+Splitwave is a node-based audio router for macOS, Windows and Linux. Instead of a fixed mixer, you draw the path your audio takes: where it comes from, what happens to it on the way, and where it ends up.
+
+## Pipelines
+
+A **pipeline** is one routing setup: a graph of nodes joined by cables. You can keep as many pipelines as you like and switch between them. One pipeline runs at a time; press **Run** in the editor to start it and **Stop** to end it.
+
+Edits apply while a pipeline runs. Nodes you did not touch keep playing, and a change that alters what you hear fades out and back in instead of clicking.
+
+## Nodes
+
+Every node is one of seven kinds:
+
+| Kind | What it does | Examples |
+| --- | --- | --- |
+| Input | Brings audio in | Microphone, System Audio, App Audio, Audio File |
+| Effect | Changes the audio | Gain, EQ, Compressor, Noise Gate, Noise Suppressor, plugins |
+| Output | Sends audio out | Speaker, File Recording |
+| Monitor | Measures without changing | Level Meter, Loudness, Waveform, Spectrum |
+| Network | Moves audio between machines | WebRTC, Net Sender, Net Receiver |
+| Control | Carries on/off signals, not audio | Key Input, Toggle, Timer, Logic |
+| Routing | Decides where audio goes | Mute, If, Switch, Select |
+
+Every setting lives on the node itself. Hover the **i** next to a parameter to read what it does in that effect.
+
+## Cables
+
+Drag from an output on the right of a node to an input on the left of another. Audio cables are solid and carry the channels you picked; control cables are dashed and end in diamond sockets.
+
+Some nodes have extra inputs, such as the **Sidechain** socket on the bottom of the Compressor and the Noise Gate. See [Sidechain compression and ducking](/wiki/effects/sidechain).
+
+## Next steps
+
+- [Process your microphone for Discord, Zoom or OBS](/wiki/getting-started/microphone-for-calls)
+- [Learn the canvas shortcuts](/wiki/canvas)

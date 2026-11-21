@@ -1,0 +1,38 @@
+---
+title: Noise Gate
+description: Silence background noise between words with Splitwave's noise gate - threshold, range, attack, hold and release explained.
+order: 3
+---
+
+A noise gate lets audio through while it is loud enough and turns it down when it falls below a **threshold**. It is the simplest way to hide fan hum, keyboard clicks and room noise in the pauses between words.
+
+## How it decides
+
+The gate in Splitwave uses a **hard threshold**: when the detector level is at or above it, the gate is open and the audio passes untouched; below it, the gate closes and the audio drops by **Range**. There is no gradual zone in level, so the curve on the node is a step.
+
+The smoothing happens **in time**, not in level. That is what Attack, Hold and Release control, and it is drawn in the second graph on the node: a short burst crosses the threshold, the gate opens over Attack, stays open for Hold, and closes over Release.
+
+## Parameters
+
+| Parameter | Range | What it does |
+| --- | --- | --- |
+| Threshold | -80 to 0 dB | The gate opens at or above this level and closes below it. |
+| Range | -80 to 0 dB | How much the closed gate turns the signal down. -80 dB is near silence; -10 dB only softens pauses. |
+| Attack | 0.1 to 50 ms | How fast the gate opens. Very short values can click; a few ms is smooth. |
+| Hold | 0 to 500 ms | How long it stays open after the level drops, so word endings are not chopped. |
+| Release | 10 to 1000 ms | How fast it closes after Hold ends. |
+
+## Setting it up
+
+1. Stay quiet and watch the green level line on the graph: that is your noise floor.
+2. Set **Threshold** a few dB above it.
+3. Speak normally. If word endings get cut, raise **Hold** or **Release**.
+4. If complete silence sounds unnatural on a call, use a **Range** of -20 to -30 dB instead of -80 dB.
+
+The state badge under the graph shows **Open**, **Hold** or **Closed**, with the current attenuation.
+
+> **Tip:** put a [Noise Suppressor](/wiki/effects) before the gate. With the constant noise already removed, the gate can use a lower threshold and opens more reliably for quiet speech.
+
+## Keyed gating
+
+Connect another signal to the **Sidechain** socket and the gate opens on that signal instead of its own input. See [Sidechain compression and ducking](/wiki/effects/sidechain).

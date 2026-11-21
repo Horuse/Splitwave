@@ -1,0 +1,12 @@
+---
+title: Monitoring
+description: Meter your audio in Splitwave - peak and RMS levels, EBU R128 loudness, waveform and spectrum.
+order: 4
+---
+
+Monitor nodes measure audio without changing it. Put one anywhere in a chain, or on a branch of its own.
+
+- **Level Meter**: live peak and RMS for every channel, with peak hold and clip lamps. Click it to reset the peaks.
+- **[Loudness](/wiki/monitoring/loudness)**: EBU R128 loudness in LUFS, true peak, loudness range and delivery checks.
+- **Waveform**: a live min/max envelope for each channel.
+- **Spectrum**: a log-frequency spectrum with peak hold.

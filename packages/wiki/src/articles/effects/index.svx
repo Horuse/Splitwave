@@ -1,0 +1,30 @@
+---
+title: Effects
+description: Dynamics, EQ, noise removal and creative effects in Splitwave, and how to read their live graphs.
+order: 2
+---
+
+Effects sit between an input and an output and change the audio that passes through them. Every effect has an **On** switch in its header that bypasses it, and big effects can collapse to a single summary row with the chevron next to it.
+
+## Dynamics
+
+Dynamics effects react to how loud the signal is.
+
+- **[Compressor](/wiki/effects/compressor)** turns loud parts down so the level stays even.
+- **[Noise Gate](/wiki/effects/noise-gate)** silences the signal when it falls below a threshold.
+- **[Limiter](/wiki/effects/limiter)** stops peaks from ever going over a ceiling.
+- **[Sidechain](/wiki/effects/sidechain)** lets the Compressor or the Noise Gate react to a different signal than the one it changes, for ducking and keyed gating.
+
+Their graphs are live while a pipeline runs: a green line shows the level the detector hears right now, and the point on the curve shows what comes out.
+
+## Tone and cleanup
+
+- **EQ**: 10-band graphic EQ at octave centres from 32 Hz to 16 kHz.
+- **Noise Suppressor**: neural speech denoising (DeepFilterNet).
+- **De-esser**: compresses only the harsh "s" band above a frequency you set.
+- **Declick**: repairs short clicks and crackle.
+
+## Space and colour
+
+- **Delay**, **Reverb** and **Saturator** add echoes, room and warmth.
+- **Plugin** hosts your own CLAP plugins as a node.

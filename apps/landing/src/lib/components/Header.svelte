@@ -28,6 +28,7 @@
 				<a href="/download" class="text-xs text-neutral-1000 transition-colors hover:text-theme"
 					>Download</a
 				>
+				<a href="/wiki" class="text-xs text-neutral-1000 transition-colors hover:text-theme">Wiki</a>
 				<a href="/changelog" class="text-xs text-neutral-1000 transition-colors hover:text-theme"
 					>Release notes</a
 				>

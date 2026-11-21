@@ -16,6 +16,7 @@ Key facts:
 
 - [Home and FAQ](https://splitwave.app/): features and answers to common setup questions
 - [Download](https://splitwave.app/download): installers and step-by-step installation for macOS, Linux and Windows
+- [Wiki](https://splitwave.app/wiki): guides for routing, nodes, effects, sidechain, recording and networking
 - [Changelog](https://splitwave.app/changelog): release notes for every version
 
 ## Source

@@ -3,4 +3,4 @@
 /**
  * Input heard through a Select, 1-based.
  */
-export type SelectData = { inputs: number; selected: number };
+export type SelectData = { inputs: number, selected: number, };

@@ -3,4 +3,4 @@
 /**
  * Output open on an If: 1 while the condition holds, 2 otherwise.
  */
-export type IfData = { selected: number };
+export type IfData = { selected: number, };

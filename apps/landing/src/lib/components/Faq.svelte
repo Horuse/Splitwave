@@ -118,9 +118,9 @@
 					class="flex cursor-pointer list-none items-center justify-between gap-4 text-lg font-semibold text-theme [&::-webkit-details-marker]:hidden"
 				>
 					<h3>{q}</h3>
-					<span aria-hidden="true" class="shrink-0 transition-transform group-open:rotate-45"
-						>+</span
-					>
+					<span aria-hidden="true" class="shrink-0 transition-transform group-open:rotate-45">
+						+
+					</span>
 				</summary>
 				<p class="mt-2 leading-relaxed text-neutral-1000">{a}</p>
 				{#if shot}

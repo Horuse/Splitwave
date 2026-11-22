@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import {
-	formatBytes,
-	formatDb,
-	formatDuration,
-	formatFreq,
-	formatGain,
-	formatHz,
-	formatKhzValue,
-	formatPct,
-	formatRate,
-	LossWindow
-} from '@splitwave/nodes';
+import { formatBytes, formatDb, formatDuration, formatFreq, formatGain, formatHz, formatKhzValue, formatPct, formatRate, LossWindow } from '@splitwave/nodes';
 
 describe('formatRate', () => {
 	it('formats bytes and units', () => {

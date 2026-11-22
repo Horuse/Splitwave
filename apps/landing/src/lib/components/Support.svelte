@@ -89,9 +89,9 @@
 			<div
 				class="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-1 pl-3"
 			>
-				<code class="flex-1 font-mono text-xs break-all text-theme select-all"
-					>{wallet.address}</code
-				>
+				<code class="flex-1 font-mono text-xs break-all text-theme select-all">
+					{wallet.address}
+				</code>
 				<button
 					type="button"
 					class="btn-preset !px-3 !py-1.5 !text-xs"

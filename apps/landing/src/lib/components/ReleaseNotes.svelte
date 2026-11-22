@@ -31,9 +31,9 @@
 		{:else if part.kind === 'break'}
 			<br />
 		{:else if part.kind === 'code'}
-			<code class="rounded bg-neutral-200 px-1 py-0.5 font-mono text-[0.8125rem] text-theme"
-				>{part.text}</code
-			>
+			<code class="rounded bg-neutral-200 px-1 py-0.5 font-mono text-[0.8125rem] text-theme">
+				{part.text}
+			</code>
 		{:else if part.kind === 'strong'}
 			<strong class="font-semibold text-theme">{part.text}</strong>
 		{:else if part.kind === 'em'}
@@ -44,8 +44,9 @@
 				target="_blank"
 				rel="noopener noreferrer"
 				class="text-theme underline decoration-neutral-500 underline-offset-2 transition-colors hover:decoration-theme"
-				>{part.text}</a
 			>
+				{part.text}
+			</a>
 		{/if}
 	{/each}
 {/snippet}

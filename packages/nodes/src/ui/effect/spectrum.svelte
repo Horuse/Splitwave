@@ -213,8 +213,9 @@
 				{#each DB_TICKS as db (db)}
 					{@const y = dbToY(db)}
 					<line x1={SCALE_W} y1={y} x2={W - RIGHT_PAD} y2={y} stroke="rgba(255,255,255,0.07)" stroke-width="1" shape-rendering="crispEdges" />
-					<text x={SCALE_W - 4} {y} fill="rgba(255,255,255,0.45)" font-size="7" font-family="monospace" text-anchor="end" dominant-baseline="middle"
-						>{db}</text>
+					<text x={SCALE_W - 4} {y} fill="rgba(255,255,255,0.45)" font-size="7" font-family="monospace" text-anchor="end" dominant-baseline="middle">
+						{db}
+					</text>
 				{/each}
 
 				<!-- frequency grid -->
@@ -235,7 +236,9 @@
 						font-size="6.5"
 						font-family="monospace"
 						text-anchor="middle"
-						dominant-baseline="middle">{t.label}</text>
+						dominant-baseline="middle">
+						{t.label}
+					</text>
 				{/each}
 
 				<line

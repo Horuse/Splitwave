@@ -24,11 +24,21 @@ describe('inline', () => {
 			{
 				kind: 'link',
 				href: 'https://a.dev',
-				children: [{ kind: 'text', text: 'see ' }, { kind: 'strong', children: [{ kind: 'text', text: 'docs' }] }]
+				children: [
+					{ kind: 'text', text: 'see ' },
+					{ kind: 'strong', children: [{ kind: 'text', text: 'docs' }] }
+				]
 			}
 		]);
 		expect(parseInline('**a *b* c**')).toEqual([
-			{ kind: 'strong', children: [{ kind: 'text', text: 'a ' }, { kind: 'em', children: [{ kind: 'text', text: 'b' }] }, { kind: 'text', text: ' c' }] }
+			{
+				kind: 'strong',
+				children: [
+					{ kind: 'text', text: 'a ' },
+					{ kind: 'em', children: [{ kind: 'text', text: 'b' }] },
+					{ kind: 'text', text: ' c' }
+				]
+			}
 		]);
 	});
 
@@ -115,11 +125,7 @@ describe('blocks', () => {
 	});
 
 	test('two trailing spaces break a paragraph line', () => {
-		expect(para(parseMarkdown('one  \ntwo')[0])).toEqual([
-			{ kind: 'text', text: 'one' },
-			{ kind: 'br' },
-			{ kind: 'text', text: 'two' }
-		]);
+		expect(para(parseMarkdown('one  \ntwo')[0])).toEqual([{ kind: 'text', text: 'one' }, { kind: 'br' }, { kind: 'text', text: 'two' }]);
 	});
 
 	test('raw html stays text', () => {

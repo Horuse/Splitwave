@@ -21,7 +21,15 @@
 	let blocks = $derived(parseMarkdown(source));
 	let article = $derived(variant === 'article');
 
-	const HEADING_ARTICLE = ['', 'text-2xl font-semibold', 'text-xl font-semibold', 'text-lg font-semibold', 'text-base font-semibold', 'text-sm font-semibold', 'text-sm font-semibold'];
+	const HEADING_ARTICLE = [
+		'',
+		'text-2xl font-semibold',
+		'text-xl font-semibold',
+		'text-lg font-semibold',
+		'text-base font-semibold',
+		'text-sm font-semibold',
+		'text-sm font-semibold'
+	];
 
 	const CALLOUT: Record<CalloutKind, { label: string; icon: typeof Info; class: string }> = {
 		note: { label: 'Note', icon: Info, class: 'border-sky-500/40 bg-sky-500/10 text-sky-500' },
@@ -56,7 +64,9 @@
 				onclick={(e) => {
 					e.preventDefault();
 					open(part.href);
-				}}>{@render inline(part.children)}</a>
+				}}>
+				{@render inline(part.children)}
+			</a>
 		{:else if part.kind === 'image'}
 			<img src={part.src} alt={part.alt} title={part.title} loading="lazy" class="inline-block max-w-full rounded-lg align-middle" />
 		{:else if part.kind === 'br'}
@@ -120,7 +130,8 @@
 				{#if block.lang}
 					<span class="absolute top-1.5 right-2 font-mono text-[10px] text-neutral-600">{block.lang}</span>
 				{/if}
-				<pre class="overflow-x-auto rounded-lg border border-theme/5 bg-neutral-100 p-3 font-mono text-[0.85em] leading-relaxed text-neutral-1100">{block.text}</pre>
+				<pre
+					class="overflow-x-auto rounded-lg border border-theme/5 bg-neutral-100 p-3 font-mono text-[0.85em] leading-relaxed text-neutral-1100">{block.text}</pre>
 			</div>
 		{:else if block.kind === 'mermaid'}
 			<div class="mt-3 first:mt-0"><Mermaid source={block.text} /></div>
@@ -130,7 +141,9 @@
 					<thead class="bg-neutral-200">
 						<tr>
 							{#each block.head as cell, c (c)}
-								<th class="border-b border-theme/5 px-3 py-1.5 font-semibold" style:text-align={block.align[c] ?? 'left'}>{@render inline(cell)}</th>
+								<th class="border-b border-theme/5 px-3 py-1.5 font-semibold" style:text-align={block.align[c] ?? 'left'}>
+									{@render inline(cell)}
+								</th>
 							{/each}
 						</tr>
 					</thead>

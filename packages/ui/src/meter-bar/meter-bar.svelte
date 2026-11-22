@@ -77,7 +77,9 @@
 			{#if hoverLabel}
 				<span
 					class="absolute left-1/2 -translate-x-1/2 rounded bg-neutral-800 px-1 font-mono text-[8px] leading-tight whitespace-nowrap text-white"
-					style={orientation === 'vertical' ? `top: ${hoverPos < 12 ? '2px' : '-10px'};` : 'top: -10px;'}>{hoverLabel(hoverPct)}</span>
+					style={orientation === 'vertical' ? `top: ${hoverPos < 12 ? '2px' : '-10px'};` : 'top: -10px;'}>
+					{hoverLabel(hoverPct)}
+				</span>
 			{/if}
 		</div>
 	{/if}

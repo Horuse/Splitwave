@@ -120,8 +120,8 @@
 	</div>
 
 	{#snippet footer()}
-		<Button onclick={() => logStore.clear()}> Clear </Button>
+		<Button onclick={() => logStore.clear()}>Clear</Button>
 		<CopyButton text={() => asText(filtered)} label="Copy" />
-		<Button tone="success" type="button" onclick={() => (logStore.open = false)}> Close </Button>
+		<Button tone="success" type="button" onclick={() => (logStore.open = false)}>Close</Button>
 	{/snippet}
 </Modal>

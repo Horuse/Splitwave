@@ -5,8 +5,9 @@
 	<a
 		href="/"
 		class="inline-block self-start text-sm text-neutral-900 transition-colors hover:text-theme"
-		>← Back</a
 	>
+		← Back
+	</a>
 
 	<h1 class="mb-2 text-3xl font-bold">Privacy Policy</h1>
 	<p class="mb-10 text-sm text-neutral-900">Last updated: 19 November 2026</p>
@@ -36,17 +37,21 @@
 				You can support Splitwave on <a
 					href="https://www.patreon.com/splitwave"
 					target="_blank"
-					rel="noopener noreferrer">Patreon</a
-				> or with a cryptocurrency transfer to the wallets listed on this website. Both happen outside
-				this website: we do not receive or store your payment details, and we do not link any
-				contribution to an account on splitwave.app.
+					rel="noopener noreferrer"
+				>
+					Patreon
+				</a> or with a cryptocurrency transfer to the wallets listed on this website. Both happen outside
+				this website: we do not receive or store your payment details, and we do not link any contribution
+				to an account on splitwave.app.
 			</p>
 			<p>
 				Payments made through Patreon are governed by the <a
 					href="https://www.patreon.com/policy/privacy"
 					target="_blank"
-					rel="noopener noreferrer">Patreon Privacy Policy</a
-				>.
+					rel="noopener noreferrer"
+				>
+					Patreon Privacy Policy
+				</a>.
 			</p>
 		</section>
 
@@ -67,9 +72,9 @@
 					code hosting, releases and download counts;
 				</li>
 				<li>
-					<a href="https://pages.cloudflare.com" target="_blank" rel="noopener noreferrer"
-						>Cloudflare</a
-					> — web hosting, security, and content delivery.
+					<a href="https://pages.cloudflare.com" target="_blank" rel="noopener noreferrer">
+						Cloudflare
+					</a> — web hosting, security, and content delivery.
 				</li>
 			</ul>
 		</section>
@@ -86,8 +91,10 @@
 			<h2 class="mb-3 text-base font-semibold text-theme">7. Contact</h2>
 			<p>
 				If you have any questions regarding this Privacy Policy or your data, please contact us at <a
-					href="mailto:support@splitwave.app">support@splitwave.app</a
-				>.
+					href="mailto:support@splitwave.app"
+				>
+					support@splitwave.app
+				</a>.
 			</p>
 		</section>
 	</div>

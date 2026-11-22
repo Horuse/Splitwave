@@ -74,5 +74,5 @@ export const nodeTypes: Record<NodeKind, Component<any>> = {
 	if: If,
 	switch: Switch,
 	select: Select,
-	levelTrigger: LevelTrigger,
+	levelTrigger: LevelTrigger
 };

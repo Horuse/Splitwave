@@ -5,8 +5,9 @@
 	<a
 		href="/"
 		class="inline-block self-start text-sm text-neutral-900 transition-colors hover:text-theme"
-		>← Back</a
 	>
+		← Back
+	</a>
 
 	<h1 class="mb-2 text-3xl font-bold">Terms of Service</h1>
 	<p class="mb-10 text-sm text-neutral-900">Last updated: 19 November 2026</p>
@@ -19,8 +20,10 @@
 				released under the <a
 					href="https://opensource.org/licenses/MIT"
 					target="_blank"
-					rel="noopener noreferrer">MIT License</a
-				>. By using this website or our software, you agree to these Terms.
+					rel="noopener noreferrer"
+				>
+					MIT License
+				</a>. By using this website or our software, you agree to these Terms.
 			</p>
 		</section>
 
@@ -39,8 +42,10 @@
 				You can support the ongoing development of Splitwave via <a
 					href="https://www.patreon.com/splitwave"
 					target="_blank"
-					rel="noopener noreferrer">Patreon</a
-				> or a cryptocurrency transfer. Contributions are voluntary, support open-source development,
+					rel="noopener noreferrer"
+				>
+					Patreon
+				</a> or a cryptocurrency transfer. Contributions are voluntary, support open-source development,
 				and do not purchase a license, features, or priority support.
 			</p>
 		</section>
@@ -64,9 +69,9 @@
 		<section>
 			<h2 class="mb-3 text-base font-semibold text-theme">6. Contact</h2>
 			<p>
-				For questions regarding these Terms, contact us at <a href="mailto:support@splitwave.app"
-					>support@splitwave.app</a
-				>.
+				For questions regarding these Terms, contact us at <a href="mailto:support@splitwave.app">
+					support@splitwave.app
+				</a>.
 			</p>
 		</section>
 

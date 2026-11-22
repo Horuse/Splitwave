@@ -66,8 +66,9 @@
 				<Popover bind:open={menuOpen} placement="bottom-end" offsetPx={6}>
 					{#snippet trigger()}
 						<Button variant="ghost" icon type="button" aria-label="Menu">
-							<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-								><path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" /></svg>
+							<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+								<path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" />
+							</svg>
 						</Button>
 					{/snippet}
 
@@ -82,16 +83,19 @@
 
 				<div class="flex items-center gap-0.5">
 					<Button variant="ghost" icon aria-label="Minimize" onclick={() => win?.minimize()}>
-						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-							><path stroke-linecap="round" d="M5 12h14" /></svg>
+						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+							<path stroke-linecap="round" d="M5 12h14" />
+						</svg>
 					</Button>
 					<Button variant="ghost" icon aria-label="Maximize" onclick={() => win?.toggleMaximize()}>
-						<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-							><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+						<svg class="size-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+							<rect x="5" y="5" width="14" height="14" rx="2" />
+						</svg>
 					</Button>
 					<Button variant="ghost" icon class="hover:!bg-red-500 hover:!text-white" aria-label="Close" onclick={() => win?.close()}>
-						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"
-							><path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" /></svg>
+						<svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+							<path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
+						</svg>
 					</Button>
 				</div>
 			{/if}

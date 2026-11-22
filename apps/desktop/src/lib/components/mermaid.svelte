@@ -31,7 +31,7 @@
 {:else}
 	{#key source}
 		<div
-			class="overflow-x-auto rounded-lg border border-theme/5 bg-neutral-100 p-3 [--pele-accent:var(--color-signal)] [--pele-bg:transparent] [--pele-border:var(--color-neutral-400)] [--pele-fg:var(--color-neutral-1100)] [--pele-line:var(--color-neutral-800)] [--pele-muted:var(--color-neutral-700)] [--pele-surface:var(--color-neutral-200)] [--pele-surface-alt:var(--color-neutral-300)]"
+			class="overflow-x-auto rounded-lg border border-theme/5 bg-neutral-100 p-3 [--pele-accent:var(--color-signal)] [--pele-bg:transparent] [--pele-border:var(--color-neutral-400)] [--pele-fg:var(--color-neutral-1100)] [--pele-line:var(--color-neutral-800)] [--pele-muted:var(--color-neutral-700)] [--pele-surface-alt:var(--color-neutral-300)] [--pele-surface:var(--color-neutral-200)]"
 			{@attach diagram}>
 		</div>
 	{/key}

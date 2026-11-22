@@ -372,7 +372,7 @@
 	// grid, so the live tail matches the disk bins exactly; a segment
 	// straddling two blocks merges by reading back the open slot.
 	function binLiveGrid(data: number[][], ch: number, frames: number, sessionStartFrame: number): void {
-		for (let f = 0; f < frames; ) {
+		for (let f = 0; f < frames;) {
 			const sFrame = sessionStartFrame + f;
 			const gridIdx = Math.floor(sFrame / SEG_FRAMES);
 			const absSeg = liveBaseSeg + gridIdx;
@@ -1314,7 +1314,11 @@
 
 	onMount(() => {
 		ctx = canvas.getContext('2d');
-		floating = floatCanvas(canvas, wrap, { onScale: markDirty, holes: () => wrap.querySelectorAll('[data-canvas-hole], [data-canvas-holes] > *'), radius: 10 });
+		floating = floatCanvas(canvas, wrap, {
+			onScale: markDirty,
+			holes: () => wrap.querySelectorAll('[data-canvas-hole], [data-canvas-holes] > *'),
+			radius: 10
+		});
 		unlistenScope = engine.listen<ScopeTick>('audio://scope', (p) => onScope(p));
 		unlistenProgress = engine.listen<RecorderProgress>('audio://recorder_progress', (p) => onProgress(p));
 		ro = new ResizeObserver((entries) => {
@@ -1390,13 +1394,17 @@
 				type="button"
 				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 				onclick={zoomOut}
-				title="Zoom out"><Minus class="size-2.5" /></button>
+				title="Zoom out">
+				<Minus class="size-2.5" />
+			</button>
 			<span class="min-w-7 text-center font-mono text-[8px] text-white/70 tabular-nums">{zoomLabel}</span>
 			<button
 				type="button"
 				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
 				onclick={zoomIn}
-				title="Zoom in"><Add class="size-2.5" /></button>
+				title="Zoom in">
+				<Add class="size-2.5" />
+			</button>
 		</div>
 	</div>
 </div>

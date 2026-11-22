@@ -56,9 +56,9 @@
 	<table class="hidden w-full border-collapse text-left text-sm md:table">
 		<thead>
 			<tr class="border-b border-neutral-300">
-				<th scope="col" class="w-1/4 py-3 pr-4 font-normal text-neutral-900"
-					><span class="sr-only">Feature</span></th
-				>
+				<th scope="col" class="w-1/4 py-3 pr-4 font-normal text-neutral-900">
+					<span class="sr-only">Feature</span>
+				</th>
 				{#each platforms as p (p.name)}
 					<th scope="col" class="w-1/4 px-4 py-3 font-semibold">
 						<span class="inline-flex items-center gap-2"><p.icon class="size-4" />{p.name}</span>

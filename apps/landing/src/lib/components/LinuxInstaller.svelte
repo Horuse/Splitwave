@@ -169,9 +169,9 @@
 						<span
 							class="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-neutral-400 p-3 pl-5"
 						>
-							<code class="flex-1 font-mono text-xs whitespace-pre text-theme select-all"
-								>{installCmd}</code
-							>
+							<code class="flex-1 font-mono text-xs whitespace-pre text-theme select-all">
+								{installCmd}
+							</code>
 							<button type="button" class="btn-ghost" onclick={copyCommand}>
 								{#if copied}
 									<Icons.Checkmark class="size-3.5" />

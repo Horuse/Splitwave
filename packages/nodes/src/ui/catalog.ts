@@ -345,7 +345,6 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	})
 };
 
-
 export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 
 export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect', 'routing', 'control'];

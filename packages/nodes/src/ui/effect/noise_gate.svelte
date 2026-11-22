@@ -62,7 +62,6 @@
 		const t = data.thresholdDb;
 		return [`${sx(X_MIN)},${sy(X_MIN + data.rangeDb)}`, `${sx(t)},${sy(t + data.rangeDb)}`, `${sx(t)},${sy(t)}`, `${sx(X_MAX)},${sy(X_MAX)}`].join(' ');
 	}
-
 </script>
 
 <Wrapper
@@ -79,8 +78,9 @@
 	collapsed={data.collapsed}>
 	{#snippet summary()}
 		<div class="flex w-52 items-center justify-between gap-2 font-mono text-[10px] text-neutral-900 tabular-nums">
-			<span class={STATE[gateState].class}>{STATE[gateState].label}</span><span
-				>thr {data.thresholdDb.toFixed(0)} dB{gr.db > 0.2 ? ` · -${gr.db.toFixed(1)}` : ''}</span>
+			<span class={STATE[gateState].class}>{STATE[gateState].label}</span><span>
+				thr {data.thresholdDb.toFixed(0)} dB{gr.db > 0.2 ? ` · -${gr.db.toFixed(1)}` : ''}
+			</span>
 		</div>
 	{/snippet}
 

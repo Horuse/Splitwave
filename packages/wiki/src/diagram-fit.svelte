@@ -14,7 +14,6 @@
 	$effect(() => {
 		if (initialized.current) requestAnimationFrame(() => flow.fitView(FIT));
 	});
-
 </script>
 
 <!-- Wheel zoom stays off so the article scrolls; these zoom the canvas instead. -->

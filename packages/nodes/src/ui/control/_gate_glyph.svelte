@@ -58,7 +58,9 @@
 		x="160"
 		y={br.y + (br.branch === 1 ? -4 : 11)}
 		text-anchor="end"
-		class={['font-mono text-[9px] group-focus-visible/route:underline', route === br.branch ? 'fill-signal' : 'fill-neutral-900']}>{br.label}</text>
+		class={['font-mono text-[9px] group-focus-visible/route:underline', route === br.branch ? 'fill-signal' : 'fill-neutral-900']}>
+		{br.label}
+	</text>
 	<path d={br.d} class="fill-none stroke-transparent stroke-[14]" />
 {/snippet}
 

@@ -20,7 +20,9 @@ export default defineConfig({
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
 				// mdsvex output (.svx) is compiled in its own mode, like libraries.
 				runes: ({ filename }) =>
-					filename.split(/[/\\]/).includes('node_modules') || filename.endsWith('.svx') ? undefined : true
+					filename.split(/[/\\]/).includes('node_modules') || filename.endsWith('.svx')
+						? undefined
+						: true
 			},
 
 			// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.

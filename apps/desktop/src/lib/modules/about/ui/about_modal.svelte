@@ -65,8 +65,9 @@
 	<div class="flex flex-col items-center gap-1 text-center text-[10px] text-neutral-900">
 		<p>
 			Built with Tauri, Svelte, Rust ·
-			<button type="button" class="underline hover:text-neutral-1000" onclick={() => open(`https://github.com/${REPO}/blob/main/LICENSE`)}
-				>MIT License</button>
+			<button type="button" class="underline hover:text-neutral-1000" onclick={() => open(`https://github.com/${REPO}/blob/main/LICENSE`)}>
+				MIT License
+			</button>
 		</p>
 		<a href="mailto:support@splitwave.app" class="underline hover:text-neutral-1000"> support@splitwave.app </a>
 	</div>

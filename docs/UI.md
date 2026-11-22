@@ -14,8 +14,8 @@ How node and app UI is built. Code conventions for Svelte: [CONCEPT.md](CONCEPT.
 
 `bun run storybook` opens every node and every shared component on :6006, driven by a mocked engine. Start there before writing UI: it shows what already exists and how each piece looks in every state, in light and dark.
 
-| Folder                    | Contents                                             |
-| ------------------------- | ---------------------------------------------------- |
+| Folder                                 | Contents                                             |
+| -------------------------------------- | ---------------------------------------------------- |
 | `apps/desktop/src/stories/nodes/`      | One file per node kind, plus `Nodes/Gallery`         |
 | `apps/desktop/src/stories/forms/`      | Inputs: combobox, toggle, slider, stepper, segmented |
 | `apps/desktop/src/stories/components/` | Display pieces: meter bar, signal bars, copy button  |

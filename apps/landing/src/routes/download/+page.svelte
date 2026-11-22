@@ -75,8 +75,9 @@
 				<a
 					href="/changelog"
 					class="text-theme underline decoration-neutral-500 underline-offset-2 transition-colors hover:decoration-theme"
-					>What's new</a
 				>
+					What's new
+				</a>
 			{:else}
 				Free and open source for macOS, Linux and Windows.
 			{/if}

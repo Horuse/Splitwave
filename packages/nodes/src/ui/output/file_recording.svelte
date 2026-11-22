@@ -650,8 +650,11 @@
 				class={[
 					'flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-semibold',
 					recording ? 'bg-red-500/15 text-red-500' : 'bg-(--lv-1) text-neutral-700'
-				]}><span class={['size-1.5 rounded-full', recording ? 'bg-red-500' : 'bg-neutral-500']}></span>{recording ? 'REC' : 'IDLE'}</span
-			><span class="truncate text-neutral-900">{basename(data.filePath)}</span><span class="text-neutral-1000">{formatDuration(durationSec, 1)}</span>
+				]}>
+				<span class={['size-1.5 rounded-full', recording ? 'bg-red-500' : 'bg-neutral-500']}></span>{recording ? 'REC' : 'IDLE'}
+			</span><span class="truncate text-neutral-900">{basename(data.filePath)}</span><span class="text-neutral-1000">
+				{formatDuration(durationSec, 1)}
+			</span>
 		</div>
 	{/snippet}
 

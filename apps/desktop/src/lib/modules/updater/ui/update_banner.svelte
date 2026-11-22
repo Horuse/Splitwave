@@ -117,16 +117,16 @@
 
 		{#snippet footer()}
 			{#if s.phase === 'up_to_date'}
-				<Button onclick={dismiss}> OK </Button>
+				<Button onclick={dismiss}>OK</Button>
 			{:else if s.phase === 'available'}
-				<Button onclick={onSkip}> Skip this version </Button>
-				<Button onclick={dismiss}> Later </Button>
-				<Button tone="success" type="button" onclick={installUpdate}> Install &amp; restart </Button>
+				<Button onclick={onSkip}>Skip this version</Button>
+				<Button onclick={dismiss}>Later</Button>
+				<Button tone="success" type="button" onclick={installUpdate}>Install &amp; restart</Button>
 			{:else if s.phase === 'error'}
-				<Button onclick={dismiss}> Dismiss </Button>
+				<Button onclick={dismiss}>Dismiss</Button>
 				<CopyButton text={s.message} label="Copy error" tone="danger" />
 			{:else if s.phase === 'unsupported'}
-				<Button onclick={dismiss}> OK </Button>
+				<Button onclick={dismiss}>OK</Button>
 			{/if}
 		{/snippet}
 	</Modal>

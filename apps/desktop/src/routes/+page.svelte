@@ -134,12 +134,7 @@
 					{@const stale = isFromFuture(p)}
 					{@const isRunning = audioStore.isRunning && audioStore.runningPipelineId === p.id}
 					<div animate:flip={{ duration: 200 }} transition:slide={{ duration: 200 }}>
-						<Card
-							nested
-							class={[
-								'flex items-center gap-4 p-3',
-								isRunning ? 'border-brand/30 bg-brand/5' : !stale && 'hover:border-neutral-500'
-							]}>
+						<Card nested class={['flex items-center gap-4 p-3', isRunning ? 'border-brand/30 bg-brand/5' : !stale && 'hover:border-neutral-500']}>
 							<svelte:element
 								this={stale ? 'div' : 'a'}
 								href={stale ? undefined : `/pipelines/${p.id}`}
@@ -155,8 +150,9 @@
 								<span class="flex items-center gap-2">
 									<span class="truncate font-medium">{p.name}</span>
 									{#if stale}
-										<span class="rounded-full border border-amber-600/50 bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-600"
-											>newer version</span>
+										<span class="rounded-full border border-amber-600/50 bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-600">
+											newer version
+										</span>
 									{/if}
 								</span>
 								<span class="text-xs text-neutral-900">

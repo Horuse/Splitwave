@@ -25,18 +25,21 @@
 		</div>
 		<div class="my-3 flex w-auto shrink-0 flex-col items-center gap-3 xs:my-0 xs:flex-row">
 			<div class="flex items-center gap-4">
-				<a href="/download" class="text-xs text-neutral-1000 transition-colors hover:text-theme"
-					>Download</a
-				>
-				<a href="/wiki" class="text-xs text-neutral-1000 transition-colors hover:text-theme">Wiki</a>
-				<a href="/changelog" class="text-xs text-neutral-1000 transition-colors hover:text-theme"
-					>Release notes</a
-				>
+				<a href="/download" class="text-xs text-neutral-1000 transition-colors hover:text-theme">
+					Download
+				</a>
+				<a href="/wiki" class="text-xs text-neutral-1000 transition-colors hover:text-theme">
+					Wiki
+				</a>
+				<a href="/changelog" class="text-xs text-neutral-1000 transition-colors hover:text-theme">
+					Release notes
+				</a>
 			</div>
 			<span
 				class="rounded-full border border-neutral-300 bg-neutral-200 px-2.5 py-0.5 text-xs whitespace-nowrap text-neutral-1000"
-				>macOS · Linux · Windows</span
 			>
+				macOS · Linux · Windows
+			</span>
 			<a
 				href={GITHUB}
 				target="_blank"

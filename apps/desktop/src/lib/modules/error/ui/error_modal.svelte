@@ -159,9 +159,9 @@
 		</div>
 
 		{#snippet footer()}
-			<Button onclick={dismiss}> Dismiss </Button>
+			<Button onclick={dismiss}>Dismiss</Button>
 			<CopyButton text={() => buildDetails()} label="Copy details" />
-			<Button tone="danger" type="button" onclick={reportOnGitHub}> Report on GitHub </Button>
+			<Button tone="danger" type="button" onclick={reportOnGitHub}>Report on GitHub</Button>
 		{/snippet}
 	</Modal>
 {/if}

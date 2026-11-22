@@ -21,7 +21,6 @@ export interface VolumeChange extends DeviceVolume {
 	name: string;
 }
 
-
 export interface VirtualDriverStatus {
 	installed: boolean;
 	installedVersion: number | null;
@@ -37,13 +36,7 @@ export interface VirtualDeviceConfig {
 }
 
 export type WindowsVirtualCableState =
-	| 'notInstalled'
-	| 'installedExternal'
-	| 'installedManaged'
-	| 'partial'
-	| 'rebootRequired'
-	| 'removalPendingReboot'
-	| 'unknownOwnership';
+	'notInstalled' | 'installedExternal' | 'installedManaged' | 'partial' | 'rebootRequired' | 'removalPendingReboot' | 'unknownOwnership';
 
 export type WindowsVirtualCableOwnership = 'external' | 'managed' | 'unknown';
 

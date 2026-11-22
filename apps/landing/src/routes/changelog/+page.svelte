@@ -12,8 +12,9 @@
 	<a
 		href="/"
 		class="inline-block self-start text-sm text-neutral-900 transition-colors hover:text-theme"
-		>&larr; Back</a
 	>
+		&larr; Back
+	</a>
 
 	<div class="flex flex-col gap-2">
 		<h1 class="text-3xl font-bold">Changelog</h1>
@@ -31,8 +32,10 @@
 					href={GITHUB_RELEASES}
 					target="_blank"
 					rel="noopener noreferrer"
-					class="text-blue-500 underline underline-offset-2">on GitHub</a
-				> instead.
+					class="text-blue-500 underline underline-offset-2"
+				>
+					on GitHub
+				</a> instead.
 			</p>
 		</div>
 	{:else}
@@ -40,18 +43,20 @@
 			{#each data.releases as release, i (release.tag)}
 				<li id={release.tag} class="grid scroll-mt-24 gap-x-10 gap-y-4 sm:grid-cols-[10rem_1fr]">
 					<div class="flex flex-col gap-2 sm:sticky sm:top-24 sm:self-start">
-						<div class="flex items-center flex-wrap gap-2">
+						<div class="flex flex-wrap items-center gap-2">
 							<h2 class="text-2xl font-bold tracking-tight">{release.tag}</h2>
 							{#if release.tag === data.latestTag}
 								<span
 									class="rounded-full border border-neutral-300 bg-neutral-200 px-2 py-0.5 text-xs whitespace-nowrap text-neutral-1000"
-									>Latest</span
 								>
+									Latest
+								</span>
 							{:else if release.prerelease}
 								<span
 									class="rounded-full border border-dashed border-amber-500/60 px-2 py-0.5 text-xs whitespace-nowrap text-amber-500"
-									>Pre-release</span
 								>
+									Pre-release
+								</span>
 							{/if}
 						</div>
 						<time datetime={release.publishedAt} class="text-xs text-neutral-900">
@@ -87,8 +92,10 @@
 				href={GITHUB_RELEASES}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="text-blue-500 underline underline-offset-2">GitHub releases</a
-			>.
+				class="text-blue-500 underline underline-offset-2"
+			>
+				GitHub releases
+			</a>.
 		</p>
 	{/if}
 </div>

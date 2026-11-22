@@ -52,8 +52,6 @@
 			</span>
 		{/if}
 		<p class="mb-3 text-xs leading-relaxed {messageClass}">{announcement.message}</p>
-
-
 	</div>
 
 	<div class="flex items-center justify-end gap-2 px-5 pt-2 pb-4">

@@ -68,13 +68,17 @@
 						type="button"
 						class="rounded px-1 hover:bg-black/10 dark:hover:bg-white/15"
 						title="Previous notice"
-						onclick={() => announcementStore.prevBanner()}>&lt;</button>
+						onclick={() => announcementStore.prevBanner()}>
+						&lt;
+					</button>
 					<span>{currentIndex + 1}/{count}</span>
 					<button
 						type="button"
 						class="rounded px-1 hover:bg-black/10 dark:hover:bg-white/15"
 						title="Next notice"
-						onclick={() => announcementStore.nextBanner()}>&gt;</button>
+						onclick={() => announcementStore.nextBanner()}>
+						&gt;
+					</button>
 				</div>
 			{/if}
 

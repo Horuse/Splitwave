@@ -4,7 +4,8 @@ import { wikiUrl } from '#lib/site.js';
 import type { EntryGenerator } from './$types';
 
 /** Every article is a page; folders without an index article are listed on /wiki only. */
-export const entries: EntryGenerator = () => articles.filter((a) => a.slug).map((a) => ({ slug: a.slug }));
+export const entries: EntryGenerator = () =>
+	articles.filter((a) => a.slug).map((a) => ({ slug: a.slug }));
 
 export const load = ({ params }) => {
 	const node = getNode(params.slug);
@@ -13,7 +14,9 @@ export const load = ({ params }) => {
 		slug: node.slug,
 		seo: {
 			title: `${node.article.title} — Splitwave Wiki`,
-			description: node.article.description || `${node.article.title} in Splitwave, the free node-based audio router.`,
+			description:
+				node.article.description ||
+				`${node.article.title} in Splitwave, the free node-based audio router.`,
 			url: wikiUrl(node.slug)
 		}
 	};

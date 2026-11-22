@@ -105,5 +105,4 @@
 	{:else}
 		<p class="px-2.5 py-4 text-xs text-neutral-900">No nodes match "{query}".</p>
 	{/each}
-
 </Sidebar>

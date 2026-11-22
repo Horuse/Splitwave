@@ -182,12 +182,13 @@
 			viewBox="0 0 {CURVE_W} {CURVE_H}"
 			preserveAspectRatio="none"
 			class="block h-8 w-72 rounded-md border border-theme/5 bg-(--field-bg,var(--lv-1))"
-			aria-hidden="true"
-			><line x1="0" y1={dbToY(0)} x2={CURVE_W} y2={dbToY(0)} class="stroke-neutral-500" stroke-width="0.5" /><path
+			aria-hidden="true">
+			<line x1="0" y1={dbToY(0)} x2={CURVE_W} y2={dbToY(0)} class="stroke-neutral-500" stroke-width="0.5" /><path
 				d={curvePath}
 				class="stroke-signal"
 				stroke-width="1.5"
-				fill="none" /></svg>
+				fill="none" />
+		</svg>
 	{/snippet}
 
 	<div class="flex w-72 flex-col gap-1.5">

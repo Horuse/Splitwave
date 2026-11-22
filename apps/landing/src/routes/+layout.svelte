@@ -66,8 +66,9 @@
 <a
 	href="#content"
 	class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-100 focus:rounded-lg focus:bg-background focus:px-3 focus:py-2 focus:text-sm"
-	>Skip to content</a
 >
+	Skip to content
+</a>
 
 <main class="flex min-h-screen flex-col">
 	<Header />

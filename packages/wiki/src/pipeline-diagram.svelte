@@ -13,8 +13,7 @@
 	/** An audio cable carries `channels` (stereo by default); `sidechain` lands on the effect's key input.
 	 * A control cable names its sockets, such as `control:out` to `control:open`. */
 	export type DiagramEdge =
-		| { from: string; to: string; channels?: number; sidechain?: boolean }
-		| { from: string; to: string; control: { from: string; to: string } };
+		{ from: string; to: string; channels?: number; sidechain?: boolean } | { from: string; to: string; control: { from: string; to: string } };
 </script>
 
 <script lang="ts">
@@ -85,9 +84,7 @@
 		sync();
 		const observer = new MutationObserver(sync);
 		observer.observe(root, { attributes: true, attributeFilter: ['class'] });
-		const stops = spec.map((n) =>
-			startSignal({ nodeId: n.id, wideScope: n.kind === 'spectrum', running: true }, DEFAULT_SIGNAL, port.emit)
-		);
+		const stops = spec.map((n) => startSignal({ nodeId: n.id, wideScope: n.kind === 'spectrum', running: true }, DEFAULT_SIGNAL, port.emit));
 		return () => {
 			observer.disconnect();
 			stops.forEach((stop) => stop());

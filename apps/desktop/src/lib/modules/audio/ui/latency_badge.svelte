@@ -42,7 +42,9 @@
 					<span class="text-neutral-900">Round-trip latency</span>
 					<span class="text-2xl font-semibold text-theme tabular-nums">
 						<AnimatedNumber value={path.totalMs} format={msFormat(path.totalMs)} suffix={path.hardwareIncluded ? '' : '+'} /><span
-							class="ml-1 text-sm font-normal text-neutral-900">ms</span>
+							class="ml-1 text-sm font-normal text-neutral-900">
+							ms
+						</span>
 					</span>
 				</div>
 

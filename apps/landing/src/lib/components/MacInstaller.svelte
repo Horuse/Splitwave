@@ -177,8 +177,10 @@
 			<p class="text-sm leading-relaxed text-neutral-1000">
 				Splitwave is an open-source app distributed outside the Mac App Store and is not yet
 				notarized by Apple. When you download a file from the internet, macOS attaches a <span
-					class="font-mono text-xs">com.apple.quarantine</span
+					class="font-mono text-xs"
 				>
+					com.apple.quarantine
+				</span>
 				attribute to it. Because the app isn't notarized, Gatekeeper blocks it with a “Splitwave is damaged
 				and can't be opened” or “unidentified developer” message. The
 				<span class="font-mono text-xs">xattr -cr</span>

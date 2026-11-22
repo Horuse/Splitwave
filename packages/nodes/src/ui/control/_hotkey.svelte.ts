@@ -16,7 +16,8 @@ export function useGlobalHotkey(key: () => string | undefined, onEvent: (state: 
 		let live = true;
 		// A leftover registration from a previous mount (HMR, node re-render)
 		// makes `register` fail with "already registered"; clear it first.
-		engine.unregisterHotkey(k)
+		engine
+			.unregisterHotkey(k)
 			.catch(() => {})
 			.then(() => {
 				if (!live) return;

@@ -81,8 +81,9 @@
 							<div class="flex items-center gap-2">
 								<h3 class="text-lg font-medium">{entry.name}</h3>
 								{#if entry.prerelease}
-									<span class="rounded-full border border-dashed border-neutral-500 px-2 py-0.5 font-mono text-[10px] text-neutral-900"
-										>pre-release</span>
+									<span class="rounded-full border border-dashed border-neutral-500 px-2 py-0.5 font-mono text-[10px] text-neutral-900">
+										pre-release
+									</span>
 								{/if}
 								{#if entry.version === installed}
 									<span class="rounded-full bg-brand-soft px-2 py-0.5 font-mono text-[10px] text-brand">installed</span>

@@ -15,7 +15,7 @@
 
 <section class="mx-auto max-w-3xl px-6 pb-24">
 	<div
-		class="relative isolate flex flex-col items-center gap-5 overflow-hidden rounded-[2rem] border border-neutral-300 bg-neutral-100 px-12 sm:px-24 py-14 text-center shadow-2xl shadow-black/25"
+		class="relative isolate flex flex-col items-center gap-5 overflow-hidden rounded-[2rem] border border-neutral-300 bg-neutral-100 px-12 py-14 text-center shadow-2xl shadow-black/25 sm:px-24"
 	>
 		<svg
 			class="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-full w-full"

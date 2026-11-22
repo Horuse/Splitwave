@@ -46,6 +46,10 @@
 	// Box selection mode, toggled by the button by the zoom controls; Shift still works as a hold.
 	let selectLocked = $state(false);
 
+	function onWindowKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') selectLocked = false;
+	}
+
 	function sanitizeEdges(xyNodes: XyNode[], xyEdges: XyEdge[]): XyEdge[] {
 		const ids = new Set(xyNodes.map((n) => n.id));
 		return xyEdges.filter((e) => ids.has(e.source) && ids.has(e.target) && canConnect(e.sourceHandle, e.targetHandle));
@@ -696,7 +700,7 @@
 	});
 </script>
 
-<svelte:window onmousedown={closeContextMenu} />
+<svelte:window onmousedown={closeContextMenu} onkeydown={onWindowKeydown} />
 
 <div class="flex h-full w-full">
 	<div bind:this={canvasEl} class="relative flex-1" role="region" aria-label="Flow editor" ondragover={onDragOver} ondrop={onDrop}>
@@ -732,7 +736,7 @@
 		{#if selectLocked}
 			<div
 				class="pointer-events-none absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm">
-				Selection mode: drag to select nodes and cables. Click the select button to leave it
+				Selection mode: drag to select nodes and cables. Press Esc or the select button to leave it
 			</div>
 		{/if}
 

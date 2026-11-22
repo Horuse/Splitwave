@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Combobox, RescanButton, Slider, Toggle } from '@splitwave/ui';
+	import { Button, Combobox, RescanButton, ScrollArea, Slider, Toggle, Tooltip } from '@splitwave/ui';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
@@ -22,8 +22,10 @@
 	const missing = $derived(engine.plugins.scanned && !!data.path && !currentUid);
 
 	$effect(() => {
-		if (data.path) engine.plugins.ensure();
+		engine.plugins.ensure();
 	});
+
+	const noPlugins = $derived(engine.plugins.scanned && !engine.plugins.scanning && engine.plugins.plugins.length === 0 && !data.path);
 
 	const options = $derived(
 		engine.plugins.plugins.map((p) => ({
@@ -187,18 +189,28 @@
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
 	<div class="flex w-56 flex-col gap-2">
-		<Combobox
-			class="nodrag nopan"
-			{options}
-			value={currentUid}
-			placeholder={data.name || (engine.plugins.scanning ? 'Scanning…' : 'Select a plugin')}
-			emptyHint={engine.plugins.scanning ? 'Scanning…' : 'No plugins found'}
-			onOpen={() => engine.plugins.refresh()}
-			onChange={select}>
-			{#snippet footer()}
-				<RescanButton onRescan={() => engine.plugins.rescan()} />
-			{/snippet}
-		</Combobox>
+		{#if noPlugins}
+			<div class="flex items-center justify-between gap-2 rounded-lg bg-(--field-bg) py-1 pr-1 pl-2.5">
+				<span class="text-xs whitespace-nowrap text-neutral-900">No plugins installed</span>
+				<Button class="nodrag nopan" size="xs" variant="ghost" disabled={engine.plugins.scanning} onclick={() => engine.plugins.rescan()}>
+					<Refresh class={['size-3.5', engine.plugins.scanning && 'animate-spin']} />
+					Rescan
+				</Button>
+			</div>
+		{:else}
+			<Combobox
+				class="nodrag nopan"
+				{options}
+				value={currentUid}
+				placeholder={data.name || (engine.plugins.scanning ? 'Scanning…' : 'Select a plugin')}
+				emptyHint={engine.plugins.scanning ? 'Scanning…' : 'No plugins found'}
+				onOpen={() => engine.plugins.refresh()}
+				onChange={select}>
+				{#snippet footer()}
+					<RescanButton onRescan={() => engine.plugins.rescan()} />
+				{/snippet}
+			</Combobox>
+		{/if}
 		{#if missing}
 			<p class="text-xs text-rose-400">Not installed, or failed to load</p>
 		{/if}
@@ -219,14 +231,12 @@
 				{#if editorError}
 					<p class="text-xs text-rose-400">{editorError}</p>
 				{/if}
+			{:else if canOpenEditor}
+				<Button class="nodrag nopan w-full" onclick={toggleEditor}>{editorOpen ? 'Close editor' : 'Open editor'}</Button>
 			{:else}
-				<button
-					class="nodrag nopan rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
-					disabled={!canOpenEditor}
-					title={canOpenEditor ? undefined : 'Start the pipeline to open the editor'}
-					onclick={toggleEditor}>
-					{editorOpen ? 'Close editor' : 'Open editor'}
-				</button>
+				<Tooltip text="Run the pipeline first: the plugin loads only while it runs.">
+					<Button class="nodrag nopan pointer-events-none w-full" disabled>Open editor</Button>
+				</Tooltip>
 			{/if}
 			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
 				{data.pluginId}
@@ -238,7 +248,7 @@
 				checked={!!data.showParams}
 				onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
 			{#if data.showParams && params.length}
-				<div class="nowheel nodrag flex max-h-64 flex-col gap-1.5 overflow-y-auto pr-1">
+				<ScrollArea class="nowheel nodrag" viewportClass="flex max-h-64 flex-col gap-1.5 pr-3">
 					{#each params as p (p.id)}
 						<Slider
 							class="nodrag nopan nowheel"
@@ -250,7 +260,7 @@
 							defaultValue={p.default}
 							onChange={(v) => setParam(p, v)} />
 					{/each}
-				</div>
+				</ScrollArea>
 			{/if}
 		{/if}
 	</div>

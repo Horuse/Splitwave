@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Slider, Toggle } from '@splitwave/ui';
+	import { Button, Slider, Toggle } from '@splitwave/ui';
 	import { getContext, onMount } from 'svelte';
 	import { useSvelteFlow, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { SystemAudioNodeData } from '@splitwave/nodes';
@@ -79,41 +79,14 @@
 		{#if showBanner}
 			<div
 				class={[
-					'flex items-center justify-between gap-2 rounded border px-2 py-1 text-[10px]',
-					permission?.state === 'denied' && 'border-red-300 bg-red-50 text-red-700',
-					permission?.state === 'unknown' && 'border-neutral-300 bg-neutral-100 text-neutral-1000'
+					'flex items-center justify-between gap-2 rounded-lg py-1 pr-1 pl-2.5 text-[10px]',
+					permission?.state === 'denied' ? 'bg-red-500/10 text-red-500' : 'bg-(--field-bg) text-neutral-900'
 				]}>
-				<span class="flex items-center gap-1.5">
-					<span
-						class={[
-							'inline-block h-2 w-2 rounded-full',
-							permission?.state === 'denied' && 'bg-red-500',
-							permission?.state === 'unknown' && 'bg-neutral-500'
-						]}></span>
-					<span>
-						{#if permission?.state === 'denied'}
-							Screen Recording denied
-						{:else}
-							Checking permission…
-						{/if}
-					</span>
-				</span>
+				<span>{permission?.state === 'denied' ? 'Screen Recording denied' : 'Checking permission...'}</span>
 				{#if permission?.state === 'denied'}
-					<button
-						type="button"
-						class="nodrag nopan shrink-0 rounded border border-red-400 bg-red-100 px-1.5 py-0.5 hover:bg-red-200"
-						onclick={openPrivacySettings}>
-						Open Settings
-					</button>
+					<Button class="nodrag nopan" size="xs" tone="danger" onclick={openPrivacySettings}>Open Settings</Button>
 				{:else}
-					<button
-						type="button"
-						class="nodrag nopan shrink-0 rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 hover:bg-neutral-200 disabled:opacity-50"
-						title="Re-check"
-						disabled={checking}
-						onclick={refreshPermission}>
-						⟳
-					</button>
+					<Button class="nodrag nopan" size="xs" disabled={checking} onclick={refreshPermission}>Re-check</Button>
 				{/if}
 			</div>
 		{/if}

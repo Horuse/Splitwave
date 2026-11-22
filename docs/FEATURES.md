@@ -48,12 +48,12 @@ If a node produces a transformed mono signal from several sources, it is an **ef
 Device, capture, volume, virtual-device, and pipeline input/output modules each carry one file per OS (`macos.rs` / `linux.rs` / `windows.rs`). Touching one usually means touching all three:
 
 ```
-src-tauri/src/audio/device/
-src-tauri/src/audio/capture/
-src-tauri/src/audio/volume/
-src-tauri/src/audio/virtual_device/
-src-tauri/src/audio/pipeline/input/
-src-tauri/src/audio/pipeline/output/
+apps/desktop/src-tauri/src/audio/device/
+apps/desktop/src-tauri/src/audio/capture/
+apps/desktop/src-tauri/src/audio/volume/
+apps/desktop/src-tauri/src/audio/virtual_device/
+apps/desktop/src-tauri/src/audio/pipeline/input/
+apps/desktop/src-tauri/src/audio/pipeline/output/
 ```
 
 A platform that cannot support the feature returns a real error from that backend. It does not silently substitute a different rate, device, or format.

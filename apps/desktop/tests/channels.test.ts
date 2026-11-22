@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { channelColor, channelLabel, darken, deriveSlots, freeRunFrom, handleColor } from '../packages/nodes/src/ui/utils/channels';
+import { channelColor, channelLabel, darken, deriveSlots, freeRunFrom, handleColor } from '../../../packages/nodes/src/ui/utils/channels';
 
 describe('deriveSlots', () => {
 	it('keeps freed slots in place instead of renumbering', () => {

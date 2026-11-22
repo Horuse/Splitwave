@@ -16,10 +16,10 @@ How node and app UI is built. Code conventions for Svelte: [CONCEPT.md](CONCEPT.
 
 | Folder                    | Contents                                             |
 | ------------------------- | ---------------------------------------------------- |
-| `src/stories/nodes/`      | One file per node kind, plus `Nodes/Gallery`         |
-| `src/stories/forms/`      | Inputs: combobox, toggle, slider, stepper, segmented |
-| `src/stories/components/` | Display pieces: meter bar, signal bars, copy button  |
-| `src/stories/harness/`    | Node canvas, mocked engine, fake signal, arg helpers |
+| `apps/desktop/src/stories/nodes/`      | One file per node kind, plus `Nodes/Gallery`         |
+| `apps/desktop/src/stories/forms/`      | Inputs: combobox, toggle, slider, stepper, segmented |
+| `apps/desktop/src/stories/components/` | Display pieces: meter bar, signal bars, copy button  |
+| `apps/desktop/src/stories/harness/`    | Node canvas, mocked engine, fake signal, arg helpers |
 
 ## Reuse before you build
 
@@ -29,7 +29,7 @@ How node and app UI is built. Code conventions for Svelte: [CONCEPT.md](CONCEPT.
 
 ## Adding a node
 
-The node's stories land in the same commit as the node, in `src/stories/nodes/<kind>.stories.svelte`:
+The node's stories land in the same commit as the node, in `apps/desktop/src/stories/nodes/<kind>.stories.svelte`:
 
 - Render it through `NodeCanvas` with `kind` and the story args.
 - Expose every field of the node's data as a control (`dataArgs`), plus the signal (`signalArgs`), wiring (`wiringArgs`) and engine state (`envArgs`) the node reacts to.
@@ -37,7 +37,7 @@ The node's stories land in the same commit as the node, in `src/stories/nodes/<k
 
 ## Adding a shared component
 
-Its stories land in the same commit, in `src/stories/forms/` for inputs or `src/stories/components/` for everything else:
+Its stories land in the same commit, in `apps/desktop/src/stories/forms/` for inputs or `apps/desktop/src/stories/components/` for everything else:
 
 - Controls for every prop that changes how it looks.
 - Controlled inputs go through `Controlled` so they respond to clicks, with changes logged in the Actions panel via `fn()`.

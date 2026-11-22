@@ -60,7 +60,7 @@ Without these, one chunk takes ~16 ms and the worker stalls.
 
 ## Layout
 
-    src/lib/modules/
+    apps/desktop/src/lib/modules/
       audio/     methods.ts, stores.svelte.ts, types.ts, ui/
       flow/      ui/ (xyflow nodes; node.svelte wrapper, editor, sidebar)
       form/      ui/ (combobox.svelte etc.)

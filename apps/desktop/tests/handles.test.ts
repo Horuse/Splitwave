@@ -11,7 +11,7 @@ import {
 	peerHandle,
 	SIDECHAIN_HANDLE,
 	signalOf
-} from '../packages/nodes/src/ui/utils/handles';
+} from '../../../packages/nodes/src/ui/utils/handles';
 
 describe('handle builders', () => {
 	it('prefix every handle with its signal', () => {

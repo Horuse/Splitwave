@@ -1,6 +1,6 @@
 @import '@splitwave/ui/styles';
-@source '../packages/nodes/src';
-@source '../packages/wiki/src';
+@source '../../../packages/nodes/src';
+@source '../../../packages/wiki/src';
 
 @layer base {
     body {

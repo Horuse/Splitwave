@@ -45,7 +45,7 @@ export default defineConfig(async () => ({
 				}
 			: undefined,
 		fs: {
-			allow: ['packages']
+			allow: ['../../packages']
 		},
 		watch: {
 			// 3. tell Vite to ignore watching `src-tauri`

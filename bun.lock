@@ -4,6 +4,16 @@
   "workspaces": {
     "": {
       "name": "splitwave",
+      "devDependencies": {
+        "bun-types": "^1.4.5",
+        "prettier": "3.10.1",
+        "prettier-plugin-svelte": "^4.2.0",
+        "prettier-plugin-tailwindcss": "^0.8.1",
+      },
+    },
+    "apps/desktop": {
+      "name": "@splitwave/desktop",
+      "version": "2.0.0-beta.1",
       "dependencies": {
         "@number-flow/svelte": "^0.4.2",
         "@paralleldrive/cuid2": "^3.3.0",
@@ -23,8 +33,6 @@
         "@xyflow/svelte": "^2.0.2",
         "esm-env": "^1.2.2",
         "pele": "1.13.0",
-        "prettier-plugin-svelte": "^4.2.0",
-        "prettier-plugin-tailwindcss": "^0.8.1",
         "semver": "^7.8.6",
         "svelte-floating-ui": "^1.6.2",
         "svelte-french-toast": "^1.2.0",
@@ -43,7 +51,6 @@
         "@types/semver": "^7.8.0",
         "bun-types": "^1.4.5",
         "mdsvex": "^1.0.1",
-        "prettier": "3.10.1",
         "storybook": "^10.6.8",
         "svelte": "^5.59.1",
         "svelte-check": "^4.7.8",
@@ -500,6 +507,8 @@
     "@sindresorhus/is": ["@sindresorhus/is@7.2.0", "", {}, "sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw=="],
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
+
+    "@splitwave/desktop": ["@splitwave/desktop@workspace:apps/desktop"],
 
     "@splitwave/landing": ["@splitwave/landing@workspace:apps/landing"],
 

@@ -6,6 +6,7 @@
 	import Megaphone from '~icons/fluent/megaphone-16-regular';
 	import Warning from '~icons/fluent/warning-16-regular';
 	import ErrorCircle from '~icons/fluent/error-circle-16-regular';
+	import Checkmark from '~icons/fluent/checkmark-12-filled';
 	import Mermaid from './mermaid.svelte';
 	import { parseMarkdown, type Block, type CalloutKind, type Inline } from '$lib/utils/markdown';
 
@@ -56,11 +57,11 @@
 		{:else if part.kind === 'del'}
 			<del class="opacity-70">{@render inline(part.children)}</del>
 		{:else if part.kind === 'code'}
-			<code class="rounded bg-neutral-300 px-1 py-px font-mono text-[0.88em]">{part.text}</code>
+			<code class="rounded-md bg-violet-500/12 px-[0.35em] py-[0.15em] font-mono text-[0.85em] text-violet-500">{part.text}</code>
 		{:else if part.kind === 'link'}
 			<a
 				href={part.href}
-				class="cursor-pointer break-words underline decoration-current/40 underline-offset-2 hover:decoration-current"
+				class="cursor-pointer break-words text-violet-500 underline-offset-2 hover:text-violet-600 hover:underline"
 				onclick={(e) => {
 					e.preventDefault();
 					open(part.href);
@@ -79,31 +80,35 @@
 	{#each list as block, i (i)}
 		{#if block.kind === 'heading'}
 			{#if article}
-				<svelte:element this={`h${block.level}`} class={['mt-6 text-neutral-1200 first:mt-0', HEADING_ARTICLE[block.level]]}>
+				<svelte:element
+					this={`h${block.level}`}
+					class={['mt-6 mb-3 leading-tight text-pretty text-neutral-1200 first:mt-0', HEADING_ARTICLE[block.level]]}>
 					{@render inline(block.content)}
 				</svelte:element>
 			{:else}
-				<p class="mt-3 text-[11px] font-semibold tracking-wide uppercase opacity-70 first:mt-0">{@render inline(block.content)}</p>
+				<p class="mt-4 mb-1 text-[13px] leading-tight font-semibold text-neutral-1200 first:mt-0">{@render inline(block.content)}</p>
 			{/if}
 		{:else if block.kind === 'paragraph'}
 			{#if block.content.length === 1 && block.content[0].kind === 'image'}
 				{@const img = block.content[0]}
-				<figure class="mt-3 first:mt-0">
+				<figure class="my-4 first:mt-0 last:mb-0">
 					<img src={img.src} alt={img.alt} loading="lazy" class="w-full rounded-lg border border-theme/5" />
 					{#if img.title || img.alt}
 						<figcaption class="mt-1.5 text-center text-xs text-neutral-700">{img.title || img.alt}</figcaption>
 					{/if}
 				</figure>
 			{:else}
-				<p class={[article ? 'mt-3 leading-relaxed' : 'mt-1.5', 'first:mt-0']}>{@render inline(block.content)}</p>
+				<p class={['my-2 break-words first:mt-0 last:mb-0', article ? 'leading-6' : 'leading-relaxed']}>{@render inline(block.content)}</p>
 			{/if}
 		{:else if block.kind === 'hr'}
-			<hr class="my-4 border-theme/10" />
+			<hr class="my-6 border-t-2 border-theme/10" />
 		{:else if block.kind === 'quote'}
-			<blockquote class="mt-3 border-l-2 border-neutral-500 pl-3 text-neutral-900 first:mt-0">{@render render(block.blocks)}</blockquote>
+			<blockquote class="my-4 rounded-sm border-l-4 border-neutral-500 bg-neutral-200/40 py-1 pr-3 pl-4 text-neutral-1000 first:mt-0 last:mb-0">
+				{@render render(block.blocks)}
+			</blockquote>
 		{:else if block.kind === 'callout'}
 			{@const c = CALLOUT[block.callout]}
-			<div class={['mt-3 rounded-lg border px-3 py-2 first:mt-0', c.class]}>
+			<div class={['my-4 rounded-lg border px-3 py-2 first:mt-0 last:mb-0', c.class]}>
 				<p class="mb-1 flex items-center gap-1.5 text-xs font-semibold"><c.icon class="size-3.5" />{c.label}</p>
 				<div class="text-neutral-1100">{@render render(block.blocks)}</div>
 			</div>
@@ -111,12 +116,18 @@
 			<svelte:element
 				this={block.ordered ? 'ol' : 'ul'}
 				start={block.ordered && block.start !== 1 ? block.start : undefined}
-				class={['mt-1.5 pl-5 first:mt-0', block.ordered ? 'list-decimal' : 'list-disc']}>
+				class={['my-3 ml-1.5 pl-4 marker:text-neutral-700 first:mt-0 last:mb-0', block.ordered ? 'list-decimal' : 'list-disc']}>
 				{#each block.items as item, j (j)}
-					<li class={['mt-0.5', item.checked !== null && '-ml-5 list-none']}>
+					<li class={['my-1 pl-0.5', item.checked !== null && '-ml-4 list-none']}>
 						{#if item.checked !== null}
 							<span class="flex items-start gap-2">
-								<input type="checkbox" checked={item.checked} disabled class="mt-1 accent-neutral-900" />
+								<span
+									class={[
+										'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-md border',
+										item.checked ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-neutral-400 bg-neutral-200'
+									]}>
+									{#if item.checked}<Checkmark class="size-3" />{/if}
+								</span>
 								<span class={['min-w-0 flex-1', item.checked && 'opacity-70']}>{@render render(item.blocks)}</span>
 							</span>
 						{:else}
@@ -126,22 +137,21 @@
 				{/each}
 			</svelte:element>
 		{:else if block.kind === 'code'}
-			<div class="relative mt-3 first:mt-0">
+			<div class="relative my-4 first:mt-0 last:mb-0">
 				{#if block.lang}
 					<span class="absolute top-1.5 right-2 font-mono text-[10px] text-neutral-600">{block.lang}</span>
 				{/if}
-				<pre
-					class="overflow-x-auto rounded-lg border border-theme/5 bg-neutral-100 p-3 font-mono text-[0.85em] leading-relaxed text-neutral-1100">{block.text}</pre>
+				<pre class="overflow-x-auto rounded-lg bg-neutral-100 px-4 py-3 font-mono text-[0.8rem] leading-relaxed text-neutral-1100">{block.text}</pre>
 			</div>
 		{:else if block.kind === 'mermaid'}
-			<div class="mt-3 first:mt-0"><Mermaid source={block.text} /></div>
+			<div class="my-4 first:mt-0 last:mb-0"><Mermaid source={block.text} /></div>
 		{:else if block.kind === 'table'}
-			<div class="mt-3 overflow-x-auto rounded-lg border border-theme/5 first:mt-0">
+			<div class="my-4 overflow-x-auto first:mt-0 last:mb-0">
 				<table class="w-full border-collapse text-[0.95em]">
-					<thead class="bg-neutral-200">
+					<thead>
 						<tr>
 							{#each block.head as cell, c (c)}
-								<th class="border-b border-theme/5 px-3 py-1.5 font-semibold" style:text-align={block.align[c] ?? 'left'}>
+								<th class="border border-theme/10 bg-theme/5 px-3 py-2 align-top font-semibold" style:text-align={block.align[c] ?? 'left'}>
 									{@render inline(cell)}
 								</th>
 							{/each}
@@ -149,9 +159,11 @@
 					</thead>
 					<tbody>
 						{#each block.rows as row, r (r)}
-							<tr class="border-b border-theme/5 last:border-b-0">
+							<tr>
 								{#each row as cell, c (c)}
-									<td class="px-3 py-1.5" style:text-align={block.align[c] ?? 'left'}>{@render inline(cell)}</td>
+									<td class="border border-theme/10 px-3 py-2 align-top" style:text-align={block.align[c] ?? 'left'}>
+										{@render inline(cell)}
+									</td>
 								{/each}
 							</tr>
 						{/each}

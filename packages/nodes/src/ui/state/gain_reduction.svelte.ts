@@ -10,6 +10,8 @@ export interface GainReduction {
 	readonly gain: number;
 	/** Detector level feeding the effect, dBFS, with the same peak fall as `db`; null while silent. */
 	readonly inDb: number | null;
+	/** Last detector level the engine reported, dBFS, without the fall: what the effect compares to its threshold. */
+	readonly inRawDb: number;
 }
 
 const IN_FLOOR_DB = -90;
@@ -22,6 +24,7 @@ export function useGainReduction(nodeId: () => string): GainReduction {
 	let gain = $state(1);
 	let db = $state(0);
 	let inLevel = $state(IN_FLOOR_DB);
+	let inRaw = $state(IN_FLOOR_DB);
 	let raf: number | undefined;
 	let destroyed = false;
 	let last = 0;
@@ -30,7 +33,10 @@ export function useGainReduction(nodeId: () => string): GainReduction {
 		if (p.nodeId !== nodeId()) return;
 		gain = Math.max(0, Math.min(1, p.grLin));
 		target = -20 * Math.log10(Math.max(1e-6, gain));
-		if (p.inLin !== undefined) inTarget = Math.max(IN_FLOOR_DB, 20 * Math.log10(Math.max(1e-6, p.inLin)));
+		if (p.inLin !== undefined) {
+			inTarget = Math.max(IN_FLOOR_DB, 20 * Math.log10(Math.max(1e-6, p.inLin)));
+			inRaw = inTarget;
+		}
 		wake();
 	});
 
@@ -62,6 +68,9 @@ export function useGainReduction(nodeId: () => string): GainReduction {
 		},
 		get gain() {
 			return gain;
+		},
+		get inRawDb() {
+			return inRaw;
 		},
 		get inDb() {
 			return inLevel > IN_FLOOR_DB + 1 ? inLevel : null;

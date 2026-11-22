@@ -10,7 +10,7 @@ A noise gate lets audio through while it is loud enough and turns it down when i
 
 The gate in Splitwave uses a **hard threshold**: when the detector level is at or above it, the gate is open and the audio passes untouched; below it, the gate closes and the audio drops by **Range**. There is no gradual zone in level, so the curve on the node is a step.
 
-The smoothing happens **in time**, not in level. That is what Attack, Hold and Release control, and it is drawn in the second graph on the node: a short burst crosses the threshold, the gate opens over Attack, stays open for Hold, and closes over Release.
+The smoothing happens **in time**, not in level. That is what Attack, Hold and Release control: when the signal crosses the threshold the gate opens over Attack, stays fully open for Hold after the signal drops, and then closes over Release. The label under the graph shows which of these the gate is in right now: Open, Hold, Release or Closed.
 
 ## Parameters
 

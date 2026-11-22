@@ -34,11 +34,17 @@
 	}
 
 	const gr = useGainReduction(() => id);
-	let gateState = $derived<'open' | 'hold' | 'closed'>(gr.gain > 0.85 ? 'open' : gr.gain > 0.15 ? 'hold' : 'closed');
+	// Same rule as noise_gate.rs: above the threshold the gate is open; below it, a gate still
+	// fully open is in its hold time, one on its way down is releasing.
+	let closedGain = $derived(Math.pow(10, data.rangeDb / 20));
+	let gateState = $derived<'open' | 'hold' | 'release' | 'closed'>(
+		gr.inRawDb >= data.thresholdDb ? 'open' : gr.gain > 0.98 ? 'hold' : gr.gain > closedGain + 0.02 ? 'release' : 'closed'
+	);
 
 	const STATE = {
 		open: { label: 'Open', class: 'text-emerald-500' },
 		hold: { label: 'Hold', class: 'text-amber-500' },
+		release: { label: 'Release', class: 'text-sky-500' },
 		closed: { label: 'Closed', class: 'text-neutral-600' }
 	} as const;
 
@@ -47,7 +53,7 @@
 
 	// noise_gate.rs opens on a hard threshold: at or above it the gain is unity,
 	// below it the signal drops by Range. There is no soft knee in level; the
-	// smoothing is in time (attack, hold, release), drawn in the second graph.
+	// smoothing is in time (attack, hold, release).
 	function outAt(xDb: number): number {
 		return xDb >= data.thresholdDb ? xDb : xDb + data.rangeDb;
 	}
@@ -57,37 +63,6 @@
 		return [`${sx(X_MIN)},${sy(X_MIN + data.rangeDb)}`, `${sx(t)},${sy(t + data.rangeDb)}`, `${sx(t)},${sy(t)}`, `${sx(X_MAX)},${sy(X_MAX)}`].join(' ');
 	}
 
-	// A burst that crosses the threshold, then silence: the same one-pole gain
-	// smoothing as the engine, sampled at STEP ms.
-	const BURST_MS = 120;
-	const LEAD_MS = 20;
-	let spanMs = $derived(Math.max(300, LEAD_MS + BURST_MS + data.holdMs + data.releaseMs * 3));
-
-	function envelope(sx: (v: number) => number, sy: (v: number) => number): string {
-		const steps = 160;
-		const step = spanMs / steps;
-		const closed = Math.pow(10, data.rangeDb / 20);
-		const atk = 1 - Math.exp(-step / Math.max(0.01, data.attackMs));
-		const rel = 1 - Math.exp(-step / Math.max(0.1, data.releaseMs));
-		let g = closed;
-		let hold = 0;
-		const pts: string[] = [];
-		for (let i = 0; i <= steps; i++) {
-			const t = i * step;
-			const open = t >= LEAD_MS && t < LEAD_MS + BURST_MS;
-			let target = closed;
-			if (open) {
-				hold = data.holdMs;
-				target = 1;
-			} else if (hold > 0) {
-				hold -= step;
-				target = 1;
-			}
-			g += (target - g) * (target > g ? atk : rel);
-			pts.push(`${sx(t).toFixed(1)},${sy(20 * Math.log10(Math.max(g, 1e-6))).toFixed(1)}`);
-		}
-		return pts.join(' ');
-	}
 </script>
 
 <Wrapper
@@ -138,35 +113,6 @@
 					</span>
 				{/snippet}
 			</ParamGraph>
-			<div class="mt-2">
-				<ParamGraph
-					x={[0, spanMs]}
-					y={[Math.min(-6, data.rangeDb), 0]}
-					yTicks={[data.rangeDb, 0]}
-					yFormat={(v) => v.toFixed(0)}
-					xLabel="ms"
-					height={60}>
-					{#snippet children({ x, y })}
-						<rect x={x(LEAD_MS)} y="0" width={x(LEAD_MS + BURST_MS) - x(LEAD_MS)} height="200" class="fill-neutral-200" />
-						{#if data.holdMs > 0}
-							<rect
-								x={x(LEAD_MS + BURST_MS)}
-								y="0"
-								width={x(LEAD_MS + BURST_MS + data.holdMs) - x(LEAD_MS + BURST_MS)}
-								height="200"
-								class="fill-amber-500/10" />
-						{/if}
-						<polyline points={envelope(x, y)} fill="none" class="stroke-signal" stroke-width="1.5" stroke-linejoin="round" />
-						<line x1={x(0)} y1={y(-gr.db)} x2={x(spanMs)} y2={y(-gr.db)} class="stroke-emerald-500" stroke-width="1" />
-					{/snippet}
-					{#snippet badge()}
-						<span class="text-neutral-600">signal</span>
-						<span class="text-amber-500">hold</span>
-						<span class="text-emerald-500">now</span>
-						<span>gate gain over time</span>
-					{/snippet}
-				</ParamGraph>
-			</div>
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">

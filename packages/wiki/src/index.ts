@@ -8,6 +8,8 @@ export interface WikiArticle {
 	/** File path inside src/articles, used for the GitHub edit link. */
 	file: string;
 	component: Component;
+	/** The article as plain Markdown, for copying into chats and AI tools. */
+	markdown: string;
 }
 
 export interface WikiNode {
@@ -24,6 +26,26 @@ interface SvxModule {
 }
 
 const modules = import.meta.glob<SvxModule>('./articles/**/*.svx', { eager: true });
+const sources = import.meta.glob<string>('./articles/**/*.svx', { eager: true, query: '?raw', import: 'default' });
+
+/** The site that serves the public wiki. */
+export const WIKI_ORIGIN = 'https://splitwave.app';
+
+export function wikiPageUrl(slug: string): string {
+	return slug ? `${WIKI_ORIGIN}/wiki/${slug}` : `${WIKI_ORIGIN}/wiki`;
+}
+
+// Front matter and scripts go; a live diagram keeps its caption, a video is dropped.
+function toMarkdown(svx: string, title: string, description: string): string {
+	const body = svx
+		.replace(/^---[\s\S]*?\n---\n/, '')
+		.replace(/<script[\s\S]*?<\/script>\n?/g, '')
+		.replace(/<PipelineDiagram[\s\S]*?caption="([^"]*)"[\s\S]*?\/>/g, '> Diagram: $1')
+		.replace(/<WikiVideo[\s\S]*?\/>\n?/g, '')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+	return `# ${title}\n\n${description ? description + '\n\n' : ''}${body}\n`;
+}
 
 function titleFromSlug(slug: string): string {
 	const last = slug.slice(slug.lastIndexOf('/') + 1).replace(/-/g, ' ');
@@ -32,6 +54,12 @@ function titleFromSlug(slug: string): string {
 
 // A folder's index.svx is the page of the folder itself.
 export const articles: WikiArticle[] = Object.entries(modules).map(([path, mod]) => {
+	const article = toArticle(path, mod);
+	article.markdown = toMarkdown(sources[path] ?? '', article.title, article.description);
+	return article;
+});
+
+function toArticle(path: string, mod: SvxModule): WikiArticle {
 	const rel = path.slice('./articles/'.length, -'.svx'.length);
 	const slug = rel === 'index' ? '' : rel.replace(/\/index$/, '');
 	return {
@@ -40,9 +68,10 @@ export const articles: WikiArticle[] = Object.entries(modules).map(([path, mod])
 		description: mod.metadata?.description ?? '',
 		order: mod.metadata?.order ?? 0,
 		file: path.slice('./articles/'.length),
-		component: mod.default
+		component: mod.default,
+		markdown: ''
 	};
-});
+}
 
 function buildTree(): WikiNode[] {
 	const root: WikiNode = { slug: '', title: '', order: 0, children: [] };
@@ -113,3 +142,6 @@ export function neighbours(slug: string): { prev?: WikiNode; next?: WikiNode } {
 }
 
 export { default as WikiVideo } from './wiki-video.svelte';
+export { default as PipelineDiagram, type DiagramNode, type DiagramEdge } from './pipeline-diagram.svelte';
+export { PROSE } from './prose';
+export { default as CopyPage } from './copy-page.svelte';

@@ -1,5 +1,5 @@
 import type { DeviceInfoState, DeviceVolumeState, EnginePort } from './port';
-import type { AudioDevice } from './types';
+import type { AudioApplication, AudioDevice } from './types';
 import type { EmitFn } from './demo_signal';
 
 /** A port with no engine behind it: commands do nothing and events come from `emit`. */
@@ -17,6 +17,12 @@ const INPUTS: AudioDevice[] = [
 const OUTPUTS: AudioDevice[] = [
 	{ id: 'out-1', name: 'Studio Monitors', kind: 'output' },
 	{ id: 'out-2', name: 'Headphones', kind: 'output' }
+];
+
+const APPS: AudioApplication[] = [
+	{ bundleId: 'com.apple.Music', name: 'Music' },
+	{ bundleId: 'com.spotify.client', name: 'Spotify' },
+	{ bundleId: 'com.google.Chrome', name: 'Google Chrome' }
 ];
 
 const done = (): Promise<void> => Promise.resolve();
@@ -103,7 +109,7 @@ export function createDemoPort(options: { running?: boolean; os?: string } = {})
 		},
 		inputDevices: INPUTS,
 		outputDevices: OUTPUTS,
-		audioApplications: [],
+		audioApplications: APPS,
 		refreshInputDevices: done,
 		refreshOutputDevices: done,
 		refreshAudioApplications: done,

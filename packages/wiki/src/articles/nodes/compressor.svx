@@ -1,10 +1,10 @@
 ---
 title: Compressor
 description: How Splitwave's compressor works - threshold, ratio, soft knee, attack, release and makeup gain - with a live transfer curve.
-order: 2
+order: 1
 ---
 
-A compressor turns down the parts of a signal that are louder than a **threshold**, so loud and quiet passages sit closer together. Splitwave's compressor has a soft knee, separate attack and release, makeup gain and a [sidechain](/wiki/effects/sidechain) input.
+A compressor turns down the parts of a signal that are louder than a **threshold**, so loud and quiet passages sit closer together. Splitwave's compressor has a soft knee, separate attack and release, makeup gain and a [sidechain](/wiki/nodes/sidechain) input.
 
 ## Parameters
 
@@ -35,6 +35,6 @@ The **GR** bar under the graph shows the same gain reduction over time.
 
 - **Voice for calls or streaming**: Threshold -24 dB, Ratio 3:1, Attack 10 ms, Release 100 ms, Knee 6 dB.
 - **Gentle bus glue**: Threshold -18 dB, Ratio 2:1, Attack 30 ms, Release 200 ms.
-- **Ducking music under a voice**: see [Sidechain compression and ducking](/wiki/effects/sidechain).
+- **Ducking music under a voice**: see [Sidechain compression and ducking](/wiki/nodes/sidechain).
 
 Presets on the node give ready-made settings for common jobs, and you can save your own.

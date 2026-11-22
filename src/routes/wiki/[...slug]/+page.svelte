@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { Card, Separator, Toc, type TocItem } from '@splitwave/ui';
-	import { editUrl, getNode, neighbours } from '@splitwave/wiki';
+	import { CopyPage, editUrl, getNode, neighbours, PROSE, wikiPageUrl } from '@splitwave/wiki';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import IconEdit from '~icons/fluent/edit-16-filled';
 	import IconPrev from '~icons/fluent/arrow-left-16-filled';
 	import IconNext from '~icons/fluent/arrow-right-16-filled';
+	import IconBrowser from '~icons/fluent/open-16-regular';
 	import Header from '$lib/components/layout/header.svelte';
 
 	let { data } = $props();
@@ -63,8 +64,7 @@
 
 <div bind:this={scroller} class="min-h-0 flex-1 overflow-y-auto" onscroll={updateActive}>
 	<div class="flex w-full gap-10 p-8">
-		<article
-			class="flex min-w-0 flex-1 flex-col text-sm leading-relaxed text-neutral-1100 [&_h2]:mt-8 [&_h2]:scroll-mt-6 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-theme [&_h3]:mt-6 [&_h3]:scroll-mt-6 [&_h3]:font-semibold [&_h3]:text-theme [&_p]:mt-3 [&_strong]:font-semibold [&_strong]:text-theme [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5">
+		<article class="flex min-w-0 flex-1 flex-col text-sm leading-relaxed text-neutral-1100">
 			<nav class="flex flex-wrap items-center gap-1 text-xs text-neutral-900">
 				<a href="/wiki" class="transition-colors duration-150 hover:text-theme">Wiki</a>
 				{#each crumbs as c (c.slug)}
@@ -72,9 +72,23 @@
 					<a href="/wiki/{c.slug}" class="transition-colors duration-150 hover:text-theme">{c.title}</a>
 				{/each}
 			</nav>
-			<h1 class="mt-1 text-2xl font-semibold text-theme">{node.title}</h1>
+			<div class="mt-1 flex flex-wrap items-center justify-between gap-3">
+				<h1 class="text-2xl font-semibold text-theme">{node.title}</h1>
+				<div class="flex items-center gap-2">
+					<button
+						type="button"
+						class="flex h-8 items-center gap-1.5 rounded-lg border border-neutral-300 bg-neutral-100 px-2.5 text-xs text-neutral-1100 hover:bg-neutral-200"
+						onclick={() => openUrl(wikiPageUrl(data.slug)).catch(() => {})}>
+						<IconBrowser class="size-4" />
+						Open in browser
+					</button>
+					{#if node.article}
+						<CopyPage markdown={node.article.markdown} url={wikiPageUrl(data.slug)} open={(href) => openUrl(href).catch(() => {})} />
+					{/if}
+				</div>
+			</div>
 
-			<div bind:this={body}>
+			<div bind:this={body} class={PROSE}>
 				{#if node.article}
 					<node.article.component />
 				{/if}

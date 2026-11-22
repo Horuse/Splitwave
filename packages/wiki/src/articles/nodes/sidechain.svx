@@ -1,8 +1,12 @@
 ---
 title: Sidechain compression and ducking
 description: Duck music under your voice and key a gate from another source with the Sidechain input on Splitwave's Compressor and Noise Gate.
-order: 1
+order: 4
 ---
+
+<script>
+	import PipelineDiagram from '../../pipeline-diagram.svelte';
+</script>
 
 A sidechain lets an effect **listen to one signal while it changes another**. In Splitwave, the Compressor and the Noise Gate each have a **Sidechain** socket on the bottom edge of the node. When something is connected there, the effect's detector hears the sidechain instead of the main input; the main input is still the audio that gets turned down or let through.
 
@@ -10,12 +14,21 @@ A sidechain lets an effect **listen to one signal while it changes another**. In
 
 The classic use: background music that gets quieter while you talk and comes back when you stop.
 
-```
-Microphone ----------------------------> Speaker
-                \
-                 -> Compressor (Sidechain)
-App Audio (music) -> Compressor (main) -> Speaker
-```
+<PipelineDiagram
+	caption="Music from App Audio runs through a Compressor whose Sidechain hears the microphone; both reach the Speaker."
+	height={420}
+	nodes={[
+		{ id: 'music', kind: 'appAudio', x: 0, y: 0, data: { bundleId: 'com.apple.Music' } },
+		{ id: 'comp', kind: 'compressor', x: 380, y: -40, data: { thresholdDb: -35, ratio: 6, attackMs: 10, releaseMs: 300, collapsed: true } },
+		{ id: 'mic', kind: 'microphone', x: 0, y: 260, data: { deviceId: 'in-1' } },
+		{ id: 'out', kind: 'speaker', x: 760, y: 80, data: { deviceId: 'out-1' } }
+	]}
+	edges={[
+		{ from: 'music', to: 'comp' },
+		{ from: 'mic', to: 'comp', sidechain: true, channels: 1 },
+		{ from: 'comp', to: 'out' },
+		{ from: 'mic', to: 'out' }
+	]} />
 
 1. Add **App Audio** for your music player and connect it to a **Compressor**, then to your output.
 2. Connect your **Microphone** to the output as usual, and drag a second cable from it to the Compressor's **Sidechain** socket.
@@ -42,5 +55,5 @@ Set the gate's **Threshold** against the sidechain level, and use **Hold** so it
 
 ## Related
 
-- [Compressor](/wiki/effects/compressor)
-- [Noise Gate](/wiki/effects/noise-gate)
+- [Compressor](/wiki/nodes/compressor)
+- [Noise Gate](/wiki/nodes/noise-gate)

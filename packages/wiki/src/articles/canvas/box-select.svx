@@ -5,9 +5,9 @@ order: 3
 ---
 
 <script>
-	import WikiVideo from '../../../wiki-video.svelte';
-	import mp4 from '../../../media/shift_select.mp4';
-	import webm from '../../../media/shift_select.webm';
+	import WikiVideo from '../../wiki-video.svelte';
+	import mp4 from '../../media/shift_select.mp4';
+	import webm from '../../media/shift_select.webm';
 </script>
 
 Hold **Shift** to switch the canvas into box-select mode, then drag a rectangle over the nodes you want to select.

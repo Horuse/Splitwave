@@ -1,7 +1,7 @@
 ---
 title: Loudness metering (LUFS)
 description: Measure loudness in LUFS with Splitwave's EBU R128 meter and check streams, podcasts and broadcasts against Spotify, Apple, ACX and ATSC targets.
-order: 1
+order: 5
 ---
 
 Peak meters tell you whether audio clips; **loudness meters** tell you how loud it *sounds*. Streaming services and broadcasters normalise by loudness, measured in **LUFS** (LKFS in the US), so hitting their target keeps your audio from being turned down or sounding quiet next to others.
@@ -38,7 +38,7 @@ Integrated loudness passes when it is within 1 LU of the target.
 
 ## Hitting a target
 
-1. Put the Loudness meter last, after your [Limiter](/wiki/effects/limiter).
+1. Put the Loudness meter last, after your [Limiter](/wiki/nodes/limiter).
 2. Play a representative section and watch **I** settle.
 3. Raise or lower the level before the limiter (Gain or the Compressor's makeup) until **I** reaches the target.
 4. Set the limiter's ceiling at or below the profile's true peak.

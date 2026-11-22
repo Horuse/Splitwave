@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { editUrl, getNode, neighbours } from '@splitwave/wiki';
+	import { CopyPage, editUrl, getNode, neighbours, PROSE } from '@splitwave/wiki';
 	import * as Icons from '#lib/components/icons/index.js';
 	import { jsonLdTag } from '#lib/json_ld.js';
 	import { SITE, wikiUrl } from '#lib/site.js';
@@ -44,21 +44,6 @@
 		])
 	);
 
-	// Article typography, applied to the mdsvex output below.
-	const PROSE = [
-		'text-[15px] leading-relaxed text-neutral-1100',
-		'[&_h2]:mt-10 [&_h2]:scroll-mt-24 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-theme',
-		'[&_h3]:mt-7 [&_h3]:scroll-mt-24 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-theme',
-		'[&_p]:mt-3 [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mt-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mt-1',
-		'[&_a]:text-blue-500 [&_a]:underline [&_a]:underline-offset-2',
-		'[&_strong]:font-semibold [&_strong]:text-theme',
-		'[&_code]:rounded [&_code]:bg-neutral-200 [&_code]:px-1 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.88em]',
-		'[&_pre]:mt-4 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-neutral-300 [&_pre]:bg-neutral-100 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0',
-		'[&_blockquote]:mt-4 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-400 [&_blockquote]:pl-4 [&_blockquote]:text-neutral-1000',
-		'[&_table]:mt-4 [&_table]:w-full [&_table]:text-sm [&_th]:border-b [&_th]:border-neutral-300 [&_th]:py-2 [&_th]:pr-4 [&_th]:text-left [&_th]:font-semibold [&_td]:border-b [&_td]:border-neutral-200 [&_td]:py-2 [&_td]:pr-4',
-		'[&_kbd]:rounded [&_kbd]:border [&_kbd]:border-neutral-400 [&_kbd]:bg-neutral-100 [&_kbd]:px-1.5 [&_kbd]:font-sans [&_kbd]:text-xs',
-		'[&_img]:mt-4 [&_img]:rounded-xl [&_img]:border [&_img]:border-neutral-300'
-	];
 </script>
 
 <svelte:head>
@@ -76,13 +61,16 @@
 	</nav>
 
 	<header class="flex flex-col gap-3">
-		<h1 class="text-3xl font-bold tracking-tight">{article.title}</h1>
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<h1 class="text-3xl font-bold tracking-tight">{article.title}</h1>
+			<CopyPage markdown={article.markdown} url={wikiUrl(data.slug)} />
+		</div>
 		{#if article.description}
 			<p class="text-base leading-relaxed text-neutral-1000">{article.description}</p>
 		{/if}
 	</header>
 
-	<div class={PROSE}><Body /></div>
+	<div class={["text-[15px] leading-relaxed text-neutral-1100", PROSE]}><Body /></div>
 
 	<footer class="mt-6 flex flex-col gap-4 border-t border-neutral-200 pt-6">
 		<div class="grid gap-3 sm:grid-cols-2">

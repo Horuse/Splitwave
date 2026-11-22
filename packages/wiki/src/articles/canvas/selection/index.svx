@@ -1,7 +1,0 @@
----
-title: Selection
-description: Selecting, copying and pasting groups of nodes.
-order: 3
----
-
-Ways to select several nodes and work with them at once.

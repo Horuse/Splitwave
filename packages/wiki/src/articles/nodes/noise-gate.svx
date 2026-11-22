@@ -1,7 +1,7 @@
 ---
 title: Noise Gate
 description: Silence background noise between words with Splitwave's noise gate - threshold, range, attack, hold and release explained.
-order: 3
+order: 2
 ---
 
 A noise gate lets audio through while it is loud enough and turns it down when it falls below a **threshold**. It is the simplest way to hide fan hum, keyboard clicks and room noise in the pauses between words.
@@ -31,8 +31,8 @@ The smoothing happens **in time**, not in level. That is what Attack, Hold and R
 
 The state badge under the graph shows **Open**, **Hold** or **Closed**, with the current attenuation.
 
-> **Tip:** put a [Noise Suppressor](/wiki/effects) before the gate. With the constant noise already removed, the gate can use a lower threshold and opens more reliably for quiet speech.
+> **Tip:** put a [Noise Suppressor](/wiki/nodes) before the gate. With the constant noise already removed, the gate can use a lower threshold and opens more reliably for quiet speech.
 
 ## Keyed gating
 
-Connect another signal to the **Sidechain** socket and the gate opens on that signal instead of its own input. See [Sidechain compression and ducking](/wiki/effects/sidechain).
+Connect another signal to the **Sidechain** socket and the gate opens on that signal instead of its own input. See [Sidechain compression and ducking](/wiki/nodes/sidechain).

@@ -12,6 +12,9 @@
 		}
 	},
 	"peerDependencies": {
-		"svelte": "^5"
+		"svelte": "^5",
+		"@splitwave/nodes": "*",
+		"@xyflow/svelte": "*",
+		"@splitwave/ui": "*"
 	}
 }

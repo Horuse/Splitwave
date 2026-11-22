@@ -32,7 +32,7 @@ Every setting lives on the node itself. Hover the **i** next to a parameter to r
 
 Drag from an output on the right of a node to an input on the left of another. Audio cables are solid and carry the channels you picked; control cables are dashed and end in diamond sockets.
 
-Some nodes have extra inputs, such as the **Sidechain** socket on the bottom of the Compressor and the Noise Gate. See [Sidechain compression and ducking](/wiki/effects/sidechain).
+Some nodes have extra inputs, such as the **Sidechain** socket on the bottom of the Compressor and the Noise Gate. See [Sidechain compression and ducking](/wiki/nodes/sidechain).
 
 ## Next steps
 

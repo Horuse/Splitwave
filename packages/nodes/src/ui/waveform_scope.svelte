@@ -3,6 +3,7 @@
 	import { blur } from 'svelte/transition';
 	import { getEnginePort } from '../engine';
 	import { channelColor, channelLabel } from './utils';
+	import { floatCanvas, type FloatingCanvas } from './utils/floating_canvas';
 	import Add from '~icons/fluent/add-24-filled';
 	import Minus from '~icons/fluent/subtract-24-filled';
 	import ChevronDoubleRight from '~icons/fluent/chevron-double-right-20-filled';
@@ -791,13 +792,11 @@
 		const c = ctx;
 		// canvas/ctx are nulled on unmount; a rAF may still land after teardown.
 		if (!c || !canvas) return;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = (window.devicePixelRatio || 1) * (floating?.scale ?? 1);
 		const bw = Math.max(1, Math.round(W * dpr));
 		const bh = Math.max(1, Math.round(H * dpr));
 		if (canvas.width !== bw) canvas.width = bw;
 		if (canvas.height !== bh) canvas.height = bh;
-		if (canvas.style.width !== `${W}px`) canvas.style.width = `${W}px`;
-		if (canvas.style.height !== `${H}px`) canvas.style.height = `${H}px`;
 		c.setTransform(dpr, 0, 0, dpr, 0, 0);
 		c.clearRect(0, 0, W, H);
 
@@ -1311,8 +1310,11 @@
 	let unlistenScope: (() => void) | undefined;
 	let unlistenProgress: (() => void) | undefined;
 
+	let floating: FloatingCanvas | undefined;
+
 	onMount(() => {
 		ctx = canvas.getContext('2d');
+		floating = floatCanvas(canvas, wrap, { onScale: markDirty, holes: () => wrap.querySelectorAll('[data-canvas-hole], [data-canvas-holes] > *'), radius: 10 });
 		unlistenScope = engine.listen<ScopeTick>('audio://scope', (p) => onScope(p));
 		unlistenProgress = engine.listen<RecorderProgress>('audio://recorder_progress', (p) => onProgress(p));
 		ro = new ResizeObserver((entries) => {
@@ -1340,6 +1342,7 @@
 		unlistenProgress?.();
 		if (stopTimer) clearTimeout(stopTimer);
 		ro?.disconnect();
+		floating?.destroy();
 		ctx = null;
 		if (rafId) cancelAnimationFrame(rafId);
 	});
@@ -1349,7 +1352,7 @@
 
 <div
 	bind:this={wrap}
-	class="nodrag nopan nowheel relative w-full overflow-hidden"
+	class="nodrag nopan nowheel relative w-full overflow-hidden rounded-[10px] bg-[#111]"
 	class:cursor-pointer={scrollbarHover && !scrollbarDragging}
 	class:cursor-grabbing={dragging || scrollbarDragging}
 	class:cursor-grab={pan && !dragging && !scrollbarDragging && !scrollbarHover}
@@ -1362,11 +1365,12 @@
 	<canvas bind:this={canvas} style="display:block;width:100%;height:100%" aria-hidden="true"></canvas>
 	{#if fileMode && totalSegs <= 0}
 		<div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-			<span class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">loading…</span>
+			<span data-canvas-hole class="rounded bg-neutral-900/60 px-1.5 py-0.5 font-mono text-[9px] text-white/60">loading…</span>
 		</div>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
+		data-canvas-holes
 		class="nodrag nopan absolute top-1.5 right-1.5 flex items-center gap-1"
 		onmousedown={(e) => e.stopPropagation()}
 		onwheel={(e) => e.stopPropagation()}
@@ -1374,14 +1378,14 @@
 		{#if pan && !following}
 			<button
 				type="button"
-				class="flex h-4.5 items-center justify-center gap-0.5 rounded-md bg-neutral-900/40 px-1 text-white/70 backdrop-blur-[2px] hover:bg-neutral-900/60 hover:text-white"
+				class="flex h-4.5 items-center justify-center gap-0.5 rounded-md bg-neutral-900/40 px-1 text-white/70 hover:bg-neutral-900/60 hover:text-white"
 				onclick={jumpToEnd}
 				transition:blur={{ amount: 1 }}
 				title="Jump to live edge">
 				<ChevronDoubleRight class="size-2.5" />
 			</button>
 		{/if}
-		<div class="flex h-4.5 items-center gap-0 rounded-md bg-neutral-900/40 px-0.5 backdrop-blur-[2px]">
+		<div class="flex h-4.5 items-center gap-0 rounded-md bg-neutral-900/40 px-0.5">
 			<button
 				type="button"
 				class="flex size-3.5 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"

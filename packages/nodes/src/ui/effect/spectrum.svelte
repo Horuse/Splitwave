@@ -5,6 +5,7 @@
 	import type { SpectrumNodeData } from '@splitwave/nodes';
 	import DataBar from '~icons/fluent/data-bar-vertical-16-filled';
 	import { PREVIEW_CTX } from '../utils';
+	import { floatCanvas, type FloatingCanvas } from '../utils/floating_canvas';
 	import { CATEGORY_TEXT } from '../utils';
 	import ChannelHandles from '../_channel_handles.svelte';
 	import { formatFreq } from '@splitwave/nodes';
@@ -104,13 +105,11 @@
 		if (!ctx) ctx = canvas.getContext('2d');
 		if (!ctx) return;
 
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = (window.devicePixelRatio || 1) * (floating?.scale ?? 1);
 		const bw = Math.max(1, Math.round(W * dpr));
 		const bh = Math.max(1, Math.round(Hpx * dpr));
 		if (canvas.width !== bw) canvas.width = bw;
 		if (canvas.height !== bh) canvas.height = bh;
-		if (canvas.style.width !== `${W}px`) canvas.style.width = `${W}px`;
-		if (canvas.style.height !== `${Hpx}px`) canvas.style.height = `${Hpx}px`;
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, W, Hpx);
@@ -141,7 +140,11 @@
 
 	let unlisten: (() => void) | undefined;
 
+	let floating: FloatingCanvas | undefined;
+
 	onMount(() => {
+		// Bars only: the grid and labels stay in the node's SVG, drawn under the lifted canvas.
+		floating = floatCanvas(canvas, plotWrap, { onScale: renderCanvas, radius: 10 });
 		unlisten = engine.listen<SpectrumTick>('audio://spectrum', (p) => {
 			if (p.nodeId !== id) return;
 			updateBars(p.bars, p.sampleRate);
@@ -151,6 +154,7 @@
 
 	onDestroy(() => {
 		unlisten?.();
+		floating?.destroy();
 		if (rafId !== undefined) cancelAnimationFrame(rafId);
 	});
 </script>
@@ -199,9 +203,9 @@
 		{#if !isPreview}
 			<ChannelHandles nodeId={id} side="target" />
 		{/if}
-		<div bind:this={plotWrap} class="nowheel relative min-w-0 flex-1 self-stretch overflow-hidden rounded-[10px]">
+		<div bind:this={plotWrap} class="nowheel relative min-w-0 flex-1 self-stretch overflow-hidden rounded-[10px] bg-[#111]">
 			<!-- Flat canvas for high-perf 60 FPS spectrum bars without DOM nodes -->
-			<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 block h-full w-full bg-[#111]" aria-hidden="true"></canvas>
+			<canvas bind:this={canvas} class="pointer-events-none absolute inset-0 block h-full w-full" aria-hidden="true"></canvas>
 
 			<!-- Crisp vector overlay for scales, axes and grid -->
 			<svg viewBox={`0 0 ${W} ${Hpx}`} style="display:block; width:100%; height:100%;" class="pointer-events-none relative z-10" aria-hidden="true">

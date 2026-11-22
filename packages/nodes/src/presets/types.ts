@@ -22,6 +22,8 @@ interface PresetDataMap {
 	saturator: Omit<SaturatorData, 'bypassed'>;
 	noiseSuppressor: Omit<NoiseSuppressorData, 'bypassed'>;
 	deEsser: Omit<DeEsserData, 'bypassed'>;
+	/** Parameter values by id for one plugin, applied live while it runs. */
+	plugin: { pluginId: string; params: Record<string, number> };
 }
 
 export type PresetKind = keyof PresetDataMap;

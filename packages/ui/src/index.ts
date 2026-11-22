@@ -16,6 +16,7 @@ export * from './card';
 export * from './separator';
 export * from './sidebar';
 export * from './scroll-area';
+export * from './knob';
 export * from './animated-number';
 export * from './chip';
 export * from './section-card';

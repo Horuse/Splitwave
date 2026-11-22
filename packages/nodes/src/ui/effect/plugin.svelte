@@ -1,11 +1,18 @@
 <script lang="ts">
-	import { Button, Combobox, RescanButton, ScrollArea, Slider, Toggle, Tooltip } from '@splitwave/ui';
+	import { untrack } from 'svelte';
+	import { Button, Combobox, Input, Knob, RescanButton, ScrollArea, Slider, Tooltip } from '@splitwave/ui';
+	import { slide } from 'svelte/transition';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '@splitwave/nodes';
 	import Wrapper from '../node.svelte';
 	import Plug from '~icons/fluent/plug-connected-16-filled';
 	import Refresh from '~icons/fluent/arrow-clockwise-16-filled';
 	import WindowOff from '~icons/fluent/window-multiple-off-16-regular';
+	import WindowNew from '~icons/fluent/window-new-16-regular';
+	import PinOn from '~icons/fluent/pin-12-filled';
+	import PinOff from '~icons/fluent/pin-12-regular';
+	import Chevron from '~icons/fluent/chevron-right-12-filled';
+	import PluginPresets from './_plugin_presets.svelte';
 	import { getEnginePort, type PluginParam, type PluginStatus } from '../../engine';
 
 	const engine = getEnginePort();
@@ -60,7 +67,11 @@
 	// while the graph rebuilds. Everything that touches the plugin waits on it:
 	// acting sooner opens the outgoing plugin's editor instead of the new one.
 	let status = $state<PluginStatus>({ path: null, hasEditor: true });
-	const loaded = $derived(!!data.path && status.path === data.path);
+	// A derived, not data.path: every updateNodeData hands the node a new data
+	// object, which would rerun the status probe and flash the loading state.
+	const pluginPath = $derived(data.path);
+	const running = $derived(engine.isRunning);
+	const loaded = $derived(!!pluginPath && status.path === pluginPath);
 	const loading = $derived(!!data.path && engine.isRunning && !loaded);
 
 	const canOpenEditor = $derived(loaded && engine.isRunning);
@@ -68,10 +79,10 @@
 	$effect(() => {
 		// Reading the path first both tracks it and clears the previous plugin's
 		// verdict, so a stale answer never carries over to the new selection.
-		const path = data.path;
+		const path = pluginPath;
 		status = { path: null, hasEditor: true };
 		editorError = null;
-		if (!path || !engine.isRunning) return;
+		if (!path || !running) return;
 		// A single probe would race the rebuild and read the outgoing plugin's
 		// answer, which then never gets corrected; polling settles on the new
 		// instance instead, and stops once it has.
@@ -85,7 +96,8 @@
 				})
 				.catch(() => {});
 		timer = setInterval(probe, 400);
-		probe();
+		// Untracked: the probe reads engine state, which must not rerun this effect.
+		untrack(probe);
 		return () => clearInterval(timer);
 	});
 
@@ -110,12 +122,36 @@
 		engine.audio.updateEffect(id, { pluginParams: { [p.id]: v } }).catch(() => {});
 	}
 
+	function applyValues(values: Record<string, number>) {
+		for (const p of params) if (values[p.id] !== undefined) p.value = values[p.id];
+		engine.audio.updateEffect(id, { pluginParams: values }).catch(() => {});
+	}
+
+	const pinnedIds = $derived(data.pinned ?? []);
+	const pinned = $derived(pinnedIds.map((pid) => params.find((p) => p.id === pid)).filter((p): p is PluginParam => !!p));
+
+	function togglePin(pid: number) {
+		const next = pinnedIds.includes(pid) ? pinnedIds.filter((x) => x !== pid) : [...pinnedIds, pid];
+		flow.updateNodeData(id, { pinned: next });
+	}
+
+	let query = $state('');
+	const filtered = $derived(query.trim() ? params.filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase())) : params);
+
+	function stepOf(p: PluginParam): number {
+		return p.step || (p.max > p.min ? (p.max - p.min) / 100 : 0.01);
+	}
+
+	function formatValue(v: number): string {
+		return Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2);
+	}
+
 	$effect(() => {
-		if (!data.showParams || !loaded || !engine.isRunning) {
+		if (!loaded || !running) {
 			params = [];
 			return;
 		}
-		loadParams();
+		untrack(loadParams);
 		const timer = setInterval(loadParams, 500);
 		return () => clearInterval(timer);
 	});
@@ -188,7 +224,7 @@
 	nodeId={id}
 	bypassed={data.bypassed}
 	onBypass={toggleBypass}>
-	<div class="flex w-56 flex-col gap-2">
+	<div class="flex w-64 flex-col gap-2">
 		{#if noPlugins}
 			<div class="flex items-center justify-between gap-2 rounded-lg bg-(--field-bg) py-1 pr-1 pl-2.5">
 				<span class="text-xs whitespace-nowrap text-neutral-900">No plugins installed</span>
@@ -198,69 +234,126 @@
 				</Button>
 			</div>
 		{:else}
-			<Combobox
-				class="nodrag nopan"
-				{options}
-				value={currentUid}
-				placeholder={data.name || (engine.plugins.scanning ? 'Scanning…' : 'Select a plugin')}
-				emptyHint={engine.plugins.scanning ? 'Scanning…' : 'No plugins found'}
-				onOpen={() => engine.plugins.refresh()}
-				onChange={select}>
-				{#snippet footer()}
-					<RescanButton onRescan={() => engine.plugins.rescan()} />
-				{/snippet}
-			</Combobox>
+			<div class="flex items-center gap-1.5">
+				<div class="min-w-0 flex-1">
+					<Combobox
+						class="nodrag nopan"
+						{options}
+						value={currentUid}
+						placeholder={data.name || (engine.plugins.scanning ? 'Scanning...' : 'Choose a plugin')}
+						emptyHint={engine.plugins.scanning ? 'Scanning...' : 'No plugins found'}
+						onOpen={() => engine.plugins.refresh()}
+						onChange={select}>
+						{#snippet footer()}
+							<RescanButton onRescan={() => engine.plugins.rescan()} />
+						{/snippet}
+					</Combobox>
+				</div>
+				{#if data.path}
+					{#if canOpenEditor && status.hasEditor}
+						<Tooltip text={editorOpen ? 'Close the plugin window' : 'Open the plugin window'}>
+							<Button class="nodrag nopan" icon aria-label="Plugin window" tone={editorOpen ? 'accent' : 'neutral'} onclick={toggleEditor}>
+								<WindowNew class="size-4" />
+							</Button>
+						</Tooltip>
+					{:else}
+						<Tooltip text={canOpenEditor ? 'This plugin has no window of its own' : 'Run the pipeline first: the plugin loads only while it runs.'}>
+							<Button class="nodrag nopan pointer-events-none" icon disabled aria-label="Plugin window">
+								{#if canOpenEditor}<WindowOff class="size-4" />{:else}<WindowNew class="size-4" />{/if}
+							</Button>
+						</Tooltip>
+					{/if}
+				{/if}
+			</div>
 		{/if}
+
 		{#if missing}
-			<p class="text-xs text-rose-400">Not installed, or failed to load</p>
+			<p class="text-xs text-red-500">Not installed, or failed to load</p>
 		{/if}
 		{#if engine.plugins.error}
-			<p class="text-xs text-rose-400">Plugin scan failed: {engine.plugins.error}</p>
+			<p class="text-xs text-red-500">Plugin scan failed: {engine.plugins.error}</p>
 		{/if}
-		{#if data.path}
+		{#if editorError}
+			<p class="text-xs text-red-500">{editorError}</p>
+		{/if}
+
+		{#if data.path && !missing}
 			{#if loading}
-				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
-					<Refresh class="h-4 w-4 shrink-0 animate-spin" />
+				<p class="flex items-center gap-1.5 text-xs text-neutral-900">
+					<Refresh class="size-3.5 shrink-0 animate-spin" />
 					Loading plugin...
 				</p>
-			{:else if canOpenEditor && !status.hasEditor}
-				<p class="flex items-center gap-1.5 text-sm text-neutral-900">
-					<WindowOff class="h-4 w-4 shrink-0" />
-					No editor
-				</p>
-				{#if editorError}
-					<p class="text-xs text-rose-400">{editorError}</p>
+			{:else if !engine.isRunning}
+				<p class="rounded-lg bg-(--field-bg) px-2.5 py-2 text-[11px] text-neutral-900">Run the pipeline to see and change the plugin's parameters.</p>
+			{:else if params.length}
+				<PluginPresets pluginId={data.pluginId} {params} onApply={applyValues} />
+
+				{#if pinned.length}
+					<div class="grid grid-cols-4 gap-x-1 gap-y-2 rounded-lg bg-(--field-bg) px-1 py-2 text-violet-500">
+						{#each pinned as p (p.id)}
+							<Knob
+								class="nodrag nopan"
+								label={p.name}
+								value={p.value}
+								min={p.min}
+								max={p.max}
+								step={p.step}
+								defaultValue={p.default}
+								format={formatValue}
+								onChange={(v) => setParam(p, v)} />
+						{/each}
+					</div>
+				{:else}
+					<p class="rounded-lg border border-dashed border-theme/10 px-2.5 py-2 text-[11px] text-neutral-800">
+						Pin parameters from the list below to get knobs here.
+					</p>
 				{/if}
-			{:else if canOpenEditor}
-				<Button class="nodrag nopan w-full" onclick={toggleEditor}>{editorOpen ? 'Close editor' : 'Open editor'}</Button>
-			{:else}
-				<Tooltip text="Run the pipeline first: the plugin loads only while it runs.">
-					<Button class="nodrag nopan pointer-events-none w-full" disabled>Open editor</Button>
-				</Tooltip>
-			{/if}
-			<p class="truncate font-mono text-[10px] text-neutral-800" title={data.path}>
-				{data.pluginId}
-			</p>
-			<Toggle
-				class="nodrag nopan"
-				size="sm"
-				label="Show parameters"
-				checked={!!data.showParams}
-				onChange={(v) => flow.updateNodeData(id, { showParams: v })} />
-			{#if data.showParams && params.length}
-				<ScrollArea class="nowheel nodrag" viewportClass="flex max-h-64 flex-col gap-1.5 pr-3">
-					{#each params as p (p.id)}
-						<Slider
-							class="nodrag nopan nowheel"
-							label={p.name}
-							value={p.value}
-							min={p.min}
-							max={p.max}
-							step={p.step || (p.max > p.min ? (p.max - p.min) / 100 : 0.01)}
-							defaultValue={p.default}
-							onChange={(v) => setParam(p, v)} />
-					{/each}
-				</ScrollArea>
+
+				<div class="rounded-lg bg-(--field-bg) p-2.5">
+					<button
+						type="button"
+						class="nodrag nopan flex w-full items-center gap-1 rounded-md py-0.5 text-[11px] text-neutral-900 hover:text-neutral-1100"
+						onclick={() => flow.updateNodeData(id, { showParams: !data.showParams })}>
+						<Chevron class={['size-3 transition-transform', data.showParams && 'rotate-90']} />
+						All parameters
+						<span class="text-neutral-700 tabular-nums">{params.length}</span>
+					</button>
+
+					{#if data.showParams}
+						<div class="flex flex-col gap-1.5 pt-1.5" transition:slide={{ duration: 180 }}>
+							<Input class="nodrag nopan" size="sm" placeholder="Search parameters" bind:value={query} />
+							<ScrollArea class="nowheel nodrag" viewportClass="flex max-h-64 flex-col gap-1.5 pr-2">
+								{#each filtered as p (p.id)}
+									{@const isPinned = pinnedIds.includes(p.id)}
+									<div class="flex items-end gap-1">
+										<Slider
+											class="nodrag nopan nowheel min-w-0 flex-1"
+											label={p.name}
+											value={p.value}
+											min={p.min}
+											max={p.max}
+											step={stepOf(p)}
+											defaultValue={p.default}
+											onChange={(v) => setParam(p, v)} />
+										<Button
+											class="nodrag nopan"
+											size="xs"
+											icon
+											variant="ghost"
+											tone={isPinned ? 'accent' : 'neutral'}
+											aria-label={isPinned ? 'Unpin' : 'Pin as knob'}
+											title={isPinned ? 'Unpin' : 'Pin as knob'}
+											onclick={() => togglePin(p.id)}>
+											{#if isPinned}<PinOn class="size-3" />{:else}<PinOff class="size-3" />{/if}
+										</Button>
+									</div>
+								{:else}
+									<p class="py-2 text-center text-[11px] text-neutral-800">Nothing matches "{query}"</p>
+								{/each}
+							</ScrollArea>
+						</div>
+					{/if}
+				</div>
 			{/if}
 		{/if}
 	</div>

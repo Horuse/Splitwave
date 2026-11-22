@@ -43,6 +43,7 @@
 <Story name="Running" args={{ running: true }} {template} />
 <Story name="Running with params" args={{ running: true, showParams: true }} {template} />
 <Story name="Many params" args={{ running: true, showParams: true, pluginParams: 10 }} {template} />
+<Story name="Pinned knobs" args={{ running: true, pinned: [0, 1, 2, 3, 4] }} {template} />
 <Story name="No editor" args={{ running: true, pluginEditor: false }} {template} />
 <Story name="AU plugin" args={{ plugin: 3, running: true }} {template} />
 <Story name="No plugins installed" args={{ plugin: 0, plugins: 0 }} {template} />

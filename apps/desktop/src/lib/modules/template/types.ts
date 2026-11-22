@@ -14,7 +14,8 @@ export interface TemplateEdge {
 	/** 1-based channel, as `channelHandle` takes it. */
 	fromCh?: number;
 	toCh?: number;
-	/** Named target (a compressor sidechain) instead of a channel. */
+	/** Named sockets (a compressor sidechain, a control cable) instead of a channel. */
+	fromHandle?: string;
 	toHandle?: string;
 }
 

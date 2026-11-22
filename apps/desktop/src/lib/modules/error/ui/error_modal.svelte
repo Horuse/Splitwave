@@ -5,6 +5,10 @@
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { formatAppInfo, getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
 	import CopyButton from '$lib/components/copy_button.svelte';
+	import Warning from '~icons/fluent/warning-16-filled';
+	import ErrorCircle from '~icons/fluent/error-circle-16-filled';
+	import ShieldError from '~icons/fluent/shield-error-16-filled';
+	import Chevron from '~icons/fluent/chevron-right-12-filled';
 
 	const REPO = 'Horuse/Splitwave';
 	// Longer issue URLs are cut off or rejected, so the GitHub link carries only
@@ -105,63 +109,63 @@
 	}
 </script>
 
+{#snippet trace(label: string, text: string)}
+	<details class="group border-t border-theme/5 first:border-t-0">
+		<summary class="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[11px] text-neutral-900 hover:text-neutral-1100">
+			<Chevron class="size-3 group-open:rotate-90" />
+			{label}
+		</summary>
+		<pre class="max-h-60 overflow-auto px-3 pb-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{text}</pre>
+	</details>
+{/snippet}
+
 {#if current}
+	{@const safe = current.previousRun || audioStore.safeMode}
 	<Modal
 		title={current.previousRun ? 'Splitwave crashed last time' : 'Something went wrong'}
-		titleClass={current.previousRun ? 'text-sm font-semibold text-amber-500' : 'text-sm font-semibold text-red-500'}
+		description={current.previousRun ? 'The app closed unexpectedly during your previous session.' : 'Reporting this helps us fix it.'}
 		onClose={dismiss}>
-		{#snippet badge()}
-			<div class="flex items-center gap-1.5">
-				<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
-					{sourceLabel(current.source)}
-				</span>
-				{#if current.previousRun || audioStore.safeMode}
-					<span class="rounded-md bg-amber-500/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-						SAFE MODE
-					</span>
-				{/if}
+		{#snippet icon()}
+			<div
+				class={[
+					'flex size-9 shrink-0 items-center justify-center rounded-xl',
+					current.previousRun ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-red-500/15 text-red-500'
+				]}>
+				{#if current.previousRun}<Warning class="size-4.5" />{:else}<ErrorCircle class="size-4.5" />{/if}
 			</div>
+		{/snippet}
+		{#snippet badge()}
+			<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">{sourceLabel(current.source)}</span>
 		{/snippet}
 
 		<div class="flex flex-col gap-3 px-5 py-4">
-			{#if current.previousRun || audioStore.safeMode}
-				<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
-					<div class="font-semibold">Safe Mode is active</div>
-					<div class="mt-0.5 text-[11px] opacity-90">
-						Automatic audio pipeline startup was skipped to prevent a crash loop. You can safely inspect or edit your pipelines and start them
-						manually when ready.
+			{#if safe}
+				<div class="flex gap-2.5 rounded-lg bg-amber-500/10 px-3 py-2.5 text-amber-600 dark:text-amber-400">
+					<ShieldError class="mt-px size-4 shrink-0" />
+					<div class="flex flex-col gap-0.5">
+						<span class="text-xs font-semibold">Safe Mode</span>
+						<span class="text-[11px] opacity-90">
+							Pipelines did not start on launch, to avoid a crash loop. Start them by hand when you are ready.
+						</span>
 					</div>
 				</div>
 			{/if}
-			<p class="text-xs text-neutral-900">
-				{#if current.previousRun}
-					The app closed unexpectedly during your previous session. Reporting this helps us fix it.
-				{:else}
-					Please report this so we can fix it.
+			<div class="overflow-hidden rounded-lg bg-(--field-bg,var(--lv-1))">
+				<pre
+					class="max-h-40 overflow-auto px-3 py-2.5 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1100">{current.message}</pre>
+				{#if current.stack || current.logs}
+					<div class="border-t border-theme/5">
+						{#if current.stack}{@render trace('Stack trace', current.stack)}{/if}
+						{#if current.logs}{@render trace('Session log', current.logs)}{/if}
+					</div>
 				{/if}
-			</p>
-			<pre
-				class="max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1100">{current.message}</pre>
-			{#if current.stack}
-				<details class="group">
-					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Stack trace</summary>
-					<pre
-						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.stack}</pre>
-				</details>
-			{/if}
-			{#if current.logs}
-				<details class="group">
-					<summary class="cursor-pointer text-[11px] text-neutral-900 transition-colors hover:text-neutral-1100">Session log</summary>
-					<pre
-						class="mt-2 max-h-60 overflow-auto rounded-lg border border-neutral-300 bg-neutral-200 p-3 font-mono text-[10px] leading-relaxed break-words whitespace-pre-wrap text-neutral-1000">{current.logs}</pre>
-				</details>
-			{/if}
+			</div>
 		</div>
 
 		{#snippet footer()}
-			<Button onclick={dismiss}>Dismiss</Button>
+			<Button variant="ghost" class="mr-auto" onclick={dismiss}>Dismiss</Button>
 			<CopyButton text={() => buildDetails()} label="Copy details" />
-			<Button tone="danger" type="button" onclick={reportOnGitHub}>Report on GitHub</Button>
+			<Button tone="danger" variant="solid" type="button" onclick={reportOnGitHub}>Report on GitHub</Button>
 		{/snippet}
 	</Modal>
 {/if}

@@ -15,6 +15,8 @@
 		size?: ModalSize;
 		canClose?: boolean;
 		onClose?: () => void;
+		/** Leading mark beside the title, such as a tinted icon tile. */
+		icon?: Snippet;
 		badge?: Snippet;
 		footer?: Snippet;
 		children?: Snippet;
@@ -28,6 +30,7 @@
 		size = 'md',
 		canClose = true,
 		onClose,
+		icon,
 		badge,
 		footer,
 		children,
@@ -64,11 +67,14 @@
 		role="presentation">
 		{#if title || badge || canClose}
 			<header class="flex items-start justify-between gap-3 px-5 pt-4">
-				<div class="flex min-w-0 flex-col gap-0.5">
-					<h2 class={titleClass}>{title}</h2>
-					{#if description}
-						<p class="text-xs text-neutral-900">{description}</p>
-					{/if}
+				<div class="flex min-w-0 items-center gap-3">
+					{#if icon}{@render icon()}{/if}
+					<div class="flex min-w-0 flex-col gap-0.5">
+						<h2 class={titleClass}>{title}</h2>
+						{#if description}
+							<p class="text-xs text-neutral-900">{description}</p>
+						{/if}
+					</div>
 				</div>
 				<div class="flex shrink-0 items-center gap-2">
 					{#if badge}{@render badge()}{/if}

@@ -21,7 +21,7 @@ export function instantiate(template: Template, name: string): Pipeline {
 	const edges: PipelineEdge[] = template.edges.map((e) => {
 		const source = ids.get(e.from)!;
 		const target = ids.get(e.to)!;
-		const sourceHandle = channelHandle(e.fromCh ?? 1);
+		const sourceHandle = e.fromHandle ?? channelHandle(e.fromCh ?? 1);
 		const targetHandle = e.toHandle ?? channelHandle(e.toCh ?? 1);
 		return {
 			id: `${source}-${sourceHandle}-${target}-${targetHandle}`,

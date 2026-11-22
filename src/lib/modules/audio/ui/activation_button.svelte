@@ -6,7 +6,25 @@
 	import Play from '~icons/fluent/play-24-filled';
 	import Stop from '~icons/fluent/stop-24-filled';
 
-	let { pipelineId, icon = false, size, class: className }: { pipelineId: string; icon?: boolean; size?: 'md' | 'lg' | 'xl'; class?: ClassValue } = $props();
+	let {
+		pipelineId,
+		icon = false,
+		size,
+		opaque = false,
+		class: className
+	}: {
+		pipelineId: string;
+		icon?: boolean;
+		size?: 'md' | 'lg' | 'xl';
+		/** Same tint mixed into the background, for a button that sits over the canvas. */
+		opaque?: boolean;
+		class?: ClassValue;
+	} = $props();
+
+	const OPAQUE = {
+		stop: 'bg-[color-mix(in_oklab,var(--color-red-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-red-500)_50%,var(--color-background))]',
+		run: 'bg-[color-mix(in_oklab,var(--color-orange-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-orange-500)_50%,var(--color-background))]'
+	};
 
 	let label = $derived(audioStore.isRunning ? 'Stop' : 'Run');
 
@@ -37,7 +55,7 @@
 <Button
 	{icon}
 	{size}
-	class={className}
+	class={[opaque && (audioStore.isRunning ? OPAQUE.stop : OPAQUE.run), className]}
 	tone={audioStore.isRunning ? 'danger' : 'brand'}
 	loading={busy}
 	loadingPosition={icon ? undefined : 'start'}

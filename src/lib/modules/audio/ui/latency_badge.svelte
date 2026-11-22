@@ -26,7 +26,7 @@
 </script>
 
 {#if report && path}
-	<Tooltip placement="top-end">
+	<Tooltip placement="bottom-end">
 		<span
 			class={['flex h-7 items-center gap-1.5 border px-2.5', strained ? 'border-amber-500/60 bg-amber-500/10' : 'border-(--lv-3) bg-(--lv-1)']}
 			style="border-radius: var(--r, 10px)"

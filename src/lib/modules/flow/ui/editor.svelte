@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Menu, MenuItem as OverlayMenuItem } from '@splitwave/ui';
-	import { Background, Controls, SvelteFlow, useSvelteFlow, type Edge as XyEdge, type Node as XyNode } from '@xyflow/svelte';
+	import toast from 'svelte-french-toast';
+	import { Background, SvelteFlow, useSvelteFlow, type Edge as XyEdge, type Node as XyNode } from '@xyflow/svelte';
 	import { createId } from '@paralleldrive/cuid2';
 	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import { onDestroy, onMount, untrack } from 'svelte';
@@ -17,6 +18,8 @@
 	import ConnectionLine from './_connection_line.svelte';
 	import EdgeRectSelect from './_edge_rect_select.svelte';
 	import OrphanEdges from './_orphan_edges.svelte';
+	import ZoomControls from './_zoom_controls.svelte';
+	import RunStatus from './_run_status.svelte';
 	const edgeTypes = { channel: ChannelEdge };
 	import Backspace from '~icons/fluent/backspace-24-filled';
 	import Copy from '~icons/fluent/copy-16-filled';
@@ -38,6 +41,7 @@
 	let { pipeline }: { pipeline: Pipeline } = $props();
 
 	const flow = useSvelteFlow();
+	let canvasEl = $state<HTMLDivElement>();
 
 	function sanitizeEdges(xyNodes: XyNode[], xyEdges: XyEdge[]): XyEdge[] {
 		const ids = new Set(xyNodes.map((n) => n.id));
@@ -136,10 +140,20 @@
 		// A new recording pins the rate the pipeline runs at, not a fixed one.
 		if (kind === 'fileRecording') Object.assign(data, { sampleRate: appSettings.pipelineSampleRate });
 		addNodeWithData(kind, data, position);
+		if (!position) toast.success(`${registry[kind].label} added`);
+	}
+
+	// Without a drop point the node lands in the middle of what is on screen.
+	function viewCenter(kind: NodeKind): { x: number; y: number } {
+		const rect = canvasEl?.getBoundingClientRect();
+		if (!rect) return { x: 100 + nodes.length * 40, y: 100 + nodes.length * 40 };
+		const center = flow.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+		const size = registry[kind].defaultSize ?? { width: 240, height: 120 };
+		return { x: center.x - size.width / 2, y: center.y - size.height / 2 };
 	}
 
 	function addNodeWithData(kind: NodeKind, data: Record<string, unknown>, position?: { x: number; y: number }) {
-		const fallback = { x: 100 + nodes.length * 40, y: 100 + nodes.length * 40 };
+		const fallback = viewCenter(kind);
 		const size = registry[kind].defaultSize;
 		nodes = [
 			...nodes,
@@ -682,7 +696,7 @@
 <svelte:window onmousedown={closeContextMenu} />
 
 <div class="flex h-full w-full">
-	<div class="relative flex-1" role="region" aria-label="Flow editor" ondragover={onDragOver} ondrop={onDrop}>
+	<div bind:this={canvasEl} class="relative flex-1" role="region" aria-label="Flow editor" ondragover={onDragOver} ondrop={onDrop}>
 		<SvelteFlow
 			proOptions={{ hideAttribution: true }}
 			class="!bg-background"
@@ -704,7 +718,8 @@
 			snapGrid={appSettings.snapToGrid ? [appSettings.gridSize, appSettings.gridSize] : undefined}
 			fitView>
 			<Background patternColor="#91919a" />
-			<Controls />
+			<ZoomControls />
+			<RunStatus pipelineId={pipeline.id} />
 			<EdgeRectSelect />
 			<OrphanEdges onDelete={deleteEdge} />
 		</SvelteFlow>

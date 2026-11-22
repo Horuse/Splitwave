@@ -72,7 +72,7 @@
 
 <Toaster
 	position="bottom-end"
-	containerClassName="mr-72"
+	containerClassName="mr-72 mb-14"
 	toastOptions={{
 		duration: 5000,
 		className: 'bg-neutral-200! rounded-xl! text-neutral-900! px-3!'

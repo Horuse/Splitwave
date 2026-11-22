@@ -155,7 +155,7 @@
 	});
 </script>
 
-<div data-layer="popover" class={['flex flex-col rounded-[22px] border border-theme/5 bg-neutral-200', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
+<div data-layer="node" class={['flex flex-col rounded-[22px] border border-theme/5 bg-neutral-200', isPreview ? 'h-40 w-80' : 'h-full w-full']}>
 	{#if !isPreview}
 		<NodeResizer minWidth={200} maxWidth={1400} minHeight={110} maxHeight={1400} />
 	{/if}

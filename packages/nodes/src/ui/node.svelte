@@ -114,9 +114,9 @@
 
 <!-- Concentric corners: 6px controls + 16px padding = 22px. The padding also sets where channel sockets sit (edgeOffset). -->
 <div
-	data-layer="popover"
+	data-layer="node"
 	class={[
-		'node-shell min-w-32 rounded-[22px] border border-theme/5 bg-neutral-200 p-4 [--field-bg:var(--color-neutral-100)] [--field-border:var(--color-neutral-300)]',
+		'node-shell min-w-32 rounded-[22px] border border-theme/5 bg-neutral-200 p-4',
 		!wide && 'max-w-80'
 	]}>
 	<div class="relative mb-2 flex items-center justify-between gap-2">

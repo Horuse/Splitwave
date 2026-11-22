@@ -42,7 +42,7 @@
 </script>
 
 <div
-	data-layer="popover"
+	data-layer="node"
 	class={['flex min-w-64 flex-col rounded-[22px] border border-theme/5 bg-neutral-200', isPreview ? 'h-40 w-80' : 'h-full w-full']}
 	style:min-height={`${nodeMinHeight}px`}>
 	{#if !isPreview}

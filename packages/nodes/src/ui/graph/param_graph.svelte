@@ -63,7 +63,7 @@
 	let plotH = $derived(height - PAD_B);
 </script>
 
-<div class="w-full overflow-hidden rounded-md border border-theme/5 bg-neutral-100 select-none">
+<div class="w-full overflow-hidden rounded-md border border-theme/5 bg-(--field-bg,var(--lv-1)) select-none">
 	<svg viewBox="0 0 {width} {height}" class="block w-full" aria-hidden="true">
 		<defs>
 			<clipPath id="plot-{xr[0]}-{yr[0]}-{width}-{height}">

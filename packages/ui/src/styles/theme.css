@@ -85,19 +85,42 @@
 	--lv-4: var(--color-neutral-600);
 	--lv-5: var(--color-neutral-700);
 }
-/* A menu opened inside a node takes the node's recessed field shade, so it reads as part of the select, not a lighter sheet. */
-.dark [data-layer='popover'] [data-layer='popover'] {
+:root:not(.dark) {
+	--color-foreground: var(--color-neutral-50);
+	--color-popover: var(--color-background);
+}
+
+/* A node sits one step above the page in both themes, so its controls start one step further out.
+   Its fields read as darker than the node: recessed toward the background in dark, one step out in light. */
+[data-layer='node'] {
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-500);
+	--lv-4: var(--color-neutral-600);
+	--lv-5: var(--color-neutral-700);
+	--field-bg: var(--color-neutral-300);
+	--field-border: var(--color-neutral-400);
+}
+.dark [data-layer='node'] {
+	--field-bg: var(--color-neutral-100);
+	--field-border: var(--color-neutral-300);
+}
+/* A menu opened inside a node takes the field's shade, so it reads as part of the select. */
+[data-layer='node'] [data-layer='popover'] {
+	--color-popover: var(--color-neutral-300);
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}
+.dark [data-layer='node'] [data-layer='popover'] {
 	--color-popover: var(--color-neutral-100);
 	--lv-1: var(--color-neutral-200);
 	--lv-2: var(--color-neutral-300);
 	--lv-3: var(--color-neutral-400);
 	--lv-4: var(--color-neutral-500);
 	--lv-5: var(--color-neutral-600);
-}
-
-:root:not(.dark) {
-	--color-foreground: var(--color-neutral-50);
-	--color-popover: var(--color-background);
 }
 
 /* xyflow paints its own canvas colour (#141414 under .dark); the canvas follows the theme instead. */

@@ -90,7 +90,7 @@
 			format={formatTime}
 			defaultValue={1000}
 			onChange={(ms) => set({ ms })} />
-		<MeterBar class="h-1.5 rounded-full" trackClass="bg-(--lv-1)" pct={progress * 100} fillClass={high ? 'bg-signal' : 'bg-neutral-600'} />
+		<MeterBar class="h-1.5 rounded-full" trackClass="bg-(--field-bg,var(--lv-1))" pct={progress * 100} fillClass={high ? 'bg-signal' : 'bg-neutral-600'} />
 		<div class="flex items-center justify-between">
 			<ControlPort id={START_HANDLE} side="target" label="start" high={running} />
 			<ControlPort id={CONTROL_OUT} side="source" label="out" {high} />

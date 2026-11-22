@@ -58,7 +58,7 @@
 				title={opt.subtitle || opt.label}
 				class={[
 					'relative z-10 flex flex-col items-center justify-center rounded-sm px-1 py-1.5 leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-30',
-					value === opt.value ? 'text-white' : 'text-neutral-900 not-disabled:hover:bg-neutral-200/60'
+					value === opt.value ? 'text-white' : 'text-neutral-900 not-disabled:hover:bg-(--lv-2)/60'
 				]}>
 				<span class="font-mono text-[9px] tabular-nums">{opt.label}</span>
 				{#if opt.subtitle}

@@ -24,7 +24,7 @@
 {#if horizontal}
 	<div class="flex w-full items-center gap-1.5 select-none">
 		<span class="text-[9px] leading-none text-neutral-600">GR</span>
-		<div class="relative h-1.5 flex-1 overflow-hidden rounded-full bg-(--lv-1)">
+		<div class="relative h-1.5 flex-1 overflow-hidden rounded-full bg-(--field-bg,var(--lv-1))">
 			<div class={['absolute inset-y-0 left-0 rounded-full', fill(gr.db)]} style="width: {pct(gr.db)}%;"></div>
 			{#each ticks as t (t)}
 				<div class="absolute inset-y-0 w-px bg-neutral-100" style="left: {pct(t)}%;"></div>
@@ -35,7 +35,7 @@
 {:else}
 	<div class="flex flex-col items-center gap-1 select-none">
 		<span class="text-[9px] leading-none text-neutral-600">GR</span>
-		<div class="relative h-24 w-1.5 overflow-hidden rounded-full bg-(--lv-1)">
+		<div class="relative h-24 w-1.5 overflow-hidden rounded-full bg-(--field-bg,var(--lv-1))">
 			<div class={['absolute inset-x-0 top-0 rounded-full', fill(gr.db)]} style="height: {pct(gr.db)}%;"></div>
 			{#each ticks as t (t)}
 				<div class="absolute inset-x-0 h-px bg-neutral-100" style="top: {pct(t)}%;"></div>

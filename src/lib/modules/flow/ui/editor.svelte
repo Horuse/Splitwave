@@ -43,6 +43,9 @@
 	const flow = useSvelteFlow();
 	let canvasEl = $state<HTMLDivElement>();
 
+	// Box selection mode, toggled by the button by the zoom controls; Shift still works as a hold.
+	let selectLocked = $state(false);
+
 	function sanitizeEdges(xyNodes: XyNode[], xyEdges: XyEdge[]): XyEdge[] {
 		const ids = new Set(xyNodes.map((n) => n.id));
 		return xyEdges.filter((e) => ids.has(e.source) && ids.has(e.target) && canConnect(e.sourceHandle, e.targetHandle));
@@ -716,13 +719,22 @@
 			onselectionstart={closeContextMenu}
 			onmovestart={closeContextMenu}
 			snapGrid={appSettings.snapToGrid ? [appSettings.gridSize, appSettings.gridSize] : undefined}
+			selectionOnDrag={selectLocked}
+			panOnDrag={!selectLocked}
 			fitView>
 			<Background patternColor="#91919a" />
-			<ZoomControls />
+			<ZoomControls bind:selecting={selectLocked} />
 			<RunStatus pipelineId={pipeline.id} />
 			<EdgeRectSelect />
 			<OrphanEdges onDelete={deleteEdge} />
 		</SvelteFlow>
+
+		{#if selectLocked}
+			<div
+				class="pointer-events-none absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-400 bg-neutral-100 px-3 py-1.5 text-[11px] text-neutral-1000 shadow-sm">
+				Selection mode: drag to select nodes and cables. Click the select button to leave it
+			</div>
+		{/if}
 
 		{#if channelSelection.channels.length > 0}
 			<div

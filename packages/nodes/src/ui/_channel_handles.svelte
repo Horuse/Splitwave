@@ -23,8 +23,8 @@
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
 	const id = untrack(() => nodeId);
-	const incoming = useNodeConnections({ id, handleType: 'target' });
-	const outgoing = useNodeConnections({ id, handleType: 'source' });
+	const incoming = useNodeConnections(() => ({ id, handleType: 'target' }));
+	const outgoing = useNodeConnections(() => ({ id, handleType: 'source' }));
 
 	let isSource = $derived(side === 'source');
 	let grows = $derived(selfGrowing ? isSource : !isSource);

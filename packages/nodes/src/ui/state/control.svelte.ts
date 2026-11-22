@@ -23,7 +23,7 @@ export const controlSignals = {
 
 /** Any cable wired into `handle` that is high; null while nothing is wired. */
 export function useControlInput(nodeId: string, handle: string): { readonly current: boolean | null } {
-	const cables = useNodeConnections({ id: nodeId, handleType: 'target', handleId: handle });
+	const cables = useNodeConnections(() => ({ id: nodeId, handleType: 'target', handleId: handle }));
 	return {
 		get current() {
 			const wired = cables.current;

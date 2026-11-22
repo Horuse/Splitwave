@@ -1,5 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { browser } from '$app/environment';
+import { BROWSER as browser } from 'esm-env';
 import toast from 'svelte-french-toast';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { methods } from './methods';

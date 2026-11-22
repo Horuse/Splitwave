@@ -4,7 +4,6 @@ import Icons from 'unplugin-icons/vite';
 import { enhancedImages } from '@sveltejs/enhanced-img';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { mdsvex } from 'mdsvex';
-import rehypeSlug from 'rehype-slug';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -12,11 +11,11 @@ export default defineConfig({
 		enhancedImages(),
 		tailwindcss(),
 		Icons({ compiler: 'svelte' }),
+		// Wiki articles are .svx files in @splitwave/wiki; headings get ids at build time
+		// so anchors and the table of contents work in the prerendered HTML.
+		mdsvex({ extensions: ['.svx'], heading_ids: true }),
 		sveltekit({
-			// Wiki articles are .svx files in @splitwave/wiki; headings get ids at build time
-			// so anchors and the table of contents work in the prerendered HTML.
 			extensions: ['.svelte', '.svx'],
-			preprocess: [mdsvex({ extensions: ['.svx'], rehypePlugins: [rehypeSlug] })],
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
 				// mdsvex output (.svx) is compiled in its own mode, like libraries.
@@ -30,5 +29,9 @@ export default defineConfig({
 			adapter: adapter()
 		})
 	],
+	// Packages that ship .svelte source: the Svelte plugin compiles them, esbuild cannot.
+	optimizeDeps: {
+		exclude: ['@xyflow/svelte', 'svelte-portal', 'svelte-floating-ui', '@number-flow/svelte']
+	},
 	server: { allowedHosts: ['test.splitwave.app'] }
 });

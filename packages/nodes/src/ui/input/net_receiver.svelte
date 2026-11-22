@@ -109,7 +109,7 @@
 		engine.audio.netReceiverListen(id, data.port).catch(() => {});
 	});
 
-	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'source' });
+	const wired = useNodeConnections(() => ({ id, handleType: 'source' }));
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
 			const ch = c.sourceHandle ? channelOf(c.sourceHandle) : null;

@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { BROWSER as browser } from 'esm-env';
 import { fetchChangelog } from './methods';
 
 const SEEN_KEY = 'changelog:seenVersion';

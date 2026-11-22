@@ -65,7 +65,7 @@
 	});
 
 	const MAX_CHANNELS = 255;
-	const wired = useNodeConnections({ id: untrack(() => id), handleType: 'target' });
+	const wired = useNodeConnections(() => ({ id, handleType: 'target' }));
 	let wiredChannels = $derived(
 		wired.current.reduce((n, c) => {
 			const ch = c.targetHandle ? channelOf(c.targetHandle) : null;

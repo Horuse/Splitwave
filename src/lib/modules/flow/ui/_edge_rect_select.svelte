@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { useStore } from '@xyflow/svelte';
+	import { useSvelteFlowStore } from '@xyflow/svelte';
 
 	// xyflow's rect only selects edges running between two selected nodes.
 	// Owns the selection outright: xyflow skips its write when its own set is
 	// unchanged, so additive hits would stay stuck once the rect moved off them.
-	const store = useStore();
+	const store = useSvelteFlowStore();
 
 	const SAMPLES = 16;
 

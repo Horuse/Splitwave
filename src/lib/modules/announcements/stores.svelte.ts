@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { BROWSER as browser } from 'esm-env';
 import type { Announcement } from './types';
 
 const DISMISSED_KEY = 'announcements:dismissed';

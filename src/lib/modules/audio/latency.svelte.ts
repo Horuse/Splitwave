@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { BROWSER as browser } from 'esm-env';
 import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
 import type { NodeTiming } from '@splitwave/nodes/generated/NodeTiming';
 import { methods } from './methods';

@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
+import adapter from '@sveltejs/adapter-static';
+import { mdsvex } from 'mdsvex';
 import tailwindcss from '@tailwindcss/vite';
 import Icons from 'unplugin-icons/vite';
 
@@ -7,7 +9,18 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-	plugins: [tailwindcss(), sveltekit(), Icons({ compiler: 'svelte' })],
+	plugins: [
+		tailwindcss(),
+		mdsvex({ extensions: ['.svx'], heading_ids: true }),
+		sveltekit({
+			extensions: ['.svelte', '.svx'],
+			alias: { $lib: 'src/lib' },
+			// Tauri has no Node.js server for SSR, so the app is an SPA with an index.html fallback.
+			// See https://svelte.dev/docs/kit/single-page-apps and https://v2.tauri.app/start/frontend/sveltekit/
+			adapter: adapter({ fallback: 'index.html' })
+		}),
+		Icons({ compiler: 'svelte' })
+	],
 
 	// Packages that ship .svelte source -- let the Svelte plugin handle them
 	// instead of esbuild pre-bundling (which has no .svelte loader).

@@ -16,7 +16,7 @@
 	const nodeId = untrack(() => id);
 	const flow = useSvelteFlow();
 	const TIME_SCALE_HEIGHT = 22;
-	const incoming = useNodeConnections({ id: nodeId, handleType: 'target' });
+	const incoming = useNodeConnections(() => ({ id: nodeId, handleType: 'target' }));
 	let displayedChannels = $derived(
 		incoming.current.reduce((count, connection) => {
 			const channel = connection.targetHandle ? channelOf(connection.targetHandle) : null;

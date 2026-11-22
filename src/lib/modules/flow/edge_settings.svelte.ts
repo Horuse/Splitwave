@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { BROWSER as browser } from 'esm-env';
 import { getBezierPath, getSmoothStepPath, getStraightPath } from '@xyflow/svelte';
 
 export type EdgeShape = 'bezier' | 'smoothstep' | 'step' | 'straight';

@@ -703,7 +703,7 @@
 			onmovestart={closeContextMenu}
 			snapGrid={appSettings.snapToGrid ? [appSettings.gridSize, appSettings.gridSize] : undefined}
 			fitView>
-			<Background patternClass="fill-neutral-200" />
+			<Background patternColor="#91919a" />
 			<Controls />
 			<EdgeRectSelect />
 			<OrphanEdges onDelete={deleteEdge} />

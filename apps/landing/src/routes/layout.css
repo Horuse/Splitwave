@@ -1,43 +1,19 @@
-@import 'tailwindcss';
-
-@font-face {
-	font-family: 'Inter';
-	src: url('/fonts/inter-latin.woff2') format('woff2');
-	font-style: normal;
-	font-weight: 400 700;
-	font-display: swap;
-}
+/* The app's theme: Tailwind, tokens, the Inter font, component styles and the
+   class-based dark variant. The landing adds only what is its own below. */
+@import '@splitwave/ui/styles';
+@source '../../../../packages/nodes/src';
+@source '../../../../packages/wiki/src';
 
 @theme {
 	--breakpoint-xs: 25rem;
-
-	--color-theme: black;
-	--color-background: oklch(0.99 0 0);
-	--color-primary: var(--color-blue-500);
-	--color-contrast: oklch(0 0 0);
-
-	--color-neutral-50: color-mix(in oklch, var(--color-contrast) 2.5%, var(--color-background));
-	--color-neutral-100: color-mix(in oklch, var(--color-contrast) 5%, var(--color-background));
-	--color-neutral-200: color-mix(in oklch, var(--color-contrast) 10%, var(--color-background));
-	--color-neutral-300: color-mix(in oklch, var(--color-contrast) 15%, var(--color-background));
-	--color-neutral-400: color-mix(in oklch, var(--color-contrast) 20%, var(--color-background));
-	--color-neutral-500: color-mix(in oklch, var(--color-contrast) 25%, var(--color-background));
-	--color-neutral-600: color-mix(in oklch, var(--color-contrast) 30%, var(--color-background));
-	--color-neutral-700: color-mix(in oklch, var(--color-contrast) 35%, var(--color-background));
-	--color-neutral-800: color-mix(in oklch, var(--color-contrast) 45%, var(--color-background));
-	--color-neutral-900: color-mix(in oklch, var(--color-contrast) 50%, var(--color-background));
-	--color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
-	--color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
-
-	--font-sans: 'Inter', sans-serif;
+	/* Install commands and checksums read as code here, unlike the app's UI. */
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--color-theme: white;
-		--color-background: oklch(0.18 0 0);
-		--color-contrast: oklch(1 0 0);
-	}
+/* The landing keeps its deeper dark page; a nested .dark region (a wiki
+   diagram) keeps the app's own background and scale. */
+:root.dark {
+	--color-background: oklch(0.18 0 0);
 }
 
 /* Matches xyflow's animated edge, so a diagram wire reads as a canvas edge. */

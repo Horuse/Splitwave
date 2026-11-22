@@ -10,7 +10,8 @@
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
 		},
-		"./styles": "./src/styles/app.css"
+		"./styles": "./src/styles/app.css",
+		"./styles/*": "./src/styles/*"
 	},
 	"scripts": {
 		"storybook": "storybook dev -p 6007",

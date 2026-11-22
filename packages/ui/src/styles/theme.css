@@ -28,6 +28,32 @@
 	--color-background: oklch(0.28 0 0);
 
 	--color-contrast: oklch(1 0 0);
+
+	/* The scale and the layers derive from the background. A custom property is
+	   computed where it is declared, so they are declared again here: a .dark
+	   region below the root (a diagram on the light-rooted landing) then gets the
+	   dark scale instead of inheriting values computed from the light root. */
+	--color-neutral-50: color-mix(in oklch, var(--color-contrast) 2.5%, var(--color-background));
+	--color-neutral-100: color-mix(in oklch, var(--color-contrast) 5%, var(--color-background));
+	--color-neutral-200: color-mix(in oklch, var(--color-contrast) 10%, var(--color-background));
+	--color-neutral-300: color-mix(in oklch, var(--color-contrast) 15%, var(--color-background));
+	--color-neutral-400: color-mix(in oklch, var(--color-contrast) 20%, var(--color-background));
+	--color-neutral-500: color-mix(in oklch, var(--color-contrast) 25%, var(--color-background));
+	--color-neutral-600: color-mix(in oklch, var(--color-contrast) 30%, var(--color-background));
+	--color-neutral-700: color-mix(in oklch, var(--color-contrast) 35%, var(--color-background));
+	--color-neutral-750: color-mix(in oklch, var(--color-contrast) 40%, var(--color-background));
+	--color-neutral-800: color-mix(in oklch, var(--color-contrast) 45%, var(--color-background));
+	--color-neutral-900: color-mix(in oklch, var(--color-contrast) 50%, var(--color-background));
+	--color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
+	--color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
+	--color-neutral-1200: color-mix(in oklch, var(--color-contrast) 80%, var(--color-background));
+	--color-foreground: var(--color-neutral-100);
+	--color-popover: var(--color-neutral-200);
+	--lv-1: var(--color-neutral-100);
+	--lv-2: var(--color-neutral-200);
+	--lv-3: var(--color-neutral-300);
+	--lv-4: var(--color-neutral-400);
+	--lv-5: var(--color-neutral-500);
 }
 
 @theme {
@@ -72,4 +98,9 @@
 :root:not(.dark) {
 	--color-foreground: var(--color-neutral-50);
 	--color-popover: var(--color-background);
+}
+
+/* xyflow paints its own canvas colour (#141414 under .dark); the canvas follows the theme instead. */
+.svelte-flow {
+	--xy-background-color: var(--color-background);
 }

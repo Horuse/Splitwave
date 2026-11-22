@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, type Snippet } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { createFloatingActions } from 'svelte-floating-ui';
 	import { flip, offset, shift } from 'svelte-floating-ui/dom';
@@ -46,13 +46,14 @@
 		if (open && e.key === 'Escape') setOpen(false);
 	}
 
-	onMount(() => {
+	// An effect, not onMount/onDestroy: onDestroy also runs during SSR, where window does not exist.
+	$effect(() => {
 		window.addEventListener('mousedown', onMousedown, { capture: true });
 		window.addEventListener('keydown', onKeydown);
-	});
-	onDestroy(() => {
-		window.removeEventListener('mousedown', onMousedown, { capture: true });
-		window.removeEventListener('keydown', onKeydown);
+		return () => {
+			window.removeEventListener('mousedown', onMousedown, { capture: true });
+			window.removeEventListener('keydown', onKeydown);
+		};
 	});
 </script>
 

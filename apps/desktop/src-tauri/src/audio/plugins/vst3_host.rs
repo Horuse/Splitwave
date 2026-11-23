@@ -349,7 +349,6 @@ impl Vst3Instance {
         &self,
         sample_rate: u32,
         max_frames: usize,
-        channels: usize,
         // Whether something is wired to each sidechain, in bus order.
         wired: &[bool],
         params: Arc<ParamRing>,
@@ -378,54 +377,11 @@ impl Vst3Instance {
             let ins = self.component.getBusCount(kAudio as i32, kInput as i32);
             let outs = self.component.getBusCount(kAudio as i32, kOutput as i32);
 
-            // Offer the node's own width first, the way a DAW instantiates one
-            // multichannel plugin rather than several stereo ones. A plugin that
-            // will not have it runs as a stereo pair, which the pipeline then
-            // drives once per pair.
+            // The plugin dictates its layout: every bus keeps the arrangement it
+            // came up with, and the node is sized from that. Nothing is offered
+            // that the plugin could refuse, and nothing falls back to stereo.
             let in_main = self.bus_roles(kInput as i32, ins);
             let out_main = self.bus_roles(kOutput as i32, outs);
-            let in_now = self.bus_arrangements(kInput as i32, ins);
-            let out_now = self.bus_arrangements(kOutput as i32, outs);
-            let mut accepted = 0;
-            for width in [channels, 2] {
-                let Some(arrangement) = speaker_arrangement(width) else {
-                    continue;
-                };
-                // Only the main buses are sized to the node. A sidechain keeps
-                // the arrangement the plugin itself reports for it: forcing the
-                // main one onto it is what a plugin refuses.
-                let mut in_arr: Vec<_> = in_main
-                    .iter()
-                    .zip(&in_now)
-                    .map(|(&main, &own)| if main { arrangement } else { own })
-                    .collect();
-                let mut out_arr: Vec<_> = out_main
-                    .iter()
-                    .zip(&out_now)
-                    .map(|(&main, &own)| if main { arrangement } else { own })
-                    .collect();
-                if ok(processor.setBusArrangements(
-                    in_arr.as_mut_ptr(),
-                    ins,
-                    out_arr.as_mut_ptr(),
-                    outs,
-                )) {
-                    accepted = width;
-                    break;
-                }
-            }
-            if accepted == 0 {
-                return Err(format!(
-                    "plugin refused both a {channels}-channel and a stereo bus layout"
-                ));
-            }
-            if accepted != channels {
-                tracing::debug!(
-                    channels,
-                    accepted,
-                    "vst3: plugin would not take the node's width; driving it per pair"
-                );
-            }
 
             // Every bus is inactive until the host turns it on. The main buses
             // always are; a sidechain only when something is wired to it, so a
@@ -441,10 +397,13 @@ impl Vst3Instance {
                 self.component
                     .activateBus(kAudio as i32, kInput as i32, index as i32, on as u8);
             }
-            let output_main: Vec<i32> = (0..outs).filter(|&i| out_main[i as usize]).collect();
-            for &index in &output_main {
-                self.component
-                    .activateBus(kAudio as i32, kOutput as i32, index, 1);
+            for index in 0..outs {
+                self.component.activateBus(
+                    kAudio as i32,
+                    kOutput as i32,
+                    index,
+                    out_main[index as usize] as u8,
+                );
             }
 
             let mut setup = ProcessSetup {
@@ -466,15 +425,16 @@ impl Vst3Instance {
 
             let all_inputs: Vec<i32> = (0..ins).collect();
             let input_channels = self.channel_counts(kInput as i32, &all_inputs);
-            let output_channels = self.channel_counts(kOutput as i32, &output_main);
+            let all_outputs: Vec<i32> = (0..outs).collect();
+            let output_channels = self.channel_counts(kOutput as i32, &all_outputs);
 
             Ok(Vst3Node::new(
                 processor,
                 &input_channels,
                 &in_main,
                 &output_channels,
+                &out_main,
                 max_frames,
-                accepted,
                 params,
                 alive,
             ))
@@ -784,7 +744,6 @@ mod tests {
             .activate(
                 RATE,
                 FRAMES,
-                2,
                 &vec![true; sidechains],
                 Arc::new(ParamRing::new()),
                 Arc::new(AtomicBool::new(true)),
@@ -792,7 +751,8 @@ mod tests {
             .expect("activates");
         use crate::audio::effects::Effect;
         assert_eq!(node.aux_buses().len(), sidechains);
-        let stride = 2 + node.aux_buses().iter().sum::<usize>();
+        let stride =
+            node.in_channels().max(node.out_channels()) + node.aux_buses().iter().sum::<usize>();
         for block in 0..32 {
             let mut wide = vec![0.0f32; FRAMES * stride];
             for f in 0..FRAMES {
@@ -841,14 +801,14 @@ mod tests {
             let params = std::sync::Arc::new(crate::audio::plugins::ParamRing::new());
             let alive = std::sync::Arc::new(AtomicBool::new(true));
 
-            let mut node =
-                match instance.activate(RATE, FRAMES, 2, &[], params.clone(), alive.clone()) {
-                    Ok(node) => node,
-                    Err(err) => {
-                        println!("SKIPPED: {} failed to activate: {err}", plugin.name);
-                        continue;
-                    }
-                };
+            let mut node = match instance.activate(RATE, FRAMES, &[], params.clone(), alive.clone())
+            {
+                Ok(node) => node,
+                Err(err) => {
+                    println!("SKIPPED: {} failed to activate: {err}", plugin.name);
+                    continue;
+                }
+            };
 
             // A plugin with lookahead outputs silence until its own latency has
             // passed, so measuring the first block would prove nothing.
@@ -897,45 +857,37 @@ mod tests {
 
     /// Every installed plugin must instantiate, expose a controller, and
     /// survive teardown. Both shapes (one object or two) go through here.
-    /// What each installed plugin does when offered widths other than stereo.
-    /// A plugin that takes 5.1 whole is run as one instance, the way a DAW does
-    /// it; one that refuses falls back to a stereo pair.
+    /// Every installed plugin must come up with the layout it declares, one
+    /// instance, and report the same widths the probe saw.
     #[test]
-    fn negotiates_the_widest_layout_each_plugin_accepts() {
+    fn every_installed_plugin_activates_with_the_layout_it_declares() {
         let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         let found = Vst3Backend.scan();
         if found.is_empty() {
-            return skipped("layout negotiation");
+            return skipped("layout");
         }
+        const FRAMES: usize = 512;
+        const RATE: u32 = 48_000;
         for plugin in &found {
             let module = Vst3Module::open(std::path::Path::new(&plugin.path)).unwrap();
-            const FRAMES: usize = 512;
-            const RATE: u32 = 48_000;
-            for width in [1usize, 2, 6, 8] {
-                let instance = match Vst3Instance::new(module.clone(), &plugin.plugin_id) {
-                    Ok(i) => i,
-                    Err(_) => continue,
-                };
-                let node = instance.activate(
-                    RATE,
-                    FRAMES,
-                    width,
-                    &[],
-                    Arc::new(ParamRing::new()),
-                    Arc::new(AtomicBool::new(true)),
-                );
-                match node {
-                    Ok(node) => {
-                        let got = node.channels();
-                        assert!(
-                            got == width || got == 2,
-                            "{} offered {width} took {got}, which is neither",
-                            plugin.name
-                        );
-                        println!("  {} offered {width} -> {got}", plugin.name);
-                    }
-                    Err(e) => println!("  {} offered {width} -> refused ({e})", plugin.name),
+            let Ok(instance) = Vst3Instance::new(module, &plugin.plugin_id) else {
+                continue;
+            };
+            let layout = instance.port_layout();
+            let wired = vec![false; layout.sidechains().len()];
+            match instance.activate(
+                RATE,
+                FRAMES,
+                &wired,
+                Arc::new(ParamRing::new()),
+                Arc::new(AtomicBool::new(true)),
+            ) {
+                Ok(node) => {
+                    assert_eq!(node.in_channels(), layout.main_in(), "{}", plugin.name);
+                    assert_eq!(node.out_channels(), layout.main_out(), "{}", plugin.name);
+                    assert_eq!(node.aux_buses(), layout.sidechains(), "{}", plugin.name);
                 }
+                Err(e) => println!("SKIPPED: {} would not activate ({e})", plugin.name),
             }
         }
     }

@@ -84,6 +84,28 @@ pub fn probe(
     host_for(format).probe(path, plugin_id)
 }
 
+fn copy_counts() -> &'static Mutex<HashMap<String, usize>> {
+    static COPIES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    COPIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// How many copies of its plugin a node is running, for the node to show.
+pub fn set_copies(node_id: &str, copies: usize) {
+    copy_counts()
+        .lock()
+        .unwrap()
+        .insert(node_id.to_string(), copies);
+}
+
+pub fn copies(node_id: &str) -> usize {
+    copy_counts()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .copied()
+        .unwrap_or(0)
+}
+
 /// Releases a node entirely: used when its plugin is cleared, when a rebuild
 /// fails to load one, and when the pipeline that owned it goes away.
 pub fn forget(node_id: &str) {
@@ -92,6 +114,7 @@ pub fn forget(node_id: &str) {
         use tauri::Emitter;
         let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
     }
+    copy_counts().lock().unwrap().remove(node_id);
     let owner = owners().lock().unwrap().remove(node_id);
     if let Some(format) = owner {
         host_for(format).forget(node_id);

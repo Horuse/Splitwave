@@ -174,9 +174,12 @@ pub struct Vst3Node {
     params: Arc<ParamRing>,
     param_cursor: usize,
     max_frames: usize,
-    /// Channels of the main bus, which is the width of the node.
-    channels: usize,
+    /// Channels the plugin reads on its main input and writes on its main
+    /// output, which differ for a plugin that widens or narrows the signal.
+    in_ch: usize,
+    out_ch: usize,
     main_in: Option<usize>,
+    main_out: Option<usize>,
     /// The input buses that are not main, in bus order: the sidechains.
     aux_buses: Vec<usize>,
     /// Channels of each sidechain, in `aux_buses` order.
@@ -204,8 +207,8 @@ impl Vst3Node {
         input_channels: &[usize],
         input_main: &[bool],
         output_channels: &[usize],
+        output_main: &[bool],
         max_frames: usize,
-        channels: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
     ) -> Self {
@@ -219,6 +222,9 @@ impl Vst3Node {
             .collect();
 
         let main_in = input_main.iter().position(|m| *m);
+        let main_out = output_main.iter().position(|m| *m);
+        let in_ch = main_in.map_or(0, |i| input_channels[i]);
+        let out_ch = main_out.map_or(0, |i| output_channels[i]);
         let aux_buses: Vec<usize> = (0..input_main.len()).filter(|&i| !input_main[i]).collect();
         let aux: Vec<usize> = aux_buses.iter().map(|&i| input_channels[i]).collect();
         let aux_total = aux.iter().sum();
@@ -245,8 +251,10 @@ impl Vst3Node {
             params,
             param_cursor,
             max_frames,
-            channels,
+            in_ch,
+            out_ch,
             main_in,
+            main_out,
             aux_buses,
             aux,
             aux_total,
@@ -268,7 +276,8 @@ fn bus_buffers(bus: &mut Bus) -> AudioBusBuffers {
 
 impl Effect for Vst3Node {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let width = self.channels;
+        let (in_ch, out_ch) = (self.in_ch, self.out_ch);
+        let width = in_ch.max(out_ch);
         let stride = width + self.aux_total;
         if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
@@ -287,7 +296,7 @@ impl Effect for Vst3Node {
         // Main input bus; silence stays in any channel the plugin declares
         // beyond what the pipeline carries.
         if let Some(main) = self.main_in.and_then(|i| self.inputs.get_mut(i)) {
-            for (c, channel) in main.channels.iter_mut().take(width).enumerate() {
+            for (c, channel) in main.channels.iter_mut().take(in_ch).enumerate() {
                 for i in 0..frames {
                     channel[i] = samples[i * stride + c];
                 }
@@ -326,12 +335,8 @@ impl Effect for Vst3Node {
         let processed = unsafe { self.processor.process(&mut data) } == kResultOk;
 
         if processed {
-            if let Some(main) = self.outputs.first() {
-                for c in 0..width {
-                    // A plugin narrower than the pipeline (a mono unit driven as
-                    // a pair) repeats its last channel rather than leaving the
-                    // rest of the block at whatever it held.
-                    let src = &main.channels[c.min(main.channels.len() - 1)];
+            if let Some(main) = self.main_out.and_then(|i| self.outputs.get(i)) {
+                for (c, src) in main.channels.iter().take(out_ch).enumerate() {
                     for i in 0..frames {
                         samples[i * stride + c] = src[i];
                     }
@@ -346,8 +351,12 @@ impl Effect for Vst3Node {
 }
 
 impl Vst3Node {
-    pub fn channels(&self) -> usize {
-        self.channels
+    pub fn in_channels(&self) -> usize {
+        self.in_ch
+    }
+
+    pub fn out_channels(&self) -> usize {
+        self.out_ch
     }
 
     pub fn aux_buses(&self) -> &[usize] {

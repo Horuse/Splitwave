@@ -141,6 +141,13 @@ pub fn close_window(node_id: &str) {
     }
     if let Some(w) = windows().lock().unwrap().remove(node_id) {
         w.destroy();
+        // The node's open/close button follows this event. A rebuild takes the
+        // window down without the user closing it, and without this the button
+        // keeps saying "open" and its next click does nothing.
+        if let Some(app) = crate::app_handle() {
+            use tauri::Emitter;
+            let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
+        }
     }
 }
 

@@ -169,9 +169,11 @@ pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::
     let id = node_id.clone();
     let res = tauri::async_runtime::spawn_blocking(move || {
         crate::audio::plugins::main_thread::run(move || {
-            crate::audio::plugins::registry::for_node(&id)
+            let mut status = crate::audio::plugins::registry::for_node(&id)
                 .map(|h| h.status(&id))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            status.copies = crate::audio::plugins::registry::copies(&id);
+            status
         })
     })
     .await;

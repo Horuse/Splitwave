@@ -12,4 +12,10 @@ format: PluginFormat | null, path: string, pluginId: string, bypassed: boolean, 
  * the node its sockets before the pipeline runs. None for a node saved
  * before this existed; the node reads it once and stores it.
  */
-layout: PortLayout | null, };
+layout: PortLayout | null, 
+/**
+ * A node wider than the plugin runs one copy per group of the plugin's own
+ * width, so every channel is processed. Off: one copy, and the channels
+ * beyond it pass through untouched.
+ */
+autoCopies: boolean, };

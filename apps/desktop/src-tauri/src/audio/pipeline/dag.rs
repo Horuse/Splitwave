@@ -2210,7 +2210,16 @@ pub(super) fn build_output_graph(
                 .filter_map(|e| e.source_handle.channel_span())
                 .max()
                 .unwrap_or(0);
-            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            let mut eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            // A plugin sets the width of its node: it reads and writes the
+            // channels it declares, whatever the cables carry.
+            if let EffectSpec::Plugin {
+                layout: Some(layout),
+                ..
+            } = &effect.spec
+            {
+                eff_channels = eff_channels.max(layout.main_in()).max(layout.main_out());
+            }
             // A plugin switches a sidechain on only while a cable feeds it, so
             // which ones are wired is part of what the instance is built for.
             let wired_extras: Vec<bool> =

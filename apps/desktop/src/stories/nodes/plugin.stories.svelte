@@ -23,12 +23,13 @@
 					labels: Object.fromEntries([[0, 'None'], ...CATALOG.map((p, i) => [i + 1, p.name])])
 				},
 				showParams: { control: 'boolean' },
+				autoCopies: { control: 'boolean', description: 'One copy per group of channels on a wide node' },
 				bypassed: { control: 'boolean' }
 			},
-			{ plugin: 1, showParams: false, bypassed: false }
+			{ plugin: 1, showParams: false, autoCopies: true, bypassed: false }
 		),
 		wiringArgs(2),
-		envArgs(['running', 'plugins', 'pluginParams', 'pluginEditor'])
+		envArgs(['running', 'plugins', 'pluginParams', 'pluginEditor', 'pluginSidechain', 'pluginCopies'])
 	);
 
 	const { Story } = defineMeta({ title: 'Nodes/Effects/Plugin', argTypes, args });
@@ -44,6 +45,9 @@
 <Story name="Running with params" args={{ running: true, showParams: true }} {template} />
 <Story name="Many params" args={{ running: true, showParams: true, pluginParams: 10 }} {template} />
 <Story name="Pinned knobs" args={{ running: true, pinned: [0, 1, 2, 3, 4] }} {template} />
+<Story name="With a sidechain" args={{ running: true, pluginSidechain: true }} {template} />
+<Story name="Many copies" args={{ running: true, pluginCopies: 25 }} {template} />
+<Story name="Copies off" args={{ running: true, autoCopies: false }} {template} />
 <Story name="No editor" args={{ running: true, pluginEditor: false }} {template} />
 <Story name="AU plugin" args={{ plugin: 3, running: true }} {template} />
 <Story name="No plugins installed" args={{ plugin: 0, plugins: 0 }} {template} />

@@ -18,8 +18,9 @@ use crate::audio::plugins::ParamRing;
 
 /// Audio flows through the plugin's main (index 0) input/output ports and each
 /// extra input port after it (its sidechains). The block handed to `process` is
-/// interleaved at `channels + sum(aux)` wide: the main channels first, then
-/// each extra input's in port order. An extra port nothing feeds gets silence,
+/// interleaved at `max(in, out) + sum(aux)` wide: the main channels first (the
+/// plugin reads its input width and writes its output width), then each extra
+/// input's in port order. An extra port nothing feeds gets silence,
 /// because a missing port buffer makes the plugin read a null pointer and crash.
 pub struct PluginNode {
     processor: StartedPluginAudioProcessor<SplitwaveHost>,
@@ -31,6 +32,8 @@ pub struct PluginNode {
     /// The input ports that are not main, in port order: the sidechains.
     aux_ports: Vec<usize>,
     out_bufs: Vec<Vec<Vec<f32>>>,
+    /// The output port carrying the main signal, when the plugin has one.
+    main_out: Option<usize>,
     steady: u64,
     max_frames: usize,
     // UI parameter writes drained into `events` and fed to `process` each block.
@@ -42,8 +45,10 @@ pub struct PluginNode {
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
     alive: Arc<AtomicBool>,
-    /// Channels of the plugin's main port.
-    channels: usize,
+    /// Channels the plugin reads on its main input, and writes on its main
+    /// output. They differ for a plugin that widens or narrows the signal.
+    in_ch: usize,
+    out_ch: usize,
     /// Channels of each sidechain port, in `aux_ports` order, laid out after the
     /// main ones in every block.
     aux: Vec<usize>,
@@ -60,6 +65,13 @@ impl Drop for PluginNode {
     }
 }
 
+fn main_in_channels(inputs: &[PortBus]) -> usize {
+    inputs
+        .iter()
+        .find(|b| b.main)
+        .map_or(0, |b| b.channels as usize)
+}
+
 fn alloc(port_channels: &[u32], max_frames: usize) -> Vec<Vec<Vec<f32>>> {
     port_channels
         .iter()
@@ -72,14 +84,17 @@ impl PluginNode {
     pub fn new(
         processor: StartedPluginAudioProcessor<SplitwaveHost>,
         inputs: &[PortBus],
-        output_channels: &[u32],
+        outputs: &[PortBus],
         max_frames: usize,
         params: Arc<ParamRing>,
         alive: Arc<AtomicBool>,
-        channels: usize,
         latency: usize,
     ) -> Self {
         let input_channels: Vec<u32> = inputs.iter().map(|b| b.channels).collect();
+        let output_channels: Vec<u32> = outputs.iter().map(|b| b.channels).collect();
+        let main_out = outputs.iter().position(|b| b.main);
+        let in_ch = main_in_channels(inputs);
+        let out_ch = main_out.map_or(0, |i| outputs[i].channels as usize);
         let main_in = inputs.iter().position(|b| b.main);
         let aux_ports: Vec<usize> = (0..inputs.len()).filter(|&i| !inputs[i].main).collect();
         let aux: Vec<usize> = aux_ports
@@ -101,14 +116,16 @@ impl PluginNode {
             in_bufs: alloc(&input_channels, max_frames),
             main_in,
             aux_ports,
-            out_bufs: alloc(output_channels, max_frames),
+            out_bufs: alloc(&output_channels, max_frames),
+            main_out,
             steady: 0,
             max_frames,
             params,
             param_cursor,
             events: EventBuffer::with_capacity(MAX_PARAM_CHANGES_PER_BLOCK),
             alive,
-            channels,
+            in_ch,
+            out_ch,
             aux,
             aux_total,
             latency,
@@ -118,7 +135,8 @@ impl PluginNode {
 
 impl Effect for PluginNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let width = self.channels;
+        let (in_ch, out_ch) = (self.in_ch, self.out_ch);
+        let width = in_ch.max(out_ch);
         let stride = width + self.aux_total;
         if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
@@ -160,7 +178,7 @@ impl Effect for PluginNode {
         // Main input port; silence stays in every other port, and in any channel
         // the plugin declares beyond what the pipeline carries.
         if let Some(main) = self.main_in.and_then(|i| in_bufs.get_mut(i)) {
-            for (c, channel) in main.iter_mut().take(width).enumerate() {
+            for (c, channel) in main.iter_mut().take(in_ch).enumerate() {
                 for i in 0..frames {
                     channel[i] = samples[i * stride + c];
                 }
@@ -208,12 +226,8 @@ impl Effect for PluginNode {
         drop(outputs);
 
         if processed {
-            if let Some(main) = out_bufs.first() {
-                for c in 0..width {
-                    // A plugin narrower than the pipeline (a mono unit driven as
-                    // a pair) repeats its last channel rather than leaving the
-                    // rest of the block at whatever it held.
-                    let src = &main[c.min(main.len() - 1)];
+            if let Some(main) = self.main_out.and_then(|i| out_bufs.get(i)) {
+                for (c, src) in main.iter().take(out_ch).enumerate() {
                     for i in 0..frames {
                         samples[i * stride + c] = src[i];
                     }
@@ -229,8 +243,12 @@ impl Effect for PluginNode {
 }
 
 impl PluginNode {
-    pub fn channels(&self) -> usize {
-        self.channels
+    pub fn in_channels(&self) -> usize {
+        self.in_ch
+    }
+
+    pub fn out_channels(&self) -> usize {
+        self.out_ch
     }
 
     pub fn aux_buses(&self) -> &[usize] {

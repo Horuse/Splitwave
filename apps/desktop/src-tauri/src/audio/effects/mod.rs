@@ -1070,6 +1070,8 @@ pub fn instantiate_effect(
             ref path,
             ref plugin_id,
             ref state,
+            ref layout,
+            auto_copies,
             ..
         } => {
             // Empty path == node not yet configured: inert passthrough, not a
@@ -1100,6 +1102,22 @@ pub fn instantiate_effect(
                     None,
                 );
             };
+            // The node is sized from what the plugin declared, so without that
+            // there is nothing to build: it stays silent and says why, rather
+            // than guessing a width.
+            let Some(layout) = layout else {
+                tracing::error!(node_id, path, "plugin has not reported its ports yet");
+                crate::audio::plugins::registry::forget(node_id);
+                let muted = Arc::new(AtomicBool::new(true));
+                return mk(
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            };
             // Claimed only once the instance actually exists (below): a burned
             // claim would leave the node with no editor target while the
             // previous plugin stayed installed behind it.
@@ -1112,44 +1130,92 @@ pub fn instantiate_effect(
                 .entry(node_id.to_string())
                 .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
                 .clone();
-            let request = crate::audio::plugins::host_api::ActivateRequest {
-                node_id,
-                path,
-                plugin_id,
-                sample_rate,
-                max_frames: PLUGIN_MAX_BLOCK,
+            let copies = HostedEffect::copies_needed(
+                auto_copies,
                 channels,
-                wired_extras,
-                state: state.as_deref(),
-                primary,
-                params: ring.clone(),
+                layout.main_in(),
+                layout.main_out(),
+            );
+            // The first copy is the editor target and owns the control; the rest
+            // run the same plugin from the same settings.
+            let activate = |primary: bool| {
+                crate::audio::plugins::registry::activate(
+                    format,
+                    crate::audio::plugins::host_api::ActivateRequest {
+                        node_id,
+                        path,
+                        plugin_id,
+                        sample_rate,
+                        max_frames: PLUGIN_MAX_BLOCK,
+                        layout,
+                        wired_extras,
+                        state: state.as_deref(),
+                        primary,
+                        params: ring.clone(),
+                    },
+                )
             };
-            match crate::audio::plugins::registry::activate(format, request) {
+            let built = activate(primary).and_then(|first| {
+                let mut nodes = vec![first];
+                for _ in 1..copies {
+                    nodes.push(activate(false)?);
+                }
+                Ok(nodes)
+            });
+            match built {
                 // Only the editor-target build publishes the control, so the UI
                 // writes reach the audible instance.
-                Ok(node) => {
+                Ok(nodes)
+                    if nodes.iter().any(|node| {
+                        node.in_channels() != layout.main_in()
+                            || node.out_channels() != layout.main_out()
+                            || node.aux_buses() != layout.sidechains()
+                    }) =>
+                {
+                    // The plugin is not what it was when it was picked (updated
+                    // since): its sockets and width would be wrong.
+                    tracing::error!(
+                        node_id,
+                        path,
+                        plugin_id,
+                        "plugin ports changed since it was picked; pick it again"
+                    );
+                    crate::audio::plugins::registry::forget(node_id);
+                    let muted = Arc::new(AtomicBool::new(true));
+                    mk(
+                        RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                Ok(nodes) => {
                     if primary {
                         registry.plugin_primary_claimed.insert(node_id.to_string());
                     }
                     let control = primary.then_some(EffectControl::Plugin { events: ring });
-                    // The plugin took the node whole, so the pipeline must stop
-                    // splitting it into pairs and hand it every channel.
-                    let full_width = node.channels() == channels;
+                    let effect = HostedEffect::new(
+                        nodes,
+                        realtime,
+                        sample_rate,
+                        block_frames,
+                        burst_blocks,
+                        channels,
+                    );
+                    crate::audio::plugins::registry::set_copies(node_id, effect.copy_count());
                     let mut build = mk(
-                        RuntimeEffect::HostedPlugin(HostedEffect::new(
-                            node,
-                            realtime,
-                            sample_rate,
-                            block_frames,
-                            burst_blocks,
-                        )),
+                        RuntimeEffect::HostedPlugin(effect),
                         control,
                         None,
                         None,
                         None,
                         None,
                     );
-                    build.full_width = full_width;
+                    // One entry sees the whole node; it is never split into
+                    // stereo pairs from outside.
+                    build.full_width = true;
                     build
                 }
                 Err(e) => {
@@ -1743,6 +1809,8 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: None,
+            auto_copies: true,
         };
         let mut build =
             instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
@@ -1763,12 +1831,29 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: None,
+            auto_copies: true,
         };
         let mut build =
             instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    fn stereo_layout() -> crate::audio::plugins::host_api::PortLayout {
+        use crate::audio::plugins::host_api::{PortBus, PortLayout};
+        let main = || {
+            vec![PortBus {
+                name: "Main".into(),
+                channels: 2,
+                main: true,
+            }]
+        };
+        PortLayout {
+            inputs: main(),
+            outputs: main(),
+        }
     }
 
     #[test]
@@ -1781,12 +1866,50 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: Some(stereo_layout()),
+            auto_copies: true,
         };
         let mut build =
             instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    /// A node sized from what the plugin declares has nothing to size from
+    /// until it answers: it stays silent rather than guessing a width.
+    #[test]
+    fn plugin_that_has_not_reported_its_ports_is_silenced() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Plugin {
+            node_id: "p4".into(),
+            format: Some(crate::audio::plugins::PluginFormat::Vst3),
+            path: "/some/plugin.vst3".into(),
+            plugin_id: "x".into(),
+            bypassed: false,
+            state: None,
+            layout: None,
+            auto_copies: true,
+        };
+        let mut build =
+            instantiate_effect(&spec, "p4", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
+        let mut buf = vec![0.3f32, -0.4];
+        build.effect.process_with_sidechain(&mut buf, None, 1);
+        assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn copies_follow_the_plugins_own_width() {
+        let copies = HostedEffect::copies_needed;
+        // A stereo plugin on a 50 channel node: one copy per stereo group.
+        assert_eq!(copies(true, 50, 2, 2), 25);
+        // An odd width still covers the last channel.
+        assert_eq!(copies(true, 5, 2, 2), 3);
+        // Off, or a plugin that changes width, stays one instance.
+        assert_eq!(copies(false, 50, 2, 2), 1);
+        assert_eq!(copies(true, 50, 1, 2), 1);
+        // A generator has no input to group by.
+        assert_eq!(copies(true, 50, 0, 2), 1);
     }
 
     #[test]

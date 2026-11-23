@@ -628,6 +628,15 @@ pub struct PluginData {
     /// before this existed; the node reads it once and stores it.
     #[serde(default)]
     pub layout: Option<crate::audio::plugins::host_api::PortLayout>,
+    /// A node wider than the plugin runs one copy per group of the plugin's own
+    /// width, so every channel is processed. Off: one copy, and the channels
+    /// beyond it pass through untouched.
+    #[serde(default = "default_auto_copies")]
+    pub auto_copies: bool,
+}
+
+fn default_auto_copies() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -732,6 +741,10 @@ pub enum EffectSpec {
         bypassed: bool,
         // Base64 CLAP state blob restored on instantiation; None keeps defaults.
         state: Option<String>,
+        // What the plugin declared when it was picked. It sets the node's width,
+        // so it is structural; None means it has not answered yet.
+        layout: Option<crate::audio::plugins::host_api::PortLayout>,
+        auto_copies: bool,
     },
 }
 
@@ -1526,6 +1539,8 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
                 plugin_id: data.plugin_id,
                 bypassed: data.bypassed,
                 state: data.state,
+                layout: data.layout,
+                auto_copies: data.auto_copies,
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

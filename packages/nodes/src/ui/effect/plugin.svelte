@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Button, Combobox, Input, Knob, RescanButton, ScrollArea, Slider, Tooltip } from '@splitwave/ui';
+	import { Button, Combobox, Input, Knob, RescanButton, ScrollArea, Slider, Toggle, Tooltip } from '@splitwave/ui';
 	import { slide } from 'svelte/transition';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '@splitwave/nodes';
@@ -106,12 +106,18 @@
 
 	let editorOpen = $state(false);
 
+	// A node wider than the plugin runs one copy of it per group of channels, so
+	// every channel is processed. On by default, as it has always worked.
+	function setAutoCopies(v: boolean) {
+		flow.updateNodeData(id, { autoCopies: v });
+	}
+
 	// The editor embeds a native plugin view, which needs the running audio
 	// instance; there is nothing to open before the pipeline starts.
 	// What the engine is actually running, which lags the node's own selection
 	// while the graph rebuilds. Everything that touches the plugin waits on it:
 	// acting sooner opens the outgoing plugin's editor instead of the new one.
-	let status = $state<PluginStatus>({ path: null, hasEditor: true });
+	let status = $state<PluginStatus>({ path: null, hasEditor: true, copies: 0 });
 	// A derived, not data.path: every updateNodeData hands the node a new data
 	// object, which would rerun the status probe and flash the loading state.
 	const pluginPath = $derived(data.path);
@@ -125,7 +131,7 @@
 		// Reading the path first both tracks it and clears the previous plugin's
 		// verdict, so a stale answer never carries over to the new selection.
 		const path = pluginPath;
-		status = { path: null, hasEditor: true };
+		status = { path: null, hasEditor: true, copies: 0 };
 		editorError = null;
 		if (!path || !running) return;
 		// A single probe would race the rebuild and read the outgoing plugin's
@@ -258,7 +264,16 @@
 	}
 </script>
 
+{#snippet badge()}
+	{#if running && status.copies > 1}
+		<Tooltip text={`${status.copies} copies of the plugin run, one per group of channels`}>
+			<span class="rounded-md bg-(--lv-2) px-1.5 py-1 font-mono text-[10px] leading-none text-neutral-900 tabular-nums">x{status.copies}</span>
+		</Tooltip>
+	{/if}
+{/snippet}
+
 <Wrapper
+	{badge}
 	label={data.name || 'Plugin'}
 	icon={Plug}
 	accent="effect"
@@ -303,7 +318,7 @@
 							</Button>
 						</Tooltip>
 					{:else}
-						<Tooltip text={canOpenEditor ? 'This plugin has no window of its own' : 'Run the pipeline first: the plugin loads only while it runs.'}>
+						<Tooltip text={canOpenEditor ? 'This plugin has no window of its own' : 'Start the pipeline to open the editor: the plugin loads only while it runs.'}>
 							<Button class="nodrag nopan pointer-events-none" icon disabled aria-label="Plugin window">
 								{#if canOpenEditor}<WindowOff class="size-4" />{:else}<WindowNew class="size-4" />{/if}
 							</Button>
@@ -313,6 +328,15 @@
 			</div>
 		{/if}
 
+		{#if data.path}
+			<Tooltip text="A node wider than the plugin runs one copy of it per group of channels, so every channel is processed. Off: one copy, and the other channels pass through untouched.">
+				<Toggle class="nodrag nopan" size="sm" label="Copy per channel group" checked={data.autoCopies ?? true} onChange={setAutoCopies} />
+			</Tooltip>
+			{#if !data.layout && !probeError}
+				<p class="text-xs text-neutral-800">Reading the plugin's ports...</p>
+			{/if}
+		{/if}
+
 		{#if missing}
 			<p class="text-xs text-red-500">Not installed, or failed to load</p>
 		{/if}
@@ -320,7 +344,7 @@
 			<p class="text-xs text-red-500">Plugin scan failed: {engine.plugins.error}</p>
 		{/if}
 		{#if probeError}
-			<p class="text-xs text-red-500">{probeError}</p>
+			<p class="text-xs text-red-500">Could not read the plugin's ports, so the node stays silent: {probeError}</p>
 		{/if}
 		{#if editorError}
 			<p class="text-xs text-red-500">{editorError}</p>

@@ -65,6 +65,33 @@ pub struct PortLayout {
     pub outputs: Vec<PortBus>,
 }
 
+impl PortLayout {
+    /// Channels of the first main input; 0 for a plugin with none (a generator).
+    pub fn main_in(&self) -> usize {
+        self.inputs
+            .iter()
+            .find(|b| b.main)
+            .map_or(0, |b| b.channels as usize)
+    }
+
+    /// Channels of the first main output; 0 for a plugin with none.
+    pub fn main_out(&self) -> usize {
+        self.outputs
+            .iter()
+            .find(|b| b.main)
+            .map_or(0, |b| b.channels as usize)
+    }
+
+    /// Channels of each sidechain, in the plugin's own order.
+    pub fn sidechains(&self) -> Vec<usize> {
+        self.inputs
+            .iter()
+            .filter(|b| !b.main)
+            .map(|b| b.channels as usize)
+            .collect()
+    }
+}
+
 /// What the node needs to know about its plugin between rebuilds: which one is
 /// actually running, and whether it can show an editor. A rebuild is not
 /// instant, so `path` lagging behind the node's own selection is how the UI
@@ -74,6 +101,9 @@ pub struct PortLayout {
 pub struct PluginStatus {
     pub path: Option<String>,
     pub has_editor: bool,
+    /// Copies of the plugin the node runs, one per group of channels when the
+    /// node is wider than the plugin. 0 while nothing is running.
+    pub copies: usize,
 }
 
 /// A capability this format does not have. Returned rather than silently doing
@@ -92,10 +122,10 @@ pub struct ActivateRequest<'a> {
     pub plugin_id: &'a str,
     pub sample_rate: u32,
     pub max_frames: usize,
-    /// Channels the node carries. The host offers the plugin this width and
-    /// reports back what it took, which is never more and never a value the
-    /// plugin did not agree to.
-    pub channels: usize,
+    /// What the plugin declared when it was picked. The instance takes the
+    /// buses the plugin itself reports; this is what the node's width was
+    /// sized from, and a plugin that now reports something else is refused.
+    pub layout: &'a PortLayout,
     /// Whether anything is wired to each sidechain input, in the plugin's own
     /// order. A sidechain nothing feeds stays switched off.
     pub wired_extras: &'a [bool],
@@ -117,13 +147,24 @@ pub enum HostedNode {
 }
 
 impl HostedNode {
-    /// Channels of the plugin's main port, which is the width of the node.
-    pub fn channels(&self) -> usize {
+    /// Channels the plugin reads on its main input.
+    pub fn in_channels(&self) -> usize {
         match self {
-            HostedNode::Clap(n) => n.channels(),
+            HostedNode::Clap(n) => n.in_channels(),
             #[cfg(target_os = "macos")]
-            HostedNode::Au(n) => n.channels(),
-            HostedNode::Vst3(n) => n.channels(),
+            HostedNode::Au(n) => n.in_channels(),
+            HostedNode::Vst3(n) => n.in_channels(),
+        }
+    }
+
+    /// Channels the plugin writes on its main output, which is the width the
+    /// node carries on from here.
+    pub fn out_channels(&self) -> usize {
+        match self {
+            HostedNode::Clap(n) => n.out_channels(),
+            #[cfg(target_os = "macos")]
+            HostedNode::Au(n) => n.out_channels(),
+            HostedNode::Vst3(n) => n.out_channels(),
         }
     }
 }
@@ -180,16 +221,66 @@ impl BlockProcessor for HostedProcessor {
     }
 }
 
-/// A hosted plugin, run either on the offload thread or in place.
-pub struct HostedEffect {
+/// Delays the channels a plugin does not touch by the plugin's own latency, so
+/// they stay in step with the ones it does.
+struct ChannelDelay {
+    buf: Vec<f32>,
+    pos: usize,
+    frames: usize,
+    cols: usize,
+}
+
+impl ChannelDelay {
+    fn new(frames: usize, cols: usize) -> Self {
+        Self {
+            buf: vec![0.0; frames * cols],
+            pos: 0,
+            frames,
+            cols,
+        }
+    }
+
+    /// In place over `block`, `cols` interleaved.
+    fn process(&mut self, block: &mut [f32]) {
+        if self.frames == 0 {
+            return;
+        }
+        for row in block.chunks_exact_mut(self.cols) {
+            let held = &mut self.buf[self.pos * self.cols..(self.pos + 1) * self.cols];
+            for (a, b) in held.iter_mut().zip(row.iter_mut()) {
+                std::mem::swap(a, b);
+            }
+            self.pos = (self.pos + 1) % self.frames;
+        }
+    }
+}
+
+/// One running copy of the plugin, with its own offload thread when real time.
+struct Lane {
     backend: HostedBackend,
-    channels: usize,
-    /// Channels of each extra input, laid out after the main ones.
-    aux: Vec<usize>,
-    aux_total: usize,
-    /// One block at `channels + aux_total` wide, the shape the node and the
+    /// One block at `max(in, out) + aux_total` wide, the shape the node and the
     /// offload both work in. Sized once, so the audio path never allocates.
     joined: Vec<f32>,
+}
+
+/// A hosted plugin, run either on the offload thread or in place. The node's
+/// block is `node_w` wide. With `copies` on, a node wider than the plugin gets
+/// one copy per group of the plugin's own width, so every channel is processed.
+/// With it off there is one copy: it reads the first `in_ch` channels and
+/// writes the first `out_ch`, and any channel beyond both passes through
+/// untouched (delayed to match the plugin).
+pub struct HostedEffect {
+    lanes: Vec<Lane>,
+    in_ch: usize,
+    out_ch: usize,
+    node_w: usize,
+    copies: bool,
+    /// Channels of each sidechain input, laid out after the main ones.
+    aux: Vec<usize>,
+    aux_total: usize,
+    /// The node's channels past what the plugin handles, and their delay.
+    pass: Option<ChannelDelay>,
+    pass_buf: Vec<f32>,
     latency: usize,
 }
 
@@ -200,127 +291,201 @@ enum HostedBackend {
 }
 
 impl HostedEffect {
+    /// How many copies a node of `node_w` channels needs for a plugin that
+    /// reads and writes `plugin_w`. Copies need the same width in and out to
+    /// line the groups up, so any other plugin stays a single instance.
+    pub fn copies_needed(auto_copies: bool, node_w: usize, in_ch: usize, out_ch: usize) -> usize {
+        if auto_copies && in_ch > 0 && in_ch == out_ch {
+            node_w.div_ceil(in_ch).max(1)
+        } else {
+            1
+        }
+    }
+
+    /// `nodes` are the copies, the first being the editor target. They are all
+    /// the same plugin, so they share one shape.
     pub fn new(
-        node: HostedNode,
+        nodes: Vec<HostedNode>,
         realtime: bool,
         sample_rate: u32,
         block_frames: usize,
         burst_blocks: usize,
+        node_w: usize,
     ) -> Self {
-        let latency = node.latency_frames();
-        let channels = node.channels();
-        let aux = node.aux_buses();
+        let first = nodes.first().expect("a plugin has at least one copy");
+        let plugin_latency = first.latency_frames();
+        let (in_ch, out_ch) = (first.in_channels(), first.out_channels());
+        let main_w = in_ch.max(out_ch);
+        let aux = first.aux_buses();
         let aux_total: usize = aux.iter().sum();
-        let width = channels + aux_total;
-        let joined = if aux_total > 0 {
-            vec![0.0; MAX_BUFFER_FRAMES * width]
+        let width = main_w + aux_total;
+        let copies = nodes.len() > 1;
+        let direct = !copies && aux_total == 0 && in_ch == out_ch && node_w == in_ch;
+        let mut latency = plugin_latency;
+        let lanes: Vec<Lane> = nodes
+            .into_iter()
+            .map(|node| {
+                let joined = if direct {
+                    Vec::new()
+                } else {
+                    vec![0.0; MAX_BUFFER_FRAMES * width]
+                };
+                if !realtime {
+                    return Lane {
+                        backend: HostedBackend::Inline { node },
+                        joined,
+                    };
+                }
+                let processor = HostedProcessor {
+                    node,
+                    width,
+                    scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
+                };
+                // A plugin takes the engine's blocks as they come; the offload's
+                // pad is latency it adds, not a block it works in.
+                match Offload::spawn(
+                    "plugin",
+                    processor,
+                    width,
+                    None,
+                    block_frames,
+                    burst_blocks,
+                    sample_rate,
+                ) {
+                    Ok(o) => {
+                        latency = latency.max(plugin_latency + o.latency_frames());
+                        Lane {
+                            backend: HostedBackend::Offloaded(o),
+                            joined,
+                        }
+                    }
+                    Err(p) => Lane {
+                        backend: HostedBackend::Inline { node: p.node },
+                        joined,
+                    },
+                }
+            })
+            .collect();
+        // Channels past what the plugin handles. With copies every channel has
+        // one, so nothing is left over.
+        let pass_cols = if copies {
+            0
         } else {
-            Vec::new()
+            node_w.saturating_sub(main_w)
         };
-        if !realtime {
-            return Self {
-                backend: HostedBackend::Inline { node },
-                channels,
-                aux,
-                aux_total,
-                joined,
-                latency,
-            };
+        Self {
+            lanes,
+            in_ch,
+            out_ch,
+            node_w,
+            copies,
+            aux,
+            aux_total,
+            pass: (pass_cols > 0).then(|| ChannelDelay::new(latency, pass_cols)),
+            pass_buf: vec![0.0; MAX_BUFFER_FRAMES * pass_cols],
+            latency,
         }
-        let processor = HostedProcessor {
-            node,
-            width,
-            scratch: Vec::with_capacity(MAX_BUFFER_FRAMES * width),
-        };
-        // A plugin takes the engine's blocks as they come; the offload's pad is
-        // latency it adds, not a block it works in.
-        match Offload::spawn(
-            "plugin",
-            processor,
-            width,
-            None,
-            block_frames,
-            burst_blocks,
-            sample_rate,
-        ) {
-            Ok(o) => Self {
-                latency: latency + o.latency_frames(),
-                backend: HostedBackend::Offloaded(o),
-                channels,
-                aux,
-                aux_total,
-                joined,
-            },
-            Err(p) => Self {
-                backend: HostedBackend::Inline { node: p.node },
-                channels,
-                aux,
-                aux_total,
-                joined,
-                latency,
-            },
-        }
+    }
+
+    /// How many copies of the plugin this node runs.
+    pub fn copy_count(&self) -> usize {
+        self.lanes.len()
     }
 }
 
 impl HostedEffect {
-    /// How many extra inputs the plugin declares.
-    pub fn extra_inputs(&self) -> usize {
-        self.aux.len()
-    }
-
-    /// `main` is the node's `channels` wide block. `extras[i]` feeds extra
-    /// input `i` at the node's width, and may be empty when nothing is wired to
-    /// it. A signal wider than the plugin's port loses the surplus channels,
-    /// and a port wider than the signal keeps silence in the rest.
+    /// `main` is the node's `node_w` wide block. `extras[i]` feeds sidechain
+    /// `i` at the node's width, and may be empty when nothing is wired to it. A
+    /// signal wider than the plugin's port loses the surplus channels, and a
+    /// port wider than the signal keeps silence in the rest.
     pub fn process_with_inputs(&mut self, main: &mut [f32], extras: &[Vec<f32>], frames: usize) {
-        if frames == 0 {
+        let w = self.node_w;
+        if frames == 0 || main.len() < frames * w {
             return;
         }
-        if self.aux_total == 0 {
-            return self.process(main, frames);
-        }
-        let m = self.channels;
-        let stride = m + self.aux_total;
-        let joined = &mut self.joined[..frames * stride];
-        for f in 0..frames {
-            joined[f * stride..f * stride + m].copy_from_slice(&main[f * m..f * m + m]);
-            let mut offset = m;
-            for (bus, &a) in self.aux.iter().enumerate() {
-                let side = &mut joined[f * stride + offset..f * stride + offset + a];
-                match extras.get(bus) {
-                    Some(s) if s.len() >= frames * m => {
-                        for (c, v) in side.iter_mut().enumerate() {
-                            *v = if c < m { s[f * m + c] } else { 0.0 };
-                        }
-                    }
-                    _ => side.fill(0.0),
+        let (i, o) = (self.in_ch, self.out_ch);
+        let main_w = i.max(o);
+        let stride = main_w + self.aux_total;
+        for (k, lane) in self.lanes.iter_mut().enumerate() {
+            if lane.joined.is_empty() {
+                match &mut lane.backend {
+                    HostedBackend::Offloaded(off) => off.process(&mut main[..frames * w]),
+                    HostedBackend::Inline { node } => node.process(main, frames),
                 }
-                offset += a;
+                continue;
+            }
+            // The channels this copy reads: its own group, and the last one
+            // repeated where the group runs past the node (a lone channel
+            // fills both sides of a stereo plugin, as it always has).
+            let (base, last) = if self.copies {
+                (k * i, (w - 1).min(k * i + i - 1))
+            } else {
+                (0, i.saturating_sub(1))
+            };
+            let src_of = |c: usize| (base + c).min(last);
+            let joined = &mut lane.joined[..frames * stride];
+            for f in 0..frames {
+                let row = &mut joined[f * stride..(f + 1) * stride];
+                for c in 0..i {
+                    row[c] = main[f * w + src_of(c)];
+                }
+                row[i..main_w].fill(0.0);
+                let mut offset = main_w;
+                for (bus, &a) in self.aux.iter().enumerate() {
+                    let side = &mut row[offset..offset + a];
+                    match extras.get(bus) {
+                        Some(s) if s.len() >= frames * w => {
+                            for (c, v) in side.iter_mut().enumerate() {
+                                *v = if self.copies {
+                                    s[f * w + src_of(c.min(i.saturating_sub(1)))]
+                                } else if c < w {
+                                    s[f * w + c]
+                                } else {
+                                    0.0
+                                };
+                            }
+                        }
+                        _ => side.fill(0.0),
+                    }
+                    offset += a;
+                }
+            }
+            match &mut lane.backend {
+                HostedBackend::Offloaded(off) => off.process(joined),
+                HostedBackend::Inline { node } => node.process(joined, frames),
+            }
+            // Only the channels this copy owns are written back.
+            let owned = if self.copies {
+                o.min(w.saturating_sub(base))
+            } else {
+                o
+            };
+            for f in 0..frames {
+                main[f * w + base..f * w + base + owned]
+                    .copy_from_slice(&joined[f * stride..f * stride + owned]);
+                if !self.copies && i > o {
+                    // Channels the plugin consumed and did not write back are silent.
+                    main[f * w + o..f * w + i].fill(0.0);
+                }
             }
         }
-        match &mut self.backend {
-            HostedBackend::Offloaded(o) => o.process(joined),
-            HostedBackend::Inline { node } => node.process(joined, frames),
-        }
-        for f in 0..frames {
-            main[f * m..f * m + m].copy_from_slice(&joined[f * stride..f * stride + m]);
+        if let Some(delay) = &mut self.pass {
+            let cols = w - main_w;
+            let held = &mut self.pass_buf[..frames * cols];
+            for f in 0..frames {
+                held[f * cols..(f + 1) * cols].copy_from_slice(&main[f * w + main_w..(f + 1) * w]);
+            }
+            delay.process(held);
+            for f in 0..frames {
+                main[f * w + main_w..(f + 1) * w].copy_from_slice(&held[f * cols..(f + 1) * cols]);
+            }
         }
     }
 }
 
 impl Effect for HostedEffect {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        if frames == 0 {
-            return;
-        }
-        if self.aux_total > 0 {
-            return self.process_with_inputs(samples, &[], frames);
-        }
-        match &mut self.backend {
-            HostedBackend::Offloaded(o) => o.process(&mut samples[..frames * self.channels]),
-            HostedBackend::Inline { node } => node.process(samples, frames),
-        }
+        self.process_with_inputs(samples, &[], frames);
     }
 
     fn latency_frames(&self) -> usize {

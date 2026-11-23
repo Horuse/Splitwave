@@ -87,7 +87,7 @@ export function createDemoPort(options: { running?: boolean; os?: string } = {})
 			closePluginEditor: done,
 			getPluginState: async () => null,
 			getPluginParams: async () => [],
-			pluginStatus: async () => ({ path: null, hasEditor: false }),
+			pluginStatus: async () => ({ path: null, hasEditor: false, copies: 0 }),
 			probePluginPorts: async () => ({ inputs: [{ name: 'Main', channels: 2, main: true }], outputs: [{ name: 'Main', channels: 2, main: true }] }),
 			onPluginEditorClosed: async () => () => {},
 			netReceiverListen: done,

@@ -455,13 +455,9 @@ impl HostedEffect {
                     match extras.get(bus) {
                         Some(s) if s.len() >= frames * w => {
                             for (c, v) in side.iter_mut().enumerate() {
-                                *v = if self.copies {
-                                    s[f * w + src_of(c.min(i.saturating_sub(1)))]
-                                } else if c < w {
-                                    s[f * w + c]
-                                } else {
-                                    0.0
-                                };
+                                // Every copy hears the same key: the sidechain's own
+                                // first channels, not the channels of the copy's group.
+                                *v = if c < w { s[f * w + c] } else { 0.0 };
                             }
                         }
                         _ => side.fill(0.0),

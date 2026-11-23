@@ -2166,6 +2166,15 @@ pub(super) fn build_output_graph(
             let mut main_upstream: Vec<Upstream> = Vec::new();
             let mut side_upstream: Vec<Upstream> = Vec::new();
             let mut extra_upstream: Vec<Vec<Upstream>> = Vec::new();
+            // A cable left on a sidechain the plugin no longer has (a re-picked
+            // plugin with fewer of them) feeds nothing: it gets no buffer and adds
+            // no latency. The node shows it as a warning instead.
+            let extra_cap = match &effect.spec {
+                EffectSpec::Plugin { layout, .. } => {
+                    layout.as_ref().map_or(0, |l| l.sidechains().len())
+                }
+                _ => usize::MAX,
+            };
             for e in &valid.edges {
                 if &e.to == id && reachable.contains(&e.from) {
                     let idx = id_to_index[&e.from];
@@ -2173,6 +2182,7 @@ pub(super) fn build_output_graph(
                     match e.kind {
                         EdgeKind::Main => main_upstream.push(entry),
                         EdgeKind::Sidechain => side_upstream.push(entry),
+                        EdgeKind::Extra(n) if n > extra_cap => {}
                         EdgeKind::Extra(n) => {
                             if extra_upstream.len() < n {
                                 extra_upstream.resize_with(n, Vec::new);

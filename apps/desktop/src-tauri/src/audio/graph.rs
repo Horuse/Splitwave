@@ -784,7 +784,7 @@ pub struct ValidEffect {
 pub enum EdgeKind {
     Main,
     Sidechain,
-    /// Into a plugin's extra input `N` (1-based).
+    /// Into a plugin's sidechain input `N` (1-based).
     Extra(usize),
 }
 

@@ -20,6 +20,8 @@
 		id: string;
 		label?: string;
 		position?: 'left' | 'bottom' | 'top';
+		/** Where along a bottom or top edge the socket sits, 0 to 1; centred when unset. */
+		offset?: number;
 	}
 
 	interface Props {
@@ -183,7 +185,12 @@
 	     survive alongside them. -->
 	{#if !isPreview && inputs}
 		{#each inputs as h (h.id)}
-			<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
+			<Handle
+				type="target"
+				id={h.id}
+				class="handle"
+				position={pos(h.position)}
+				style={h.offset === undefined ? undefined : `left: ${h.offset * 100}%`}>
 				{#if h.label}
 					<span class={labelClasses(h.position)}>{h.label}</span>
 				{/if}

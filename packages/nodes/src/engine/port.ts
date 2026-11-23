@@ -1,6 +1,8 @@
 import { getContext, setContext } from 'svelte';
 import type { NodeTiming } from '../generated/NodeTiming';
 import type { Preset, PresetData, PresetKind } from '../presets';
+import type { PluginFormat } from '../generated/PluginFormat';
+import type { PortLayout } from '../generated/PortLayout';
 import type { AudioApplication, AudioDevice, CapturePermission, DeviceKind, NativeDeviceInfo, PluginDescriptor, PluginParam, PluginStatus } from './types';
 
 /** Where user presets live; factory presets ship in the package. */
@@ -79,6 +81,7 @@ export interface AudioCommands {
 	getPluginState(nodeId: string): Promise<string | null>;
 	getPluginParams(nodeId: string): Promise<PluginParam[]>;
 	pluginStatus(nodeId: string): Promise<PluginStatus>;
+	probePluginPorts(format: PluginFormat, path: string, pluginId: string): Promise<PortLayout>;
 	onPluginEditorClosed(cb: (nodeId: string) => void): Promise<() => void>;
 	netReceiverListen(nodeId: string, port: number): Promise<void>;
 	netReceiverStats(nodeId: string): Promise<NetReceiverStats | null>;

@@ -200,6 +200,14 @@ export function installMockBackend(env: MockEnv): void {
 					const path = nodeData(String(args.nodeId))?.path;
 					return { path: env.running && path ? path : null, hasEditor: env.pluginEditor };
 				}
+				case 'probe_plugin_ports':
+					return {
+						inputs: [
+							{ name: 'Main', channels: 2, main: true },
+							{ name: 'Sidechain', channels: 2, main: false }
+						],
+						outputs: [{ name: 'Main', channels: 2, main: true }]
+					};
 				case 'get_plugin_params': {
 					const id = String(args.nodeId);
 					if (!params.has(id)) params.set(id, mockParams(env.pluginParams));

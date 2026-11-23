@@ -13,6 +13,7 @@
 	import PinOff from '~icons/fluent/pin-12-regular';
 	import Chevron from '~icons/fluent/chevron-right-12-filled';
 	import PluginPresets from './_plugin_presets.svelte';
+	import { pluginSidechainHandle } from '../utils';
 	import { getEnginePort, type PluginParam, type PluginStatus } from '../../engine';
 
 	const engine = getEnginePort();
@@ -55,9 +56,50 @@
 			vendor: desc?.vendor ?? '',
 			// Drop the previous plugin's state; loading it into a different plugin
 			// feeds garbage to its state parser (some plugins panic on it).
-			state: null
+			state: null,
+			// The new plugin's buses are unknown until it answers below; the old
+			// plugin's sockets must not stay on the node meanwhile.
+			layout: null
 		});
 	}
+
+	// The sockets come from what the plugin declares, so they exist before the
+	// pipeline runs. A node saved before this was stored asks once on load.
+	// Deriveds, not `data`: every updateNodeData hands the node a new data
+	// object, which would rerun the probe.
+	const pluginFormat = $derived(data.format);
+	const pluginUid = $derived(data.pluginId);
+	const hasLayout = $derived(!!data.layout);
+	let probeError = $state<string | null>(null);
+
+	$effect(() => {
+		const format = pluginFormat;
+		const path = pluginPath;
+		const pluginId = pluginUid;
+		probeError = null;
+		if (!format || !path || hasLayout) return;
+		let current = true;
+		engine.audio
+			.probePluginPorts(format, path, pluginId)
+			.then((layout) => {
+				if (current) flow.updateNodeData(id, { layout });
+			})
+			.catch((e) => {
+				if (current) probeError = String(e);
+			});
+		return () => (current = false);
+	});
+
+	// Every input after the main one is a socket of its own, labelled with the
+	// plugin's name for it.
+	const extraInputs = $derived(
+		(data.layout?.inputs ?? []).slice(1).map((bus, i, all) => ({
+			id: pluginSidechainHandle(i + 1),
+			label: bus.name || `Input ${i + 2}`,
+			position: 'bottom' as const,
+			offset: (i + 1) / (all.length + 1)
+		}))
+	);
 
 	let editorOpen = $state(false);
 
@@ -220,6 +262,7 @@
 	hasInput
 	hasOutput
 	channelIo
+	inputs={extraInputs}
 	selfGrowing
 	nodeId={id}
 	bypassed={data.bypassed}
@@ -272,6 +315,9 @@
 		{/if}
 		{#if engine.plugins.error}
 			<p class="text-xs text-red-500">Plugin scan failed: {engine.plugins.error}</p>
+		{/if}
+		{#if probeError}
+			<p class="text-xs text-red-500">{probeError}</p>
 		{/if}
 		{#if editorError}
 			<p class="text-xs text-red-500">{editorError}</p>

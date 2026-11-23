@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
+import type { PluginFormat } from '@splitwave/nodes/generated/PluginFormat';
+import type { PortLayout } from '@splitwave/nodes/generated/PortLayout';
 
 /** Rate and buffer every device stream opens with. */
 function engineFormat() {
@@ -34,6 +36,8 @@ export const methods = {
 	getPluginState: (nodeId: string): Promise<string | null> => invoke<string | null>('get_plugin_state', { nodeId }),
 	getPluginParams: (nodeId: string): Promise<PluginParam[]> => invoke<PluginParam[]>('get_plugin_params', { nodeId }),
 	pluginStatus: (nodeId: string): Promise<PluginStatus> => invoke<PluginStatus>('plugin_status', { nodeId }),
+	probePluginPorts: (format: PluginFormat, path: string, pluginId: string): Promise<PortLayout> =>
+		invoke<PortLayout>('probe_plugin_ports', { format, path, pluginId }),
 	onPluginEditorClosed: (cb: (nodeId: string) => void): Promise<UnlistenFn> =>
 		listen<string>('plugin://editor-closed', (e) => cb(e.payload)).then((un) => un),
 	listInputDevices: (): Promise<AudioDevice[]> => invoke<AudioDevice[]>('list_input_devices'),

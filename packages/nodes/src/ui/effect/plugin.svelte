@@ -97,11 +97,11 @@
 		(data.layout?.inputs ?? [])
 			.filter((bus) => !bus.main)
 			.map((bus, i, all) => ({
-			id: pluginSidechainHandle(i + 1),
-			label: bus.name || `Sidechain ${i + 1}`,
-			position: 'bottom' as const,
-			offset: (i + 1) / (all.length + 1)
-		}))
+				id: pluginSidechainHandle(i + 1),
+				label: bus.name || `Sidechain ${i + 1}`,
+				position: 'bottom' as const,
+				offset: (i + 1) / (all.length + 1)
+			}))
 	);
 
 	let editorOpen = $state(false);
@@ -169,7 +169,9 @@
 	});
 
 	// Copies need the same width in and out to line the channel groups up.
-	const canCopy = $derived(!data.layout || (data.layout.inputs.find((b) => b.main)?.channels ?? 0) === (data.layout.outputs.find((b) => b.main)?.channels ?? -1));
+	const canCopy = $derived(
+		!data.layout || (data.layout.inputs.find((b) => b.main)?.channels ?? 0) === (data.layout.outputs.find((b) => b.main)?.channels ?? -1)
+	);
 
 	// With one copy, only the plugin's own channels are processed; the rest of a
 	// wider node goes through as it came.
@@ -348,7 +350,10 @@
 							</Button>
 						</Tooltip>
 					{:else}
-						<Tooltip text={canOpenEditor ? 'This plugin has no window of its own' : 'Start the pipeline to open the editor: the plugin loads only while it runs.'}>
+						<Tooltip
+							text={canOpenEditor
+								? 'This plugin has no window of its own'
+								: 'Start the pipeline to open the editor: the plugin loads only while it runs.'}>
 							<Button class="nodrag nopan pointer-events-none" icon disabled aria-label="Plugin window">
 								{#if canOpenEditor}<WindowOff class="size-4" />{:else}<WindowNew class="size-4" />{/if}
 							</Button>
@@ -363,7 +368,13 @@
 				text={canCopy
 					? 'A node wider than the plugin runs one copy of it per group of channels, so every channel is processed. Off: one copy, and the other channels pass through untouched.'
 					: 'This plugin changes the channel count (its input and output differ), so it always runs as one copy.'}>
-				<Toggle class="nodrag nopan" size="sm" label="Copy per channel group" disabled={!canCopy} checked={canCopy && (data.autoCopies ?? true)} onChange={setAutoCopies} />
+				<Toggle
+					class="nodrag nopan"
+					size="sm"
+					label="Copy per channel group"
+					disabled={!canCopy}
+					checked={canCopy && (data.autoCopies ?? true)}
+					onChange={setAutoCopies} />
 			</Tooltip>
 			{#if !data.layout && !probeError}
 				<p class="text-xs text-neutral-800">Reading the plugin's ports...</p>

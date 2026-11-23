@@ -188,12 +188,7 @@
 	     survive alongside them. -->
 	{#if !isPreview && inputs}
 		{#each inputs as h (h.id)}
-			<Handle
-				type="target"
-				id={h.id}
-				class="handle"
-				position={pos(h.position)}
-				style={h.offset === undefined ? undefined : `left: ${h.offset * 100}%`}>
+			<Handle type="target" id={h.id} class="handle" position={pos(h.position)} style={h.offset === undefined ? undefined : `left: ${h.offset * 100}%`}>
 				{#if h.label}
 					<span class={labelClasses(h.position)}>{h.label}</span>
 				{/if}

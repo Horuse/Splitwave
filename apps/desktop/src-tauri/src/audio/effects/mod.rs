@@ -541,6 +541,8 @@ pub fn instantiate_effect(
     // Channels this node carries. An effect that can take them all says so
     // through `EffectBuild::full_width`; the rest are driven one pair at a time.
     channels: usize,
+    // Whether anything is wired to each of a plugin's sidechain inputs.
+    wired_extras: &[bool],
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -1117,6 +1119,7 @@ pub fn instantiate_effect(
                 sample_rate,
                 max_frames: PLUGIN_MAX_BLOCK,
                 channels,
+                wired_extras,
                 state: state.as_deref(),
                 primary,
                 params: ring.clone(),
@@ -1520,7 +1523,7 @@ mod tests {
         for (spec, update) in cases {
             let mut reg = EffectRegistry::new();
             let mut build =
-                instantiate_effect(&spec, "n", 48_000, 1024, 1, true, true, 2, &mut reg);
+                instantiate_effect(&spec, "n", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
             let mut warm = vec![0.25f32; 48_000 * 2];
             build.effect.process_with_sidechain(&mut warm, None, 48_000);
             let before = warm[warm.len() - 1];
@@ -1550,10 +1553,10 @@ mod tests {
     fn a_scope_rebuilt_at_another_rate_starts_a_new_handle() {
         let mut reg = EffectRegistry::new();
         let spec = EffectSpec::Spectrum(Default::default());
-        let first = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
-        let same = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
+        let same = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(same.scope.is_none(), "same rate reuses the handle");
-        let other = instantiate_effect(&spec, "sp", 44_100, 1024, 1, true, true, 2, &mut reg);
+        let other = instantiate_effect(&spec, "sp", 44_100, 1024, 1, true, true, 2, &[], &mut reg);
         let handle = other.scope.expect("a new handle at the new rate");
         assert_eq!(handle.sample_rate, 44_100);
         assert_ne!(handle.session, first.scope.unwrap().session);
@@ -1566,17 +1569,17 @@ mod tests {
             gain_db: -6.0,
             bypassed: true,
         });
-        let first = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(first.bypass_is_new);
         assert!(first.control.is_some());
         assert!(
             first.bypass.load(Ordering::Relaxed),
             "bypassed spec latches"
         );
-        let second = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let second = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(!second.bypass_is_new);
         assert!(second.control.is_none());
-        let other = instantiate_effect(&spec, "n2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let other = instantiate_effect(&spec, "n2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(other.bypass_is_new);
         assert!(other.control.is_some());
     }
@@ -1590,9 +1593,10 @@ mod tests {
             release_ms: 50.0,
             bypassed: false,
         });
-        let first = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let gr1 = first.gr.clone().expect("first build publishes GR");
-        let second = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let second =
+            instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let gr2 = second.gr.clone().expect("rebuild republishes GR");
         assert_eq!(gr1.node_id, gr2.node_id);
         assert!(Arc::ptr_eq(&gr1.gr_lin, &gr2.gr_lin), "same atom reused");
@@ -1619,6 +1623,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(comp.gr.is_some());
@@ -1638,6 +1643,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(gate.gr.is_some());
@@ -1655,6 +1661,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lvl.meter.is_some());
@@ -1667,6 +1674,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lvl2.meter.is_none());
@@ -1680,6 +1688,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lufs.lufs.is_some());
@@ -1692,6 +1701,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(wave.scope.is_some());
@@ -1704,6 +1714,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(spec_first.scope.is_some());
@@ -1716,6 +1727,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(spec_second.scope.is_none());
@@ -1732,7 +1744,8 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(build.control.is_none());
         assert!(!build.full_width);
         let mut buf = vec![0.3f32, -0.4];
@@ -1751,7 +1764,8 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
@@ -1768,7 +1782,8 @@ mod tests {
             bypassed: false,
             state: None,
         };
-        let mut build = instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
@@ -1879,7 +1894,8 @@ mod tests {
 
     fn run_in_blocks(spec: &EffectSpec, input: &[f32], block: usize) -> Vec<f32> {
         let mut reg = EffectRegistry::new();
-        let mut build = instantiate_effect(spec, "inv", 48_000, block, 1, false, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(spec, "inv", 48_000, block, 1, false, true, 2, &[], &mut reg);
         let mut out = input.to_vec();
         for chunk in out.chunks_mut(block * 2) {
             let frames = chunk.len() / 2;
@@ -1925,7 +1941,7 @@ mod tests {
             for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
                 let mut reg = EffectRegistry::new();
                 let mut build =
-                    instantiate_effect(&spec, "rt", 48_000, block, 1, true, true, 2, &mut reg);
+                    instantiate_effect(&spec, "rt", 48_000, block, 1, true, true, 2, &[], &mut reg);
                 let mut buf = program(block);
                 // First blocks may size lazily; the steady state must not.
                 for _ in 0..4 {
@@ -1947,8 +1963,18 @@ mod tests {
         for width in [1usize, 2, 4, 6] {
             let mut reg = EffectRegistry::new();
             let spec = EffectSpec::LevelMeter(LevelMeterData {});
-            let mut build =
-                instantiate_effect(&spec, "lm", 48_000, 1024, 1, true, true, width, &mut reg);
+            let mut build = instantiate_effect(
+                &spec,
+                "lm",
+                48_000,
+                1024,
+                1,
+                true,
+                true,
+                width,
+                &[],
+                &mut reg,
+            );
             let meter = build.meter.clone().expect("level meter publishes a handle");
             let frames = 1024;
             // Channel c carries a constant 0.1 * (c + 1).
@@ -1975,7 +2001,7 @@ mod tests {
         let specs = builtin_specs();
         for spec in &specs {
             let mut build =
-                instantiate_effect(spec, "dispatch", sr, 1024, 1, true, true, 2, &mut reg);
+                instantiate_effect(spec, "dispatch", sr, 1024, 1, true, true, 2, &[], &mut reg);
             assert!(build.effect.latency_frames() < 100_000);
             let mut buf = vec![0.25f32; 96];
             let side = vec![0.5f32; 96];
@@ -2030,8 +2056,18 @@ mod tests {
             }),
         ];
         for spec in &specs {
-            let mut build =
-                instantiate_effect(spec, "finite", 48_000, 1024, 1, true, true, 2, &mut reg);
+            let mut build = instantiate_effect(
+                spec,
+                "finite",
+                48_000,
+                1024,
+                1,
+                true,
+                true,
+                2,
+                &[],
+                &mut reg,
+            );
             let mut poisoned = vec![0.25; 96];
             poisoned[10] = f32::NAN;
             poisoned[11] = f32::INFINITY;
@@ -2138,7 +2174,7 @@ mod tests {
         ];
         for (i, spec) in specs.iter().enumerate() {
             let node = format!("reuse-{i}");
-            let first = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            let first = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &[], &mut reg);
             assert!(
                 first.control.is_some()
                     || first.meter.is_some()
@@ -2147,7 +2183,8 @@ mod tests {
             );
             // Same node id → the registry already holds the state; the rebuild
             // must go through from_state and stay functional.
-            let mut second = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            let mut second =
+                instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &[], &mut reg);
             assert!(second.control.is_none());
             assert!(second.meter.is_none() && second.lufs.is_none() && second.scope.is_none());
             let mut buf = vec![0.3f32; 96];

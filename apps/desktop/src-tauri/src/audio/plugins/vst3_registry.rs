@@ -73,6 +73,7 @@ fn activate_on_main(
     sample_rate: u32,
     max_frames: usize,
     channels: usize,
+    wired: Vec<bool>,
     state: Option<String>,
     primary: bool,
     params: Arc<ParamRing>,
@@ -93,7 +94,14 @@ fn activate_on_main(
 
     let alive = alive_flag();
     let node = instance
-        .activate(sample_rate, max_frames, channels, params, alive.clone())
+        .activate(
+            sample_rate,
+            max_frames,
+            channels,
+            &wired,
+            params,
+            alive.clone(),
+        )
         .map_err(|e| at(&e))?;
 
     if primary {
@@ -253,6 +261,7 @@ impl PluginHost for Vst3Host {
             req.plugin_id.to_string(),
         );
         let state = req.state.map(str::to_string);
+        let wired = req.wired_extras.to_vec();
         let (sample_rate, max_frames, channels, primary, params) = (
             req.sample_rate,
             req.max_frames,
@@ -269,6 +278,7 @@ impl PluginHost for Vst3Host {
                 sample_rate,
                 max_frames,
                 channels,
+                wired,
                 state,
                 primary,
                 params,

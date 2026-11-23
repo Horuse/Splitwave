@@ -2211,8 +2211,12 @@ pub(super) fn build_output_graph(
                 .max()
                 .unwrap_or(0);
             let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            // A plugin switches a sidechain on only while a cable feeds it, so
+            // which ones are wired is part of what the instance is built for.
+            let wired_extras: Vec<bool> =
+                extra_upstream.iter().map(|bus| !bus.is_empty()).collect();
             let key = format!(
-                "fx|{:?}|{eff_channels}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
+                "fx|{:?}|{eff_channels}|{wired_extras:?}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
                 super::sig::structural_effect(&effect.spec)
             );
             let previous_effect = previous
@@ -2236,6 +2240,7 @@ pub(super) fn build_output_graph(
                         realtime,
                         true,
                         eff_channels,
+                        &wired_extras,
                         registry,
                     );
                     if let Some(c) = build.control {
@@ -2285,6 +2290,7 @@ pub(super) fn build_output_graph(
                             realtime,
                             false,
                             2,
+                            &[],
                             registry,
                         );
                         effects.push(extra.effect);

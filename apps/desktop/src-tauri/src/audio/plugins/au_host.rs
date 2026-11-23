@@ -71,7 +71,10 @@ impl RenderBufferList {
 /// itself is moved into the graph. The unit's input callback writes our channel
 /// pointers straight into its buffer list, so no copy happens on the pull.
 struct RenderInput {
+    /// Element 0, the main input.
     channels: Vec<Vec<f32>>,
+    /// Elements 1.., the sidechains, one entry per element.
+    aux: Vec<Vec<Vec<f32>>>,
 }
 
 /// A live Audio Unit, shared between the DSP worker that renders it and the UI
@@ -182,6 +185,10 @@ pub struct AuNode {
     alive: Arc<AtomicBool>,
     input: Box<RenderInput>,
     output: Vec<Vec<f32>>,
+    /// Channels of each sidechain input element, laid out after the main
+    /// channels in every block.
+    aux: Vec<usize>,
+    aux_total: usize,
     max_frames: usize,
     /// Interleaved channels the pipeline hands this node, which is the width the
     /// unit was configured for.
@@ -206,7 +213,7 @@ unsafe extern "C-unwind" fn supply_input(
     ref_con: NonNull<c_void>,
     _action_flags: NonNull<AudioUnitRenderActionFlags>,
     _time_stamp: NonNull<AudioTimeStamp>,
-    _bus: u32,
+    bus: u32,
     frames: u32,
     io_data: *mut AudioBufferList,
 ) -> i32 {
@@ -214,13 +221,20 @@ unsafe extern "C-unwind" fn supply_input(
         return -1;
     }
     let input = &mut *(ref_con.as_ptr() as *mut RenderInput);
+    let channels = match bus {
+        0 => &mut input.channels,
+        n => match input.aux.get_mut(n as usize - 1) {
+            Some(aux) => aux,
+            None => return -1,
+        },
+    };
     let count = (*io_data).mNumberBuffers as usize;
     let buffers = ptr::addr_of_mut!((*io_data).mBuffers) as *mut AudioBuffer;
-    for i in 0..count.min(input.channels.len()) {
+    for i in 0..count.min(channels.len()) {
         let buf = &mut *buffers.add(i);
         buf.mNumberChannels = 1;
         buf.mDataByteSize = frames * size_of::<f32>() as u32;
-        buf.mData = input.channels[i].as_mut_ptr() as *mut c_void;
+        buf.mData = channels[i].as_mut_ptr() as *mut c_void;
     }
     0
 }
@@ -250,11 +264,22 @@ unsafe fn set_property<T>(
     value: &T,
     what: &str,
 ) -> Result<(), String> {
+    set_property_at(unit, property, scope, 0, value, what)
+}
+
+unsafe fn set_property_at<T>(
+    unit: AudioUnit,
+    property: u32,
+    scope: u32,
+    element: u32,
+    value: &T,
+    what: &str,
+) -> Result<(), String> {
     let status = AudioUnitSetProperty(
         unit,
         property,
         scope,
-        0,
+        element,
         value as *const T as *const c_void,
         size_of::<T>() as u32,
     );
@@ -311,8 +336,11 @@ fn activate(
         alive: alive.clone(),
         input: Box::new(RenderInput {
             channels: vec![vec![0.0; max_frames]; offered],
+            aux: Vec::new(),
         }),
         output: vec![vec![0.0; max_frames]; offered],
+        aux: Vec::new(),
+        aux_total: 0,
         max_frames,
         channels: offered,
         steady: 0.0,
@@ -435,6 +463,7 @@ pub fn probe_layout(url: &str) -> Result<PortLayout, String> {
                 };
                 PortBus {
                     name: element_name(owned.unit, scope, element),
+                    main: element == 0,
                     channels: if status == 0 {
                         format.mChannelsPerFrame
                     } else {
@@ -544,6 +573,60 @@ fn configure(
             &callback,
             "render callback",
         )?;
+
+        // Every further input element is a sidechain. A unit renders none of
+        // them without a format and a source, so each gets both, fed silence
+        // until something is wired to it.
+        node.aux.clear();
+        node.input.aux.clear();
+        let mut count = 0u32;
+        let mut size = size_of::<u32>() as u32;
+        let counted = AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_ElementCount,
+            kAudioUnitScope_Input,
+            0,
+            NonNull::from(&mut count).cast(),
+            NonNull::from(&mut size),
+        );
+        if counted == 0 {
+            for element in 1..count {
+                let mut own = float_format(sample_rate, 0);
+                let mut size = size_of::<AudioStreamBasicDescription>() as u32;
+                let got = AudioUnitGetProperty(
+                    unit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    element,
+                    NonNull::from(&mut own).cast(),
+                    NonNull::from(&mut size),
+                );
+                let ch = if got == 0 {
+                    (own.mChannelsPerFrame as usize).clamp(1, MAX_CHANNELS)
+                } else {
+                    2
+                };
+                set_property_at(
+                    unit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    element,
+                    &float_format(sample_rate, ch),
+                    "sidechain stream format",
+                )?;
+                set_property_at(
+                    unit,
+                    kAudioUnitProperty_SetRenderCallback,
+                    kAudioUnitScope_Input,
+                    element,
+                    &callback,
+                    "sidechain render callback",
+                )?;
+                node.input.aux.push(vec![vec![0.0; max_frames]; ch]);
+                node.aux.push(ch);
+            }
+        }
+        node.aux_total = node.aux.iter().sum();
 
         let status = AudioUnitInitialize(unit);
         if status != 0 {
@@ -1079,7 +1162,8 @@ fn create_view(node_id: &str) -> Result<*mut objc2::runtime::AnyObject, String> 
 impl Effect for AuNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         let width = self.channels;
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
+        let stride = width + self.aux_total;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
         }
 
@@ -1106,8 +1190,17 @@ impl Effect for AuNode {
 
         for (c, channel) in self.input.channels.iter_mut().enumerate() {
             for i in 0..frames {
-                channel[i] = samples[i * width + c];
+                channel[i] = samples[i * stride + c];
             }
+        }
+        let mut offset = width;
+        for (bus, &channels) in self.aux.iter().enumerate() {
+            for (c, channel) in self.input.aux[bus].iter_mut().take(channels).enumerate() {
+                for i in 0..frames {
+                    channel[i] = samples[i * stride + offset + c];
+                }
+            }
+            offset += channels;
         }
 
         let mut list = RenderBufferList {
@@ -1146,7 +1239,7 @@ impl Effect for AuNode {
         if status == 0 {
             for (c, channel) in self.output.iter().enumerate().take(width) {
                 for i in 0..frames {
-                    samples[i * width + c] = channel[i];
+                    samples[i * stride + c] = channel[i];
                 }
             }
         }
@@ -1162,6 +1255,10 @@ impl AuNode {
     pub fn channels(&self) -> usize {
         self.channels
     }
+
+    pub fn aux_buses(&self) -> &[usize] {
+        &self.aux
+    }
 }
 
 #[cfg(test)]
@@ -1170,6 +1267,53 @@ mod tests {
 
     /// The tests drive units directly, always as a stereo pair.
     const CHANNELS: usize = 2;
+
+    /// A unit with a sidechain must declare it, take a node built with it, and
+    /// render finite audio with a signal on both inputs.
+    #[test]
+    fn a_sidechain_unit_declares_its_extra_input_and_renders_with_it() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        use crate::audio::plugins::PluginBackend;
+        const FRAMES: usize = 512;
+
+        let found = super::super::au_backend::AuBackend.scan();
+        let Some(unit) = found.iter().find(|u| u.name.contains("Pro-MB")) else {
+            println!("SKIPPED: no sidechain audio unit installed");
+            return;
+        };
+        let layout = probe_layout(&unit.path).expect("probes");
+        let sidechains = layout.inputs.iter().filter(|b| !b.main).count();
+        assert!(
+            layout.inputs.first().is_some_and(|b| b.main),
+            "no main input"
+        );
+        assert!(sidechains >= 1, "{} declared no sidechain", unit.name);
+
+        let mut node = activate(
+            "sc",
+            &unit.path,
+            48_000,
+            FRAMES,
+            CHANNELS,
+            None,
+            false,
+            Arc::new(ParamRing::new()),
+        )
+        .expect("activates");
+        assert_eq!(node.aux_buses().len(), sidechains);
+        let stride = CHANNELS + node.aux_buses().iter().sum::<usize>();
+        for block in 0..32 {
+            let mut wide = vec![0.0f32; FRAMES * stride];
+            for f in 0..FRAMES {
+                let s = ((block * FRAMES + f) as f32 * 0.05).sin() * 0.5;
+                for c in 0..stride {
+                    wide[f * stride + c] = s;
+                }
+            }
+            node.process(&mut wide, FRAMES);
+            assert!(wide.iter().all(|s| s.is_finite()));
+        }
+    }
 
     /// Apple's N-band EQ ships with every macOS and is flat by default, so a
     /// signal must come back out at roughly the level it went in.

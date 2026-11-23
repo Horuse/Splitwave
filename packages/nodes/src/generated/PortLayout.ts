@@ -2,8 +2,6 @@
 import type { PortBus } from "./PortBus";
 
 /**
- * The audio buses a plugin declares. Index 0 of each list is the main bus and
- * every later input is auxiliary (a sidechain); all three formats order their
- * buses that way.
+ * The audio buses a plugin declares, in the plugin's own order.
  */
 export type PortLayout = { inputs: Array<PortBus>, outputs: Array<PortBus>, };

@@ -158,9 +158,11 @@ impl Bus {
     }
 }
 
-/// The pipeline carries interleaved stereo. Audio flows through bus 0 in each
-/// direction; every other bus the plugin declares is still allocated and fed
-/// silence, because a missing buffer makes the plugin read a null pointer.
+/// Audio flows through the first main bus in each direction and each sidechain
+/// input. The block handed to `process` is interleaved at `channels + sum(aux)`
+/// wide: the main channels first, then each sidechain in bus order. Every bus
+/// the plugin declares has a buffer, silent when nothing feeds it, because a
+/// missing buffer makes the plugin read a null pointer.
 pub struct Vst3Node {
     processor: ComPtr<IAudioProcessor>,
     inputs: Vec<Bus>,
@@ -172,9 +174,14 @@ pub struct Vst3Node {
     params: Arc<ParamRing>,
     param_cursor: usize,
     max_frames: usize,
-    /// Interleaved channels the pipeline hands this node, which is what the
-    /// plugin agreed to carry. The main bus is exactly this wide.
+    /// Channels of the main bus, which is the width of the node.
     channels: usize,
+    main_in: Option<usize>,
+    /// The input buses that are not main, in bus order: the sidechains.
+    aux_buses: Vec<usize>,
+    /// Channels of each sidechain, in `aux_buses` order.
+    aux: Vec<usize>,
+    aux_total: usize,
     latency: usize,
     alive: Arc<AtomicBool>,
 }
@@ -195,6 +202,7 @@ impl Vst3Node {
     pub fn new(
         processor: ComPtr<IAudioProcessor>,
         input_channels: &[usize],
+        input_main: &[bool],
         output_channels: &[usize],
         max_frames: usize,
         channels: usize,
@@ -210,6 +218,10 @@ impl Vst3Node {
             .map(|c| Bus::new(*c, max_frames))
             .collect();
 
+        let main_in = input_main.iter().position(|m| *m);
+        let aux_buses: Vec<usize> = (0..input_main.len()).filter(|&i| !input_main[i]).collect();
+        let aux: Vec<usize> = aux_buses.iter().map(|&i| input_channels[i]).collect();
+        let aux_total = aux.iter().sum();
         let input_buses = inputs.iter_mut().map(bus_buffers).collect();
         let output_buses = outputs.iter_mut().map(bus_buffers).collect();
 
@@ -234,6 +246,10 @@ impl Vst3Node {
             param_cursor,
             max_frames,
             channels,
+            main_in,
+            aux_buses,
+            aux,
+            aux_total,
             latency,
             alive,
         }
@@ -253,7 +269,8 @@ fn bus_buffers(bus: &mut Bus) -> AudioBusBuffers {
 impl Effect for Vst3Node {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         let width = self.channels;
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
+        let stride = width + self.aux_total;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
         }
 
@@ -267,14 +284,25 @@ impl Effect for Vst3Node {
             }
         }
 
-        // Main input bus; silence stays in every other bus and in any channel
-        // the plugin declares beyond what the pipeline carries.
-        if let Some(main) = self.inputs.first_mut() {
+        // Main input bus; silence stays in any channel the plugin declares
+        // beyond what the pipeline carries.
+        if let Some(main) = self.main_in.and_then(|i| self.inputs.get_mut(i)) {
             for (c, channel) in main.channels.iter_mut().take(width).enumerate() {
                 for i in 0..frames {
-                    channel[i] = samples[i * width + c];
+                    channel[i] = samples[i * stride + c];
                 }
             }
+        }
+        let mut offset = width;
+        for (n, &channels) in self.aux.iter().enumerate() {
+            if let Some(side) = self.inputs.get_mut(self.aux_buses[n]) {
+                for (c, channel) in side.channels.iter_mut().take(channels).enumerate() {
+                    for i in 0..frames {
+                        channel[i] = samples[i * stride + offset + c];
+                    }
+                }
+            }
+            offset += channels;
         }
 
         let mut data = ProcessData {
@@ -305,7 +333,7 @@ impl Effect for Vst3Node {
                     // rest of the block at whatever it held.
                     let src = &main.channels[c.min(main.channels.len() - 1)];
                     for i in 0..frames {
-                        samples[i * width + c] = src[i];
+                        samples[i * stride + c] = src[i];
                     }
                 }
             }
@@ -320,6 +348,10 @@ impl Effect for Vst3Node {
 impl Vst3Node {
     pub fn channels(&self) -> usize {
         self.channels
+    }
+
+    pub fn aux_buses(&self) -> &[usize] {
+        &self.aux
     }
 }
 

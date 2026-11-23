@@ -623,6 +623,11 @@ pub struct PluginData {
     pub bypassed: bool,
     #[serde(default)]
     pub state: Option<String>,
+    /// The buses the plugin declared when it was picked, which is what gives
+    /// the node its sockets before the pipeline runs. None for a node saved
+    /// before this existed; the node reads it once and stores it.
+    #[serde(default)]
+    pub layout: Option<crate::audio::plugins::host_api::PortLayout>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]

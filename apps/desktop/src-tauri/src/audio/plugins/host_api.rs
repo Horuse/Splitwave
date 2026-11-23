@@ -50,11 +50,13 @@ pub struct PortBus {
     /// The plugin's own name for the bus ("Sidechain", "Main").
     pub name: String,
     pub channels: u32,
+    /// The plugin's main bus. Every input that is not main is a sidechain the
+    /// node offers a socket for. A plugin can have several main buses or none
+    /// at all, so the position in the list says nothing about the role.
+    pub main: bool,
 }
 
-/// The audio buses a plugin declares. Index 0 of each list is the main bus and
-/// every later input is auxiliary (a sidechain); all three formats order their
-/// buses that way.
+/// The audio buses a plugin declares, in the plugin's own order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -94,6 +96,9 @@ pub struct ActivateRequest<'a> {
     /// reports back what it took, which is never more and never a value the
     /// plugin did not agree to.
     pub channels: usize,
+    /// Whether anything is wired to each sidechain input, in the plugin's own
+    /// order. A sidechain nothing feeds stays switched off.
+    pub wired_extras: &'a [bool],
     pub state: Option<&'a str>,
     /// Marks the editor and parameter target. Other builds of the same node are
     /// metering duplicates or extra stereo pairs.
@@ -130,8 +135,8 @@ impl HostedNode {
         match self {
             HostedNode::Clap(n) => n.aux_buses().to_vec(),
             #[cfg(target_os = "macos")]
-            HostedNode::Au(_) => Vec::new(),
-            HostedNode::Vst3(_) => Vec::new(),
+            HostedNode::Au(n) => n.aux_buses().to_vec(),
+            HostedNode::Vst3(n) => n.aux_buses().to_vec(),
         }
     }
 }

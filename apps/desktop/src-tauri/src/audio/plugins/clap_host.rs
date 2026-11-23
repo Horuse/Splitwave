@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::audio_ports::{AudioPortFlags, AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
@@ -275,7 +275,8 @@ impl ClapInstance {
             .instance
             .plugin_handle()
             .get_extension::<PluginAudioPorts>();
-        let inputs = port_channels(ports.as_ref(), &mut self.instance, true);
+        let in_buses = read_ports(ports.as_ref(), &mut self.instance, true);
+        let inputs: Vec<u32> = in_buses.iter().map(|b| b.channels).collect();
         let outputs = port_channels(ports.as_ref(), &mut self.instance, false);
         // A CLAP plugin's ports are fixed at instantiation, so there is nothing
         // to negotiate: it either already carries the node's width on its main
@@ -309,7 +310,7 @@ impl ClapInstance {
             .unwrap_or(0);
 
         Ok(PluginNode::new(
-            processor, &inputs, &outputs, max_frames, params, alive, accepted, latency,
+            processor, &in_buses, &outputs, max_frames, params, alive, accepted, latency,
         ))
     }
 
@@ -595,6 +596,7 @@ fn read_ports(
         return vec![PortBus {
             name: "Main".into(),
             channels: 2,
+            main: true,
         }];
     };
     let count = ports.count(&mut handle.plugin_handle(), is_input);
@@ -605,10 +607,12 @@ fn read_ports(
                 Some(p) => PortBus {
                     name: String::from_utf8_lossy(p.name).into_owned(),
                     channels: p.channel_count,
+                    main: p.flags.contains(AudioPortFlags::IS_MAIN),
                 },
                 None => PortBus {
                     name: String::new(),
                     channels: 2,
+                    main: i == 0,
                 },
             }
         })
@@ -672,6 +676,49 @@ mod tests {
     fn open(bundles: &mut Bundles, plugin: &PluginDescriptor) -> ClapInstance {
         ClapInstance::new(bundles, "test", &plugin.path, &plugin.plugin_id)
             .unwrap_or_else(|e| panic!("{}: {e}", plugin.name))
+    }
+
+    /// A plugin with a sidechain must declare it, take a node built with it
+    /// wired, and render finite audio with a signal on both inputs.
+    #[test]
+    fn a_sidechain_plugin_declares_its_extra_input_and_renders_with_it_wired() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        let found = installed();
+        let Some(plugin) = found.iter().find(|p| p.name.contains("Pro-MB")) else {
+            return skipped("sidechain input");
+        };
+        let mut bundles = Bundles::default();
+        let mut instance = open(&mut bundles, plugin);
+        let layout = instance.port_layout();
+        let sidechains = layout.inputs.iter().filter(|b| !b.main).count();
+        assert!(
+            layout.inputs.first().is_some_and(|b| b.main),
+            "no main input"
+        );
+        assert!(sidechains >= 1, "{} declared no sidechain", plugin.name);
+
+        let mut node = instance
+            .activate(
+                SAMPLE_RATE,
+                FRAMES,
+                CHANNELS,
+                Arc::new(ParamRing::new()),
+                alive_flag(),
+            )
+            .expect("activates");
+        assert_eq!(node.aux_buses().len(), sidechains);
+        let stride = CHANNELS + node.aux_buses().iter().sum::<usize>();
+        for block in 0..PRIMING_BLOCKS {
+            let mut wide = vec![0.0f32; FRAMES * stride];
+            for f in 0..FRAMES {
+                let s = ((block * FRAMES + f) as f32 * 0.05).sin() * 0.5;
+                for c in 0..stride {
+                    wide[f * stride + c] = s;
+                }
+            }
+            node.process(&mut wide, FRAMES);
+            assert!(wide.iter().all(|s| s.is_finite()));
+        }
     }
 
     /// An effect fed a signal must produce one. A lookahead plugin's first

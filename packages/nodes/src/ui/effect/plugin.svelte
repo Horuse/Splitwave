@@ -528,5 +528,9 @@
 				</div>
 			{/if}
 		{/if}
+
+		{#if running && status.copies > 1}
+			<p class="text-[11px] leading-snug text-neutral-800">Changes made in the plugin window reach the other copies with a short delay.</p>
+		{/if}
 	</div>
 </Wrapper>

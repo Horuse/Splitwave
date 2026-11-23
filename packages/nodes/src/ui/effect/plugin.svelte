@@ -90,12 +90,15 @@
 		return () => (current = false);
 	});
 
-	// Every input after the main one is a socket of its own, labelled with the
-	// plugin's name for it.
+	// Every input that is not a main bus is a socket of its own, labelled with
+	// the plugin's name for it. The engine counts them the same way: by role, in
+	// the plugin's own order.
 	const extraInputs = $derived(
-		(data.layout?.inputs ?? []).slice(1).map((bus, i, all) => ({
+		(data.layout?.inputs ?? [])
+			.filter((bus) => !bus.main)
+			.map((bus, i, all) => ({
 			id: pluginSidechainHandle(i + 1),
-			label: bus.name || `Input ${i + 2}`,
+			label: bus.name || `Sidechain ${i + 1}`,
 			position: 'bottom' as const,
 			offset: (i + 1) / (all.length + 1)
 		}))
@@ -262,7 +265,7 @@
 	hasInput
 	hasOutput
 	channelIo
-	inputs={extraInputs}
+	inputs={extraInputs.length ? extraInputs : undefined}
 	selfGrowing
 	nodeId={id}
 	bypassed={data.bypassed}

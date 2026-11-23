@@ -2215,8 +2215,19 @@ pub(super) fn build_output_graph(
             // which ones are wired is part of what the instance is built for.
             let wired_extras: Vec<bool> =
                 extra_upstream.iter().map(|bus| !bus.is_empty()).collect();
+            // Only VST3 has a switch per bus; CLAP and AU read a sidechain
+            // whatever is wired, so a cable must not rebuild them (a rebuild is
+            // a dropout and puts back the state saved last).
+            let wired_key = matches!(
+                effect.spec,
+                EffectSpec::Plugin {
+                    format: Some(crate::audio::plugins::PluginFormat::Vst3),
+                    ..
+                }
+            )
+            .then_some(&wired_extras);
             let key = format!(
-                "fx|{:?}|{eff_channels}|{wired_extras:?}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
+                "fx|{:?}|{eff_channels}|{wired_key:?}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
                 super::sig::structural_effect(&effect.spec)
             );
             let previous_effect = previous

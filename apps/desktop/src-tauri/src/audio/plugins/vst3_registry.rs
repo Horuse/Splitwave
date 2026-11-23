@@ -83,8 +83,20 @@ fn activate_on_main(
     let module = Vst3Module::open(std::path::Path::new(&path)).map_err(|e| at(&e))?;
     let mut instance = Vst3Instance::new(module, &plugin_id).map_err(|e| at(&e))?;
 
-    // Before activation: a plugin may size its buffers to what it reads.
-    if let Some(blob) = state.as_deref().and_then(|s| untag_state(&plugin_id, s)) {
+    // Before activation: a plugin may size its buffers to what it reads. The
+    // instance this one replaces holds what the user has set since the node's
+    // data was last saved (a sidechain mode switched on in its own window,
+    // say), so a same-plugin rebuild carries that over rather than the stale blob.
+    let live = SLOTS.with(|s| {
+        s.borrow()
+            .get(&node_id)
+            .filter(|slot| slot.path == path && slot.plugin_id == plugin_id)
+            .and_then(|slot| slot.instance.save_state())
+    });
+    if let Some(blob) = live
+        .as_deref()
+        .or_else(|| state.as_deref().and_then(|s| untag_state(&plugin_id, s)))
+    {
         if let Err(err) = instance.restore_state(blob) {
             tracing::warn!(node_id, path, %err, "vst3: saved state rejected, using defaults");
         }

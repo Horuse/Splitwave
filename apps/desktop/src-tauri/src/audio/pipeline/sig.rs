@@ -195,6 +195,7 @@ fn edge_kind_ord(k: EdgeKind) -> u8 {
     match k {
         EdgeKind::Main => 0,
         EdgeKind::Sidechain => 1,
+        EdgeKind::Extra(n) => 1u8.saturating_add(n.min(200) as u8),
     }
 }
 

@@ -648,7 +648,7 @@ mod tests {
     /// Drives a node with a stereo block the way the pipeline does: a plugin
     /// with a sidechain gets that port's channels appended, fed silence.
     fn run(node: &mut PluginNode, block: &mut [f32]) {
-        let aux = node.aux_channels();
+        let aux: usize = node.aux_buses().iter().sum();
         if aux == 0 {
             return node.process(block, FRAMES);
         }

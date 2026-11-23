@@ -124,14 +124,14 @@ impl HostedNode {
 }
 
 impl HostedNode {
-    /// Channels of the sidechain input, fed after the main ones in every block
-    /// `process` is given; 0 when the plugin has no sidechain.
-    pub fn aux_channels(&self) -> usize {
+    /// Channels of each extra input (sidechain), in port order. They follow the
+    /// main channels in every block `process` is given.
+    pub fn aux_buses(&self) -> Vec<usize> {
         match self {
-            HostedNode::Clap(n) => n.aux_channels(),
+            HostedNode::Clap(n) => n.aux_buses().to_vec(),
             #[cfg(target_os = "macos")]
-            HostedNode::Au(_) => 0,
-            HostedNode::Vst3(_) => 0,
+            HostedNode::Au(_) => Vec::new(),
+            HostedNode::Vst3(_) => Vec::new(),
         }
     }
 }
@@ -179,10 +179,11 @@ impl BlockProcessor for HostedProcessor {
 pub struct HostedEffect {
     backend: HostedBackend,
     channels: usize,
-    /// Sidechain channels carried beside the main ones; see `process_with_aux`.
-    aux: usize,
-    /// One block at `channels + aux` wide, the shape the node and the offload
-    /// both work in. Sized once, so the audio path never allocates.
+    /// Channels of each extra input, laid out after the main ones.
+    aux: Vec<usize>,
+    aux_total: usize,
+    /// One block at `channels + aux_total` wide, the shape the node and the
+    /// offload both work in. Sized once, so the audio path never allocates.
     joined: Vec<f32>,
     latency: usize,
 }
@@ -203,9 +204,10 @@ impl HostedEffect {
     ) -> Self {
         let latency = node.latency_frames();
         let channels = node.channels();
-        let aux = node.aux_channels();
-        let width = channels + aux;
-        let joined = if aux > 0 {
+        let aux = node.aux_buses();
+        let aux_total: usize = aux.iter().sum();
+        let width = channels + aux_total;
+        let joined = if aux_total > 0 {
             vec![0.0; MAX_BUFFER_FRAMES * width]
         } else {
             Vec::new()
@@ -215,6 +217,7 @@ impl HostedEffect {
                 backend: HostedBackend::Inline { node },
                 channels,
                 aux,
+                aux_total,
                 joined,
                 latency,
             };
@@ -240,12 +243,14 @@ impl HostedEffect {
                 backend: HostedBackend::Offloaded(o),
                 channels,
                 aux,
+                aux_total,
                 joined,
             },
             Err(p) => Self {
                 backend: HostedBackend::Inline { node: p.node },
                 channels,
                 aux,
+                aux_total,
                 joined,
                 latency,
             },
@@ -254,40 +259,39 @@ impl HostedEffect {
 }
 
 impl HostedEffect {
-    /// Whether the plugin has a sidechain input for the pipeline to feed.
-    pub fn has_sidechain(&self) -> bool {
-        self.aux > 0
+    /// How many extra inputs the plugin declares.
+    pub fn extra_inputs(&self) -> usize {
+        self.aux.len()
     }
 
-    /// `main` is the node's `channels` wide block; `sidechain` is the same
-    /// frame count at the node's width, or `None` when nothing is wired. The
-    /// sidechain's channels beyond what the plugin's port takes are dropped, and
-    /// a port wider than the signal keeps silence in the rest.
-    pub fn process_with_sidechain(
-        &mut self,
-        main: &mut [f32],
-        sidechain: Option<&[f32]>,
-        frames: usize,
-    ) {
+    /// `main` is the node's `channels` wide block. `extras[i]` feeds extra
+    /// input `i` at the node's width, and may be empty when nothing is wired to
+    /// it. A signal wider than the plugin's port loses the surplus channels,
+    /// and a port wider than the signal keeps silence in the rest.
+    pub fn process_with_inputs(&mut self, main: &mut [f32], extras: &[Vec<f32>], frames: usize) {
         if frames == 0 {
             return;
         }
-        if self.aux == 0 {
+        if self.aux_total == 0 {
             return self.process(main, frames);
         }
-        let (m, a) = (self.channels, self.aux);
-        let stride = m + a;
+        let m = self.channels;
+        let stride = m + self.aux_total;
         let joined = &mut self.joined[..frames * stride];
         for f in 0..frames {
             joined[f * stride..f * stride + m].copy_from_slice(&main[f * m..f * m + m]);
-            let side = &mut joined[f * stride + m..(f + 1) * stride];
-            match sidechain {
-                Some(s) if s.len() >= frames * m => {
-                    for (c, v) in side.iter_mut().enumerate() {
-                        *v = if c < m { s[f * m + c] } else { 0.0 };
+            let mut offset = m;
+            for (bus, &a) in self.aux.iter().enumerate() {
+                let side = &mut joined[f * stride + offset..f * stride + offset + a];
+                match extras.get(bus) {
+                    Some(s) if s.len() >= frames * m => {
+                        for (c, v) in side.iter_mut().enumerate() {
+                            *v = if c < m { s[f * m + c] } else { 0.0 };
+                        }
                     }
+                    _ => side.fill(0.0),
                 }
-                _ => side.fill(0.0),
+                offset += a;
             }
         }
         match &mut self.backend {
@@ -305,8 +309,8 @@ impl Effect for HostedEffect {
         if frames == 0 {
             return;
         }
-        if self.aux > 0 {
-            return self.process_with_sidechain(samples, None, frames);
+        if self.aux_total > 0 {
+            return self.process_with_inputs(samples, &[], frames);
         }
         match &mut self.backend {
             HostedBackend::Offloaded(o) => o.process(&mut samples[..frames * self.channels]),

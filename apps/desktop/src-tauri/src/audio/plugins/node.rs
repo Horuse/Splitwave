@@ -15,12 +15,11 @@ use crate::audio::plugins::clap_host::SplitwaveHost;
 use crate::audio::plugins::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use crate::audio::plugins::ParamRing;
 
-/// Audio flows through the plugin's main (index 0) input/output ports and the
-/// first auxiliary input port (its sidechain). The block handed to `process`
-/// is interleaved at `channels + aux` wide: the main channels first, then the
-/// sidechain's. Any other port the plugin declares is still allocated and fed
-/// silence, because a missing port buffer makes the plugin read a null pointer
-/// and crash.
+/// Audio flows through the plugin's main (index 0) input/output ports and each
+/// extra input port after it (its sidechains). The block handed to `process` is
+/// interleaved at `channels + sum(aux)` wide: the main channels first, then
+/// each extra input's in port order. An extra port nothing feeds gets silence,
+/// because a missing port buffer makes the plugin read a null pointer and crash.
 pub struct PluginNode {
     processor: StartedPluginAudioProcessor<SplitwaveHost>,
     in_ports: AudioPorts,
@@ -40,9 +39,10 @@ pub struct PluginNode {
     alive: Arc<AtomicBool>,
     /// Channels of the plugin's main port.
     channels: usize,
-    /// Channels of the sidechain input fed after the main ones; 0 when the
-    /// plugin has none. Always the input port at index 1.
-    aux: usize,
+    /// Channels of each extra input port (input ports 1..), in order, laid out
+    /// after the main ones in every block.
+    aux: Vec<usize>,
+    aux_total: usize,
     /// Reported by the plugin at activation. The DAG pads shorter parallel
     /// paths by it, so a wrong value here is an audible phase error rather
     /// than a missing feature.
@@ -74,7 +74,8 @@ impl PluginNode {
         channels: usize,
         latency: usize,
     ) -> Self {
-        let aux = input_channels.get(1).copied().unwrap_or(0) as usize;
+        let aux: Vec<usize> = input_channels.iter().skip(1).map(|c| *c as usize).collect();
+        let aux_total = aux.iter().sum();
         let param_cursor = params.reader();
         Self {
             processor,
@@ -96,6 +97,7 @@ impl PluginNode {
             alive,
             channels,
             aux,
+            aux_total,
             latency,
         }
     }
@@ -104,7 +106,7 @@ impl PluginNode {
 impl Effect for PluginNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         let width = self.channels;
-        let stride = width + self.aux;
+        let stride = width + self.aux_total;
         if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
         }
@@ -151,16 +153,17 @@ impl Effect for PluginNode {
                 }
             }
         }
-        // The sidechain port, when the plugin has one. Channels the pipeline
-        // does not carry stay at silence.
-        if self.aux > 0 {
-            if let Some(side) = in_bufs.get_mut(1) {
-                for (c, channel) in side.iter_mut().take(self.aux).enumerate() {
+        // The extra input ports, each after the one before it.
+        let mut offset = width;
+        for (bus, &channels) in self.aux.iter().enumerate() {
+            if let Some(side) = in_bufs.get_mut(1 + bus) {
+                for (c, channel) in side.iter_mut().take(channels).enumerate() {
                     for i in 0..frames {
-                        channel[i] = samples[i * stride + width + c];
+                        channel[i] = samples[i * stride + offset + c];
                     }
                 }
             }
+            offset += channels;
         }
 
         let inputs = in_ports.with_input_buffers(in_bufs.iter_mut().map(|port| AudioPortBuffer {
@@ -217,7 +220,7 @@ impl PluginNode {
         self.channels
     }
 
-    pub fn aux_channels(&self) -> usize {
-        self.aux
+    pub fn aux_buses(&self) -> &[usize] {
+        &self.aux
     }
 }

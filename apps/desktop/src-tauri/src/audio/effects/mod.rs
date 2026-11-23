@@ -148,6 +148,19 @@ impl RuntimeEffect {
         sidechain: Option<&[f32]>,
         frames: usize,
     ) {
+        self.process_with_inputs(main, sidechain, &[], frames);
+    }
+
+    /// `extras` are a plugin's extra inputs, one buffer per input at the node's
+    /// width; every other effect ignores them.
+    #[inline]
+    pub fn process_with_inputs(
+        &mut self,
+        main: &mut [f32],
+        sidechain: Option<&[f32]>,
+        extras: &[Vec<f32>],
+        frames: usize,
+    ) {
         // Whatever width the node runs at: a stereo pair for most effects, the
         // node's whole width (mono included) for analyzers and plugins that
         // take every channel.
@@ -175,7 +188,7 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseSuppressor(e) => e.process(active, frames),
             RuntimeEffect::Declick(e) => e.process(active, frames),
             RuntimeEffect::DeEsser(e) => e.process(active, frames),
-            RuntimeEffect::HostedPlugin(e) => e.process_with_sidechain(active, sidechain, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process_with_inputs(active, extras, frames),
             #[cfg(test)]
             RuntimeEffect::Offloaded(o) => o.process(active),
         }

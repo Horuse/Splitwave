@@ -779,6 +779,8 @@ pub struct ValidEffect {
 pub enum EdgeKind {
     Main,
     Sidechain,
+    /// Into a plugin's extra input `N` (1-based).
+    Extra(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -1154,6 +1156,7 @@ impl GraphSpec {
                     target_handle: target.clone(),
                     kind: match target {
                         AudioPort::Sidechain => EdgeKind::Sidechain,
+                        AudioPort::Extra(n) => EdgeKind::Extra(*n),
                         _ => EdgeKind::Main,
                     },
                 })

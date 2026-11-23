@@ -199,14 +199,42 @@
 		}
 	}
 
+	const saving = $derived(data.saveParams ?? true);
+
+	// A knob turn reaches the plugin on the next audio block, so the state is read a
+	// moment later, once the drag has settled.
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+	function saveSoon() {
+		if (!saving) return;
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(captureState, 500);
+	}
+
 	function setParam(p: PluginParam, v: number) {
 		p.value = v;
 		engine.audio.updateEffect(id, { pluginParams: { [p.id]: v } }).catch(() => {});
+		saveSoon();
 	}
 
 	function applyValues(values: Record<string, number>) {
 		for (const p of params) if (values[p.id] !== undefined) p.value = values[p.id];
 		engine.audio.updateEffect(id, { pluginParams: values }).catch(() => {});
+		saveSoon();
+	}
+
+	// Edits made in the plugin's own window, and anything else the plugin changes
+	// by itself, are picked up while it runs. A stopped pipeline has no plugin to
+	// ask, so the last read is what the project keeps.
+	$effect(() => {
+		if (!loaded || !running || !saving) return;
+		const timer = setInterval(captureState, 3000);
+		return () => clearInterval(timer);
+	});
+
+	function setSaveParams(v: boolean) {
+		// Off means the project stops keeping the settings: the saved ones go too,
+		// so the plugin starts from its own defaults next time.
+		flow.updateNodeData(id, v ? { saveParams: true } : { saveParams: false, state: null });
 	}
 
 	const pinnedIds = $derived(data.pinned ?? []);
@@ -241,6 +269,7 @@
 	// Pull the plugin's own state (edited via its GUI) into node data so it
 	// survives project reload. State is non-structural, so this never rebuilds.
 	async function captureState() {
+		if (!saving) return;
 		const capturedFor = data.path;
 		const state = await engine.audio.getPluginState(id).catch(() => null);
 		// The plugin may have been swapped while this was in flight. Writing now
@@ -375,6 +404,10 @@
 					disabled={!canCopy}
 					checked={canCopy && (data.autoCopies ?? true)}
 					onChange={setAutoCopies} />
+			</Tooltip>
+			<Tooltip
+				text="Keep this plugin's settings in the project, so they come back after the pipeline stops or the project is reopened. Off: the plugin starts from its defaults.">
+				<Toggle class="nodrag nopan" size="sm" label="Save settings" checked={saving} onChange={setSaveParams} />
 			</Tooltip>
 			{#if !data.layout && !probeError}
 				<p class="text-xs text-neutral-800">Reading the plugin's ports...</p>

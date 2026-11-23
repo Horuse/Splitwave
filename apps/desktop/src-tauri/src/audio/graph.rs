@@ -633,6 +633,10 @@ pub struct PluginData {
     /// beyond it pass through untouched.
     #[serde(default = "default_auto_copies")]
     pub auto_copies: bool,
+    /// Keep the plugin's settings in the project, so they come back after the
+    /// pipeline stops or the project is reopened. On unless the user turns it off.
+    #[serde(default = "default_auto_copies")]
+    pub save_params: bool,
 }
 
 fn default_auto_copies() -> bool {

@@ -18,4 +18,9 @@ layout: PortLayout | null,
  * width, so every channel is processed. Off: one copy, and the channels
  * beyond it pass through untouched.
  */
-autoCopies: boolean, };
+autoCopies: boolean, 
+/**
+ * Keep the plugin's settings in the project, so they come back after the
+ * pipeline stops or the project is reopened. On unless the user turns it off.
+ */
+saveParams: boolean, };

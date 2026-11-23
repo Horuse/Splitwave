@@ -84,6 +84,32 @@ pub fn probe(
     host_for(format).probe(path, plugin_id)
 }
 
+fn probed() -> &'static Mutex<HashMap<(PluginFormat, String, String), super::host_api::PortLayout>>
+{
+    static PROBED: OnceLock<
+        Mutex<HashMap<(PluginFormat, String, String), super::host_api::PortLayout>>,
+    > = OnceLock::new();
+    PROBED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `probe`, remembered per plugin for the life of the process. A node saved
+/// before ports were stored has none, so the engine reads them itself; this
+/// keeps every later graph update from instantiating the plugin again. A plugin
+/// that fails is asked again next time rather than remembered as broken.
+pub fn probe_cached(
+    format: PluginFormat,
+    path: &str,
+    plugin_id: &str,
+) -> Result<super::host_api::PortLayout, String> {
+    let key = (format, path.to_string(), plugin_id.to_string());
+    if let Some(layout) = probed().lock().unwrap().get(&key) {
+        return Ok(layout.clone());
+    }
+    let layout = probe(format, path, plugin_id)?;
+    probed().lock().unwrap().insert(key, layout.clone());
+    Ok(layout)
+}
+
 fn copy_counts() -> &'static Mutex<HashMap<String, usize>> {
     static COPIES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
     COPIES.get_or_init(|| Mutex::new(HashMap::new()))

@@ -1532,6 +1532,20 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
         NodeKind::DeEsser => EffectSpec::DeEsser(parse(n.data, "DeEsser")?),
         NodeKind::Plugin => {
             let data: PluginData = parse(n.data, "Plugin")?;
+            // A node saved before ports were stored has no layout. The engine reads
+            // it from the plugin itself, so sound does not wait for the node to be
+            // shown on screen.
+            let layout = match (&data.layout, data.format) {
+                (None, Some(format)) if !data.path.is_empty() && !data.plugin_id.is_empty() => {
+                    crate::audio::plugins::registry::probe_cached(
+                        format,
+                        &data.path,
+                        &data.plugin_id,
+                    )
+                    .ok()
+                }
+                _ => data.layout.clone(),
+            };
             EffectSpec::Plugin {
                 node_id: n.id.clone(),
                 format: data.format,
@@ -1539,7 +1553,7 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
                 plugin_id: data.plugin_id,
                 bypassed: data.bypassed,
                 state: data.state,
-                layout: data.layout,
+                layout,
                 auto_copies: data.auto_copies,
             }
         }

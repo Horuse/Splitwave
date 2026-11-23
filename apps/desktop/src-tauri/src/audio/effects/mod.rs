@@ -1130,15 +1130,14 @@ pub fn instantiate_effect(
                 .entry(node_id.to_string())
                 .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
                 .clone();
-            let copies = HostedEffect::copies_needed(
-                auto_copies,
-                channels,
-                layout.main_in(),
-                layout.main_out(),
-            );
-            // The first copy is the editor target and owns the control; the rest
-            // run the same plugin from the same settings.
-            let activate = |primary: bool| {
+            // A node wider than the plugin's own width is first offered to the
+            // plugin whole: one that takes it runs as a single instance (the
+            // way a DAW runs one multichannel plugin), and only one that
+            // refuses is run as copies of its own width.
+            let symmetric = layout.main_in() > 0 && layout.main_in() == layout.main_out();
+            let widen =
+                (auto_copies && symmetric && channels > layout.main_in()).then_some(channels);
+            let activate = |primary: bool, widen: Option<usize>| {
                 crate::audio::plugins::registry::activate(
                     format,
                     crate::audio::plugins::host_api::ActivateRequest {
@@ -1148,6 +1147,7 @@ pub fn instantiate_effect(
                         sample_rate,
                         max_frames: PLUGIN_MAX_BLOCK,
                         layout,
+                        widen,
                         wired_extras,
                         state: state.as_deref(),
                         primary,
@@ -1155,22 +1155,38 @@ pub fn instantiate_effect(
                     },
                 )
             };
-            let built = activate(primary).and_then(|first| {
+            // The first copy is the editor target and owns the control; the rest
+            // run the same plugin from the same settings, at the width the first
+            // one ended up with.
+            let built = activate(primary, widen).and_then(|first| {
+                let (in_ch, out_ch) = (first.in_channels(), first.out_channels());
+                let copies = HostedEffect::copies_needed(auto_copies, channels, in_ch, out_ch);
+                let again = (in_ch != layout.main_in()).then_some(in_ch);
                 let mut nodes = vec![first];
                 for _ in 1..copies {
-                    nodes.push(activate(false)?);
+                    nodes.push(activate(false, again)?);
                 }
                 Ok(nodes)
             });
+            // What the plugin may now be: its own widths, or (only when the node
+            // was offered to it) the same width in and out, as wide as the node.
+            let ports_ok = |node: &crate::audio::plugins::host_api::HostedNode| {
+                let own = node.in_channels() == layout.main_in()
+                    && node.out_channels() == layout.main_out();
+                let widened = widen.is_some()
+                    && node.in_channels() == node.out_channels()
+                    && node.in_channels() >= layout.main_in();
+                (own || widened) && node.aux_buses() == layout.sidechains()
+            };
             match built {
                 // Only the editor-target build publishes the control, so the UI
                 // writes reach the audible instance.
                 Ok(nodes)
-                    if nodes.iter().any(|node| {
-                        node.in_channels() != layout.main_in()
-                            || node.out_channels() != layout.main_out()
-                            || node.aux_buses() != layout.sidechains()
-                    }) =>
+                    if nodes.iter().any(|node| !ports_ok(node))
+                        || nodes.windows(2).any(|pair| {
+                            pair[0].in_channels() != pair[1].in_channels()
+                                || pair[0].out_channels() != pair[1].out_channels()
+                        }) =>
                 {
                     // The plugin is not what it was when it was picked (updated
                     // since): its sockets and width would be wrong.

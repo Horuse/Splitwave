@@ -48,7 +48,7 @@ use super::{editor, main_thread};
 /// Widest layout offered to a unit, and the fixed capacity of the buffer list
 /// below. Beyond 7.1 there is no arrangement the other formats name either, so
 /// a wider node is driven per stereo pair.
-const MAX_CHANNELS: usize = 8;
+const MAX_CHANNELS: usize = 64;
 
 /// `AudioBufferList` is a C flexible-array struct, so the generated binding
 /// declares one buffer. This is the same layout with room for the widest unit
@@ -1681,8 +1681,27 @@ impl PluginHost for AuHost {
         let (sample_rate, max_frames, primary, params) =
             (req.sample_rate, req.max_frames, req.primary, req.params);
         let (in_ch, out_ch) = (req.layout.main_in(), req.layout.main_out());
+        let widen = req.widen.filter(|n| *n <= MAX_CHANNELS);
 
         let act = move || {
+            // A wider node is offered to the unit first: one that takes it runs
+            // as a single instance. One that refuses keeps its own widths.
+            if let Some(n) = widen {
+                match activate(
+                    &node_id,
+                    &path,
+                    sample_rate,
+                    max_frames,
+                    n,
+                    n,
+                    state.as_deref(),
+                    primary,
+                    params.clone(),
+                ) {
+                    Ok(node) => return Ok(HostedNode::Au(node)),
+                    Err(e) => tracing::debug!(node_id, error = %e, "audio unit would not widen"),
+                }
+            }
             activate(
                 &node_id,
                 &path,

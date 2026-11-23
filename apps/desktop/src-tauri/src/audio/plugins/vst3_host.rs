@@ -349,6 +349,8 @@ impl Vst3Instance {
         &self,
         sample_rate: u32,
         max_frames: usize,
+        // Run the main buses at this width if the plugin takes it.
+        widen: Option<usize>,
         // Whether something is wired to each sidechain, in bus order.
         wired: &[bool],
         params: Arc<ParamRing>,
@@ -378,10 +380,32 @@ impl Vst3Instance {
             let outs = self.component.getBusCount(kAudio as i32, kOutput as i32);
 
             // The plugin dictates its layout: every bus keeps the arrangement it
-            // came up with, and the node is sized from that. Nothing is offered
-            // that the plugin could refuse, and nothing falls back to stereo.
+            // came up with, and the node is sized from what it then reports. A
+            // wider width is asked for only when the node is wider, and a plugin
+            // that refuses is simply left as it was.
             let in_main = self.bus_roles(kInput as i32, ins);
             let out_main = self.bus_roles(kOutput as i32, outs);
+            if let Some(arrangement) = widen.and_then(speaker_arrangement) {
+                let mut in_arr = self.bus_arrangements(kInput as i32, ins);
+                let mut out_arr = self.bus_arrangements(kOutput as i32, outs);
+                for (arr, &main) in in_arr.iter_mut().zip(&in_main) {
+                    if main {
+                        *arr = arrangement;
+                    }
+                }
+                for (arr, &main) in out_arr.iter_mut().zip(&out_main) {
+                    if main {
+                        *arr = arrangement;
+                    }
+                }
+                let accepted = ok(processor.setBusArrangements(
+                    in_arr.as_mut_ptr(),
+                    ins,
+                    out_arr.as_mut_ptr(),
+                    outs,
+                ));
+                tracing::debug!(accepted, ?widen, "vst3: asked for the node's width");
+            }
 
             // Every bus is inactive until the host turns it on. The main buses
             // always are; a sidechain only when something is wired to it, so a
@@ -744,6 +768,7 @@ mod tests {
             .activate(
                 RATE,
                 FRAMES,
+                None,
                 &vec![true; sidechains],
                 Arc::new(ParamRing::new()),
                 Arc::new(AtomicBool::new(true)),
@@ -801,14 +826,14 @@ mod tests {
             let params = std::sync::Arc::new(crate::audio::plugins::ParamRing::new());
             let alive = std::sync::Arc::new(AtomicBool::new(true));
 
-            let mut node = match instance.activate(RATE, FRAMES, &[], params.clone(), alive.clone())
-            {
-                Ok(node) => node,
-                Err(err) => {
-                    println!("SKIPPED: {} failed to activate: {err}", plugin.name);
-                    continue;
-                }
-            };
+            let mut node =
+                match instance.activate(RATE, FRAMES, None, &[], params.clone(), alive.clone()) {
+                    Ok(node) => node,
+                    Err(err) => {
+                        println!("SKIPPED: {} failed to activate: {err}", plugin.name);
+                        continue;
+                    }
+                };
 
             // A plugin with lookahead outputs silence until its own latency has
             // passed, so measuring the first block would prove nothing.
@@ -878,6 +903,7 @@ mod tests {
             match instance.activate(
                 RATE,
                 FRAMES,
+                None,
                 &wired,
                 Arc::new(ParamRing::new()),
                 Arc::new(AtomicBool::new(true)),
@@ -919,12 +945,15 @@ mod tests {
     }
 }
 
-/// The standard VST3 arrangement for a channel count. `None` for widths the
-/// format does not name, which are then never offered to a plugin: guessing a
-/// layout would tell it the wrong thing about which speaker each channel is.
+/// The VST3 arrangement for a channel count: the standard one for the widths the
+/// format names, and for any wider node one speaker per channel, which is a
+/// request by count only (a plugin that cares which speaker is which says so by
+/// refusing it).
 fn speaker_arrangement(channels: usize) -> Option<vst3::Steinberg::Vst::SpeakerArrangement> {
     use vst3::Steinberg::Vst::SpeakerArr;
     Some(match channels {
+        9..=63 => (1u64 << channels) - 1,
+        64 => u64::MAX,
         1 => SpeakerArr::kMono,
         2 => SpeakerArr::kStereo,
         3 => SpeakerArr::k30Cine,

@@ -126,6 +126,10 @@ pub struct ActivateRequest<'a> {
     /// buses the plugin itself reports; this is what the node's width was
     /// sized from, and a plugin that now reports something else is refused.
     pub layout: &'a PortLayout,
+    /// Run the plugin's main buses at this many channels if it takes them; a
+    /// plugin that refuses keeps its own widths, and the node reports which. CLAP
+    /// ports are fixed at instantiation, so it never widens.
+    pub widen: Option<usize>,
     /// Whether anything is wired to each sidechain input, in the plugin's own
     /// order. A sidechain nothing feeds stays switched off.
     pub wired_extras: &'a [bool],

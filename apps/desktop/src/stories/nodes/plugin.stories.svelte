@@ -47,7 +47,7 @@
 <Story name="Pinned knobs" args={{ running: true, pinned: [0, 1, 2, 3, 4] }} {template} />
 <Story name="With a sidechain" args={{ running: true, pluginSidechain: true }} {template} />
 <Story name="Many copies" args={{ running: true, pluginCopies: 25 }} {template} />
-<Story name="Copies off" args={{ running: true, autoCopies: false }} {template} />
+<Story name="Copies off, wide node" args={{ running: true, autoCopies: false, wiredInputs: 4 }} {template} />
 <Story name="No editor" args={{ running: true, pluginEditor: false }} {template} />
 <Story name="AU plugin" args={{ plugin: 3, running: true }} {template} />
 <Story name="No plugins installed" args={{ plugin: 0, plugins: 0 }} {template} />

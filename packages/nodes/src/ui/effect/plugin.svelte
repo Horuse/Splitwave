@@ -171,6 +171,16 @@
 	// Copies need the same width in and out to line the channel groups up.
 	const canCopy = $derived(!data.layout || (data.layout.inputs.find((b) => b.main)?.channels ?? 0) === (data.layout.outputs.find((b) => b.main)?.channels ?? -1));
 
+	// With one copy, only the plugin's own channels are processed; the rest of a
+	// wider node goes through as it came.
+	const processedChannels = $derived.by(() => {
+		const width = data.layout?.inputs.find((b) => b.main)?.channels;
+		if (!width || !running) return undefined;
+		if (status.copies > 1) return undefined;
+		if (canCopy && (data.autoCopies ?? true)) return undefined;
+		return width;
+	});
+
 	// Automatable parameters, editable directly in the node. Opt-in (most users
 	// only need the editor). Readable only once the plugin is instantiated; a
 	// poll keeps them in sync with edits made in the plugin's own window.
@@ -299,6 +309,7 @@
 	hasInput
 	hasOutput
 	channelIo
+	{processedChannels}
 	inputs={extraInputs.length ? extraInputs : undefined}
 	selfGrowing
 	nodeId={id}

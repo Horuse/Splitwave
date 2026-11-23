@@ -17,8 +17,10 @@
 		branch?: number;
 		/** Names each socket (L / R / chN) beside it. */
 		labelled?: boolean;
+		/** Channels past this count go through the node untouched and are dimmed. */
+		processed?: number;
 	}
-	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch, labelled = false }: Props = $props();
+	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch, labelled = false, processed }: Props = $props();
 
 	const updateNodeInternals = useUpdateNodeInternals();
 	// The hook takes a value; a node's id is fixed for the component's lifetime.
@@ -68,7 +70,12 @@
 	{#each slots as slot (slot.id)}
 		{@const color = channelColor(slot.ch - 1)}
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
-		<div class="relative flex min-h-4 items-center" class:justify-end={isSource} onmousedowncapture={(e) => onArm(e, slot.ch)}>
+		{@const passes = processed !== undefined && slot.ch > processed}
+		<div
+			class={['relative flex min-h-4 items-center', passes && 'opacity-35']}
+			title={passes ? 'Passes through untouched: the plugin does not process this channel' : undefined}
+			class:justify-end={isSource}
+			onmousedowncapture={(e) => onArm(e, slot.ch)}>
 			{#if labelled && slot.occupied}
 				<span class="font-mono text-[9px] leading-none" style="color:{color}">{channelLabel(slot.ch - 1, fed)}</span>
 			{/if}

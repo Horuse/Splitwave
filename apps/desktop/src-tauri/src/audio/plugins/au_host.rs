@@ -453,10 +453,14 @@ pub fn probe_layout(url: &str) -> Result<PortLayout, String> {
                 PortBus {
                     name: element_name(owned.unit, scope, element),
                     main: element == 0,
-                    channels: if status == 0 {
-                        format.mChannelsPerFrame
-                    } else {
-                        2
+                    // A sidechain is clamped the way `configure` clamps it, so
+                    // the width probed is the width that is configured.
+                    channels: match (status == 0, element) {
+                        (true, 0) => format.mChannelsPerFrame,
+                        (true, _) => {
+                            (format.mChannelsPerFrame as usize).clamp(1, MAX_CHANNELS) as u32
+                        }
+                        (false, _) => 2,
                     },
                 }
             })

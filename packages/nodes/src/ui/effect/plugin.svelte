@@ -152,6 +152,25 @@
 		return () => clearInterval(timer);
 	});
 
+	// The copy count moves when the toggle flips or a wider cable is wired, long
+	// after the status above has settled, so it is read on its own while the
+	// plugin runs.
+	$effect(() => {
+		if (!loaded || !running) return;
+		const timer = setInterval(() => {
+			engine.audio
+				.pluginStatus(id)
+				.then((v) => {
+					if (v.path === pluginPath) status = { ...status, copies: v.copies };
+				})
+				.catch(() => {});
+		}, 1000);
+		return () => clearInterval(timer);
+	});
+
+	// Copies need the same width in and out to line the channel groups up.
+	const canCopy = $derived(!data.layout || (data.layout.inputs.find((b) => b.main)?.channels ?? 0) === (data.layout.outputs.find((b) => b.main)?.channels ?? -1));
+
 	// Automatable parameters, editable directly in the node. Opt-in (most users
 	// only need the editor). Readable only once the plugin is instantiated; a
 	// poll keeps them in sync with edits made in the plugin's own window.
@@ -329,8 +348,11 @@
 		{/if}
 
 		{#if data.path}
-			<Tooltip text="A node wider than the plugin runs one copy of it per group of channels, so every channel is processed. Off: one copy, and the other channels pass through untouched.">
-				<Toggle class="nodrag nopan" size="sm" label="Copy per channel group" checked={data.autoCopies ?? true} onChange={setAutoCopies} />
+			<Tooltip
+				text={canCopy
+					? 'A node wider than the plugin runs one copy of it per group of channels, so every channel is processed. Off: one copy, and the other channels pass through untouched.'
+					: 'This plugin changes the channel count (its input and output differ), so it always runs as one copy.'}>
+				<Toggle class="nodrag nopan" size="sm" label="Copy per channel group" disabled={!canCopy} checked={canCopy && (data.autoCopies ?? true)} onChange={setAutoCopies} />
 			</Tooltip>
 			{#if !data.layout && !probeError}
 				<p class="text-xs text-neutral-800">Reading the plugin's ports...</p>

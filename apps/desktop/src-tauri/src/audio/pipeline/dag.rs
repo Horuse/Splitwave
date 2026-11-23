@@ -2278,6 +2278,10 @@ pub(super) fn build_output_graph(
                             EffectSpec::LevelMeter(_)
                                 | EffectSpec::Waveform(_)
                                 | EffectSpec::Spectrum(_)
+                                // Whatever became of the plugin, one entry sees
+                                // the whole node: a plugin that failed to load
+                                // must not be loaded again per stereo pair.
+                                | EffectSpec::Plugin { .. }
                         );
                     let this_effect = CarriedEffect {
                         latency: build.effect.latency_frames(),

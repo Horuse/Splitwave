@@ -261,6 +261,10 @@ struct Lane {
     /// One block at `max(in, out) + aux_total` wide, the shape the node and the
     /// offload both work in. Sized once, so the audio path never allocates.
     joined: Vec<f32>,
+    /// Holds this copy back to the latency of the slowest one, so every channel
+    /// group of the node leaves at the same moment. Each copy times its own
+    /// offload pad, and unequal pads would put the groups out of phase.
+    lag: Option<ChannelDelay>,
 }
 
 /// A hosted plugin, run either on the offload thread or in place. The node's
@@ -281,6 +285,8 @@ pub struct HostedEffect {
     /// The node's channels past what the plugin handles, and their delay.
     pass: Option<ChannelDelay>,
     pass_buf: Vec<f32>,
+    /// Scratch for the lag delay of a copy's own channels.
+    lag_buf: Vec<f32>,
     latency: usize,
 }
 
@@ -321,8 +327,7 @@ impl HostedEffect {
         let width = main_w + aux_total;
         let copies = nodes.len() > 1;
         let direct = !copies && aux_total == 0 && in_ch == out_ch && node_w == in_ch;
-        let mut latency = plugin_latency;
-        let lanes: Vec<Lane> = nodes
+        let built: Vec<(Lane, usize)> = nodes
             .into_iter()
             .map(|node| {
                 let joined = if direct {
@@ -330,11 +335,13 @@ impl HostedEffect {
                 } else {
                     vec![0.0; MAX_BUFFER_FRAMES * width]
                 };
+                let lane = |backend| Lane {
+                    backend,
+                    joined: joined.clone(),
+                    lag: None,
+                };
                 if !realtime {
-                    return Lane {
-                        backend: HostedBackend::Inline { node },
-                        joined,
-                    };
+                    return (lane(HostedBackend::Inline { node }), plugin_latency);
                 }
                 let processor = HostedProcessor {
                     node,
@@ -353,19 +360,26 @@ impl HostedEffect {
                     sample_rate,
                 ) {
                     Ok(o) => {
-                        latency = latency.max(plugin_latency + o.latency_frames());
-                        Lane {
-                            backend: HostedBackend::Offloaded(o),
-                            joined,
-                        }
+                        let own = plugin_latency + o.latency_frames();
+                        (lane(HostedBackend::Offloaded(o)), own)
                     }
-                    Err(p) => Lane {
-                        backend: HostedBackend::Inline { node: p.node },
-                        joined,
-                    },
+                    Err(p) => (lane(HostedBackend::Inline { node: p.node }), plugin_latency),
                 }
             })
             .collect();
+        let latency = built.iter().map(|(_, own)| *own).max().unwrap_or(0);
+        let mut lanes: Vec<Lane> = Vec::with_capacity(built.len());
+        for (k, (mut lane, own)) in built.into_iter().enumerate() {
+            let owned = if copies {
+                out_ch.min(node_w.saturating_sub(k * in_ch))
+            } else {
+                out_ch
+            };
+            if latency > own && owned > 0 {
+                lane.lag = Some(ChannelDelay::new(latency - own, owned));
+            }
+            lanes.push(lane);
+        }
         // Channels past what the plugin handles. With copies every channel has
         // one, so nothing is left over.
         let pass_cols = if copies {
@@ -383,6 +397,7 @@ impl HostedEffect {
             aux_total,
             pass: (pass_cols > 0).then(|| ChannelDelay::new(latency, pass_cols)),
             pass_buf: vec![0.0; MAX_BUFFER_FRAMES * pass_cols],
+            lag_buf: vec![0.0; MAX_BUFFER_FRAMES * out_ch],
             latency,
         }
     }
@@ -466,6 +481,18 @@ impl HostedEffect {
                 if !self.copies && i > o {
                     // Channels the plugin consumed and did not write back are silent.
                     main[f * w + o..f * w + i].fill(0.0);
+                }
+            }
+            if let Some(lag) = &mut lane.lag {
+                let held = &mut self.lag_buf[..frames * owned];
+                for f in 0..frames {
+                    held[f * owned..(f + 1) * owned]
+                        .copy_from_slice(&main[f * w + base..f * w + base + owned]);
+                }
+                lag.process(held);
+                for f in 0..frames {
+                    main[f * w + base..f * w + base + owned]
+                        .copy_from_slice(&held[f * owned..(f + 1) * owned]);
                 }
             }
         }

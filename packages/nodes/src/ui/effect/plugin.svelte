@@ -175,7 +175,7 @@
 	// wider node goes through as it came.
 	const processedChannels = $derived.by(() => {
 		const width = data.layout?.inputs.find((b) => b.main)?.channels;
-		if (!width || !running) return undefined;
+		if (!width) return undefined;
 		if (status.copies > 1) return undefined;
 		if (canCopy && (data.autoCopies ?? true)) return undefined;
 		return width;

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Position, useNodeConnections, useUpdateNodeInternals } from '@xyflow/svelte';
+	import Skip from '~icons/fluent/arrow-right-16-regular';
 	import Handle from './_handle.svelte';
 	import { branchChannelOf, branchHandle, channelColor, channelHandle, channelLabel, deriveSlots, handleEdgeStyle } from './utils';
 	import { channelCaps, channelSelection } from './state/channel_selection.svelte';
@@ -17,7 +18,7 @@
 		branch?: number;
 		/** Names each socket (L / R / chN) beside it. */
 		labelled?: boolean;
-		/** Channels past this count go through the node untouched and are dimmed. */
+		/** Channels past this count go through the node untouched and get a pass-through icon outside the socket. */
 		processed?: number;
 	}
 	let { nodeId, side, max = Infinity, min = 0, selfGrowing = false, branch, labelled = false, processed }: Props = $props();
@@ -72,7 +73,7 @@
 		{@const armed = isSource && channelSelection.has(nodeId, slot.ch)}
 		{@const passes = processed !== undefined && slot.ch > processed}
 		<div
-			class={['relative flex min-h-4 items-center', passes && 'opacity-35']}
+			class="relative flex min-h-4 items-center"
 			title={passes ? 'Passes through untouched: the plugin does not process this channel' : undefined}
 			class:justify-end={isSource}
 			onmousedowncapture={(e) => onArm(e, slot.ch)}>
@@ -83,8 +84,11 @@
 				type={side}
 				id={branch === undefined ? slot.id : branchHandle(branch, slot.ch)}
 				position={isSource ? Position.Right : Position.Left}
-				class={['handle', armed && 'handle-armed']}
+				class={['handle', armed && 'handle-armed', passes && 'opacity-40']}
 				style={handleEdgeStyle(color, side)} />
+			{#if passes}
+				<Skip class={['pointer-events-none absolute size-2 text-neutral-800', isSource ? '-right-[0.75rem]' : '-left-[0.75rem]']} />
+			{/if}
 		</div>
 	{/each}
 </div>

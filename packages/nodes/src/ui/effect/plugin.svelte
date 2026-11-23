@@ -188,12 +188,28 @@
 	// poll keeps them in sync with edits made in the plugin's own window.
 	let params = $state<PluginParam[]>([]);
 
+	// When each parameter was last moved from this node. The plugin takes a write on
+	// its next audio block, so a read just after one still shows the old value; that
+	// is not an edit from the plugin's window.
+	const touched = new Map<number, number>();
+	const SETTLE_MS = 1500;
+
 	async function loadParams() {
 		const fresh = (await engine.audio.getPluginParams(id).catch(() => [])).filter((p) => !p.readOnly);
 		// Same parameter set: update values in place so sliders aren't recreated
 		// (and a mid-drag one isn't yanked). Otherwise swap the whole list.
 		if (params.length === fresh.length && params.every((p, i) => p.id === fresh[i].id)) {
-			for (let i = 0; i < fresh.length; i++) params[i].value = fresh[i].value;
+			// The plugin window drives the first copy only. A value that moved there is
+			// handed to the others the way a knob on this node would be.
+			const moved: Record<number, number> = {};
+			const now = Date.now();
+			for (let i = 0; i < fresh.length; i++) {
+				if (status.copies > 1 && fresh[i].value !== params[i].value && now - (touched.get(fresh[i].id) ?? 0) > SETTLE_MS) {
+					moved[fresh[i].id] = fresh[i].value;
+				}
+				params[i].value = fresh[i].value;
+			}
+			if (Object.keys(moved).length) engine.audio.updateEffect(id, { pluginParams: moved }).catch(() => {});
 		} else {
 			params = fresh;
 		}
@@ -212,12 +228,18 @@
 
 	function setParam(p: PluginParam, v: number) {
 		p.value = v;
+		touched.set(p.id, Date.now());
 		engine.audio.updateEffect(id, { pluginParams: { [p.id]: v } }).catch(() => {});
 		saveSoon();
 	}
 
 	function applyValues(values: Record<string, number>) {
-		for (const p of params) if (values[p.id] !== undefined) p.value = values[p.id];
+		const now = Date.now();
+		for (const p of params)
+			if (values[p.id] !== undefined) {
+				p.value = values[p.id];
+				touched.set(p.id, now);
+			}
 		engine.audio.updateEffect(id, { pluginParams: values }).catch(() => {});
 		saveSoon();
 	}

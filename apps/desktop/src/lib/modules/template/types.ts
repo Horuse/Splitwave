@@ -1,0 +1,31 @@
+import type { AnyNodeData, NodeKind } from '@splitwave/nodes';
+
+export interface TemplateNode {
+	/** Local to the template; swapped for a cuid when the pipeline is built. */
+	key: string;
+	kind: NodeKind;
+	position: { x: number; y: number };
+	data?: Partial<AnyNodeData>;
+}
+
+export interface TemplateEdge {
+	from: string;
+	to: string;
+	/** 1-based channel, as `channelHandle` takes it. */
+	fromCh?: number;
+	toCh?: number;
+	/** Named sockets (a compressor sidechain, a control cable) instead of a channel. */
+	fromHandle?: string;
+	toHandle?: string;
+}
+
+export type TemplateAccent = 'neutral' | 'emerald' | 'sky' | 'violet' | 'amber' | 'rose';
+
+export interface Template {
+	id: string;
+	accent: TemplateAccent;
+	name: string;
+	description: string;
+	nodes: TemplateNode[];
+	edges: TemplateEdge[];
+}

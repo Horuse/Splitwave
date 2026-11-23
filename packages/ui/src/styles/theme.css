@@ -1,0 +1,129 @@
+@theme {
+	--color-theme: black;
+	--color-background: oklch(0.99 0 0);
+	--color-primary: var(--color-blue-500);
+
+	--color-contrast: oklch(0 0 0); /* куди йде шкала */
+
+	--color-neutral-50: color-mix(in oklch, var(--color-contrast) 2.5%, var(--color-background));
+	--color-neutral-100: color-mix(in oklch, var(--color-contrast) 5%, var(--color-background));
+	--color-neutral-200: color-mix(in oklch, var(--color-contrast) 10%, var(--color-background));
+	--color-neutral-300: color-mix(in oklch, var(--color-contrast) 15%, var(--color-background));
+	--color-neutral-400: color-mix(in oklch, var(--color-contrast) 20%, var(--color-background));
+	--color-neutral-500: color-mix(in oklch, var(--color-contrast) 25%, var(--color-background));
+	--color-neutral-600: color-mix(in oklch, var(--color-contrast) 30%, var(--color-background));
+	--color-neutral-700: color-mix(in oklch, var(--color-contrast) 35%, var(--color-background));
+	--color-neutral-750: color-mix(in oklch, var(--color-contrast) 40%, var(--color-background));
+	--color-neutral-800: color-mix(in oklch, var(--color-contrast) 45%, var(--color-background));
+	--color-neutral-900: color-mix(in oklch, var(--color-contrast) 50%, var(--color-background));
+	--color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
+	--color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
+	--color-neutral-1200: color-mix(in oklch, var(--color-contrast) 80%, var(--color-background));
+
+	/* A live control signal: lit sockets, gates and cables. */
+	--color-signal: oklch(0.82 0.17 85);
+}
+.dark {
+	--color-theme: white;
+	--color-background: oklch(0.28 0 0);
+
+	--color-contrast: oklch(1 0 0);
+
+	/* The scale and the layers derive from the background. A custom property is
+	   computed where it is declared, so they are declared again here: a .dark
+	   region below the root (a diagram on the light-rooted landing) then gets the
+	   dark scale instead of inheriting values computed from the light root. */
+	--color-neutral-50: color-mix(in oklch, var(--color-contrast) 2.5%, var(--color-background));
+	--color-neutral-100: color-mix(in oklch, var(--color-contrast) 5%, var(--color-background));
+	--color-neutral-200: color-mix(in oklch, var(--color-contrast) 10%, var(--color-background));
+	--color-neutral-300: color-mix(in oklch, var(--color-contrast) 15%, var(--color-background));
+	--color-neutral-400: color-mix(in oklch, var(--color-contrast) 20%, var(--color-background));
+	--color-neutral-500: color-mix(in oklch, var(--color-contrast) 25%, var(--color-background));
+	--color-neutral-600: color-mix(in oklch, var(--color-contrast) 30%, var(--color-background));
+	--color-neutral-700: color-mix(in oklch, var(--color-contrast) 35%, var(--color-background));
+	--color-neutral-750: color-mix(in oklch, var(--color-contrast) 40%, var(--color-background));
+	--color-neutral-800: color-mix(in oklch, var(--color-contrast) 45%, var(--color-background));
+	--color-neutral-900: color-mix(in oklch, var(--color-contrast) 50%, var(--color-background));
+	--color-neutral-1000: color-mix(in oklch, var(--color-contrast) 60%, var(--color-background));
+	--color-neutral-1100: color-mix(in oklch, var(--color-contrast) 70%, var(--color-background));
+	--color-neutral-1200: color-mix(in oklch, var(--color-contrast) 80%, var(--color-background));
+	--color-foreground: var(--color-neutral-100);
+	--color-popover: var(--color-neutral-200);
+	--lv-1: var(--color-neutral-100);
+	--lv-2: var(--color-neutral-200);
+	--lv-3: var(--color-neutral-300);
+	--lv-4: var(--color-neutral-400);
+	--lv-5: var(--color-neutral-500);
+}
+
+@theme {
+	--color-foreground: var(--color-neutral-100);
+	/* One step above foreground: popovers, menus, tooltips. */
+	--color-popover: var(--color-neutral-200);
+}
+
+/* Control shades relative to the surface they sit on: a foreground block (card, sidebar) lifts them one step. */
+:root {
+	--lv-1: var(--color-neutral-100);
+	--lv-2: var(--color-neutral-200);
+	--lv-3: var(--color-neutral-300);
+	--lv-4: var(--color-neutral-400);
+	--lv-5: var(--color-neutral-500);
+}
+/* Dark: a foreground block is lighter, so its controls step up. Light: the block is near-white and controls keep page shades. */
+.dark [data-layer='fg'] {
+	--lv-1: var(--color-neutral-200);
+	--lv-2: var(--color-neutral-300);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}
+.dark [data-layer='popover'] {
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-500);
+	--lv-4: var(--color-neutral-600);
+	--lv-5: var(--color-neutral-700);
+}
+:root:not(.dark) {
+	--color-foreground: var(--color-neutral-50);
+	--color-popover: var(--color-background);
+}
+
+/* A node sits one step above the page in both themes, so its controls start one step further out.
+   Its fields read as darker than the node: recessed toward the background in dark, one step out in light. */
+[data-layer='node'] {
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-500);
+	--lv-4: var(--color-neutral-600);
+	--lv-5: var(--color-neutral-700);
+	--field-bg: var(--color-neutral-300);
+	--field-border: var(--color-neutral-400);
+}
+.dark [data-layer='node'] {
+	--field-bg: var(--color-neutral-100);
+	--field-border: var(--color-neutral-300);
+}
+/* A menu opened inside a node takes the field's shade, so it reads as part of the select. */
+[data-layer='node'] [data-layer='popover'] {
+	--color-popover: var(--color-neutral-300);
+	--lv-1: var(--color-neutral-300);
+	--lv-2: var(--color-neutral-400);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}
+.dark [data-layer='node'] [data-layer='popover'] {
+	--color-popover: var(--color-neutral-100);
+	--lv-1: var(--color-neutral-200);
+	--lv-2: var(--color-neutral-300);
+	--lv-3: var(--color-neutral-400);
+	--lv-4: var(--color-neutral-500);
+	--lv-5: var(--color-neutral-600);
+}
+
+/* xyflow paints its own canvas colour (#141414 under .dark); the canvas follows the theme instead. */
+.svelte-flow {
+	--xy-background-color: var(--color-background);
+}

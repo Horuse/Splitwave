@@ -1,0 +1,72 @@
+<script lang="ts">
+	import { Button } from '@splitwave/ui';
+	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
+	import { announcementStore } from '../stores.svelte';
+	import { handleAnnouncementAction, openAnnouncementDetails } from '../methods';
+	import type { Announcement } from '../types';
+
+	interface Props extends ModalBaseProps {
+		announcement: Announcement;
+		totalModals?: number;
+	}
+
+	let { announcement, totalModals = 1, modalId }: Props = $props();
+
+	let badgeClass = $derived.by(() => {
+		if (announcement.severity === 'critical') return 'bg-red-500/20 text-red-600 dark:text-red-400';
+		if (announcement.severity === 'warning') return 'bg-amber-500/20 text-amber-600 dark:text-amber-400';
+		if (announcement.severity === 'success') return 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400';
+		return 'bg-blue-500/20 text-blue-600 dark:text-blue-400';
+	});
+
+	let messageClass = $derived(announcement.severity === 'critical' ? 'font-medium text-red-600 dark:text-red-400' : 'text-neutral-900');
+
+	function dismiss(): void {
+		if (announcement.dismissible !== false) {
+			announcementStore.dismiss(announcement.id);
+		}
+		if (modalId) {
+			modalManager.close(modalId);
+		}
+	}
+
+	/** The modal is a preview; the article opens on its own page. */
+	function readMore(): void {
+		dismiss();
+		openAnnouncementDetails(announcement);
+	}
+
+	async function performAction(): Promise<void> {
+		try {
+			await handleAnnouncementAction(announcement);
+			if (announcement.action?.dismissOnClick) dismiss();
+		} catch {}
+	}
+</script>
+
+<div class="flex min-h-44 flex-col">
+	<div class="flex flex-1 flex-col px-5 py-4">
+		{#if announcement.badge || announcement.severity !== 'info'}
+			<span class="mb-3 w-fit rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase {badgeClass}">
+				{announcement.badge ?? announcement.severity}
+			</span>
+		{/if}
+		<p class="mb-3 text-xs leading-relaxed {messageClass}">{announcement.message}</p>
+	</div>
+
+	<div class="flex items-center justify-end gap-2 px-5 pt-2 pb-4">
+		<Button onclick={dismiss}>
+			{totalModals > 1 ? 'Next' : 'Close'}
+		</Button>
+
+		{#if announcement.markdown}
+			<Button variant={announcement.action ? 'soft' : 'solid'} type="button" onclick={readMore}>Read more</Button>
+		{/if}
+
+		{#if announcement.action}
+			<Button variant="solid" type="button" onclick={performAction}>
+				{announcement.action.label}
+			</Button>
+		{/if}
+	</div>
+</div>

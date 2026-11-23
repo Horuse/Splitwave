@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import './theme.css';
+@import './brand.css';
+@import './components/smooth.css';
+@import './components/button.css';
+@import './components/input.css';
+@import './components/callout.css';
+@import './components/brand.css';
+@import './components/sidebar.css';
+@import './components/scroll-area.css';
+@import './components/chip.css';
+
+@source '../';
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+}

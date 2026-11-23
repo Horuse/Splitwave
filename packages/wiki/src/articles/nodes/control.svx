@@ -1,0 +1,28 @@
+---
+title: Control and routing nodes
+description: Drive your audio with keyboard shortcuts, MIDI and logic - push to talk, mute toggles and scene switching in Splitwave.
+order: 6
+---
+
+Control nodes carry **on/off signals** instead of audio. Their cables are dashed and their sockets are diamonds. A routing node such as **Mute**, **If**, **Switch** or **Select** takes those signals and decides where the audio goes.
+
+## Sources of control
+
+- **Key Input**: a global keyboard shortcut or a MIDI note or control. It is high while the key is held, even when Splitwave is in the background.
+- **Level Trigger**: high while an audio input is louder than a threshold, held briefly after it drops so speech does not flicker it.
+- **Timer**: in **Delay** mode it turns on a set time after its start input goes high; in **Repeat** mode it pulses at that interval while start stays high.
+
+## Shaping control
+
+- **Toggle**: flips its output each time the input goes high and keeps it until the next press. Turns a held key into an on/off switch.
+- **Cycle**: steps through 2 or more outputs one press at a time and wraps around.
+- **Logic**: combines signals with NOT, AND, OR, XOR and their inverses.
+
+## Routing audio
+
+- **Mute**: its **open** input owns the mute while connected. High lets audio through, low silences it.
+- **If**: sends audio to its **true** output while the condition is high and to **false** otherwise, crossfading between them.
+- **Switch**: one input, 2 to 8 outputs, each output with its own trigger.
+- **Select**: 2 to 8 inputs, one output, each input with its own trigger.
+
+See [Push to talk and mute shortcuts](/wiki/getting-started/push-to-talk) for complete recipes.

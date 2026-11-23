@@ -36,7 +36,7 @@ jobs:
             - name: Cache cargo build
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: src-tauri
+                  workspaces: apps/desktop/src-tauri
 
             - name: Install JS deps
               run: bun install --frozen-lockfile
@@ -48,7 +48,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
-                  projectPath: src-tauri
+                  projectPath: apps/desktop/src-tauri
                   tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
@@ -78,7 +78,7 @@ jobs:
             - name: Cache cargo build
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: src-tauri
+                  workspaces: apps/desktop/src-tauri
 
             - name: Install Linux system deps
               # PPA backports a libpipewire new enough for the libspa crate
@@ -103,7 +103,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
-                  projectPath: src-tauri
+                  projectPath: apps/desktop/src-tauri
                   tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}
@@ -117,7 +117,7 @@ jobs:
               run: |
                   set -euxo pipefail
                   export APPIMAGE_EXTRACT_AND_RUN=1
-                  app=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+                  app=$(find apps/desktop/src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
                   "$app" --appimage-extract
                   rm -fv squashfs-root/usr/lib/libwayland-client.so* \
                          squashfs-root/usr/lib/libwayland-egl.so* \
@@ -140,7 +140,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               run: |
                   set -euxo pipefail
-                  app=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)
+                  app=$(find apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)
                   rm -f "$app.sig"
                   bun run tauri signer sign "$app"
 
@@ -153,7 +153,7 @@ jobs:
                   set -euxo pipefail
                   tag="${{ github.ref_name }}"
                   repo="${{ github.repository }}"
-                  app=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)
+                  app=$(find apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)
                   newsig=$(cat "$app.sig")
                   rid=$(gh api "repos/$repo/releases" --jq "[.[] | select(.tag_name==\"$tag\")][0].id")
                   aid=$(gh api "repos/$repo/releases/$rid/assets" --jq '[.[] | select(.name=="latest.json")][0].id')
@@ -169,8 +169,8 @@ jobs:
                   tag_name: ${{ github.ref_name }}
                   draft: true
                   files: |
-                      src-tauri/target/release/bundle/appimage/*.AppImage
-                      src-tauri/target/release/bundle/appimage/*.AppImage.sig
+                      apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+                      apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
                       latest.json
 
     windows:
@@ -198,7 +198,7 @@ jobs:
             - name: Cache cargo build
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: src-tauri
+                  workspaces: apps/desktop/src-tauri
 
             - name: Install JS deps
               run: bun install --frozen-lockfile
@@ -210,7 +210,7 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               with:
-                  projectPath: src-tauri
+                  projectPath: apps/desktop/src-tauri
                   tauriScript: bun run tauri
                   tagName: ${{ github.ref_name }}
                   releaseName: Splitwave ${{ github.ref_name }}

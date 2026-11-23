@@ -1,0 +1,14 @@
+@layer components {
+	.callout {
+		@apply flex flex-col gap-2 rounded-2xl border border-dashed border-amber-600/50 bg-amber-500/20 p-4 text-xs text-amber-600 dark:border-amber-500/20 dark:bg-amber-500/10;
+	}
+	.callout-info {
+		@apply border-sky-600/50 bg-sky-500/20 text-sky-600 dark:border-sky-500/20 dark:bg-sky-500/10;
+	}
+	.callout-success {
+		@apply border-emerald-600/50 bg-emerald-500/20 text-emerald-600 dark:border-emerald-500/20 dark:bg-emerald-500/10;
+	}
+	.callout-danger {
+		@apply border-red-600/50 bg-red-500/20 text-red-600 dark:border-red-500/20 dark:bg-red-500/10;
+	}
+}

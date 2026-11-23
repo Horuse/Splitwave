@@ -1,0 +1,9 @@
+[env]
+# audiopus_sys 0.2.2 vendors libopus C source with an ancient CMakeLists.txt
+# that modern CMake (4+) rejects. CMake reads CMAKE_POLICY_VERSION_MINIMUM
+# as an env var (CMake 3.27+) and uses it as fallback policy version.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+# Where `#[ts(export)]` writes generated TS files. `relative = true` resolves
+# against the crate manifest dir (src-tauri/), so `..` climbs to the repo root.
+TS_RS_EXPORT_DIR = { value = "../../../packages/nodes/src/generated", relative = true }

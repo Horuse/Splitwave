@@ -1,0 +1,25 @@
+---
+title: Limiter
+description: Stop clipping with Splitwave's look-ahead brick-wall limiter - ceiling, lookahead and release explained.
+order: 3
+---
+
+A limiter guarantees that the output never goes above a **ceiling**. Splitwave's limiter is a brick-wall limiter with **look-ahead**: it sees a peak coming and starts turning down before the peak arrives, so the gain change is a smooth ramp instead of a sudden step.
+
+## Parameters
+
+| Parameter | Range | What it does |
+| --- | --- | --- |
+| Ceiling | -12 to 0 dB | The highest level the output may reach. Peaks above it land exactly on it. |
+| Lookahead | 1 to 20 ms | How far ahead it looks for peaks. More is cleaner but adds that much delay. |
+| Release | 10 to 500 ms | How fast the level comes back after a peak. |
+
+Changing **Lookahead** rebuilds the pipeline, because the delay of the whole path changes with it.
+
+## Reading the graph
+
+Below the ceiling the output follows the input; above it the curve is flat. While a pipeline runs, the green line shows the input level and the point on the curve where it lands. The red zone is everything the limiter will not let through.
+
+## Where to put it
+
+Put the limiter **last** in a chain, right before the output or recording. A ceiling of **-1 dB** leaves room for format conversion and lossy encoding; use **-2 dB** for broadcast targets such as ATSC A/85. Check the result with the [Loudness meter](/wiki/nodes/loudness).

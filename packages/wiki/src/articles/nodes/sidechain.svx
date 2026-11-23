@@ -1,0 +1,59 @@
+---
+title: Sidechain compression and ducking
+description: Duck music under your voice and key a gate from another source with the Sidechain input on Splitwave's Compressor and Noise Gate.
+order: 4
+---
+
+<script>
+	import PipelineDiagram from '../../pipeline-diagram.svelte';
+</script>
+
+A sidechain lets an effect **listen to one signal while it changes another**. In Splitwave, the Compressor and the Noise Gate each have a **Sidechain** socket on the bottom edge of the node. When something is connected there, the effect's detector hears the sidechain instead of the main input; the main input is still the audio that gets turned down or let through.
+
+## Ducking: music that drops under your voice
+
+The classic use: background music that gets quieter while you talk and comes back when you stop.
+
+<PipelineDiagram
+	caption="Music from App Audio runs through a Compressor whose Sidechain hears the microphone; both reach the Speaker."
+	height={420}
+	nodes={[
+		{ id: 'music', kind: 'appAudio', x: 0, y: 0, data: { bundleId: 'com.apple.Music' } },
+		{ id: 'comp', kind: 'compressor', x: 380, y: -40, data: { thresholdDb: -35, ratio: 6, attackMs: 10, releaseMs: 300, collapsed: true } },
+		{ id: 'mic', kind: 'microphone', x: 0, y: 260, data: { deviceId: 'in-1' } },
+		{ id: 'out', kind: 'speaker', x: 760, y: 80, data: { deviceId: 'out-1' } }
+	]}
+	edges={[
+		{ from: 'music', to: 'comp' },
+		{ from: 'mic', to: 'comp', sidechain: true, channels: 1 },
+		{ from: 'comp', to: 'out' },
+		{ from: 'mic', to: 'out' }
+	]} />
+
+1. Add **App Audio** for your music player and connect it to a **Compressor**, then to your output.
+2. Connect your **Microphone** to the output as usual, and drag a second cable from it to the Compressor's **Sidechain** socket.
+3. Set the Compressor's **Threshold** below your speaking level, for example -35 dB, and **Ratio** to 4:1 or more. A higher ratio ducks deeper.
+4. **Attack** sets how fast the music drops when you start talking (5 to 20 ms). **Release** sets how fast it returns after you stop (200 to 500 ms sounds natural).
+
+The Compressor graph shows the level of your voice as a green line, and how many dB the music is pulled down right now.
+
+## Keyed gate: open one source with another
+
+With a sidechain, a **Noise Gate** opens when the *sidechain* is loud, not the main signal. Two common uses:
+
+- **Tighten a noisy room mic**: gate the room microphone and key it from a close microphone, so the room opens only when the person actually speaks.
+- **Gate a bleed-prone channel**: key a drum overhead from the snare mic so it only opens on hits.
+
+Set the gate's **Threshold** against the sidechain level, and use **Hold** so it does not chatter between syllables.
+
+## How the sidechain is handled
+
+- **Several sources add up.** You can connect more than one cable to the Sidechain socket; their signals are summed before the detector.
+- **It stays in time with the main input.** Splitwave delays the sidechain by the same latency as the main path, so the detector reacts to the matching moment of audio.
+- **Peak detection, both channels.** The detector follows the louder of the left and right sidechain channels.
+- **Nothing connected, nothing changes.** Without a sidechain cable, the effect listens to its own input like a normal compressor or gate.
+
+## Related
+
+- [Compressor](/wiki/nodes/compressor)
+- [Noise Gate](/wiki/nodes/noise-gate)

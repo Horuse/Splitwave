@@ -1,0 +1,81 @@
+<script module lang="ts">
+	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import IconAdd from '~icons/fluent/add-24-regular';
+	import Button from './button.svelte';
+
+	const { Story } = defineMeta({
+		title: 'Buttons/Button',
+		component: Button,
+		tags: ['autodocs'],
+		argTypes: {
+			tone: { control: 'select', options: ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] },
+			variant: { control: 'select', options: ['soft', 'solid', 'ghost'] },
+			size: { control: 'select', options: ['xs', 'sm', 'md', 'lg', 'xl'] },
+			icon: { control: 'boolean' },
+			active: { control: 'boolean' },
+			disabled: { control: 'boolean' }
+		},
+		args: { tone: 'neutral', variant: 'soft', size: 'md', icon: false, active: false, disabled: false }
+	});
+
+	const tones = ['neutral', 'accent', 'success', 'danger', 'warning', 'brand'] as const;
+	const variants = ['soft', 'solid', 'ghost'] as const;
+	const sizes = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
+</script>
+
+<Story name="Playground">
+	{#snippet template(args)}
+		<div class="p-6">
+			<Button {...args}>Button</Button>
+		</div>
+	{/snippet}
+</Story>
+
+<Story name="Matrix">
+	{#snippet template()}
+		<div class="flex flex-col gap-3 p-6">
+			{#each variants as variant (variant)}
+				<div class="flex items-center gap-2">
+					<span class="text-muted w-12 font-mono text-[11px]">{variant}</span>
+					{#each tones as tone (tone)}
+						<Button {tone} {variant}>{tone}</Button>
+					{/each}
+				</div>
+			{/each}
+		</div>
+	{/snippet}
+</Story>
+
+<Story name="Sizes">
+	{#snippet template()}
+		<div class="flex items-center gap-2 p-6">
+			{#each sizes as size (size)}
+				<Button {size}>{size}</Button>
+				<Button {size} icon aria-label="Add"><IconAdd /></Button>
+			{/each}
+		</div>
+	{/snippet}
+</Story>
+
+<Story name="Loading">
+	{#snippet template()}
+		<div class="flex items-center gap-2 p-6">
+			<Button loading>Center</Button>
+			<Button loading loadingPosition="start">Start</Button>
+			<Button loading loadingPosition="end" tone="brand">End</Button>
+			<Button loader onclick={() => new Promise((r) => setTimeout(r, 1200))}>Async click</Button>
+			<Button loader loadingPosition="start" tone="success" onclick={() => new Promise((r) => setTimeout(r, 1200))}>Save</Button>
+		</div>
+	{/snippet}
+</Story>
+
+<Story name="States">
+	{#snippet template()}
+		<div class="flex items-center gap-2 p-6">
+			<Button>Default</Button>
+			<Button active>Active</Button>
+			<Button disabled>Disabled</Button>
+			<Button href="/" tone="accent">Link</Button>
+		</div>
+	{/snippet}
+</Story>

@@ -1,0 +1,23 @@
+---
+title: Canvas
+description: Working with nodes and connections on the pipeline canvas.
+order: 1
+---
+
+Everything you do with nodes and cables on the pipeline canvas.
+
+## Nodes
+
+Drag a node from the sidebar onto the canvas, or right click the canvas to add one where the cursor is.
+
+## Connections
+
+Drag from an output handle to an input handle to route audio. Each cable carries the channels you picked.
+
+### Channels
+
+Hold Option to pick several channels at once and connect them as one cable.
+
+## Selection
+
+Select nodes to move, copy or delete them together. See the pages below for the shortcuts.

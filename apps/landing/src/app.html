@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="theme-color" content="#3b82f6" />
+
+		<link rel="icon" sizes="any" href="%sveltekit.assets%/icon.svg" type="image/svg+xml" />
+		<link rel="icon" type="image/png" sizes="32x32" href="%sveltekit.assets%/icon.png" />
+		<link rel="shortcut icon" href="%sveltekit.assets%/icon.ico" />
+		<link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
+
+		<script>
+			// The theme switches with a .dark class, as in the app; follow the system
+			// setting before first paint so the page never flashes light.
+			(() => {
+				const media = matchMedia('(prefers-color-scheme: dark)');
+				const apply = () => document.documentElement.classList.toggle('dark', media.matches);
+				apply();
+				media.addEventListener('change', apply);
+			})();
+		</script>
+
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+		<div id="overlays"></div>
+	</body>
+</html>

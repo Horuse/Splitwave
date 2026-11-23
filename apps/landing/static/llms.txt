@@ -1,0 +1,24 @@
+# Splitwave
+
+> Splitwave is a free, open-source (MIT) desktop audio router for macOS 13+, Linux (PipeWire) and Windows 10/11. Instead of a fixed mixer you build a node graph: capture a microphone, system audio or a single app, run it through effects and VST3/AU/CLAP plugins, and send it to speakers, a recording file, the network, or a virtual audio device other apps can use as their input.
+
+Key facts:
+
+- Price: free, no account, no analytics; all audio is processed locally.
+- Virtual audio devices: unlimited, named, created by Splitwave on macOS and Linux. On Windows, Splitwave can download and set up VB-CABLE from within the app.
+- Effects: noise suppression (DeepFilterNet), gate, compressor, limiter, EQ, reverb, delay, saturator.
+- Plugin hosting: third-party VST3, AU and CLAP plugins run as nodes in the graph.
+- Recording: WAV, FLAC, AIFF, Opus, MP3; AAC on macOS only.
+- Network: stream audio between machines over WebRTC or UDP.
+- Typical uses: route audio between apps, record system audio, process a microphone for Discord/Zoom/OBS, feed a DAW, replace BlackHole/Loopback/VoiceMeeter-style setups.
+
+## Pages
+
+- [Home and FAQ](https://splitwave.app/): features and answers to common setup questions
+- [Download](https://splitwave.app/download): installers and step-by-step installation for macOS, Linux and Windows
+- [Wiki](https://splitwave.app/wiki): guides for routing, nodes, effects, sidechain, recording and networking
+- [Changelog](https://splitwave.app/changelog): release notes for every version
+
+## Source
+
+- [GitHub repository](https://github.com/Horuse/Splitwave): source code, issues and releases

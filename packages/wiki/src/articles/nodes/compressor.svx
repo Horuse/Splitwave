@@ -1,0 +1,40 @@
+---
+title: Compressor
+description: How Splitwave's compressor works - threshold, ratio, soft knee, attack, release and makeup gain - with a live transfer curve.
+order: 1
+---
+
+A compressor turns down the parts of a signal that are louder than a **threshold**, so loud and quiet passages sit closer together. Splitwave's compressor has a soft knee, separate attack and release, makeup gain and a [sidechain](/wiki/nodes/sidechain) input.
+
+## Parameters
+
+| Parameter | Range | What it does |
+| --- | --- | --- |
+| Threshold | -60 to 0 dB | Level where compression starts. Quieter parts pass untouched. |
+| Ratio | 1:1 to 20:1 | How hard levels above the threshold are turned down. |
+| Attack | 0.1 to 100 ms | How fast it reacts once the level crosses the threshold. |
+| Release | 10 to 1000 ms | How fast it lets go after the level falls back. |
+| Knee | 0 to 24 dB | Width of the zone where compression fades in gradually. 0 is a hard knee. |
+| Makeup | 0 to 24 dB | Gain added after compression to win back loudness. |
+
+### Ratio in numbers
+
+At **4:1**, a signal 8 dB over the threshold comes out only 2 dB over it. At **20:1** the compressor behaves almost like a limiter.
+
+## Reading the graph
+
+The graph plots input level (bottom) against output level (left).
+
+- The **dashed diagonal** is unity: what goes in comes out unchanged.
+- The **yellow curve** is what the compressor does. It follows unity below the threshold and bends flatter above it; the shaded band around the bend is the knee.
+- While a pipeline runs, the **green line** marks the level the detector hears right now, and a **red segment** shows how many dB are being removed at that moment.
+
+The **GR** bar under the graph shows the same gain reduction over time.
+
+## Starting points
+
+- **Voice for calls or streaming**: Threshold -24 dB, Ratio 3:1, Attack 10 ms, Release 100 ms, Knee 6 dB.
+- **Gentle bus glue**: Threshold -18 dB, Ratio 2:1, Attack 30 ms, Release 200 ms.
+- **Ducking music under a voice**: see [Sidechain compression and ducking](/wiki/nodes/sidechain).
+
+Presets on the node give ready-made settings for common jobs, and you can save your own.

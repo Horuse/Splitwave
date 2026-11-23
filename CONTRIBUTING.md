@@ -20,7 +20,7 @@ Also out of scope unless the change is the point of the PR:
 - Reordering imports, fields, or functions
 - Tailwind class reordering
 - "While I was in here" refactors
-- Regenerating lockfiles or `src/lib/modules/pipeline/generated/` without a matching Rust change
+- Regenerating lockfiles or `packages/nodes/src/generated/` without a matching Rust change
 
 If you spot something worth fixing along the way, open a separate PR or an issue. Both are welcome — just not in the same diff.
 
@@ -44,12 +44,12 @@ The maintainer will cover the platforms you could not. That works, but it is man
 Pay particular attention when your change reaches these — they have a per-OS file each, and touching one usually means touching all three:
 
 ```
-src-tauri/src/audio/device/            macos.rs / linux.rs / windows.rs
-src-tauri/src/audio/capture/
-src-tauri/src/audio/volume/
-src-tauri/src/audio/virtual_device/
-src-tauri/src/audio/pipeline/input/
-src-tauri/src/audio/pipeline/output/
+apps/desktop/src-tauri/src/audio/device/            macos.rs / linux.rs / windows.rs
+apps/desktop/src-tauri/src/audio/capture/
+apps/desktop/src-tauri/src/audio/volume/
+apps/desktop/src-tauri/src/audio/virtual_device/
+apps/desktop/src-tauri/src/audio/pipeline/input/
+apps/desktop/src-tauri/src/audio/pipeline/output/
 ```
 
 If a platform genuinely cannot support what you are adding, return a real error from that backend. Do not silently substitute a different value — see the no-silent-fallback rule in [docs/RULES.md](docs/RULES.md).
@@ -62,7 +62,7 @@ bun run check                                  # frontend + Rust checks in paral
 bun run format                                 # Prettier + rustfmt
 ```
 
-All checks must pass, and `format` must leave the tree clean. A new node or shared component ships with its Storybook stories in the same PR; see [docs/UI.md](docs/UI.md). If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `src/lib/modules/pipeline/generated/` together with the Rust change — never by hand, and never on their own.
+All checks must pass, and `format` must leave the tree clean. A new node or shared component ships with its Storybook stories in the same PR; see [docs/UI.md](docs/UI.md). If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and commit the regenerated files in `packages/nodes/src/generated/` together with the Rust change — never by hand, and never on their own.
 
 Anything persisted to disk — pipeline JSON, `virtual-devices.json`, the macOS driver plist — has to keep loading for people upgrading. Add a `#[serde(default)]` or a versioned migration; do not silently change the meaning of an existing field.
 

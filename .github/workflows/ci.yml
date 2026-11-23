@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   # Splitwave ships under MIT; a copyleft dependency would silently revoke that.
-  # See src-tauri/deny.toml.
+  # See apps/desktop/src-tauri/deny.toml.
   licenses:
     runs-on: ubuntu-latest
     steps:
@@ -20,7 +20,7 @@ jobs:
       - name: Cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          manifest-path: src-tauri/Cargo.toml
+          manifest-path: apps/desktop/src-tauri/Cargo.toml
           # Only what this gate is for. `advisories` would fail the build on an
           # unrelated CVE published upstream, which is a separate concern.
           command: check licenses bans
@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # windows-latest ships CMake 4.x, which rejects audiopus_sys's pre-3.5
-      # policy version without this override (also set in src-tauri/.cargo/config.toml).
+      # policy version without this override (also set in apps/desktop/src-tauri/.cargo/config.toml).
       CMAKE_POLICY_VERSION_MINIMUM: '3.5'
     steps:
       - name: Checkout
@@ -50,7 +50,7 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: apps/desktop/src-tauri
 
       - name: Install JS deps
         run: bun install --frozen-lockfile
@@ -84,7 +84,7 @@ jobs:
       # workaround is to compile-gate Windows with --no-run and run tests on
       # the other two OSes.
       - name: Cargo test (also regenerates ts-rs bindings)
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
@@ -111,18 +111,18 @@ jobs:
       - name: Real-time scenarios (advisory on macOS)
         if: runner.os == 'macOS'
         continue-on-error: true
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
         run: cargo test --test pipelines --test transitions
 
       - name: TS-RS bindings up to date
-        run: git diff --exit-code -- src/lib/modules/pipeline/generated
+        run: git diff --exit-code -- packages/nodes/src/generated
 
       - name: Svelte / TypeScript check
         run: bun run check
 
       - name: Build Windows application
         if: runner.os == 'Windows'
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
         run: cargo build --bin splitwave
 
       - name: Build unsigned NSIS installer

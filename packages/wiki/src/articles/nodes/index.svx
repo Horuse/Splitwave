@@ -1,0 +1,43 @@
+---
+title: Nodes
+description: "Effects, meters and control nodes in Splitwave: dynamics, EQ, noise removal, loudness metering and push to talk."
+order: 2
+---
+
+Effects sit between an input and an output and change the audio that passes through them. Every effect has an **On** switch in its header that bypasses it, and big effects can collapse to a single summary row with the chevron next to it.
+
+## Dynamics
+
+Dynamics effects react to how loud the signal is.
+
+- **[Compressor](/wiki/nodes/compressor)** turns loud parts down so the level stays even.
+- **[Noise Gate](/wiki/nodes/noise-gate)** silences the signal when it falls below a threshold.
+- **[Limiter](/wiki/nodes/limiter)** stops peaks from ever going over a ceiling.
+- **[Sidechain](/wiki/nodes/sidechain)** lets the Compressor or the Noise Gate react to a different signal than the one it changes, for ducking and keyed gating.
+
+Their graphs are live while a pipeline runs: a green line shows the level the detector hears right now, and the point on the curve shows what comes out.
+
+## Tone and cleanup
+
+- **EQ**: 10-band graphic EQ at octave centres from 32 Hz to 16 kHz.
+- **Noise Suppressor**: neural speech denoising (DeepFilterNet).
+- **De-esser**: compresses only the harsh "s" band above a frequency you set.
+- **Declick**: repairs short clicks and crackle.
+
+## Space and colour
+
+- **Delay**, **Reverb** and **Saturator** add echoes, room and warmth.
+- **Plugin** hosts your own CLAP plugins as a node.
+
+## Monitoring
+
+Monitor nodes measure audio without changing it. Put one anywhere in a chain, or on a branch of its own.
+
+- **Level Meter**: live peak and RMS for every channel, with peak hold and clip lamps. Click it to reset the peaks.
+- **[Loudness](/wiki/nodes/loudness)**: EBU R128 loudness in LUFS, true peak, loudness range and delivery checks.
+- **Waveform**: a live min/max envelope for each channel.
+- **Spectrum**: a log-frequency spectrum with peak hold.
+
+## Control
+
+Control nodes carry on/off signals instead of audio. See [Control and routing nodes](/wiki/nodes/control).

@@ -56,7 +56,7 @@ Required before opening a PR — see [CONTRIBUTING.md](../CONTRIBUTING.md#keep-t
 ## Project layout
 
 ```
-src/lib/modules/
+apps/desktop/src/lib/modules/
   audio/        device enumeration, meter store
   flow/         xyflow node graph editor, sidebar, context menu
   pipeline/     pipeline state, snapshot history, ts-rs generated types
@@ -67,7 +67,7 @@ src/lib/modules/
   error/        global error modal (Rust panics + JS errors)
   updater/      auto-update modal + skip-version persistence
   app_info/     OS / app version cache
-src-tauri/src/audio/
+apps/desktop/src-tauri/src/audio/
   capture/      system + per-app capture (macos.rs SCK / linux.rs PipeWire / windows.rs WASAPI)
   device/       device enumeration (macos.rs CoreAudio / linux.rs PipeWire / windows.rs cpal)
   volume/       device volume (macos.rs / linux.rs / windows.rs)
@@ -77,7 +77,7 @@ src-tauri/src/audio/
   streams/      cpal stream builders (macOS + Windows)
   playback.rs   PipeWire speaker output (Linux)
   pipeline/     DSP engine, effects, encoders, pipeline DAG (input/, output/ per OS)
-src-tauri/native/virtual_driver/
+apps/desktop/src-tauri/native/virtual_driver/
   SplitAudioDriver.cpp  AudioServerPlugin implementation (libASPL, macOS)
   Info.plist            CFPlugin manifest
 ```

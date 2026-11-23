@@ -7,7 +7,7 @@
   - Run `bun run test`, `bun run check`, and `bun run format` —
     all must pass and leave the tree clean.
   - If you changed a `#[derive(TS)]` type in Rust, run `bun run generate` and
-    commit the regenerated files in src/lib/modules/pipeline/generated/.
+    commit the regenerated files in packages/nodes/src/generated/.
 -->
 
 ## What does this PR do?

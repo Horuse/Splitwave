@@ -1,8 +1,8 @@
 .DS_Store
-src-tauri/resources/
+apps/desktop/src-tauri/resources/
 node_modules
-/build
-/.svelte-kit
+/apps/desktop/build
+/apps/desktop/.svelte-kit
 /package
 .env
 .env.*
@@ -13,7 +13,7 @@ vite.config.ts.timestamp-*
 !.idea/codeStyles/
 
 # ts-rs default export dir; real types live in src/lib/modules/pipeline/generated
-/src-tauri/bindings/
+/apps/desktop/src-tauri/bindings/
 
 # flatpak-builder work dirs and inputs
 /flatpak/build/
@@ -23,4 +23,4 @@ vite.config.ts.timestamp-*
 /flatpak/*.flatpak
 
 # storybook
-/storybook-static
+storybook-static

@@ -18,10 +18,10 @@ async function edit(path: string, pattern: RegExp, replacement: string) {
 	console.log(`updated ${path}`);
 }
 
-await edit('package.json', /("version":\s*")[^"]+(")/, `$1${version}$2`);
-await edit('src-tauri/tauri.conf.json', /("version":\s*")[^"]+(")/, `$1${version}$2`);
-await edit('src-tauri/Cargo.toml', /(\[package\][^[]*?\nversion = ")[^"]+(")/, `$1${version}$2`);
-await edit('src-tauri/Cargo.lock', /(name = "splitwave"\nversion = ")[^"]+(")/, `$1${version}$2`);
+await edit('apps/desktop/package.json', /("version":\s*")[^"]+(")/, `$1${version}$2`);
+await edit('apps/desktop/src-tauri/tauri.conf.json', /("version":\s*")[^"]+(")/, `$1${version}$2`);
+await edit('apps/desktop/src-tauri/Cargo.toml', /(\[package\][^[]*?\nversion = ")[^"]+(")/, `$1${version}$2`);
+await edit('apps/desktop/src-tauri/Cargo.lock', /(name = "splitwave"\nversion = ")[^"]+(")/, `$1${version}$2`);
 await edit('CHANGELOG.md', /(\n## \[)/, `\n## [${version}] - ${date}\n$1`);
 
 // AppStream sorts "2.0.0-beta.1" above "2.0.0", so pre-releases stay out of the Flathub metadata.

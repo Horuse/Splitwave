@@ -1,0 +1,105 @@
+/* The app's theme: Tailwind, tokens, the Inter font, component styles and the
+   class-based dark variant. The landing adds only what is its own below. */
+@import '@splitwave/ui/styles';
+@source '../../../../packages/nodes/src';
+@source '../../../../packages/wiki/src';
+
+@theme {
+	--breakpoint-xs: 25rem;
+	/* Install commands and checksums read as code here, unlike the app's UI. */
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The landing keeps its deeper dark page; a nested .dark region (a wiki
+   diagram) keeps the app's own background and scale. */
+:root.dark {
+	--color-background: oklch(0.18 0 0);
+}
+
+/* Matches xyflow's animated edge, so a diagram wire reads as a canvas edge. */
+@keyframes dashdraw {
+	from {
+		stroke-dashoffset: 10;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wire {
+		animation: none;
+	}
+}
+
+@utility mix-bg-* {
+	background-color: color-mix(
+		in oklab,
+		var(--color-background) calc(100% - --modifier(percentage, --default(10%))),
+		--value(--color-*) --modifier(percentage, --default(10%))
+	);
+}
+
+@layer base {
+	body {
+		@apply bg-background font-sans text-theme antialiased;
+	}
+	button {
+		@apply cursor-pointer;
+	}
+}
+
+@layer components {
+	.btn-primary {
+		@apply inline-flex items-center gap-1.5 rounded-2xl border border-blue-500/40 bg-blue-500/20 px-5 py-2.5 text-sm font-semibold text-blue-400 transition-all duration-300;
+		@apply hover:scale-[1.02] hover:border-blue-500/60 hover:bg-blue-500/30 hover:text-blue-400;
+	}
+
+	.btn-secondary {
+		@apply inline-flex items-center gap-1.5 rounded-2xl border border-neutral-400 bg-neutral-200 px-5 py-2.5 text-sm font-semibold text-neutral-1000 transition-all duration-300;
+		@apply hover:scale-[1.02] hover:border-neutral-500 hover:bg-neutral-300;
+	}
+
+	.btn-preset {
+		@apply inline-flex items-center gap-1.5 rounded-xl border border-orange-500/20 bg-orange-500/10 px-5 py-1.5 text-sm font-semibold text-orange-400 transition-all duration-300;
+		@apply hover:scale-[1.02] hover:border-orange-500/30 hover:bg-orange-500/20 hover:text-orange-400;
+	}
+
+	/* Neutral pill for in-page selectors; the active accent is applied per view so
+	   it can match the platform colour. */
+	.btn-tab {
+		@apply inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-neutral-100 px-4 py-2 text-sm font-semibold text-neutral-1000 transition-all duration-300;
+		@apply hover:border-neutral-500;
+	}
+
+	.btn-ghost {
+		@apply inline-flex items-center gap-1.5 rounded-lg border border-neutral-400 bg-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-1000 transition-all duration-300;
+		@apply hover:border-neutral-500 hover:bg-neutral-300;
+	}
+
+	.btn-preset.active {
+		@apply border-orange-500/20 bg-orange-500/20 text-orange-300;
+	}
+
+	.wire {
+		stroke-dasharray: 5;
+		stroke-width: 2;
+		fill: none;
+		animation: dashdraw 0.5s linear infinite;
+	}
+
+	.diagram-box {
+		@apply fill-neutral-100 stroke-neutral-300;
+	}
+
+	.card {
+		@apply rounded-2xl border border-neutral-300 bg-neutral-100 p-6;
+	}
+
+	.input-base {
+		@apply rounded-xl border border-neutral-400 bg-neutral-200 px-3 py-2 text-sm text-theme transition-all;
+		@apply focus:border-blue-500/50 focus:bg-neutral-100 focus:outline-none;
+		@apply placeholder:text-neutral-800;
+	}
+
+	.document a {
+		@apply text-blue-500 underline underline-offset-2 hover:text-blue-500;
+	}
+}

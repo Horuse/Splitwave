@@ -1,0 +1,66 @@
+---
+title: Push to talk and mute shortcuts
+description: Build push-to-talk, a mute toggle and scene switching with global shortcuts or MIDI in Splitwave.
+order: 2
+---
+
+<script>
+	import PipelineDiagram from '../../pipeline-diagram.svelte';
+</script>
+
+These recipes work in any app, because Splitwave's **Key Input** listens to a global shortcut: it reacts even while another window is focused, such as a game or a call.
+
+## Push to talk
+
+<PipelineDiagram
+	caption="Key Input drives the open socket of a Mute between the Microphone and the virtual device."
+	height={340}
+	nodes={[
+		{ id: 'mic', kind: 'microphone', x: 0, y: 0, data: { deviceId: 'in-1' } },
+		{ id: 'key', kind: 'keyInput', x: 0, y: 280 },
+		{ id: 'mute', kind: 'mute', x: 380, y: 60 },
+		{ id: 'out', kind: 'speaker', x: 720, y: 0, data: { deviceId: 'out-1' } }
+	]}
+	edges={[
+		{ from: 'mic', to: 'mute' },
+		{ from: 'mute', to: 'out' },
+		{ from: 'key', to: 'mute', control: { from: 'control:out', to: 'control:open' } }
+	]} />
+
+1. Add **Key Input**, click its binding field and press the key you want, for example F13.
+2. Connect its output diamond to the **open** socket on a **Mute** node in your microphone chain.
+
+While the key is held, Key Input is high and Mute lets your voice through. Release it and you are silent again.
+
+## Mute toggle
+
+Put a **Toggle** between them:
+
+<PipelineDiagram
+	caption="A Toggle between Key Input and the Mute turns each key press into on or off."
+	height={260}
+	nodes={[
+		{ id: 'key', kind: 'keyInput', x: 0, y: 0 },
+		{ id: 'tog', kind: 'toggle', x: 340, y: 0 },
+		{ id: 'mute', kind: 'mute', x: 640, y: -40 }
+	]}
+	edges={[
+		{ from: 'key', to: 'tog', control: { from: 'control:out', to: 'control:in' } },
+		{ from: 'tog', to: 'mute', control: { from: 'control:out', to: 'control:open' } }
+	]} />
+
+Each press flips the Toggle, so one tap unmutes and the next tap mutes. Turn on **Sound cue** on the Mute node to hear a short beep in your headphones when it changes.
+
+## Talk only when you actually speak
+
+Replace Key Input with a **Level Trigger** fed from your microphone. Its output is high while your voice is above the threshold and stays high for the Hold time, so the mute opens on speech and closes on silence.
+
+## Switch between sources
+
+To pick between several sources with one key each, use **Select**: connect every source to its inputs and give each input its own Key Input. To send one source to one of several destinations, use **Switch** the same way.
+
+For a single key that steps through options, put a **Cycle** in front: each press moves to the next output and wraps around.
+
+## MIDI instead of keys
+
+Set Key Input to **MIDI**, click the field and press a pad or move a control. Notes and CC messages both work; a knob counts as on past halfway.

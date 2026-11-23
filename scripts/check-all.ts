@@ -5,7 +5,7 @@ const tasks = [
 	},
 	{
 		name: 'backend',
-		command: ['cargo', 'check', '--manifest-path', 'src-tauri/Cargo.toml']
+		command: ['cargo', 'check', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml']
 	}
 ] as const;
 

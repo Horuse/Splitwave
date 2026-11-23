@@ -1,0 +1,42 @@
+@layer components {
+	.sidebar {
+		@apply flex h-full w-56 shrink-0 flex-col border-r border-theme/5 bg-foreground;
+	}
+	.sidebar-item-nested {
+		@apply h-7 pl-2.5 text-[13px];
+	}
+	.sidebar-group {
+		@apply relative ml-[18px] flex flex-col gap-0.5 border-l border-(--lv-3) pl-2;
+	}
+	.sidebar-group-marker {
+		@apply pointer-events-none absolute top-0 -left-px w-0.5 rounded-full transition-[transform,height,opacity] duration-200 ease-out;
+		background-color: var(--color-brand);
+	}
+	.sidebar-toggle {
+		& > svg {
+			@apply transition-transform duration-150;
+		}
+		@apply -mr-1 flex size-6 items-center justify-center rounded-md text-neutral-800 hover:bg-(--lv-3) hover:text-theme;
+	}
+	.sidebar-marker {
+		@apply pointer-events-none absolute top-1/2 -left-2 -mt-1 h-2 w-1 rounded-r-full;
+		background-color: var(--color-brand);
+	}
+	.sidebar-section {
+		@apply px-2.5 pt-3 pb-1 font-mono text-[10px] tracking-wider text-neutral-800 uppercase;
+	}
+	.sidebar-item {
+		@apply relative flex h-8 w-full cursor-pointer items-center gap-2.5 px-2.5 text-left text-sm text-neutral-900 transition-[color,background-color] duration-150 select-none;
+		border-radius: var(--r, 10px);
+
+		& > svg {
+			@apply block size-4.5 shrink-0;
+		}
+		&:hover {
+			@apply bg-(--lv-2) text-theme;
+		}
+		&[data-active='true'] {
+			@apply bg-(--lv-2) font-medium text-theme;
+		}
+	}
+}

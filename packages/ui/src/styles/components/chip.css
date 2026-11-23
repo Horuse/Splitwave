@@ -1,0 +1,26 @@
+@layer components {
+	.chip {
+		@apply inline-flex cursor-pointer flex-col items-center justify-center gap-1 border border-(--lv-3) bg-(--lv-1) px-3 py-1 text-[11px] font-medium text-neutral-1000 transition-[color,background-color,border-color] duration-150 select-none hover:bg-(--lv-2);
+		border-radius: var(--r, 8px);
+
+		&[data-selected='true'] {
+			@apply border-(--lv-5) bg-(--lv-2) text-theme;
+		}
+		&:disabled {
+			@apply cursor-not-allowed opacity-40;
+		}
+	}
+	.chip-mono {
+		@apply font-mono font-normal tabular-nums;
+	}
+
+	.section-card-icon {
+		@apply flex size-9 shrink-0 items-center justify-center border border-(--lv-3) bg-(--lv-2);
+		border-radius: var(--r, 10px);
+		color: var(--color-brand);
+
+		& > svg {
+			@apply block size-5;
+		}
+	}
+}

@@ -1,0 +1,50 @@
+{
+	"name": "@splitwave/nodes",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"svelte": "./src/index.ts",
+	"exports": {
+		".": {
+			"svelte": "./src/index.ts",
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		},
+		"./generated/*": "./src/generated/*.ts",
+		"./catalog": {
+			"svelte": "./src/ui/catalog.ts",
+			"types": "./src/ui/catalog.ts",
+			"default": "./src/ui/catalog.ts"
+		},
+		"./node-types": {
+			"svelte": "./src/ui/node_types.ts",
+			"types": "./src/ui/node_types.ts",
+			"default": "./src/ui/node_types.ts"
+		},
+		"./engine": {
+			"svelte": "./src/engine/index.ts",
+			"types": "./src/engine/index.ts",
+			"default": "./src/engine/index.ts"
+		},
+		"./ui": {
+			"svelte": "./src/ui/index.ts",
+			"types": "./src/ui/index.ts",
+			"default": "./src/ui/index.ts"
+		},
+		"./ui/*": {
+			"svelte": "./src/ui/*",
+			"types": "./src/ui/*",
+			"default": "./src/ui/*"
+		},
+		"./icons": {
+			"svelte": "./src/ui/icons/index.ts",
+			"types": "./src/ui/icons/index.ts",
+			"default": "./src/ui/icons/index.ts"
+		}
+	},
+	"peerDependencies": {
+		"svelte": "^5",
+		"@xyflow/svelte": "*",
+		"@splitwave/ui": "*"
+	}
+}

@@ -29,7 +29,7 @@ use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginSt
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
 
-use super::host_api::{AliveFlag, EditorSize, PluginParamInfo};
+use super::host_api::{AliveFlag, EditorSize, PluginParamInfo, PortBus, PortLayout};
 use super::node::PluginNode;
 use super::{editor, ParamRing};
 
@@ -247,6 +247,19 @@ impl ClapInstance {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// The buses the plugin declares. Read without activating: CLAP fixes its
+    /// ports at instantiation.
+    pub fn port_layout(&mut self) -> PortLayout {
+        let ports = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginAudioPorts>();
+        PortLayout {
+            inputs: read_ports(ports.as_ref(), &mut self.instance, true),
+            outputs: read_ports(ports.as_ref(), &mut self.instance, false),
+        }
     }
 
     /// Starts processing and hands back the `Send` half for the DSP worker.
@@ -571,25 +584,45 @@ fn embedded_config() -> Option<GuiConfiguration<'static>> {
     })
 }
 
-/// Channel count per audio port. Falls back to a single stereo port when the
-/// plugin does not expose the audio-ports extension.
-fn port_channels(
+/// The audio ports of one direction. Falls back to a single stereo port when
+/// the plugin does not expose the audio-ports extension.
+fn read_ports(
     ports: Option<&PluginAudioPorts>,
     handle: &mut PluginInstance<SplitwaveHost>,
     is_input: bool,
-) -> Vec<u32> {
+) -> Vec<PortBus> {
     let Some(ports) = ports else {
-        return vec![2];
+        return vec![PortBus {
+            name: "Main".into(),
+            channels: 2,
+        }];
     };
     let count = ports.count(&mut handle.plugin_handle(), is_input);
     (0..count)
         .map(|i| {
             let mut buf = AudioPortInfoBuffer::default();
-            ports
-                .get(&mut handle.plugin_handle(), i, is_input, &mut buf)
-                .map(|p| p.channel_count)
-                .unwrap_or(2)
+            match ports.get(&mut handle.plugin_handle(), i, is_input, &mut buf) {
+                Some(p) => PortBus {
+                    name: String::from_utf8_lossy(p.name).into_owned(),
+                    channels: p.channel_count,
+                },
+                None => PortBus {
+                    name: String::new(),
+                    channels: 2,
+                },
+            }
         })
+        .collect()
+}
+
+fn port_channels(
+    ports: Option<&PluginAudioPorts>,
+    handle: &mut PluginInstance<SplitwaveHost>,
+    is_input: bool,
+) -> Vec<u32> {
+    read_ports(ports, handle, is_input)
+        .into_iter()
+        .map(|b| b.channels)
         .collect()
 }
 
@@ -610,6 +643,26 @@ mod tests {
 
     fn skipped(what: &str) {
         println!("SKIPPED: no clap plugins installed, cannot check {what}");
+    }
+
+    /// Drives a node with a stereo block the way the pipeline does: a plugin
+    /// with a sidechain gets that port's channels appended, fed silence.
+    fn run(node: &mut PluginNode, block: &mut [f32]) {
+        let aux = node.aux_channels();
+        if aux == 0 {
+            return node.process(block, FRAMES);
+        }
+        let stride = CHANNELS + aux;
+        let mut wide = vec![0.0f32; FRAMES * stride];
+        for f in 0..FRAMES {
+            wide[f * stride..f * stride + CHANNELS]
+                .copy_from_slice(&block[f * CHANNELS..(f + 1) * CHANNELS]);
+        }
+        node.process(&mut wide, FRAMES);
+        for f in 0..FRAMES {
+            block[f * CHANNELS..(f + 1) * CHANNELS]
+                .copy_from_slice(&wide[f * stride..f * stride + CHANNELS]);
+        }
     }
 
     fn installed() -> Vec<PluginDescriptor> {
@@ -667,7 +720,7 @@ mod tests {
                     block[2 * i] = s;
                     block[2 * i + 1] = s;
                 }
-                node.process(&mut block, FRAMES);
+                run(&mut node, &mut block);
                 peak = block.iter().fold(peak, |a, s| a.max(s.abs()));
             }
             if peak <= 0.01 {
@@ -715,7 +768,7 @@ mod tests {
                     block[0] = 1.0;
                     block[1] = 1.0;
                 }
-                node.process(&mut block, FRAMES);
+                run(&mut node, &mut block);
                 if arrived.is_none() {
                     if let Some(i) = block.iter().position(|s| s.abs() > 1e-6) {
                         arrived = Some(fed + i / 2);

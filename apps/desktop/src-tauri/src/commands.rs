@@ -188,6 +188,32 @@ pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::
     }
 }
 
+/// The audio buses a plugin declares, read from a short-lived instance. The
+/// node asks when a plugin is picked, so its sockets exist before the pipeline
+/// runs.
+#[tauri::command]
+pub async fn probe_plugin_ports(
+    format: crate::audio::plugins::PluginFormat,
+    path: String,
+    plugin_id: String,
+) -> AppResult<crate::audio::plugins::host_api::PortLayout> {
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::registry::probe(format, &path, &plugin_id)
+    })
+    .await;
+    match res {
+        Ok(Ok(layout)) => Ok(layout),
+        Ok(Err(e)) => {
+            error!(error = %e, "probe_plugin_ports failed");
+            Err(AppError::Validation(e))
+        }
+        Err(_) => {
+            error!("probe_plugin_ports worker failed");
+            Err(AppError::Validation("plugin probe worker failed".into()))
+        }
+    }
+}
+
 /// Persisted crash reports from previous runs, cleared as they are read.
 #[tauri::command]
 pub fn take_crash_reports() -> Vec<serde_json::Value> {

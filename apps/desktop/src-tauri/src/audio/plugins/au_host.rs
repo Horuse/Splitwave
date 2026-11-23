@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use objc2_audio_toolbox::{
-    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_Latency,
+    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_ElementCount,
+    kAudioUnitProperty_ElementName, kAudioUnitProperty_Latency,
     kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitProperty_ParameterInfo,
     kAudioUnitProperty_ParameterList, kAudioUnitProperty_SetRenderCallback,
     kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global, kAudioUnitScope_Input,
@@ -38,7 +39,7 @@ use crate::audio::effects::Effect;
 use super::au_backend::{find_component, parse_component_url};
 use super::host_api::{
     alive_flag, ActivateRequest, AliveFlag, EditorSize, Graveyard, HostedNode, PluginHost,
-    PluginParamInfo, PluginStatus, Unsupported,
+    PluginParamInfo, PluginStatus, PortBus, PortLayout, Unsupported,
 };
 use super::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use super::ParamRing;
@@ -379,6 +380,98 @@ fn activate(
         graveyard().lock().unwrap().bury(old.instance, old.alive);
     }
     Ok(node)
+}
+
+/// The buses a unit declares, read from a fresh instance that is never
+/// initialised. A unit reports its default format per element, so the channel
+/// count here is the one it would run at if left alone.
+pub fn probe_layout(url: &str) -> Result<PortLayout, String> {
+    let desc = parse_component_url(url).ok_or_else(|| format!("not an audio unit: {url}"))?;
+    let component = find_component(&desc);
+    if component.is_null() {
+        return Err(format!("audio unit not installed: {url}"));
+    }
+    let mut unit: AudioUnit = ptr::null_mut();
+    // SAFETY: `component` is a live registry entry; the call writes `unit`.
+    let status = unsafe { AudioComponentInstanceNew(component, NonNull::from(&mut unit)) };
+    if status != 0 || unit.is_null() {
+        return Err(format!("instantiate {url}: OSStatus {status}"));
+    }
+    let owned = AuInstance {
+        unit,
+        url: url.to_string(),
+    };
+    let read = |scope: u32| -> Vec<PortBus> {
+        let mut count = 0u32;
+        let mut size = size_of::<u32>() as u32;
+        // SAFETY: the property is a single UInt32 and every value outlives the call.
+        let status = unsafe {
+            AudioUnitGetProperty(
+                owned.unit,
+                kAudioUnitProperty_ElementCount,
+                scope,
+                0,
+                NonNull::from(&mut count).cast(),
+                NonNull::from(&mut size),
+            )
+        };
+        if status != 0 {
+            return Vec::new();
+        }
+        (0..count)
+            .map(|element| {
+                let mut format = float_format(0, 0);
+                let mut size = size_of::<AudioStreamBasicDescription>() as u32;
+                // SAFETY: the property is one stream description.
+                let status = unsafe {
+                    AudioUnitGetProperty(
+                        owned.unit,
+                        kAudioUnitProperty_StreamFormat,
+                        scope,
+                        element,
+                        NonNull::from(&mut format).cast(),
+                        NonNull::from(&mut size),
+                    )
+                };
+                PortBus {
+                    name: element_name(owned.unit, scope, element),
+                    channels: if status == 0 {
+                        format.mChannelsPerFrame
+                    } else {
+                        2
+                    },
+                }
+            })
+            .collect()
+    };
+    Ok(PortLayout {
+        inputs: read(kAudioUnitScope_Input),
+        outputs: read(kAudioUnitScope_Output),
+    })
+}
+
+/// The unit's own name for an element; empty when it gives none.
+fn element_name(unit: AudioUnit, scope: u32, element: u32) -> String {
+    use objc2_core_foundation::CFString;
+
+    let mut name: *const CFString = ptr::null();
+    let mut size = size_of::<*const CFString>() as u32;
+    // SAFETY: the property is a retained CFString the caller releases.
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_ElementName,
+            scope,
+            element,
+            NonNull::from(&mut name).cast(),
+            NonNull::from(&mut size),
+        )
+    };
+    let Some(name) = NonNull::new(name.cast_mut()).filter(|_| status == 0) else {
+        return String::new();
+    };
+    // SAFETY: a successful get hands over one retain.
+    unsafe { CFRetained::from_raw(name) }.to_string()
 }
 
 /// The unit's reported lookahead, converted from seconds. Zero when the unit
@@ -1347,6 +1440,16 @@ mod tests {
 pub struct AuHost;
 
 impl PluginHost for AuHost {
+    fn probe(&self, path: &str, _plugin_id: &str) -> Result<PortLayout, String> {
+        let url = path.to_string();
+        if main_thread::is_main_thread() {
+            probe_layout(&url)
+        } else {
+            main_thread::run(move || probe_layout(&url))
+                .map_err(|e| format!("main thread error: {e}"))?
+        }
+    }
+
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
         main_thread::ensure_ticker();
         let (node_id, path) = (req.node_id.to_string(), req.path.to_string());

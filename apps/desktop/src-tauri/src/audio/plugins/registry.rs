@@ -75,6 +75,15 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
     Ok(node)
 }
 
+/// The buses a plugin declares, without activating it.
+pub fn probe(
+    format: PluginFormat,
+    path: &str,
+    plugin_id: &str,
+) -> Result<super::host_api::PortLayout, String> {
+    host_for(format).probe(path, plugin_id)
+}
+
 /// Releases a node entirely: used when its plugin is cleared, when a rebuild
 /// fails to load one, and when the pipeline that owned it goes away.
 pub fn forget(node_id: &str) {

@@ -175,7 +175,7 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseSuppressor(e) => e.process(active, frames),
             RuntimeEffect::Declick(e) => e.process(active, frames),
             RuntimeEffect::DeEsser(e) => e.process(active, frames),
-            RuntimeEffect::HostedPlugin(e) => e.process(active, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process_with_sidechain(active, sidechain, frames),
             #[cfg(test)]
             RuntimeEffect::Offloaded(o) => o.process(active),
         }

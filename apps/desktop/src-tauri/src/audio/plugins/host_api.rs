@@ -42,6 +42,27 @@ pub struct PluginParamInfo {
     pub read_only: bool,
 }
 
+/// One audio bus a plugin declares.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PortBus {
+    /// The plugin's own name for the bus ("Sidechain", "Main").
+    pub name: String,
+    pub channels: u32,
+}
+
+/// The audio buses a plugin declares. Index 0 of each list is the main bus and
+/// every later input is auxiliary (a sidechain); all three formats order their
+/// buses that way.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PortLayout {
+    pub inputs: Vec<PortBus>,
+    pub outputs: Vec<PortBus>,
+}
+
 /// What the node needs to know about its plugin between rebuilds: which one is
 /// actually running, and whether it can show an editor. A rebuild is not
 /// instant, so `path` lagging behind the node's own selection is how the UI
@@ -91,14 +112,26 @@ pub enum HostedNode {
 }
 
 impl HostedNode {
-    /// Channels this instance was configured for. `2` means the pipeline must
-    /// drive it one stereo pair at a time.
+    /// Channels of the plugin's main port, which is the width of the node.
     pub fn channels(&self) -> usize {
         match self {
             HostedNode::Clap(n) => n.channels(),
             #[cfg(target_os = "macos")]
             HostedNode::Au(n) => n.channels(),
             HostedNode::Vst3(n) => n.channels(),
+        }
+    }
+}
+
+impl HostedNode {
+    /// Channels of the sidechain input, fed after the main ones in every block
+    /// `process` is given; 0 when the plugin has no sidechain.
+    pub fn aux_channels(&self) -> usize {
+        match self {
+            HostedNode::Clap(n) => n.aux_channels(),
+            #[cfg(target_os = "macos")]
+            HostedNode::Au(_) => 0,
+            HostedNode::Vst3(_) => 0,
         }
     }
 }
@@ -146,6 +179,11 @@ impl BlockProcessor for HostedProcessor {
 pub struct HostedEffect {
     backend: HostedBackend,
     channels: usize,
+    /// Sidechain channels carried beside the main ones; see `process_with_aux`.
+    aux: usize,
+    /// One block at `channels + aux` wide, the shape the node and the offload
+    /// both work in. Sized once, so the audio path never allocates.
+    joined: Vec<f32>,
     latency: usize,
 }
 
@@ -164,11 +202,20 @@ impl HostedEffect {
         burst_blocks: usize,
     ) -> Self {
         let latency = node.latency_frames();
-        let width = node.channels();
+        let channels = node.channels();
+        let aux = node.aux_channels();
+        let width = channels + aux;
+        let joined = if aux > 0 {
+            vec![0.0; MAX_BUFFER_FRAMES * width]
+        } else {
+            Vec::new()
+        };
         if !realtime {
             return Self {
                 backend: HostedBackend::Inline { node },
-                channels: width,
+                channels,
+                aux,
+                joined,
                 latency,
             };
         }
@@ -191,13 +238,64 @@ impl HostedEffect {
             Ok(o) => Self {
                 latency: latency + o.latency_frames(),
                 backend: HostedBackend::Offloaded(o),
-                channels: width,
+                channels,
+                aux,
+                joined,
             },
             Err(p) => Self {
                 backend: HostedBackend::Inline { node: p.node },
-                channels: width,
+                channels,
+                aux,
+                joined,
                 latency,
             },
+        }
+    }
+}
+
+impl HostedEffect {
+    /// Whether the plugin has a sidechain input for the pipeline to feed.
+    pub fn has_sidechain(&self) -> bool {
+        self.aux > 0
+    }
+
+    /// `main` is the node's `channels` wide block; `sidechain` is the same
+    /// frame count at the node's width, or `None` when nothing is wired. The
+    /// sidechain's channels beyond what the plugin's port takes are dropped, and
+    /// a port wider than the signal keeps silence in the rest.
+    pub fn process_with_sidechain(
+        &mut self,
+        main: &mut [f32],
+        sidechain: Option<&[f32]>,
+        frames: usize,
+    ) {
+        if frames == 0 {
+            return;
+        }
+        if self.aux == 0 {
+            return self.process(main, frames);
+        }
+        let (m, a) = (self.channels, self.aux);
+        let stride = m + a;
+        let joined = &mut self.joined[..frames * stride];
+        for f in 0..frames {
+            joined[f * stride..f * stride + m].copy_from_slice(&main[f * m..f * m + m]);
+            let side = &mut joined[f * stride + m..(f + 1) * stride];
+            match sidechain {
+                Some(s) if s.len() >= frames * m => {
+                    for (c, v) in side.iter_mut().enumerate() {
+                        *v = if c < m { s[f * m + c] } else { 0.0 };
+                    }
+                }
+                _ => side.fill(0.0),
+            }
+        }
+        match &mut self.backend {
+            HostedBackend::Offloaded(o) => o.process(joined),
+            HostedBackend::Inline { node } => node.process(joined, frames),
+        }
+        for f in 0..frames {
+            main[f * m..f * m + m].copy_from_slice(&joined[f * stride..f * stride + m]);
         }
     }
 }
@@ -206,6 +304,9 @@ impl Effect for HostedEffect {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         if frames == 0 {
             return;
+        }
+        if self.aux > 0 {
+            return self.process_with_sidechain(samples, None, frames);
         }
         match &mut self.backend {
             HostedBackend::Offloaded(o) => o.process(&mut samples[..frames * self.channels]),
@@ -325,6 +426,10 @@ pub type EditorSize = (u32, u32);
 pub trait PluginHost: Sync {
     /// Instantiates and activates the plugin, returning its RT node.
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String>;
+
+    /// The buses the plugin declares, read from a short-lived instance that is
+    /// never activated and never becomes any node's editor target.
+    fn probe(&self, path: &str, plugin_id: &str) -> Result<PortLayout, String>;
 
     /// Drops this host's editor/parameter hold on the node. The instance itself
     /// lives until its RT node is gone.

@@ -15,10 +15,12 @@ use crate::audio::plugins::clap_host::SplitwaveHost;
 use crate::audio::plugins::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use crate::audio::plugins::ParamRing;
 
-/// The pipeline carries interleaved stereo. Audio flows only through the
-/// plugin's main (index 0) input/output ports; other ports the plugin declares
-/// (e.g. a sidechain input) are still allocated and fed silence, because a
-/// missing port buffer makes the plugin read a null pointer and crash.
+/// Audio flows through the plugin's main (index 0) input/output ports and the
+/// first auxiliary input port (its sidechain). The block handed to `process`
+/// is interleaved at `channels + aux` wide: the main channels first, then the
+/// sidechain's. Any other port the plugin declares is still allocated and fed
+/// silence, because a missing port buffer makes the plugin read a null pointer
+/// and crash.
 pub struct PluginNode {
     processor: StartedPluginAudioProcessor<SplitwaveHost>,
     in_ports: AudioPorts,
@@ -36,9 +38,11 @@ pub struct PluginNode {
     // Cleared on drop so the host's main thread can reclaim the matching
     // main-thread instance once its processor is gone from the DAG.
     alive: Arc<AtomicBool>,
-    /// Interleaved channels the pipeline hands this node, which is what the
-    /// plugin's main port carries.
+    /// Channels of the plugin's main port.
     channels: usize,
+    /// Channels of the sidechain input fed after the main ones; 0 when the
+    /// plugin has none. Always the input port at index 1.
+    aux: usize,
     /// Reported by the plugin at activation. The DAG pads shorter parallel
     /// paths by it, so a wrong value here is an audible phase error rather
     /// than a missing feature.
@@ -70,6 +74,7 @@ impl PluginNode {
         channels: usize,
         latency: usize,
     ) -> Self {
+        let aux = input_channels.get(1).copied().unwrap_or(0) as usize;
         let param_cursor = params.reader();
         Self {
             processor,
@@ -90,6 +95,7 @@ impl PluginNode {
             events: EventBuffer::with_capacity(MAX_PARAM_CHANGES_PER_BLOCK),
             alive,
             channels,
+            aux,
             latency,
         }
     }
@@ -98,7 +104,8 @@ impl PluginNode {
 impl Effect for PluginNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
         let width = self.channels;
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
+        let stride = width + self.aux;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
         }
         let Self {
@@ -140,7 +147,18 @@ impl Effect for PluginNode {
         if let Some(main) = in_bufs.first_mut() {
             for (c, channel) in main.iter_mut().take(width).enumerate() {
                 for i in 0..frames {
-                    channel[i] = samples[i * width + c];
+                    channel[i] = samples[i * stride + c];
+                }
+            }
+        }
+        // The sidechain port, when the plugin has one. Channels the pipeline
+        // does not carry stay at silence.
+        if self.aux > 0 {
+            if let Some(side) = in_bufs.get_mut(1) {
+                for (c, channel) in side.iter_mut().take(self.aux).enumerate() {
+                    for i in 0..frames {
+                        channel[i] = samples[i * stride + width + c];
+                    }
                 }
             }
         }
@@ -181,7 +199,7 @@ impl Effect for PluginNode {
                     // rest of the block at whatever it held.
                     let src = &main[c.min(main.len() - 1)];
                     for i in 0..frames {
-                        samples[i * width + c] = src[i];
+                        samples[i * stride + c] = src[i];
                     }
                 }
             }
@@ -197,5 +215,9 @@ impl Effect for PluginNode {
 impl PluginNode {
     pub fn channels(&self) -> usize {
         self.channels
+    }
+
+    pub fn aux_channels(&self) -> usize {
+        self.aux
     }
 }

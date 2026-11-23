@@ -14,7 +14,7 @@ use std::time::Instant;
 use super::clap_host::{Bundles, ClapInstance};
 use super::host_api::{
     alive_flag, take_dead, ActivateRequest, AliveFlag, EditorSize, Graveyard, HostedNode,
-    PluginHost, PluginParamInfo, PluginStatus, Unsupported,
+    PluginHost, PluginParamInfo, PluginStatus, PortLayout, Unsupported,
 };
 use super::{editor, main_thread, ParamRing, PluginFormat};
 
@@ -120,6 +120,16 @@ impl PluginHost for ClapHost {
             )
         })?
         .map(HostedNode::Clap)
+    }
+
+    fn probe(&self, path: &str, plugin_id: &str) -> Result<PortLayout, String> {
+        main_thread::ensure_ticker();
+        let (path, plugin_id) = (path.to_string(), plugin_id.to_string());
+        main_thread::run(move || {
+            let mut instance = BUNDLES
+                .with(|b| ClapInstance::new(&mut b.borrow_mut(), "probe", &path, &plugin_id))?;
+            Ok(instance.port_layout())
+        })?
     }
 
     /// Retires a node's editor/parameter target without installing a

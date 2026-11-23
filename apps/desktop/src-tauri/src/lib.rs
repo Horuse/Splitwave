@@ -388,6 +388,7 @@ pub fn run() {
             commands::get_plugin_state,
             commands::get_plugin_params,
             commands::plugin_status,
+            commands::probe_plugin_ports,
             commands::take_crash_reports,
             commands::get_logs,
             commands::clear_logs,

@@ -12,7 +12,7 @@ use vst3::{ComPtr, ComWrapper, Interface};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use super::host_api::PluginParamInfo;
+use super::host_api::{PluginParamInfo, PortBus, PortLayout};
 use super::vst3_backend::{parse_cid, Vst3Module};
 use super::vst3_com::{host_context, ComponentHandler, EditListener, MemoryStream};
 use super::vst3_node::{supports_f32, Vst3Node};
@@ -473,6 +473,39 @@ impl Vst3Instance {
                     && info.busType == kMain as i32
             })
             .collect()
+    }
+
+    /// The audio buses the plugin declares, main first: the format requires
+    /// every `kMain` bus to come before the `kAux` ones.
+    pub fn port_layout(&self) -> PortLayout {
+        use vst3::Steinberg::Vst::{
+            BusDirections_::{kInput, kOutput},
+            BusInfo,
+            MediaTypes_::kAudio,
+        };
+
+        let read = |direction: i32| -> Vec<PortBus> {
+            // SAFETY: each index is below the count the plugin itself reported.
+            unsafe {
+                let count = self.component.getBusCount(kAudio as i32, direction);
+                (0..count.max(0))
+                    .filter_map(|index| {
+                        let mut info: BusInfo = std::mem::zeroed();
+                        ok(self
+                            .component
+                            .getBusInfo(kAudio as i32, direction, index, &mut info))
+                        .then(|| PortBus {
+                            name: utf16(&info.name),
+                            channels: info.channelCount.max(0) as u32,
+                        })
+                    })
+                    .collect()
+            }
+        };
+        PortLayout {
+            inputs: read(kInput as i32),
+            outputs: read(kOutput as i32),
+        }
     }
 
     /// Channels per bus, read back after the arrangement is set.

@@ -14,7 +14,7 @@ use tauri::Emitter;
 
 use super::host_api::{
     alive_flag, tag_state, untag_state, ActivateRequest, AliveFlag, EditorSize, Graveyard,
-    HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
+    HostedNode, PluginHost, PluginParamInfo, PluginStatus, PortLayout, Unsupported,
 };
 use super::vst3_backend::Vst3Module;
 use super::vst3_com::EditListener;
@@ -275,6 +275,17 @@ impl PluginHost for Vst3Host {
             )
         })?
         .map(HostedNode::Vst3)
+    }
+
+    fn probe(&self, path: &str, plugin_id: &str) -> Result<PortLayout, String> {
+        main_thread::ensure_ticker();
+        let (path, plugin_id) = (path.to_string(), plugin_id.to_string());
+        main_thread::run(move || {
+            let at = |step: &str| format!("vst3 probe [{path}]: {step}");
+            let module = Vst3Module::open(std::path::Path::new(&path)).map_err(|e| at(&e))?;
+            let instance = Vst3Instance::new(module, &plugin_id).map_err(|e| at(&e))?;
+            Ok(instance.port_layout())
+        })?
     }
 
     fn forget(&self, node_id: &str) {

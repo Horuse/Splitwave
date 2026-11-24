@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-beta.2] - 2026-11-24
+
+### Added
+
+- **Plugin sidechains** - VST3, Audio Unit and CLAP plugins with a sidechain input get a `sidechain` socket on the node for each one they declare, and unused inputs stay off. The node reads the plugin's own ports when it is picked by @Horuse in (#85).
+- **Copy per channel group** - a cable wider than the plugin is first offered to the plugin whole; if it refuses, one copy runs per group of channels and the node shows how many (`x3`). With copies off, the channels past the plugin's width pass through untouched and are marked on the node by @Horuse in (#85).
+- **Save settings** - a plugin's settings are kept in the project when a knob moves, a value changes in its window, or the window closes, and come back after the pipeline stops or the project reopens. The switch is on the node by @Horuse in (#85).
+- **Plugin knobs and presets** - pin parameters as knobs on the node, save presets per plugin, and collapse the parameter list by @Horuse in (#84).
+- **Control signals and conditions** - dashed cables and diamond sockets carry on/off signals. New nodes: Key Input (keyboard and MIDI), Toggle, Select, Level Trigger, Cycle, Timer, If, Switch and Logic. Mute and the audio file transport buttons take control inputs by @Horuse in (#77, #83).
+- **Wiki** - guides for getting started, canvas and nodes with live pipeline diagrams, and a Copy page button by @Horuse in (#84).
+- **What's new** - announcements with unread dots, and a changelog page built from GitHub releases by @Horuse in (#84).
+- **Editor** - run time, latency and Run/Stop on the canvas, a box select button, node search in the side panel and a collapsed summary row for big nodes by @Horuse in (#84).
+
+### Changed
+
+- **Redesigned app** - sidebar navigation, card lists for pipelines and virtual devices, redesigned nodes and settings, and light and dark themes on a shared component set by @Horuse in (#84).
+- The plugin sets the node's width from its own ports; the host no longer forces the cable's width on it or falls back to stereo copies by @Horuse in (#85).
+- Cables and handles are typed by signal (`audio:` and `control:`). Saved pipelines are migrated to format 3 when opened, and a Mute's global shortcut becomes a Key Input node wired into its `open` input by @Horuse in (#77).
+- The project is a Bun workspace: the app moved to `apps/desktop`, with shared `ui`, `nodes` and `wiki` packages and a separate landing by @Horuse in (#84).
+- Upgraded Tauri to 2.12.5 and tao to 0.37.3, and the front end to SvelteKit 3, Vite 8, mdsvex 1 and xyflow 2 by @Horuse in (#84).
+
+### Fixed
+
+- Fixed the plugin window button staying on "open" after the plugin was rebuilt, so the next click did nothing by @Horuse in (#85).
+- Fixed a plugin that fails to load being tried again on every stereo pair, and one that will not load slowing down every graph edit by @Horuse in (#85).
+- Fixed a sidechain reaching only the first copy of a plugin and edits in a plugin's window reaching only the first copy by @Horuse in (#85).
+- Fixed the Noise Gate state label: Open, Hold, Release and Closed now follow what the gate is doing by @Horuse in (#84).
+- Fixed every node going blurry when zoomed while a Waveform or Spectrum was on the canvas by @Horuse in (#84).
+- Fixed the plugin list popover drawing under node sockets by @Horuse in (#85).
+
 ## [2.0.0-beta.1] - 2026-11-01
 
 ### Added

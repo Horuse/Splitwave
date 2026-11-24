@@ -39,7 +39,7 @@ use serde::Serialize;
 
 pub use scan::scan_all;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
 pub enum PluginFormat {

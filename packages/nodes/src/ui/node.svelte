@@ -20,6 +20,8 @@
 		id: string;
 		label?: string;
 		position?: 'left' | 'bottom' | 'top';
+		/** Where along a bottom or top edge the socket sits, 0 to 1; centred when unset. */
+		offset?: number;
 	}
 
 	interface Props {
@@ -37,6 +39,8 @@
 		// When set, the node exposes per-channel handles that grow with the cables
 		// wired into it instead of a single bus handle. Requires `nodeId`.
 		channelIo?: boolean;
+		/** Channels past this count pass through the node untouched. */
+		processedChannels?: number;
 		nodeId?: string;
 		maxChannels?: number;
 		minChannels?: number;
@@ -64,6 +68,7 @@
 		bypassed,
 		onBypass,
 		channelIo = false,
+		processedChannels,
 		nodeId,
 		maxChannels,
 		minChannels,
@@ -165,7 +170,7 @@
 	<!-- Socket columns take no width; a gap here would inset the content. -->
 	<div class="flex items-start">
 		{#if chExpanded && nodeId && hasInput}
-			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} />
+			<ChannelHandles {nodeId} side="target" max={maxChannels} min={minChannels} processed={processedChannels} />
 		{/if}
 		<div class={['min-w-0 flex-1', bypassed && 'opacity-40']}>
 			{#if showSummary}
@@ -175,7 +180,7 @@
 			{/if}
 		</div>
 		{#if chExpanded && nodeId && hasOutput}
-			<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} />
+			<ChannelHandles {nodeId} side="source" max={maxChannels} min={minChannels} {selfGrowing} processed={processedChannels} />
 		{/if}
 	</div>
 
@@ -183,7 +188,7 @@
 	     survive alongside them. -->
 	{#if !isPreview && inputs}
 		{#each inputs as h (h.id)}
-			<Handle type="target" id={h.id} class="handle" position={pos(h.position)}>
+			<Handle type="target" id={h.id} class="handle" position={pos(h.position)} style={h.offset === undefined ? undefined : `left: ${h.offset * 100}%`}>
 				{#if h.label}
 					<span class={labelClasses(h.position)}>{h.label}</span>
 				{/if}

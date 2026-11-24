@@ -623,6 +623,25 @@ pub struct PluginData {
     pub bypassed: bool,
     #[serde(default)]
     pub state: Option<String>,
+    /// The buses the plugin declared when it was picked, which is what gives
+    /// the node its sockets before the pipeline runs. None for a node saved
+    /// before this existed; the node reads it once and stores it.
+    #[serde(default)]
+    pub layout: Option<crate::audio::plugins::host_api::PortLayout>,
+    /// A node wider than the plugin runs one copy per group of the plugin's own
+    /// width, so every channel is processed. Off: one copy, and the channels
+    /// beyond it pass through untouched.
+    #[serde(default = "default_true")]
+    pub auto_copies: bool,
+    /// Keep the plugin's settings in the project, so they come back after the
+    /// pipeline stops or the project is reopened. On unless the user turns it off.
+    #[serde(default = "default_true")]
+    pub save_params: bool,
+    /// The plugin's parameter values by id, kept apart from `state`: some plugins
+    /// do not put a value changed from outside into the state they hand back. They
+    /// are set again when the plugin starts.
+    #[serde(default)]
+    pub params: std::collections::HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -727,6 +746,12 @@ pub enum EffectSpec {
         bypassed: bool,
         // Base64 CLAP state blob restored on instantiation; None keeps defaults.
         state: Option<String>,
+        // What the plugin declared when it was picked. It sets the node's width,
+        // so it is structural; None means it has not answered yet.
+        layout: Option<crate::audio::plugins::host_api::PortLayout>,
+        auto_copies: bool,
+        // Parameter values set again after the state is restored.
+        param_values: Vec<(u32, f64)>,
     },
 }
 
@@ -779,6 +804,8 @@ pub struct ValidEffect {
 pub enum EdgeKind {
     Main,
     Sidechain,
+    /// Into a plugin's sidechain input `N` (1-based).
+    Extra(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -1154,6 +1181,7 @@ impl GraphSpec {
                     target_handle: target.clone(),
                     kind: match target {
                         AudioPort::Sidechain => EdgeKind::Sidechain,
+                        AudioPort::Extra(n) => EdgeKind::Extra(*n),
                         _ => EdgeKind::Main,
                     },
                 })
@@ -1511,6 +1539,20 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
         NodeKind::DeEsser => EffectSpec::DeEsser(parse(n.data, "DeEsser")?),
         NodeKind::Plugin => {
             let data: PluginData = parse(n.data, "Plugin")?;
+            // A node saved before ports were stored has no layout. The engine reads
+            // it from the plugin itself, so sound does not wait for the node to be
+            // shown on screen.
+            let layout = match (&data.layout, data.format) {
+                (None, Some(format)) if !data.path.is_empty() && !data.plugin_id.is_empty() => {
+                    crate::audio::plugins::registry::probe_cached(
+                        format,
+                        &data.path,
+                        &data.plugin_id,
+                    )
+                    .ok()
+                }
+                _ => data.layout.clone(),
+            };
             EffectSpec::Plugin {
                 node_id: n.id.clone(),
                 format: data.format,
@@ -1518,6 +1560,17 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
                 plugin_id: data.plugin_id,
                 bypassed: data.bypassed,
                 state: data.state,
+                layout,
+                auto_copies: data.auto_copies,
+                param_values: {
+                    let mut v: Vec<(u32, f64)> = data
+                        .params
+                        .iter()
+                        .filter_map(|(k, val)| Some((k.parse().ok()?, *val)))
+                        .collect();
+                    v.sort_by_key(|(id, _)| *id);
+                    v
+                },
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

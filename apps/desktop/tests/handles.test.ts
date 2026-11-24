@@ -9,6 +9,7 @@ import {
 	MAIN_HANDLE,
 	parsePort,
 	peerHandle,
+	pluginSidechainHandle,
 	SIDECHAIN_HANDLE,
 	signalOf
 } from '../../../packages/nodes/src/ui/utils/handles';
@@ -29,6 +30,8 @@ describe('parsePort', () => {
 	it('reads what the builders write', () => {
 		expect(parsePort(MAIN_HANDLE)).toEqual({ signal: 'audio', port: { kind: 'main' } });
 		expect(parsePort(SIDECHAIN_HANDLE)).toEqual({ signal: 'audio', port: { kind: 'sidechain' } });
+		expect(parsePort(pluginSidechainHandle(2))).toEqual({ signal: 'audio', port: { kind: 'pluginSidechain', n: 2 } });
+		expect(parsePort('audio:sidechain0')).toBeNull();
 		expect(parsePort(channelHandle(12))).toEqual({ signal: 'audio', port: { kind: 'channel', ch: 12 } });
 		expect(parsePort('audio:st2')).toEqual({ signal: 'audio', port: { kind: 'stereo', ch: 2 } });
 		expect(parsePort(peerHandle('p'))).toEqual({ signal: 'audio', port: { kind: 'peer', peer: 'p', ch: null } });

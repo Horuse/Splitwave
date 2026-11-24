@@ -10,6 +10,7 @@ export type AudioPort =
 	| { kind: 'stereo'; ch: number }
 	| { kind: 'peer'; peer: string; ch: number | null }
 	| { kind: 'sidechain' }
+	| { kind: 'pluginSidechain'; n: number }
 	| { kind: 'branch'; branch: number; port: AudioPort };
 
 export type Port = { signal: 'audio'; port: AudioPort } | { signal: 'control'; name: string };
@@ -17,6 +18,11 @@ export type Port = { signal: 'audio'; port: AudioPort } | { signal: 'control'; n
 /** A node's whole bus. */
 export const MAIN_HANDLE = 'audio:main';
 export const SIDECHAIN_HANDLE = 'audio:sidechain';
+
+/** A plugin's sidechain input, 1-based. A compressor's own sidechain is `SIDECHAIN_HANDLE`. */
+export function pluginSidechainHandle(n: number): string {
+	return `audio:sidechain${n}`;
+}
 
 /** One channel, 1-based. */
 export function channelHandle(ch: number): string {
@@ -66,6 +72,8 @@ const INDEX = /^[1-9]\d*$/;
 function parseAudioPort(port: string): AudioPort | null {
 	if (port === 'main') return { kind: 'main' };
 	if (port === 'sidechain') return { kind: 'sidechain' };
+	const pluginSidechain = /^sidechain(.*)$/.exec(port);
+	if (pluginSidechain && INDEX.test(pluginSidechain[1])) return { kind: 'pluginSidechain', n: Number(pluginSidechain[1]) };
 	const branch = /^branch([^:]*):(.*)$/.exec(port);
 	if (branch) {
 		const inner = parseAudioPort(branch[2]);

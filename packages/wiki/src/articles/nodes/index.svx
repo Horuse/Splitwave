@@ -27,7 +27,7 @@ Their graphs are live while a pipeline runs: a green line shows the level the de
 ## Space and colour
 
 - **Delay**, **Reverb** and **Saturator** add echoes, room and warmth.
-- **Plugin** hosts your own CLAP plugins as a node.
+- **[Plugin](/wiki/nodes/plugin)** hosts your own CLAP, VST3 and Audio Unit plugins as a node.
 
 ## Monitoring
 

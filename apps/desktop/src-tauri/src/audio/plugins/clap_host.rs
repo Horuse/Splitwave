@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::audio_ports::{AudioPortFlags, AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, HostGui, HostGuiImpl, PluginGui, Window as ClackWindow,
 };
@@ -29,7 +29,7 @@ use clack_extensions::state::{HostState as HostStateExt, HostStateImpl, PluginSt
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
 
-use super::host_api::{AliveFlag, EditorSize, PluginParamInfo};
+use super::host_api::{AliveFlag, EditorSize, PluginParamInfo, PortBus, PortLayout};
 use super::node::PluginNode;
 use super::{editor, ParamRing};
 
@@ -249,12 +249,25 @@ impl ClapInstance {
         &self.path
     }
 
+    /// The buses the plugin declares. Read without activating: CLAP fixes its
+    /// ports at instantiation.
+    pub fn port_layout(&mut self) -> PortLayout {
+        let ports = self
+            .instance
+            .plugin_handle()
+            .get_extension::<PluginAudioPorts>();
+        PortLayout {
+            inputs: read_ports(ports.as_ref(), &mut self.instance, true),
+            outputs: read_ports(ports.as_ref(), &mut self.instance, false),
+        }
+    }
+
     /// Starts processing and hands back the `Send` half for the DSP worker.
+    /// The node takes the widths the plugin's own ports declare.
     pub fn activate(
         &mut self,
         sample_rate: u32,
         max_frames: usize,
-        channels: usize,
         params: Arc<ParamRing>,
         alive: AliveFlag,
     ) -> Result<PluginNode, String> {
@@ -262,17 +275,8 @@ impl ClapInstance {
             .instance
             .plugin_handle()
             .get_extension::<PluginAudioPorts>();
-        let inputs = port_channels(ports.as_ref(), &mut self.instance, true);
-        let outputs = port_channels(ports.as_ref(), &mut self.instance, false);
-        // A CLAP plugin's ports are fixed at instantiation, so there is nothing
-        // to negotiate: it either already carries the node's width on its main
-        // ports, or it runs as a stereo pair like every other narrow effect.
-        let main_width = |ports: &[u32]| ports.first().copied().unwrap_or(2) as usize;
-        let accepted = if main_width(&inputs) == channels && main_width(&outputs) == channels {
-            channels
-        } else {
-            2
-        };
+        let in_buses = read_ports(ports.as_ref(), &mut self.instance, true);
+        let out_buses = read_ports(ports.as_ref(), &mut self.instance, false);
 
         let config = PluginAudioConfiguration {
             sample_rate: sample_rate as f64,
@@ -296,7 +300,7 @@ impl ClapInstance {
             .unwrap_or(0);
 
         Ok(PluginNode::new(
-            processor, &inputs, &outputs, max_frames, params, alive, accepted, latency,
+            processor, &in_buses, &out_buses, max_frames, params, alive, latency,
         ))
     }
 
@@ -571,24 +575,36 @@ fn embedded_config() -> Option<GuiConfiguration<'static>> {
     })
 }
 
-/// Channel count per audio port. Falls back to a single stereo port when the
-/// plugin does not expose the audio-ports extension.
-fn port_channels(
+/// The audio ports of one direction. Falls back to a single stereo port when
+/// the plugin does not expose the audio-ports extension.
+fn read_ports(
     ports: Option<&PluginAudioPorts>,
     handle: &mut PluginInstance<SplitwaveHost>,
     is_input: bool,
-) -> Vec<u32> {
+) -> Vec<PortBus> {
     let Some(ports) = ports else {
-        return vec![2];
+        return vec![PortBus {
+            name: "Main".into(),
+            channels: 2,
+            main: true,
+        }];
     };
     let count = ports.count(&mut handle.plugin_handle(), is_input);
     (0..count)
         .map(|i| {
             let mut buf = AudioPortInfoBuffer::default();
-            ports
-                .get(&mut handle.plugin_handle(), i, is_input, &mut buf)
-                .map(|p| p.channel_count)
-                .unwrap_or(2)
+            match ports.get(&mut handle.plugin_handle(), i, is_input, &mut buf) {
+                Some(p) => PortBus {
+                    name: String::from_utf8_lossy(p.name).into_owned(),
+                    channels: p.channel_count,
+                    main: p.flags.contains(AudioPortFlags::IS_MAIN),
+                },
+                None => PortBus {
+                    name: String::new(),
+                    channels: 2,
+                    main: i == 0,
+                },
+            }
         })
         .collect()
 }
@@ -612,6 +628,28 @@ mod tests {
         println!("SKIPPED: no clap plugins installed, cannot check {what}");
     }
 
+    /// Drives a node with a stereo block the way the pipeline does: the plugin
+    /// reads and writes the widths it declares, a sidechain gets its channels
+    /// after them (silence here), and a mono plugin's one channel is repeated to
+    /// both sides on the way out.
+    fn run(node: &mut PluginNode, block: &mut [f32]) {
+        let (i, o) = (node.in_channels(), node.out_channels());
+        let main_w = i.max(o);
+        let stride = main_w + node.aux_buses().iter().sum::<usize>();
+        let mut wide = vec![0.0f32; FRAMES * stride];
+        for f in 0..FRAMES {
+            for c in 0..i {
+                wide[f * stride + c] = block[f * CHANNELS + c.min(CHANNELS - 1)];
+            }
+        }
+        node.process(&mut wide, FRAMES);
+        for f in 0..FRAMES {
+            for c in 0..CHANNELS {
+                block[f * CHANNELS + c] = wide[f * stride + c.min(o.saturating_sub(1))];
+            }
+        }
+    }
+
     fn installed() -> Vec<PluginDescriptor> {
         ClapBackend.scan()
     }
@@ -619,6 +657,49 @@ mod tests {
     fn open(bundles: &mut Bundles, plugin: &PluginDescriptor) -> ClapInstance {
         ClapInstance::new(bundles, "test", &plugin.path, &plugin.plugin_id)
             .unwrap_or_else(|e| panic!("{}: {e}", plugin.name))
+    }
+
+    /// A plugin with a sidechain must declare it, take a node built with it
+    /// wired, and render finite audio with a signal on both inputs.
+    #[test]
+    fn a_sidechain_plugin_declares_its_extra_input_and_renders_with_it_wired() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        let found = installed();
+        let Some(plugin) = found.iter().find(|p| p.name.contains("Pro-MB")) else {
+            return skipped("sidechain input");
+        };
+        let mut bundles = Bundles::default();
+        let mut instance = open(&mut bundles, plugin);
+        let layout = instance.port_layout();
+        let sidechains = layout.inputs.iter().filter(|b| !b.main).count();
+        assert!(
+            layout.inputs.first().is_some_and(|b| b.main),
+            "no main input"
+        );
+        assert!(sidechains >= 1, "{} declared no sidechain", plugin.name);
+
+        let mut node = instance
+            .activate(
+                SAMPLE_RATE,
+                FRAMES,
+                Arc::new(ParamRing::new()),
+                alive_flag(),
+            )
+            .expect("activates");
+        assert_eq!(node.aux_buses().len(), sidechains);
+        let stride =
+            node.in_channels().max(node.out_channels()) + node.aux_buses().iter().sum::<usize>();
+        for block in 0..PRIMING_BLOCKS {
+            let mut wide = vec![0.0f32; FRAMES * stride];
+            for f in 0..FRAMES {
+                let s = ((block * FRAMES + f) as f32 * 0.05).sin() * 0.5;
+                for c in 0..stride {
+                    wide[f * stride + c] = s;
+                }
+            }
+            node.process(&mut wide, FRAMES);
+            assert!(wide.iter().all(|s| s.is_finite()));
+        }
     }
 
     /// An effect fed a signal must produce one. A lookahead plugin's first
@@ -648,7 +729,6 @@ mod tests {
             let mut node = match instance.activate(
                 SAMPLE_RATE,
                 FRAMES,
-                CHANNELS,
                 Arc::new(ParamRing::new()),
                 alive_flag(),
             ) {
@@ -667,7 +747,7 @@ mod tests {
                     block[2 * i] = s;
                     block[2 * i + 1] = s;
                 }
-                node.process(&mut block, FRAMES);
+                run(&mut node, &mut block);
                 peak = block.iter().fold(peak, |a, s| a.max(s.abs()));
             }
             if peak <= 0.01 {
@@ -698,7 +778,6 @@ mod tests {
                 .activate(
                     SAMPLE_RATE,
                     FRAMES,
-                    CHANNELS,
                     Arc::new(ParamRing::new()),
                     alive_flag(),
                 )
@@ -715,7 +794,7 @@ mod tests {
                     block[0] = 1.0;
                     block[1] = 1.0;
                 }
-                node.process(&mut block, FRAMES);
+                run(&mut node, &mut block);
                 if arrived.is_none() {
                     if let Some(i) = block.iter().position(|s| s.abs() > 1e-6) {
                         arrived = Some(fed + i / 2);

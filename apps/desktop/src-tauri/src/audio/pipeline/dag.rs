@@ -940,6 +940,10 @@ struct EffectState {
     bypass: Bypass,
     incoming: Vec<IncomingEdge>,
     sidechain: Vec<IncomingEdge>,
+    // A plugin's extra inputs (`inN`): the edges into each, and the summed block
+    // each one hands the plugin. Empty for every other effect.
+    extra_edges: Vec<Vec<IncomingEdge>>,
+    extra_bufs: Vec<Vec<f32>>,
     out_buf: Vec<f32>,
     sidechain_buf: Option<Vec<f32>>,
     // Scratch for deinterleaving one pair out of a >2-wide buffer.
@@ -1012,7 +1016,7 @@ impl EffectState {
         let w = self.out_buf.len() / frames;
         if self.full_width || w == 2 {
             let sc = self.sidechain_buf.as_deref();
-            self.effects[0].process_with_sidechain(&mut self.out_buf, sc, frames);
+            self.effects[0].process_with_inputs(&mut self.out_buf, sc, &self.extra_bufs, frames);
             return;
         }
         for p in 0..self.effects.len() {
@@ -1565,6 +1569,12 @@ impl OutputGraph {
                             &prev.sidechain,
                             &old.node_ids,
                         )
+                        && new.extra_edges.len() == prev.extra_edges.len()
+                        && new
+                            .extra_edges
+                            .iter()
+                            .zip(&prev.extra_edges)
+                            .all(|(n, p)| same_edges(n, &self.node_ids, p, &old.node_ids))
                 }
                 _ => false,
             };
@@ -1619,6 +1629,9 @@ impl OutputGraph {
                         &mut prev.sidechain,
                         &old.node_ids,
                     );
+                    for (n, p) in new.extra_edges.iter_mut().zip(&mut prev.extra_edges) {
+                        carry_delays(n, &self.node_ids, p, &old.node_ids);
+                    }
                 }
                 (DagNode::Consumer(new), DagNode::Consumer(prev)) => {
                     carry_delays(
@@ -1726,6 +1739,17 @@ impl OutputGraph {
                             None => src,
                         };
                         add_mapped(src, sc_buf, frames);
+                    }
+                }
+                for (edges, buf) in eff.extra_edges.iter_mut().zip(&mut eff.extra_bufs) {
+                    buf.fill(0.0);
+                    for edge in edges {
+                        let src = head[edge.src_idx].out_buf_for_handle(&edge.source_handle);
+                        let src = match &mut edge.delay {
+                            Some(d) => d.delayed(src),
+                            None => src,
+                        };
+                        add_mapped(src, buf, frames);
                     }
                 }
                 eff.process(frames);
@@ -2141,6 +2165,16 @@ pub(super) fn build_output_graph(
             type Upstream = (usize, AudioPort, AudioPort);
             let mut main_upstream: Vec<Upstream> = Vec::new();
             let mut side_upstream: Vec<Upstream> = Vec::new();
+            let mut extra_upstream: Vec<Vec<Upstream>> = Vec::new();
+            // A cable left on a sidechain the plugin no longer has (a re-picked
+            // plugin with fewer of them) feeds nothing: it gets no buffer and adds
+            // no latency. The node shows it as a warning instead.
+            let extra_cap = match &effect.spec {
+                EffectSpec::Plugin { layout, .. } => {
+                    layout.as_ref().map_or(0, |l| l.sidechains().len())
+                }
+                _ => usize::MAX,
+            };
             for e in &valid.edges {
                 if &e.to == id && reachable.contains(&e.from) {
                     let idx = id_to_index[&e.from];
@@ -2148,12 +2182,20 @@ pub(super) fn build_output_graph(
                     match e.kind {
                         EdgeKind::Main => main_upstream.push(entry),
                         EdgeKind::Sidechain => side_upstream.push(entry),
+                        EdgeKind::Extra(n) if n > extra_cap => {}
+                        EdgeKind::Extra(n) => {
+                            if extra_upstream.len() < n {
+                                extra_upstream.resize_with(n, Vec::new);
+                            }
+                            extra_upstream[n - 1].push(entry);
+                        }
                     }
                 }
             }
             let max_upstream = main_upstream
                 .iter()
                 .chain(side_upstream.iter())
+                .chain(extra_upstream.iter().flatten())
                 .map(|(i, _, _)| node_latencies[*i])
                 .max()
                 .unwrap_or(0);
@@ -2178,9 +2220,33 @@ pub(super) fn build_output_graph(
                 .filter_map(|e| e.source_handle.channel_span())
                 .max()
                 .unwrap_or(0);
-            let eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            let mut eff_channels = upstream_w.max(target_w).max(tap_w).max(1);
+            // A plugin sets the width of its node: it reads and writes the
+            // channels it declares, whatever the cables carry.
+            if let EffectSpec::Plugin {
+                layout: Some(layout),
+                ..
+            } = &effect.spec
+            {
+                eff_channels = eff_channels.max(layout.main_in()).max(layout.main_out());
+            }
+            // A plugin switches a sidechain on only while a cable feeds it, so
+            // which ones are wired is part of what the instance is built for.
+            let wired_extras: Vec<bool> =
+                extra_upstream.iter().map(|bus| !bus.is_empty()).collect();
+            // Only VST3 has a switch per bus; CLAP and AU read a sidechain
+            // whatever is wired, so a cable must not rebuild them (a rebuild is
+            // a dropout and puts back the state saved last).
+            let wired_key = matches!(
+                effect.spec,
+                EffectSpec::Plugin {
+                    format: Some(crate::audio::plugins::PluginFormat::Vst3),
+                    ..
+                }
+            )
+            .then_some(&wired_extras);
             let key = format!(
-                "fx|{:?}|{eff_channels}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
+                "fx|{:?}|{eff_channels}|{wired_key:?}|{output_sr}|{block_frames}|{burst_blocks}|{realtime}",
                 super::sig::structural_effect(&effect.spec)
             );
             let previous_effect = previous
@@ -2204,6 +2270,7 @@ pub(super) fn build_output_graph(
                         realtime,
                         true,
                         eff_channels,
+                        &wired_extras,
                         registry,
                     );
                     if let Some(c) = build.control {
@@ -2221,6 +2288,10 @@ pub(super) fn build_output_graph(
                             EffectSpec::LevelMeter(_)
                                 | EffectSpec::Waveform(_)
                                 | EffectSpec::Spectrum(_)
+                                // Whatever became of the plugin, one entry sees
+                                // the whole node: a plugin that failed to load
+                                // must not be loaded again per stereo pair.
+                                | EffectSpec::Plugin { .. }
                         );
                     let this_effect = CarriedEffect {
                         latency: build.effect.latency_frames(),
@@ -2253,6 +2324,7 @@ pub(super) fn build_output_graph(
                             realtime,
                             false,
                             2,
+                            &[],
                             registry,
                         );
                         effects.push(extra.effect);
@@ -2300,6 +2372,24 @@ pub(super) fn build_output_graph(
                 .into_iter()
                 .map(|(i, s, t)| make_edge(i, s, t))
                 .collect();
+            let extra_edges: Vec<Vec<IncomingEdge>> = extra_upstream
+                .into_iter()
+                .map(|bus| {
+                    bus.into_iter()
+                        .map(|(i, s, t)| make_edge(i, s, t))
+                        .collect()
+                })
+                .collect();
+            let extra_bufs: Vec<Vec<f32>> = extra_edges
+                .iter()
+                .map(|bus| {
+                    if bus.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![0.0; block_frames * eff_channels]
+                    }
+                })
+                .collect();
             let sidechain_buf = if sidechain.is_empty() {
                 None
             } else {
@@ -2329,6 +2419,8 @@ pub(super) fn build_output_graph(
                 bypass,
                 incoming,
                 sidechain,
+                extra_edges,
+                extra_bufs,
                 out_buf: vec![0.0; block_frames * eff_channels],
                 sidechain_buf,
                 pair_main: vec![0.0; block_frames * 2],
@@ -2597,7 +2689,7 @@ fn audible_nodes(nodes: &[DagNode], terminals: &[TerminalEdge]) -> Vec<bool> {
                 &c.incoming
             }
             DagNode::Effect(e) if audible[i] => {
-                for s in &e.sidechain {
+                for s in e.sidechain.iter().chain(e.extra_edges.iter().flatten()) {
                     audible[s.src_idx] = true;
                 }
                 &e.incoming

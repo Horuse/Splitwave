@@ -22,6 +22,8 @@ export interface MockEnv {
 	plugins: number;
 	pluginParams: number;
 	pluginEditor: boolean;
+	pluginSidechain: boolean;
+	pluginCopies: number;
 	link: LinkQuality;
 	linkChannels: number;
 	webrtcPhase: 'idle' | 'hosting' | 'joining';
@@ -49,6 +51,8 @@ export const DEFAULT_ENV: MockEnv = {
 	plugins: 4,
 	pluginParams: 6,
 	pluginEditor: true,
+	pluginSidechain: false,
+	pluginCopies: 1,
 	link: 'good',
 	linkChannels: 2,
 	webrtcPhase: 'idle',
@@ -198,8 +202,13 @@ export function installMockBackend(env: MockEnv): void {
 					return plugins;
 				case 'plugin_status': {
 					const path = nodeData(String(args.nodeId))?.path;
-					return { path: env.running && path ? path : null, hasEditor: env.pluginEditor };
+					return { path: env.running && path ? path : null, hasEditor: env.pluginEditor, copies: env.running && path ? env.pluginCopies : 0 };
 				}
+				case 'probe_plugin_ports':
+					return {
+						inputs: [{ name: 'Main', channels: 2, main: true }, ...(env.pluginSidechain ? [{ name: 'Sidechain', channels: 2, main: false }] : [])],
+						outputs: [{ name: 'Main', channels: 2, main: true }]
+					};
 				case 'get_plugin_params': {
 					const id = String(args.nodeId);
 					if (!params.has(id)) params.set(id, mockParams(env.pluginParams));

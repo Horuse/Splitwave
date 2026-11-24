@@ -27,6 +27,8 @@ export interface PluginStatus {
 	/** Reference of the plugin actually running, null while none is loaded. */
 	path: string | null;
 	hasEditor: boolean;
+	/** Copies of the plugin the node runs, one per group of channels; 0 while none runs. */
+	copies: number;
 }
 
 export interface PluginParam {

@@ -75,6 +75,65 @@ pub fn activate(format: PluginFormat, req: ActivateRequest<'_>) -> Result<Hosted
     Ok(node)
 }
 
+/// The buses a plugin declares, without activating it.
+pub fn probe(
+    format: PluginFormat,
+    path: &str,
+    plugin_id: &str,
+) -> Result<super::host_api::PortLayout, String> {
+    host_for(format).probe(path, plugin_id)
+}
+
+type ProbeKey = (PluginFormat, String, String);
+type ProbeResult = Result<super::host_api::PortLayout, String>;
+
+fn probed() -> &'static Mutex<HashMap<ProbeKey, ProbeResult>> {
+    static PROBED: OnceLock<Mutex<HashMap<ProbeKey, ProbeResult>>> = OnceLock::new();
+    PROBED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `probe`, remembered per plugin until a rescan. A node saved before ports were
+/// stored has none, so the engine reads them itself. A failure is remembered too:
+/// a plugin that will not load takes seconds to give up, and asking again at
+/// every graph change would make editing crawl.
+pub fn probe_cached(format: PluginFormat, path: &str, plugin_id: &str) -> ProbeResult {
+    let key = (format, path.to_string(), plugin_id.to_string());
+    if let Some(known) = probed().lock().unwrap().get(&key) {
+        return known.clone();
+    }
+    let result = probe(format, path, plugin_id);
+    probed().lock().unwrap().insert(key, result.clone());
+    result
+}
+
+/// Forgets every remembered probe, so a rescan sees plugins that were installed,
+/// fixed or updated since.
+pub fn forget_probes() {
+    probed().lock().unwrap().clear();
+}
+
+fn copy_counts() -> &'static Mutex<HashMap<String, usize>> {
+    static COPIES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    COPIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// How many copies of its plugin a node is running, for the node to show.
+pub fn set_copies(node_id: &str, copies: usize) {
+    copy_counts()
+        .lock()
+        .unwrap()
+        .insert(node_id.to_string(), copies);
+}
+
+pub fn copies(node_id: &str) -> usize {
+    copy_counts()
+        .lock()
+        .unwrap()
+        .get(node_id)
+        .copied()
+        .unwrap_or(0)
+}
+
 /// Releases a node entirely: used when its plugin is cleared, when a rebuild
 /// fails to load one, and when the pipeline that owned it goes away.
 pub fn forget(node_id: &str) {
@@ -83,6 +142,7 @@ pub fn forget(node_id: &str) {
         use tauri::Emitter;
         let _ = app.emit(super::host_api::EDITOR_CLOSED_EVENT, node_id);
     }
+    copy_counts().lock().unwrap().remove(node_id);
     let owner = owners().lock().unwrap().remove(node_id);
     if let Some(format) = owner {
         host_for(format).forget(node_id);

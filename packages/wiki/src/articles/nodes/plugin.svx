@@ -1,0 +1,51 @@
+---
+title: Plugins
+description: Host CLAP, VST3 and Audio Unit plugins in Splitwave, with their sidechain inputs, channel copies and pass-through channels.
+order: 5
+---
+
+<script>
+	import node from '../../media/plugin_node_copies_off.png';
+	import socket from '../../media/plugin_passthrough_socket.png';
+</script>
+
+The **Plugin** node runs a third-party audio plugin inside your pipeline. Splitwave hosts **CLAP**, **VST3** and, on macOS, **Audio Unit** plugins. Pick one from the list in the node; use **Rescan** if you just installed it.
+
+The pipeline has to be running for the plugin to load, so the plugin window button works only while it runs.
+
+## Sockets follow the plugin
+
+When you pick a plugin, Splitwave asks it which audio inputs and outputs it has and builds the node from that answer. The plugin decides, not the node.
+
+- A plugin with a **sidechain input** gets an extra socket on the node for it, named `sidechain1`, `sidechain2` and so on, in the order the plugin lists them.
+- An input that nothing is connected to stays switched off in the plugin, so a plugin that misbehaves with an unused sidechain is left alone.
+- If Splitwave cannot read the plugin's ports, the node shows a red message and stays silent. It does not guess a layout.
+
+## Wide cables and copies
+
+A cable can carry more channels than a plugin takes. A stereo plugin on a 6 channel cable is the usual case. Splitwave handles it in this order:
+
+1. If the cable is wider than the plugin's own width, the plugin is first asked to take the **whole width** as one instance. VST3 and Audio Unit plugins that can do this run as a single instance. CLAP plugins have a fixed width and are never widened.
+2. If the plugin refuses, and **Copy per channel group** is on, Splitwave runs **one copy of the plugin for each group of channels**: channels 1-2 go to the first copy, 3-4 to the second, and so on. Every channel is processed. A badge such as **x3** in the node's header shows how many copies are running.
+3. All copies start from the same settings, and the plugin window edits the first copy. Their delay is matched, so the groups stay in time with each other.
+
+**Copy per channel group** is **on** by default. It is available only when the plugin has the same number of channels in and out. A plugin that changes the channel count always runs as one instance.
+
+## Channels that pass through
+
+Turn **Copy per channel group** off and one instance handles only the channels it has. Every channel beyond that goes **through the node untouched**, as in a DAW when a stereo plugin sits on a wider track.
+
+Those channels are marked on the node: the socket is faded and a small arrow sits beside it, on the inner side of the node.
+
+<img src={socket} alt="A pass-through socket: faded, with an arrow beside it" />
+
+In the node below, the Duck plugin takes two channels. Channels 3 to 5 are faded with arrows, and they leave the node as they came in.
+
+<img src={node} alt="A stereo plugin with Copy per channel group off, on a 5 channel cable" />
+
+If the plugin takes **more** channels in than it gives out, the extra input channels are consumed by it and leave silent.
+
+## Related
+
+- [Sidechain compression and ducking](/wiki/nodes/sidechain)
+- [Multi-select channels with Option](/wiki/canvas/multi-select-channels)

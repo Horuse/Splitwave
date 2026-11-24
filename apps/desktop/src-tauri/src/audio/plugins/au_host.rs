@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use objc2_audio_toolbox::{
-    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_Latency,
+    kAudioUnitProperty_ClassInfo, kAudioUnitProperty_CocoaUI, kAudioUnitProperty_ElementCount,
+    kAudioUnitProperty_ElementName, kAudioUnitProperty_Latency,
     kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitProperty_ParameterInfo,
     kAudioUnitProperty_ParameterList, kAudioUnitProperty_SetRenderCallback,
     kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global, kAudioUnitScope_Input,
@@ -38,7 +39,7 @@ use crate::audio::effects::Effect;
 use super::au_backend::{find_component, parse_component_url};
 use super::host_api::{
     alive_flag, ActivateRequest, AliveFlag, EditorSize, Graveyard, HostedNode, PluginHost,
-    PluginParamInfo, PluginStatus, Unsupported,
+    PluginParamInfo, PluginStatus, PortBus, PortLayout, Unsupported,
 };
 use super::param_ring::MAX_PARAM_CHANGES_PER_BLOCK;
 use super::ParamRing;
@@ -47,7 +48,7 @@ use super::{editor, main_thread};
 /// Widest layout offered to a unit, and the fixed capacity of the buffer list
 /// below. Beyond 7.1 there is no arrangement the other formats name either, so
 /// a wider node is driven per stereo pair.
-const MAX_CHANNELS: usize = 8;
+const MAX_CHANNELS: usize = 64;
 
 /// `AudioBufferList` is a C flexible-array struct, so the generated binding
 /// declares one buffer. This is the same layout with room for the widest unit
@@ -70,7 +71,10 @@ impl RenderBufferList {
 /// itself is moved into the graph. The unit's input callback writes our channel
 /// pointers straight into its buffer list, so no copy happens on the pull.
 struct RenderInput {
+    /// Element 0, the main input.
     channels: Vec<Vec<f32>>,
+    /// Elements 1.., the sidechains, one entry per element.
+    aux: Vec<Vec<Vec<f32>>>,
 }
 
 /// A live Audio Unit, shared between the DSP worker that renders it and the UI
@@ -181,10 +185,16 @@ pub struct AuNode {
     alive: Arc<AtomicBool>,
     input: Box<RenderInput>,
     output: Vec<Vec<f32>>,
+    /// Channels of each sidechain input element, laid out after the main
+    /// channels in every block.
+    aux: Vec<usize>,
+    aux_total: usize,
     max_frames: usize,
-    /// Interleaved channels the pipeline hands this node, which is the width the
-    /// unit was configured for.
-    channels: usize,
+    /// Channels the unit reads on its input and writes on its output. The block
+    /// handed to `process` is `max(in, out) + aux_total` wide: the unit's own
+    /// widths, never the node's.
+    in_ch: usize,
+    out_ch: usize,
     steady: f64,
     /// Reported by the unit once initialised. The DAG pads shorter parallel
     /// paths by it, so a wrong value here is an audible phase error rather
@@ -205,7 +215,7 @@ unsafe extern "C-unwind" fn supply_input(
     ref_con: NonNull<c_void>,
     _action_flags: NonNull<AudioUnitRenderActionFlags>,
     _time_stamp: NonNull<AudioTimeStamp>,
-    _bus: u32,
+    bus: u32,
     frames: u32,
     io_data: *mut AudioBufferList,
 ) -> i32 {
@@ -213,13 +223,20 @@ unsafe extern "C-unwind" fn supply_input(
         return -1;
     }
     let input = &mut *(ref_con.as_ptr() as *mut RenderInput);
+    let channels = match bus {
+        0 => &mut input.channels,
+        n => match input.aux.get_mut(n as usize - 1) {
+            Some(aux) => aux,
+            None => return -1,
+        },
+    };
     let count = (*io_data).mNumberBuffers as usize;
     let buffers = ptr::addr_of_mut!((*io_data).mBuffers) as *mut AudioBuffer;
-    for i in 0..count.min(input.channels.len()) {
+    for i in 0..count.min(channels.len()) {
         let buf = &mut *buffers.add(i);
         buf.mNumberChannels = 1;
         buf.mDataByteSize = frames * size_of::<f32>() as u32;
-        buf.mData = input.channels[i].as_mut_ptr() as *mut c_void;
+        buf.mData = channels[i].as_mut_ptr() as *mut c_void;
     }
     0
 }
@@ -249,11 +266,22 @@ unsafe fn set_property<T>(
     value: &T,
     what: &str,
 ) -> Result<(), String> {
+    set_property_at(unit, property, scope, 0, value, what)
+}
+
+unsafe fn set_property_at<T>(
+    unit: AudioUnit,
+    property: u32,
+    scope: u32,
+    element: u32,
+    value: &T,
+    what: &str,
+) -> Result<(), String> {
     let status = AudioUnitSetProperty(
         unit,
         property,
         scope,
-        0,
+        element,
         value as *const T as *const c_void,
         size_of::<T>() as u32,
     );
@@ -274,7 +302,8 @@ fn activate(
     url: &str,
     sample_rate: u32,
     max_frames: usize,
-    channels: usize,
+    in_ch: usize,
+    out_ch: usize,
     state: Option<&str>,
     primary: bool,
     params: Arc<ParamRing>,
@@ -294,14 +323,14 @@ fn activate(
     // From here on the instance is owned, so a failed `configure` still
     // disposes of it through `Drop`.
     let alive = alive_flag();
-    // Offer the node's own width first, the way a DAW instantiates one
-    // multichannel unit rather than several stereo ones. Anything wider than
-    // the widest arrangement the formats name goes straight to stereo.
-    let offered = if (1..=MAX_CHANNELS).contains(&channels) {
-        channels
-    } else {
-        2
-    };
+    // The unit dictates its widths: they are the ones it declared when it was
+    // picked, so nothing is offered that it could refuse and nothing falls back
+    // to stereo.
+    if in_ch > MAX_CHANNELS || out_ch > MAX_CHANNELS {
+        return Err(format!(
+            "audio unit is {in_ch} in, {out_ch} out; at most {MAX_CHANNELS} channels are supported"
+        ));
+    }
     let mut node = AuNode {
         instance: Arc::new(AuInstance {
             unit,
@@ -309,33 +338,22 @@ fn activate(
         }),
         alive: alive.clone(),
         input: Box::new(RenderInput {
-            channels: vec![vec![0.0; max_frames]; offered],
+            channels: vec![vec![0.0; max_frames]; in_ch],
+            aux: Vec::new(),
         }),
-        output: vec![vec![0.0; max_frames]; offered],
+        output: vec![vec![0.0; max_frames]; out_ch],
+        aux: Vec::new(),
+        aux_total: 0,
         max_frames,
-        channels: offered,
+        in_ch,
+        out_ch,
         steady: 0.0,
         latency: 0,
         param_cursor: params.reader(),
         params,
     };
 
-    let mut configured = configure(&mut node, sample_rate, max_frames, offered);
-    if configured.is_err() && offered != 2 {
-        // The unit will not carry the node's width, so it runs as a stereo pair
-        // and the pipeline drives it once per pair. Nothing was initialised yet,
-        // so the same instance can simply be configured again.
-        tracing::debug!(
-            node_id,
-            url,
-            channels,
-            "audio unit refused the node's width; driving it per pair"
-        );
-        node.channels = 2;
-        node.input.channels = vec![vec![0.0; max_frames]; 2];
-        node.output = vec![vec![0.0; max_frames]; 2];
-        configured = configure(&mut node, sample_rate, max_frames, 2);
-    }
+    let configured = configure(&mut node, sample_rate, max_frames);
     if let Err(e) = configured {
         return Err(format!("au {url}: {e}"));
     }
@@ -381,6 +399,103 @@ fn activate(
     Ok(node)
 }
 
+/// The buses a unit declares, read from a fresh instance that is never
+/// initialised. A unit reports its default format per element, so the channel
+/// count here is the one it would run at if left alone.
+pub fn probe_layout(url: &str) -> Result<PortLayout, String> {
+    let desc = parse_component_url(url).ok_or_else(|| format!("not an audio unit: {url}"))?;
+    let component = find_component(&desc);
+    if component.is_null() {
+        return Err(format!("audio unit not installed: {url}"));
+    }
+    let mut unit: AudioUnit = ptr::null_mut();
+    // SAFETY: `component` is a live registry entry; the call writes `unit`.
+    let status = unsafe { AudioComponentInstanceNew(component, NonNull::from(&mut unit)) };
+    if status != 0 || unit.is_null() {
+        return Err(format!("instantiate {url}: OSStatus {status}"));
+    }
+    let owned = AuInstance {
+        unit,
+        url: url.to_string(),
+    };
+    let read = |scope: u32| -> Vec<PortBus> {
+        let mut count = 0u32;
+        let mut size = size_of::<u32>() as u32;
+        // SAFETY: the property is a single UInt32 and every value outlives the call.
+        let status = unsafe {
+            AudioUnitGetProperty(
+                owned.unit,
+                kAudioUnitProperty_ElementCount,
+                scope,
+                0,
+                NonNull::from(&mut count).cast(),
+                NonNull::from(&mut size),
+            )
+        };
+        if status != 0 {
+            return Vec::new();
+        }
+        (0..count)
+            .map(|element| {
+                let mut format = float_format(0, 0);
+                let mut size = size_of::<AudioStreamBasicDescription>() as u32;
+                // SAFETY: the property is one stream description.
+                let status = unsafe {
+                    AudioUnitGetProperty(
+                        owned.unit,
+                        kAudioUnitProperty_StreamFormat,
+                        scope,
+                        element,
+                        NonNull::from(&mut format).cast(),
+                        NonNull::from(&mut size),
+                    )
+                };
+                PortBus {
+                    name: element_name(owned.unit, scope, element),
+                    main: element == 0,
+                    // A sidechain is clamped the way `configure` clamps it, so
+                    // the width probed is the width that is configured.
+                    channels: match (status == 0, element) {
+                        (true, 0) => format.mChannelsPerFrame,
+                        (true, _) => {
+                            (format.mChannelsPerFrame as usize).clamp(1, MAX_CHANNELS) as u32
+                        }
+                        (false, _) => 2,
+                    },
+                }
+            })
+            .collect()
+    };
+    Ok(PortLayout {
+        inputs: read(kAudioUnitScope_Input),
+        outputs: read(kAudioUnitScope_Output),
+    })
+}
+
+/// The unit's own name for an element; empty when it gives none.
+fn element_name(unit: AudioUnit, scope: u32, element: u32) -> String {
+    use objc2_core_foundation::CFString;
+
+    let mut name: *const CFString = ptr::null();
+    let mut size = size_of::<*const CFString>() as u32;
+    // SAFETY: the property is a retained CFString the caller releases.
+    let status = unsafe {
+        AudioUnitGetProperty(
+            unit,
+            kAudioUnitProperty_ElementName,
+            scope,
+            element,
+            NonNull::from(&mut name).cast(),
+            NonNull::from(&mut size),
+        )
+    };
+    let Some(name) = NonNull::new(name.cast_mut()).filter(|_| status == 0) else {
+        return String::new();
+    };
+    // SAFETY: a successful get hands over one retain.
+    unsafe { CFRetained::from_raw(name) }.to_string()
+}
+
 /// The unit's reported lookahead, converted from seconds. Zero when the unit
 /// does not implement the property, which most simple effects do not.
 fn latency_frames(unit: AudioUnit, sample_rate: u32) -> usize {
@@ -403,17 +518,13 @@ fn latency_frames(unit: AudioUnit, sample_rate: u32) -> usize {
     (seconds * sample_rate as f64).round() as usize
 }
 
-/// Configures the unit for `channels` and initialises it. A unit that will not
-/// take the width says so through its stream-format property, which is how the
-/// caller knows to offer stereo instead.
-fn configure(
-    node: &mut AuNode,
-    sample_rate: u32,
-    max_frames: usize,
-    channels: usize,
-) -> Result<(), String> {
+/// Configures the unit for its own widths and initialises it. A unit that
+/// refuses them says so through its stream-format property, which fails the
+/// node visibly.
+fn configure(node: &mut AuNode, sample_rate: u32, max_frames: usize) -> Result<(), String> {
     let unit = node.instance.unit;
-    let format = float_format(sample_rate, channels);
+    let in_format = float_format(sample_rate, node.in_ch);
+    let out_format = float_format(sample_rate, node.out_ch);
     let slice = max_frames as u32;
     let callback = AURenderCallbackStruct {
         inputProc: Some(supply_input),
@@ -430,27 +541,83 @@ fn configure(
             &slice,
             "max frames per slice",
         )?;
-        set_property(
-            unit,
-            kAudioUnitProperty_StreamFormat,
-            kAudioUnitScope_Input,
-            &format,
-            "input stream format",
-        )?;
+        if node.in_ch > 0 {
+            set_property(
+                unit,
+                kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input,
+                &in_format,
+                "input stream format",
+            )?;
+            set_property(
+                unit,
+                kAudioUnitProperty_SetRenderCallback,
+                kAudioUnitScope_Input,
+                &callback,
+                "render callback",
+            )?;
+        }
         set_property(
             unit,
             kAudioUnitProperty_StreamFormat,
             kAudioUnitScope_Output,
-            &format,
+            &out_format,
             "output stream format",
         )?;
-        set_property(
+
+        // Every further input element is a sidechain. A unit renders none of
+        // them without a format and a source, so each gets both, fed silence
+        // until something is wired to it.
+        node.aux.clear();
+        node.input.aux.clear();
+        let mut count = 0u32;
+        let mut size = size_of::<u32>() as u32;
+        let counted = AudioUnitGetProperty(
             unit,
-            kAudioUnitProperty_SetRenderCallback,
+            kAudioUnitProperty_ElementCount,
             kAudioUnitScope_Input,
-            &callback,
-            "render callback",
-        )?;
+            0,
+            NonNull::from(&mut count).cast(),
+            NonNull::from(&mut size),
+        );
+        if counted == 0 {
+            for element in 1..count {
+                let mut own = float_format(sample_rate, 0);
+                let mut size = size_of::<AudioStreamBasicDescription>() as u32;
+                let got = AudioUnitGetProperty(
+                    unit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    element,
+                    NonNull::from(&mut own).cast(),
+                    NonNull::from(&mut size),
+                );
+                let ch = if got == 0 {
+                    (own.mChannelsPerFrame as usize).clamp(1, MAX_CHANNELS)
+                } else {
+                    2
+                };
+                set_property_at(
+                    unit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    element,
+                    &float_format(sample_rate, ch),
+                    "sidechain stream format",
+                )?;
+                set_property_at(
+                    unit,
+                    kAudioUnitProperty_SetRenderCallback,
+                    kAudioUnitScope_Input,
+                    element,
+                    &callback,
+                    "sidechain render callback",
+                )?;
+                node.input.aux.push(vec![vec![0.0; max_frames]; ch]);
+                node.aux.push(ch);
+            }
+        }
+        node.aux_total = node.aux.iter().sum();
 
         let status = AudioUnitInitialize(unit);
         if status != 0 {
@@ -985,8 +1152,9 @@ fn create_view(node_id: &str) -> Result<*mut objc2::runtime::AnyObject, String> 
 
 impl Effect for AuNode {
     fn process(&mut self, samples: &mut [f32], frames: usize) {
-        let width = self.channels;
-        if frames == 0 || frames > self.max_frames || samples.len() < frames * width {
+        let width = self.in_ch.max(self.out_ch);
+        let stride = width + self.aux_total;
+        if frames == 0 || frames > self.max_frames || samples.len() < frames * stride {
             return;
         }
 
@@ -1013,12 +1181,21 @@ impl Effect for AuNode {
 
         for (c, channel) in self.input.channels.iter_mut().enumerate() {
             for i in 0..frames {
-                channel[i] = samples[i * width + c];
+                channel[i] = samples[i * stride + c];
             }
+        }
+        let mut offset = width;
+        for (bus, &channels) in self.aux.iter().enumerate() {
+            for (c, channel) in self.input.aux[bus].iter_mut().take(channels).enumerate() {
+                for i in 0..frames {
+                    channel[i] = samples[i * stride + offset + c];
+                }
+            }
+            offset += channels;
         }
 
         let mut list = RenderBufferList {
-            number_buffers: width as u32,
+            number_buffers: self.out_ch as u32,
             buffers: [AudioBuffer {
                 mNumberChannels: 1,
                 mDataByteSize: (frames * size_of::<f32>()) as u32,
@@ -1051,9 +1228,9 @@ impl Effect for AuNode {
         // A render error leaves the block untouched rather than emitting the
         // uninitialised output buffer.
         if status == 0 {
-            for (c, channel) in self.output.iter().enumerate().take(width) {
+            for (c, channel) in self.output.iter().enumerate().take(self.out_ch) {
                 for i in 0..frames {
-                    samples[i * width + c] = channel[i];
+                    samples[i * stride + c] = channel[i];
                 }
             }
         }
@@ -1066,8 +1243,16 @@ impl Effect for AuNode {
 }
 
 impl AuNode {
-    pub fn channels(&self) -> usize {
-        self.channels
+    pub fn in_channels(&self) -> usize {
+        self.in_ch
+    }
+
+    pub fn out_channels(&self) -> usize {
+        self.out_ch
+    }
+
+    pub fn aux_buses(&self) -> &[usize] {
+        &self.aux
     }
 }
 
@@ -1077,6 +1262,55 @@ mod tests {
 
     /// The tests drive units directly, always as a stereo pair.
     const CHANNELS: usize = 2;
+
+    /// A unit with a sidechain must declare it, take a node built with it, and
+    /// render finite audio with a signal on both inputs.
+    #[test]
+    fn a_sidechain_unit_declares_its_extra_input_and_renders_with_it() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        use crate::audio::plugins::PluginBackend;
+        const FRAMES: usize = 512;
+
+        let found = super::super::au_backend::AuBackend.scan();
+        let Some(unit) = found.iter().find(|u| u.name.contains("Pro-MB")) else {
+            println!("SKIPPED: no sidechain audio unit installed");
+            return;
+        };
+        let layout = probe_layout(&unit.path).expect("probes");
+        let sidechains = layout.inputs.iter().filter(|b| !b.main).count();
+        assert!(
+            layout.inputs.first().is_some_and(|b| b.main),
+            "no main input"
+        );
+        assert!(sidechains >= 1, "{} declared no sidechain", unit.name);
+
+        let mut node = activate(
+            "sc",
+            &unit.path,
+            48_000,
+            FRAMES,
+            layout.main_in(),
+            layout.main_out(),
+            None,
+            false,
+            Arc::new(ParamRing::new()),
+        )
+        .expect("activates");
+        assert_eq!(node.aux_buses().len(), sidechains);
+        let stride =
+            node.in_channels().max(node.out_channels()) + node.aux_buses().iter().sum::<usize>();
+        for block in 0..32 {
+            let mut wide = vec![0.0f32; FRAMES * stride];
+            for f in 0..FRAMES {
+                let s = ((block * FRAMES + f) as f32 * 0.05).sin() * 0.5;
+                for c in 0..stride {
+                    wide[f * stride + c] = s;
+                }
+            }
+            node.process(&mut wide, FRAMES);
+            assert!(wide.iter().all(|s| s.is_finite()));
+        }
+    }
 
     /// Apple's N-band EQ ships with every macOS and is flat by default, so a
     /// signal must come back out at roughly the level it went in.
@@ -1089,6 +1323,7 @@ mod tests {
             "au://aufx/nbeq/appl",
             48_000,
             FRAMES,
+            CHANNELS,
             CHANNELS,
             None,
             false,
@@ -1124,6 +1359,7 @@ mod tests {
             48_000,
             FRAMES,
             CHANNELS,
+            CHANNELS,
             None,
             false,
             Arc::new(ParamRing::new()),
@@ -1158,46 +1394,40 @@ mod tests {
         );
     }
 
-    /// What each installed unit does when offered widths other than stereo. A
-    /// unit that takes 5.1 whole is run as one instance, the way a DAW does it;
-    /// one that refuses falls back to a stereo pair.
+    /// Every installed unit must come up with the layout it declared when it
+    /// was picked: the node's width follows the unit, not the other way round.
     #[test]
-    fn negotiates_the_widest_layout_each_unit_accepts() {
+    fn every_installed_unit_activates_with_the_layout_it_declares() {
         let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
         use crate::audio::plugins::PluginBackend;
 
         let found = super::super::au_backend::AuBackend.scan();
-        let mut wide = 0;
+        let mut checked = 0;
         for unit in &found {
-            let mut accepted = Vec::new();
-            for width in [1usize, 2, 6, 8] {
-                let node = activate(
-                    "neg",
-                    &unit.path,
-                    48_000,
-                    512,
-                    width,
-                    None,
-                    false,
-                    Arc::new(ParamRing::new()),
-                );
-                let Ok(node) = node else { continue };
-                let got = node.channels();
-                assert!(
-                    got == width || got == 2,
-                    "{} offered {width} took {got}, which is neither",
-                    unit.name
-                );
-                accepted.push(got);
-            }
-            if accepted.contains(&6) {
-                wide += 1;
-            }
+            let Ok(layout) = probe_layout(&unit.path) else {
+                continue;
+            };
+            let node = activate(
+                "layout",
+                &unit.path,
+                48_000,
+                512,
+                layout.main_in(),
+                layout.main_out(),
+                None,
+                false,
+                Arc::new(ParamRing::new()),
+            );
+            let Ok(node) = node else {
+                println!("SKIPPED: {} would not activate", unit.name);
+                continue;
+            };
+            assert_eq!(node.in_channels(), layout.main_in(), "{}", unit.name);
+            assert_eq!(node.out_channels(), layout.main_out(), "{}", unit.name);
+            assert_eq!(node.aux_buses(), layout.sidechains(), "{}", unit.name);
+            checked += 1;
         }
-        println!(
-            "{wide} of {} audio units take more than stereo",
-            found.len()
-        );
+        println!("{checked} of {} audio units kept their layout", found.len());
     }
 
     /// A unit driven at the node's full width must keep every channel separate
@@ -1218,12 +1448,17 @@ mod tests {
             48_000,
             FRAMES,
             WIDTH,
+            WIDTH,
             None,
             false,
             Arc::new(ParamRing::new()),
         )
         .expect("activate");
-        assert_eq!(node.channels(), WIDTH, "unit did not take the full width");
+        assert_eq!(
+            node.in_channels(),
+            WIDTH,
+            "unit did not take the full width"
+        );
 
         // Descending levels, one per channel.
         let level = |c: usize| 0.5 - 0.05 * c as f32;
@@ -1256,6 +1491,85 @@ mod tests {
         }
     }
 
+    /// Builds a node of `width` channels around `copies` instances of a flat EQ
+    /// and feeds each channel its own level, so a swapped or dropped channel
+    /// shows in the peaks.
+    fn eq_peaks(width: usize, copies: usize) -> Vec<f32> {
+        use super::super::host_api::HostedEffect;
+        const FRAMES: usize = 512;
+        const EQ: &str = "au://aufx/greq/appl";
+        let nodes: Vec<HostedNode> = (0..copies)
+            .map(|_| {
+                HostedNode::Au(
+                    activate(
+                        "copies",
+                        EQ,
+                        48_000,
+                        FRAMES,
+                        CHANNELS,
+                        CHANNELS,
+                        None,
+                        false,
+                        Arc::new(ParamRing::new()),
+                    )
+                    .expect("activate"),
+                )
+            })
+            .collect();
+        let mut effect = HostedEffect::new(nodes, false, 48_000, FRAMES, 1, width);
+        let level = |c: usize| 0.9 - 0.1 * c as f32;
+        let mut block = vec![0.0f32; FRAMES * width];
+        for i in 0..FRAMES {
+            let s = (i as f32 * 0.05).sin();
+            for c in 0..width {
+                block[i * width + c] = s * level(c);
+            }
+        }
+        effect.process_with_inputs(&mut block, &[], FRAMES);
+        (0..width)
+            .map(|c| {
+                block
+                    .iter()
+                    .skip(c)
+                    .step_by(width)
+                    .fold(0.0f32, |a, s| a.max(s.abs()))
+            })
+            .collect()
+    }
+
+    /// A stereo unit on a six channel node, one copy per pair: every channel is
+    /// processed and every one stays in its place.
+    #[test]
+    fn copies_cover_every_channel_of_a_wide_node_in_order() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        let peaks = eq_peaks(6, 3);
+        for (c, peak) in peaks.iter().enumerate() {
+            assert!(*peak > 0.01, "channel {c} came back silent: {peaks:?}");
+        }
+        for c in 1..6 {
+            assert!(
+                peaks[c] < peaks[c - 1],
+                "channels came back out of order: {peaks:?}"
+            );
+        }
+    }
+
+    /// Without copies the one instance takes the first pair and the rest of the
+    /// node goes through as it came.
+    #[test]
+    fn without_copies_the_channels_past_the_plugin_pass_through() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        let peaks = eq_peaks(6, 1);
+        for c in 2..6 {
+            let want = 0.9 - 0.1 * c as f32;
+            assert!(
+                (peaks[c] - want).abs() < 0.01,
+                "channel {c} should pass through at {want}: {peaks:?}"
+            );
+        }
+        assert!(peaks[0] > 0.01 && peaks[1] > 0.01, "{peaks:?}");
+    }
+
     /// The N-band EQ exposes a known, stable parameter set, so this pins both
     /// the list query and the `AudioUnitParameterInfo` layout.
     #[test]
@@ -1266,6 +1580,7 @@ mod tests {
             "au://aufx/nbeq/appl",
             48_000,
             512,
+            CHANNELS,
             CHANNELS,
             None,
             true,
@@ -1288,6 +1603,54 @@ mod tests {
         forget("params-test");
     }
 
+    /// A unit may leave a value set from outside out of the state it hands back
+    /// (Duck does), so the node keeps the values apart and sets them again through
+    /// the same queue a knob uses. Checked on a unit that is installed.
+    #[test]
+    fn values_pushed_through_the_ring_reach_the_unit() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        const URL: &str = "au://aumf/DUCK/DvMc";
+        let Ok(layout) = probe_layout(URL) else {
+            println!("SKIPPED: Duck not installed");
+            return;
+        };
+        let ring = Arc::new(ParamRing::new());
+        let mut node = activate(
+            "ringed",
+            URL,
+            48_000,
+            512,
+            layout.main_in(),
+            layout.main_out(),
+            None,
+            true,
+            ring.clone(),
+        )
+        .expect("activate");
+        let target = get_params("ringed")
+            .into_iter()
+            .find(|p| p.name == "Trigger threshold")
+            .expect("a known parameter");
+        let want = target.min + (target.max - target.min) * 0.3;
+        assert!(
+            (target.value - want).abs() > 0.1,
+            "the value to set must differ"
+        );
+        ring.push(target.id, want as f64);
+        let stride =
+            node.in_channels().max(node.out_channels()) + node.aux_buses().iter().sum::<usize>();
+        let mut block = vec![0.0f32; 512 * stride];
+        node.process(&mut block, 512);
+        let got = get_params("ringed")
+            .into_iter()
+            .find(|p| p.id == target.id)
+            .unwrap()
+            .value;
+        assert!((got - want).abs() < 0.01, "want {want} got {got}");
+        drop(node);
+        forget("ringed");
+    }
+
     /// Round-trips a real unit's settings: save, restore into a fresh instance,
     /// and read the parameter back. Pins the class-info plist path end to end.
     #[test]
@@ -1301,6 +1664,7 @@ mod tests {
             URL,
             48_000,
             512,
+            CHANNELS,
             CHANNELS,
             None,
             true,
@@ -1322,6 +1686,7 @@ mod tests {
             URL,
             48_000,
             512,
+            CHANNELS,
             CHANNELS,
             Some(&saved),
             true,
@@ -1347,25 +1712,51 @@ mod tests {
 pub struct AuHost;
 
 impl PluginHost for AuHost {
+    fn probe(&self, path: &str, _plugin_id: &str) -> Result<PortLayout, String> {
+        let url = path.to_string();
+        if main_thread::is_main_thread() {
+            probe_layout(&url)
+        } else {
+            main_thread::run(move || probe_layout(&url))
+                .map_err(|e| format!("main thread error: {e}"))?
+        }
+    }
+
     fn activate(&self, req: ActivateRequest<'_>) -> Result<HostedNode, String> {
         main_thread::ensure_ticker();
         let (node_id, path) = (req.node_id.to_string(), req.path.to_string());
         let state = req.state.map(str::to_string);
-        let (sample_rate, max_frames, channels, primary, params) = (
-            req.sample_rate,
-            req.max_frames,
-            req.channels,
-            req.primary,
-            req.params,
-        );
+        let (sample_rate, max_frames, primary, params) =
+            (req.sample_rate, req.max_frames, req.primary, req.params);
+        let (in_ch, out_ch) = (req.layout.main_in(), req.layout.main_out());
+        let widen = req.widen.filter(|n| *n <= MAX_CHANNELS);
 
         let act = move || {
+            // A wider node is offered to the unit first: one that takes it runs
+            // as a single instance. One that refuses keeps its own widths.
+            if let Some(n) = widen {
+                match activate(
+                    &node_id,
+                    &path,
+                    sample_rate,
+                    max_frames,
+                    n,
+                    n,
+                    state.as_deref(),
+                    primary,
+                    params.clone(),
+                ) {
+                    Ok(node) => return Ok(HostedNode::Au(node)),
+                    Err(e) => tracing::debug!(node_id, error = %e, "audio unit would not widen"),
+                }
+            }
             activate(
                 &node_id,
                 &path,
                 sample_rate,
                 max_frames,
-                channels,
+                in_ch,
+                out_ch,
                 state.as_deref(),
                 primary,
                 params,
@@ -1393,6 +1784,7 @@ impl PluginHost for AuHost {
         PluginStatus {
             path: loaded_path(node_id),
             has_editor: has_editor(node_id),
+            copies: 0,
         }
     }
 

@@ -27,6 +27,9 @@ pub enum AudioPort {
     },
     /// An effect's sidechain key input.
     Sidechain,
+    /// A plugin's sidechain input, 1-based (`sidechainN`). The bare
+    /// `sidechain` is an effect's own key input and is a different socket.
+    Extra(usize),
     /// `port` on one output of a branching node, 1-based. Graph validation
     /// resolves it to a port of that output's own node; the engine never sees it.
     Branch { branch: usize, port: Box<AudioPort> },
@@ -122,6 +125,9 @@ impl FromStr for AudioPort {
         if let Some(a) = s.strip_prefix("st") {
             return index(a).map(AudioPort::Stereo);
         }
+        if let Some(n) = s.strip_prefix("sidechain") {
+            return index(n).map(AudioPort::Extra);
+        }
         Err(bad())
     }
 }
@@ -142,6 +148,8 @@ mod tests {
         assert_eq!(audio("audio:main"), AudioPort::Main);
         assert_eq!(audio("audio:sidechain"), AudioPort::Sidechain);
         assert_eq!(audio("audio:ch3"), AudioPort::Channel(3));
+        assert_eq!(audio("audio:sidechain2"), AudioPort::Extra(2));
+        assert!("audio:sidechain0".parse::<Port>().is_err());
         assert_eq!(audio("audio:st2"), AudioPort::Stereo(2));
         assert_eq!(
             audio("audio:peer:p"),

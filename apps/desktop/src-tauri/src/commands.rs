@@ -57,6 +57,14 @@ where
         .map_err(|_| AppError::Device("device task failed".into()))
 }
 
+/// Validating a graph may ask a plugin node about its ports, which loads the
+/// plugin and waits on the main thread, so it runs where waiting is allowed.
+async fn validate_off_runtime(graph: GraphSpec) -> AppResult<crate::audio::graph::ValidGraph> {
+    tauri::async_runtime::spawn_blocking(move || graph.validate())
+        .await
+        .map_err(|_| AppError::Validation("graph validation task failed".into()))?
+}
+
 /// Scans standard install directories for hostable plugins, opening only
 /// bundles that are new or changed since the cached scan; `full` reopens all of
 /// them. Loading foreign dylibs blocks and can be slow, so it runs off the main
@@ -72,6 +80,9 @@ pub async fn scan_plugins(
         .inspect_err(|err| tracing::warn!("no cache dir, plugin scan is not cached: {err}"))
         .ok();
     tauri::async_runtime::spawn_blocking(move || {
+        if full {
+            crate::audio::plugins::registry::forget_probes();
+        }
         crate::audio::plugins::scan_all(cache_dir.as_deref(), full)
     })
     .await
@@ -169,9 +180,11 @@ pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::
     let id = node_id.clone();
     let res = tauri::async_runtime::spawn_blocking(move || {
         crate::audio::plugins::main_thread::run(move || {
-            crate::audio::plugins::registry::for_node(&id)
+            let mut status = crate::audio::plugins::registry::for_node(&id)
                 .map(|h| h.status(&id))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            status.copies = crate::audio::plugins::registry::copies(&id);
+            status
         })
     })
     .await;
@@ -184,6 +197,32 @@ pub async fn plugin_status(node_id: String) -> AppResult<crate::audio::plugins::
         Err(_) => {
             error!(node_id, "plugin_status worker failed");
             Ok(Default::default())
+        }
+    }
+}
+
+/// The audio buses a plugin declares, read from a short-lived instance. The
+/// node asks when a plugin is picked, so its sockets exist before the pipeline
+/// runs.
+#[tauri::command]
+pub async fn probe_plugin_ports(
+    format: crate::audio::plugins::PluginFormat,
+    path: String,
+    plugin_id: String,
+) -> AppResult<crate::audio::plugins::host_api::PortLayout> {
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::plugins::registry::probe(format, &path, &plugin_id)
+    })
+    .await;
+    match res {
+        Ok(Ok(layout)) => Ok(layout),
+        Ok(Err(e)) => {
+            error!(error = %e, "probe_plugin_ports failed");
+            Err(AppError::Validation(e))
+        }
+        Err(_) => {
+            error!("probe_plugin_ports worker failed");
+            Err(AppError::Validation("plugin probe worker failed".into()))
         }
     }
 }
@@ -351,7 +390,7 @@ pub async fn start_pipeline(
     app: AppHandle,
 ) -> AppResult<()> {
     info!(nodes = graph.nodes.len(), "starting pipeline");
-    let valid = graph.validate()?;
+    let valid = validate_off_runtime(graph).await?;
     let tx = state.audio_tx.clone();
     let spawned = app.clone();
     let result = audio_request(tx, move |reply| Command::Start {
@@ -420,7 +459,7 @@ pub async fn reconcile_pipeline(
     app: AppHandle,
 ) -> AppResult<()> {
     info!(nodes = graph.nodes.len(), "reconciling pipeline");
-    let valid = graph.validate()?;
+    let valid = validate_off_runtime(graph).await?;
     let tx = state.audio_tx.clone();
     audio_request(tx, move |reply| Command::Reconcile {
         graph: valid,

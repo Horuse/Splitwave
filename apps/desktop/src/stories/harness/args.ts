@@ -33,6 +33,8 @@ const ENV_ARG_TYPES: Record<keyof MockEnv, InputType> = {
 	plugins: { control: range(0, 6) },
 	pluginParams: { control: range(0, 10) },
 	pluginEditor: { control: 'boolean', description: 'Plugin exposes a GUI' },
+	pluginSidechain: { control: 'boolean', description: 'Plugin declares a sidechain input' },
+	pluginCopies: { control: range(1, 25), description: 'Copies of the plugin the engine reports' },
 	link: { control: 'inline-radio', options: ['offline', 'good', 'lossy'] },
 	linkChannels: { control: range(1, 8) },
 	webrtcPhase: { control: 'inline-radio', options: ['idle', 'hosting', 'joining'] },

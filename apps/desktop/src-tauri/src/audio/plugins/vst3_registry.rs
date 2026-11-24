@@ -14,7 +14,7 @@ use tauri::Emitter;
 
 use super::host_api::{
     alive_flag, tag_state, untag_state, ActivateRequest, AliveFlag, EditorSize, Graveyard,
-    HostedNode, PluginHost, PluginParamInfo, PluginStatus, Unsupported,
+    HostedNode, PluginHost, PluginParamInfo, PluginStatus, PortLayout, Unsupported,
 };
 use super::vst3_backend::Vst3Module;
 use super::vst3_com::EditListener;
@@ -72,7 +72,8 @@ fn activate_on_main(
     plugin_id: String,
     sample_rate: u32,
     max_frames: usize,
-    channels: usize,
+    widen: Option<usize>,
+    wired: Vec<bool>,
     state: Option<String>,
     primary: bool,
     params: Arc<ParamRing>,
@@ -82,8 +83,20 @@ fn activate_on_main(
     let module = Vst3Module::open(std::path::Path::new(&path)).map_err(|e| at(&e))?;
     let mut instance = Vst3Instance::new(module, &plugin_id).map_err(|e| at(&e))?;
 
-    // Before activation: a plugin may size its buffers to what it reads.
-    if let Some(blob) = state.as_deref().and_then(|s| untag_state(&plugin_id, s)) {
+    // Before activation: a plugin may size its buffers to what it reads. The
+    // instance this one replaces holds what the user has set since the node's
+    // data was last saved (a sidechain mode switched on in its own window,
+    // say), so a same-plugin rebuild carries that over rather than the stale blob.
+    let live = SLOTS.with(|s| {
+        s.borrow()
+            .get(&node_id)
+            .filter(|slot| slot.path == path && slot.plugin_id == plugin_id)
+            .and_then(|slot| slot.instance.save_state())
+    });
+    if let Some(blob) = live
+        .as_deref()
+        .or_else(|| state.as_deref().and_then(|s| untag_state(&plugin_id, s)))
+    {
         if let Err(err) = instance.restore_state(blob) {
             tracing::warn!(node_id, path, %err, "vst3: saved state rejected, using defaults");
         }
@@ -93,7 +106,14 @@ fn activate_on_main(
 
     let alive = alive_flag();
     let node = instance
-        .activate(sample_rate, max_frames, channels, params, alive.clone())
+        .activate(
+            sample_rate,
+            max_frames,
+            widen,
+            &wired,
+            params,
+            alive.clone(),
+        )
         .map_err(|e| at(&e))?;
 
     if primary {
@@ -253,13 +273,10 @@ impl PluginHost for Vst3Host {
             req.plugin_id.to_string(),
         );
         let state = req.state.map(str::to_string);
-        let (sample_rate, max_frames, channels, primary, params) = (
-            req.sample_rate,
-            req.max_frames,
-            req.channels,
-            req.primary,
-            req.params,
-        );
+        let wired = req.wired_extras.to_vec();
+        let widen = req.widen;
+        let (sample_rate, max_frames, primary, params) =
+            (req.sample_rate, req.max_frames, req.primary, req.params);
 
         main_thread::run(move || {
             activate_on_main(
@@ -268,13 +285,25 @@ impl PluginHost for Vst3Host {
                 plugin_id,
                 sample_rate,
                 max_frames,
-                channels,
+                widen,
+                wired,
                 state,
                 primary,
                 params,
             )
         })?
         .map(HostedNode::Vst3)
+    }
+
+    fn probe(&self, path: &str, plugin_id: &str) -> Result<PortLayout, String> {
+        main_thread::ensure_ticker();
+        let (path, plugin_id) = (path.to_string(), plugin_id.to_string());
+        main_thread::run(move || {
+            let at = |step: &str| format!("vst3 probe [{path}]: {step}");
+            let module = Vst3Module::open(std::path::Path::new(&path)).map_err(|e| at(&e))?;
+            let instance = Vst3Instance::new(module, &plugin_id).map_err(|e| at(&e))?;
+            Ok(instance.port_layout())
+        })?
     }
 
     fn forget(&self, node_id: &str) {
@@ -293,6 +322,7 @@ impl PluginHost for Vst3Host {
         with_slot(node_id, |slot| PluginStatus {
             path: Some(slot.path.clone()),
             has_editor: slot.instance.has_editor(),
+            copies: 0,
         })
         .unwrap_or_default()
     }

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Button, Combobox, Input, Knob, RescanButton, ScrollArea, Slider, Tooltip } from '@splitwave/ui';
+	import { Button, Combobox, Input, Knob, RescanButton, ScrollArea, Slider, Toggle, Tooltip } from '@splitwave/ui';
 	import { slide } from 'svelte/transition';
 	import { useSvelteFlow, type Node, type NodeProps } from '@xyflow/svelte';
 	import type { PluginNodeData } from '@splitwave/nodes';
@@ -13,6 +13,7 @@
 	import PinOff from '~icons/fluent/pin-12-regular';
 	import Chevron from '~icons/fluent/chevron-right-12-filled';
 	import PluginPresets from './_plugin_presets.svelte';
+	import { pluginSidechainHandle } from '../utils';
 	import { getEnginePort, type PluginParam, type PluginStatus } from '../../engine';
 
 	const engine = getEnginePort();
@@ -55,18 +56,69 @@
 			vendor: desc?.vendor ?? '',
 			// Drop the previous plugin's state; loading it into a different plugin
 			// feeds garbage to its state parser (some plugins panic on it).
-			state: null
+			state: null,
+			params: {},
+			// The new plugin's buses are unknown until it answers below; the old
+			// plugin's sockets must not stay on the node meanwhile.
+			layout: null
 		});
 	}
 
+	// The sockets come from what the plugin declares, so they exist before the
+	// pipeline runs. A node saved before this was stored asks once on load.
+	// Deriveds, not `data`: every updateNodeData hands the node a new data
+	// object, which would rerun the probe.
+	const pluginFormat = $derived(data.format);
+	const pluginUid = $derived(data.pluginId);
+	const hasLayout = $derived(!!data.layout);
+	let probeError = $state<string | null>(null);
+
+	$effect(() => {
+		const format = pluginFormat;
+		const path = pluginPath;
+		const pluginId = pluginUid;
+		probeError = null;
+		if (!format || !path || hasLayout) return;
+		let current = true;
+		engine.audio
+			.probePluginPorts(format, path, pluginId)
+			.then((layout) => {
+				if (current) flow.updateNodeData(id, { layout });
+			})
+			.catch((e) => {
+				if (current) probeError = String(e);
+			});
+		return () => (current = false);
+	});
+
+	// Every input that is not a main bus is a socket of its own, labelled with
+	// the plugin's name for it. The engine counts them the same way: by role, in
+	// the plugin's own order.
+	const extraInputs = $derived(
+		(data.layout?.inputs ?? [])
+			.filter((bus) => !bus.main)
+			.map((bus, i, all) => ({
+				id: pluginSidechainHandle(i + 1),
+				label: bus.name || `Sidechain ${i + 1}`,
+				position: 'bottom' as const,
+				offset: (i + 1) / (all.length + 1)
+			}))
+	);
+
 	let editorOpen = $state(false);
+
+	// A node wider than the plugin runs one copy of it per group of channels, so
+	// every channel is processed. On by default, as it has always worked.
+	function setAutoCopies(v: boolean) {
+		flow.updateNodeData(id, { autoCopies: v });
+	}
 
 	// The editor embeds a native plugin view, which needs the running audio
 	// instance; there is nothing to open before the pipeline starts.
 	// What the engine is actually running, which lags the node's own selection
 	// while the graph rebuilds. Everything that touches the plugin waits on it:
 	// acting sooner opens the outgoing plugin's editor instead of the new one.
-	let status = $state<PluginStatus>({ path: null, hasEditor: true });
+	let status = $state<PluginStatus>({ path: null, hasEditor: true, copies: 0 });
 	// A derived, not data.path: every updateNodeData hands the node a new data
 	// object, which would rerun the status probe and flash the loading state.
 	const pluginPath = $derived(data.path);
@@ -80,7 +132,7 @@
 		// Reading the path first both tracks it and clears the previous plugin's
 		// verdict, so a stale answer never carries over to the new selection.
 		const path = pluginPath;
-		status = { path: null, hasEditor: true };
+		status = { path: null, hasEditor: true, copies: 0 };
 		editorError = null;
 		if (!path || !running) return;
 		// A single probe would race the rebuild and read the outgoing plugin's
@@ -101,30 +153,107 @@
 		return () => clearInterval(timer);
 	});
 
+	// The copy count moves when the toggle flips or a wider cable is wired, long
+	// after the status above has settled, so it is read on its own while the
+	// plugin runs.
+	$effect(() => {
+		if (!loaded || !running) return;
+		const timer = setInterval(() => {
+			engine.audio
+				.pluginStatus(id)
+				.then((v) => {
+					if (v.path === pluginPath) status = { ...status, copies: v.copies };
+				})
+				.catch(() => {});
+		}, 1000);
+		return () => clearInterval(timer);
+	});
+
+	// Copies need the same width in and out to line the channel groups up.
+	const canCopy = $derived(
+		!data.layout || (data.layout.inputs.find((b) => b.main)?.channels ?? 0) === (data.layout.outputs.find((b) => b.main)?.channels ?? -1)
+	);
+
+	// With one copy, only the plugin's own channels are processed; the rest of a
+	// wider node goes through as it came.
+	const processedChannels = $derived.by(() => {
+		const width = data.layout?.inputs.find((b) => b.main)?.channels;
+		if (!width) return undefined;
+		if (status.copies > 1) return undefined;
+		if (canCopy && (data.autoCopies ?? true)) return undefined;
+		return width;
+	});
+
 	// Automatable parameters, editable directly in the node. Opt-in (most users
 	// only need the editor). Readable only once the plugin is instantiated; a
 	// poll keeps them in sync with edits made in the plugin's own window.
 	let params = $state<PluginParam[]>([]);
+
+	// When each parameter was last moved from this node. The plugin takes a write on
+	// its next audio block, so a read just after one still shows the old value; that
+	// is not an edit from the plugin's window.
+	const touched = new Map<number, number>();
+	const SETTLE_MS = 1500;
 
 	async function loadParams() {
 		const fresh = (await engine.audio.getPluginParams(id).catch(() => [])).filter((p) => !p.readOnly);
 		// Same parameter set: update values in place so sliders aren't recreated
 		// (and a mid-drag one isn't yanked). Otherwise swap the whole list.
 		if (params.length === fresh.length && params.every((p, i) => p.id === fresh[i].id)) {
-			for (let i = 0; i < fresh.length; i++) params[i].value = fresh[i].value;
+			// The plugin window drives the first copy only. A value that moved there is
+			// handed to the others the way a knob on this node would be.
+			const moved: Record<number, number> = {};
+			const now = Date.now();
+			let changed = false;
+			for (let i = 0; i < fresh.length; i++) {
+				if (fresh[i].value !== params[i].value) changed = true;
+				if (status.copies > 1 && fresh[i].value !== params[i].value && now - (touched.get(fresh[i].id) ?? 0) > SETTLE_MS) {
+					moved[fresh[i].id] = fresh[i].value;
+				}
+				params[i].value = fresh[i].value;
+			}
+			// A value that moved, here or in the plugin window, is kept in the project
+			// right away; nothing is read while nothing changes.
+			if (changed) saveSoon();
+			if (Object.keys(moved).length) engine.audio.updateEffect(id, { pluginParams: moved }).catch(() => {});
 		} else {
 			params = fresh;
 		}
 	}
 
+	const saving = $derived(data.saveParams ?? true);
+
+	// A knob turn reaches the plugin on the next audio block, so the state is read a
+	// moment later, once the drag has settled.
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+	function saveSoon() {
+		if (!saving) return;
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(captureState, 500);
+	}
+
 	function setParam(p: PluginParam, v: number) {
 		p.value = v;
+		touched.set(p.id, Date.now());
 		engine.audio.updateEffect(id, { pluginParams: { [p.id]: v } }).catch(() => {});
+		saveSoon();
 	}
 
 	function applyValues(values: Record<string, number>) {
-		for (const p of params) if (values[p.id] !== undefined) p.value = values[p.id];
+		const now = Date.now();
+		for (const p of params)
+			if (values[p.id] !== undefined) {
+				p.value = values[p.id];
+				touched.set(p.id, now);
+			}
 		engine.audio.updateEffect(id, { pluginParams: values }).catch(() => {});
+		saveSoon();
+	}
+
+	function setSaveParams(v: boolean) {
+		// Off means the project stops keeping the settings: the saved ones go too,
+		// so the plugin starts from its own defaults next time.
+		flow.updateNodeData(id, v ? { saveParams: true } : { saveParams: false, state: null, params: {} });
 	}
 
 	const pinnedIds = $derived(data.pinned ?? []);
@@ -159,6 +288,7 @@
 	// Pull the plugin's own state (edited via its GUI) into node data so it
 	// survives project reload. State is non-structural, so this never rebuilds.
 	async function captureState() {
+		if (!saving) return;
 		const capturedFor = data.path;
 		const state = await engine.audio.getPluginState(id).catch(() => null);
 		// The plugin may have been swapped while this was in flight. Writing now
@@ -166,7 +296,15 @@
 		// it on the next rebuild and ends up in a state its own editor disagrees
 		// with.
 		if (data.path !== capturedFor) return;
-		if (state && state !== data.state) flow.updateNodeData(id, { state });
+		const patch: { state?: string; params?: Record<string, number> } = {};
+		if (state && state !== data.state) patch.state = state;
+		// The values go in beside the state: a plugin may leave a value changed from
+		// outside out of the state it hands back.
+		if (params.length) {
+			const values = Object.fromEntries(params.map((p) => [String(p.id), p.value]));
+			if (JSON.stringify(values) !== JSON.stringify(data.params ?? {})) patch.params = values;
+		}
+		if (Object.keys(patch).length) flow.updateNodeData(id, patch);
 	}
 
 	// Last editor failure, shown in the node. The backend message names the
@@ -213,13 +351,24 @@
 	}
 </script>
 
+{#snippet badge()}
+	{#if running && status.copies > 1}
+		<Tooltip text={`${status.copies} copies of the plugin run, one per group of channels`}>
+			<span class="rounded-md bg-(--lv-2) px-1.5 py-1 font-mono text-[10px] leading-none text-neutral-900 tabular-nums">x{status.copies}</span>
+		</Tooltip>
+	{/if}
+{/snippet}
+
 <Wrapper
+	{badge}
 	label={data.name || 'Plugin'}
 	icon={Plug}
 	accent="effect"
 	hasInput
 	hasOutput
 	channelIo
+	{processedChannels}
+	inputs={extraInputs.length ? extraInputs : undefined}
 	selfGrowing
 	nodeId={id}
 	bypassed={data.bypassed}
@@ -257,7 +406,10 @@
 							</Button>
 						</Tooltip>
 					{:else}
-						<Tooltip text={canOpenEditor ? 'This plugin has no window of its own' : 'Run the pipeline first: the plugin loads only while it runs.'}>
+						<Tooltip
+							text={canOpenEditor
+								? 'This plugin has no window of its own'
+								: 'Start the pipeline to open the editor: the plugin loads only while it runs.'}>
 							<Button class="nodrag nopan pointer-events-none" icon disabled aria-label="Plugin window">
 								{#if canOpenEditor}<WindowOff class="size-4" />{:else}<WindowNew class="size-4" />{/if}
 							</Button>
@@ -267,11 +419,36 @@
 			</div>
 		{/if}
 
+		{#if data.path}
+			<Tooltip
+				text={canCopy
+					? 'A node wider than the plugin runs one copy of it per group of channels, so every channel is processed. Off: one copy, and the other channels pass through untouched.'
+					: 'This plugin changes the channel count (its input and output differ), so it always runs as one copy.'}>
+				<Toggle
+					class="nodrag nopan"
+					size="sm"
+					label="Copy per channel group"
+					disabled={!canCopy}
+					checked={canCopy && (data.autoCopies ?? true)}
+					onChange={setAutoCopies} />
+			</Tooltip>
+			<Tooltip
+				text="Keep this plugin's settings in the project, so they come back after the pipeline stops or the project is reopened. Off: the plugin starts from its defaults.">
+				<Toggle class="nodrag nopan" size="sm" label="Save settings" checked={saving} onChange={setSaveParams} />
+			</Tooltip>
+			{#if !data.layout && !probeError}
+				<p class="text-xs text-neutral-800">Reading the plugin's ports...</p>
+			{/if}
+		{/if}
+
 		{#if missing}
 			<p class="text-xs text-red-500">Not installed, or failed to load</p>
 		{/if}
 		{#if engine.plugins.error}
 			<p class="text-xs text-red-500">Plugin scan failed: {engine.plugins.error}</p>
+		{/if}
+		{#if probeError}
+			<p class="text-xs text-red-500">Could not read the plugin's ports, so the node stays silent: {probeError}</p>
 		{/if}
 		{#if editorError}
 			<p class="text-xs text-red-500">{editorError}</p>
@@ -355,6 +532,10 @@
 					{/if}
 				</div>
 			{/if}
+		{/if}
+
+		{#if running && status.copies > 1}
+			<p class="text-[11px] leading-snug text-neutral-800">Changes made in the plugin window reach the other copies with a short delay.</p>
 		{/if}
 	</div>
 </Wrapper>

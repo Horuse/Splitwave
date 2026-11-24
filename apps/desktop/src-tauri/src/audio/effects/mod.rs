@@ -148,6 +148,19 @@ impl RuntimeEffect {
         sidechain: Option<&[f32]>,
         frames: usize,
     ) {
+        self.process_with_inputs(main, sidechain, &[], frames);
+    }
+
+    /// `extras` are a plugin's extra inputs, one buffer per input at the node's
+    /// width; every other effect ignores them.
+    #[inline]
+    pub fn process_with_inputs(
+        &mut self,
+        main: &mut [f32],
+        sidechain: Option<&[f32]>,
+        extras: &[Vec<f32>],
+        frames: usize,
+    ) {
         // Whatever width the node runs at: a stereo pair for most effects, the
         // node's whole width (mono included) for analyzers and plugins that
         // take every channel.
@@ -175,7 +188,7 @@ impl RuntimeEffect {
             RuntimeEffect::NoiseSuppressor(e) => e.process(active, frames),
             RuntimeEffect::Declick(e) => e.process(active, frames),
             RuntimeEffect::DeEsser(e) => e.process(active, frames),
-            RuntimeEffect::HostedPlugin(e) => e.process(active, frames),
+            RuntimeEffect::HostedPlugin(e) => e.process_with_inputs(active, extras, frames),
             #[cfg(test)]
             RuntimeEffect::Offloaded(o) => o.process(active),
         }
@@ -528,6 +541,8 @@ pub fn instantiate_effect(
     // Channels this node carries. An effect that can take them all says so
     // through `EffectBuild::full_width`; the rest are driven one pair at a time.
     channels: usize,
+    // Whether anything is wired to each of a plugin's sidechain inputs.
+    wired_extras: &[bool],
     registry: &mut EffectRegistry,
 ) -> EffectBuild {
     let (bypass, bypass_is_new) = match registry.bypasses.get(node_id) {
@@ -1055,6 +1070,9 @@ pub fn instantiate_effect(
             ref path,
             ref plugin_id,
             ref state,
+            ref layout,
+            auto_copies,
+            ref param_values,
             ..
         } => {
             // Empty path == node not yet configured: inert passthrough, not a
@@ -1085,6 +1103,22 @@ pub fn instantiate_effect(
                     None,
                 );
             };
+            // The node is sized from what the plugin declared, so without that
+            // there is nothing to build: it stays silent and says why, rather
+            // than guessing a width.
+            let Some(layout) = layout else {
+                tracing::error!(node_id, path, "plugin has not reported its ports yet");
+                crate::audio::plugins::registry::forget(node_id);
+                let muted = Arc::new(AtomicBool::new(true));
+                return mk(
+                    RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            };
             // Claimed only once the instance actually exists (below): a burned
             // claim would leave the node with no editor target while the
             // previous plugin stayed installed behind it.
@@ -1097,43 +1131,113 @@ pub fn instantiate_effect(
                 .entry(node_id.to_string())
                 .or_insert_with(|| Arc::new(crate::audio::plugins::ParamRing::new()))
                 .clone();
-            let request = crate::audio::plugins::host_api::ActivateRequest {
-                node_id,
-                path,
-                plugin_id,
-                sample_rate,
-                max_frames: PLUGIN_MAX_BLOCK,
-                channels,
-                state: state.as_deref(),
-                primary,
-                params: ring.clone(),
+            // A node wider than the plugin's own width is first offered to the
+            // plugin whole: one that takes it runs as a single instance (the
+            // way a DAW runs one multichannel plugin), and only one that
+            // refuses is run as copies of its own width.
+            let symmetric = layout.main_in() > 0 && layout.main_in() == layout.main_out();
+            let widen =
+                (auto_copies && symmetric && channels > layout.main_in()).then_some(channels);
+            let activate = |primary: bool, widen: Option<usize>| {
+                crate::audio::plugins::registry::activate(
+                    format,
+                    crate::audio::plugins::host_api::ActivateRequest {
+                        node_id,
+                        path,
+                        plugin_id,
+                        sample_rate,
+                        max_frames: PLUGIN_MAX_BLOCK,
+                        layout,
+                        widen,
+                        wired_extras,
+                        state: state.as_deref(),
+                        primary,
+                        params: ring.clone(),
+                    },
+                )
             };
-            match crate::audio::plugins::registry::activate(format, request) {
+            // The first copy is the editor target and owns the control; the rest
+            // run the same plugin from the same settings, at the width the first
+            // one ended up with.
+            let built = activate(primary, widen).and_then(|first| {
+                let (in_ch, out_ch) = (first.in_channels(), first.out_channels());
+                let copies = HostedEffect::copies_needed(auto_copies, channels, in_ch, out_ch);
+                let again = (in_ch != layout.main_in()).then_some(in_ch);
+                let mut nodes = vec![first];
+                for _ in 1..copies {
+                    nodes.push(activate(false, again)?);
+                }
+                Ok(nodes)
+            });
+            // What the plugin may now be: its own widths, or (only when the node
+            // was offered to it) the same width in and out, as wide as the node.
+            let ports_ok = |node: &crate::audio::plugins::host_api::HostedNode| {
+                let own = node.in_channels() == layout.main_in()
+                    && node.out_channels() == layout.main_out();
+                let widened = widen.is_some()
+                    && node.in_channels() == node.out_channels()
+                    && node.in_channels() >= layout.main_in();
+                (own || widened) && node.aux_buses() == layout.sidechains()
+            };
+            match built {
                 // Only the editor-target build publishes the control, so the UI
                 // writes reach the audible instance.
-                Ok(node) => {
+                Ok(nodes)
+                    if nodes.iter().any(|node| !ports_ok(node))
+                        || nodes.windows(2).any(|pair| {
+                            pair[0].in_channels() != pair[1].in_channels()
+                                || pair[0].out_channels() != pair[1].out_channels()
+                        }) =>
+                {
+                    // The plugin is not what it was when it was picked (updated
+                    // since): its sockets and width would be wrong.
+                    tracing::error!(
+                        node_id,
+                        path,
+                        plugin_id,
+                        "plugin ports changed since it was picked; pick it again"
+                    );
+                    crate::audio::plugins::registry::forget(node_id);
+                    let muted = Arc::new(AtomicBool::new(true));
+                    mk(
+                        RuntimeEffect::Mute(MuteEffect::from_state(muted, sample_rate)),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                Ok(nodes) => {
+                    // After the state is restored: the plugin gets the values it had,
+                    // through the same queue a knob uses, so every copy takes them.
+                    for (id, value) in param_values {
+                        ring.push(*id, *value);
+                    }
                     if primary {
                         registry.plugin_primary_claimed.insert(node_id.to_string());
                     }
                     let control = primary.then_some(EffectControl::Plugin { events: ring });
-                    // The plugin took the node whole, so the pipeline must stop
-                    // splitting it into pairs and hand it every channel.
-                    let full_width = node.channels() == channels;
+                    let effect = HostedEffect::new(
+                        nodes,
+                        realtime,
+                        sample_rate,
+                        block_frames,
+                        burst_blocks,
+                        channels,
+                    );
+                    crate::audio::plugins::registry::set_copies(node_id, effect.copy_count());
                     let mut build = mk(
-                        RuntimeEffect::HostedPlugin(HostedEffect::new(
-                            node,
-                            realtime,
-                            sample_rate,
-                            block_frames,
-                            burst_blocks,
-                        )),
+                        RuntimeEffect::HostedPlugin(effect),
                         control,
                         None,
                         None,
                         None,
                         None,
                     );
-                    build.full_width = full_width;
+                    // One entry sees the whole node; it is never split into
+                    // stereo pairs from outside.
+                    build.full_width = true;
                     build
                 }
                 Err(e) => {
@@ -1507,7 +1611,7 @@ mod tests {
         for (spec, update) in cases {
             let mut reg = EffectRegistry::new();
             let mut build =
-                instantiate_effect(&spec, "n", 48_000, 1024, 1, true, true, 2, &mut reg);
+                instantiate_effect(&spec, "n", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
             let mut warm = vec![0.25f32; 48_000 * 2];
             build.effect.process_with_sidechain(&mut warm, None, 48_000);
             let before = warm[warm.len() - 1];
@@ -1537,10 +1641,10 @@ mod tests {
     fn a_scope_rebuilt_at_another_rate_starts_a_new_handle() {
         let mut reg = EffectRegistry::new();
         let spec = EffectSpec::Spectrum(Default::default());
-        let first = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
-        let same = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
+        let same = instantiate_effect(&spec, "sp", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(same.scope.is_none(), "same rate reuses the handle");
-        let other = instantiate_effect(&spec, "sp", 44_100, 1024, 1, true, true, 2, &mut reg);
+        let other = instantiate_effect(&spec, "sp", 44_100, 1024, 1, true, true, 2, &[], &mut reg);
         let handle = other.scope.expect("a new handle at the new rate");
         assert_eq!(handle.sample_rate, 44_100);
         assert_ne!(handle.session, first.scope.unwrap().session);
@@ -1553,17 +1657,17 @@ mod tests {
             gain_db: -6.0,
             bypassed: true,
         });
-        let first = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(first.bypass_is_new);
         assert!(first.control.is_some());
         assert!(
             first.bypass.load(Ordering::Relaxed),
             "bypassed spec latches"
         );
-        let second = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let second = instantiate_effect(&spec, "n1", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(!second.bypass_is_new);
         assert!(second.control.is_none());
-        let other = instantiate_effect(&spec, "n2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let other = instantiate_effect(&spec, "n2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(other.bypass_is_new);
         assert!(other.control.is_some());
     }
@@ -1577,9 +1681,10 @@ mod tests {
             release_ms: 50.0,
             bypassed: false,
         });
-        let first = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let first = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let gr1 = first.gr.clone().expect("first build publishes GR");
-        let second = instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let second =
+            instantiate_effect(&spec, "lim", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let gr2 = second.gr.clone().expect("rebuild republishes GR");
         assert_eq!(gr1.node_id, gr2.node_id);
         assert!(Arc::ptr_eq(&gr1.gr_lin, &gr2.gr_lin), "same atom reused");
@@ -1606,6 +1711,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(comp.gr.is_some());
@@ -1625,6 +1731,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(gate.gr.is_some());
@@ -1642,6 +1749,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lvl.meter.is_some());
@@ -1654,6 +1762,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lvl2.meter.is_none());
@@ -1667,6 +1776,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(lufs.lufs.is_some());
@@ -1679,6 +1789,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(wave.scope.is_some());
@@ -1691,6 +1802,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(spec_first.scope.is_some());
@@ -1703,6 +1815,7 @@ mod tests {
             true,
             true,
             2,
+            &[],
             &mut reg,
         );
         assert!(spec_second.scope.is_none());
@@ -1718,8 +1831,12 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: None,
+            auto_copies: true,
+            param_values: Vec::new(),
         };
-        let mut build = instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         assert!(build.control.is_none());
         assert!(!build.full_width);
         let mut buf = vec![0.3f32, -0.4];
@@ -1737,11 +1854,30 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: None,
+            auto_copies: true,
+            param_values: Vec::new(),
         };
-        let mut build = instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    fn stereo_layout() -> crate::audio::plugins::host_api::PortLayout {
+        use crate::audio::plugins::host_api::{PortBus, PortLayout};
+        let main = || {
+            vec![PortBus {
+                name: "Main".into(),
+                channels: 2,
+                main: true,
+            }]
+        };
+        PortLayout {
+            inputs: main(),
+            outputs: main(),
+        }
     }
 
     #[test]
@@ -1754,11 +1890,52 @@ mod tests {
             plugin_id: String::new(),
             bypassed: false,
             state: None,
+            layout: Some(stereo_layout()),
+            auto_copies: true,
+            param_values: Vec::new(),
         };
-        let mut build = instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
         let mut buf = vec![0.3f32, -0.4];
         build.effect.process_with_sidechain(&mut buf, None, 1);
         assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    /// A node sized from what the plugin declares has nothing to size from
+    /// until it answers: it stays silent rather than guessing a width.
+    #[test]
+    fn plugin_that_has_not_reported_its_ports_is_silenced() {
+        let mut reg = EffectRegistry::new();
+        let spec = EffectSpec::Plugin {
+            node_id: "p4".into(),
+            format: Some(crate::audio::plugins::PluginFormat::Vst3),
+            path: "/some/plugin.vst3".into(),
+            plugin_id: "x".into(),
+            bypassed: false,
+            state: None,
+            layout: None,
+            auto_copies: true,
+            param_values: Vec::new(),
+        };
+        let mut build =
+            instantiate_effect(&spec, "p4", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
+        let mut buf = vec![0.3f32, -0.4];
+        build.effect.process_with_sidechain(&mut buf, None, 1);
+        assert_eq!(buf, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn copies_follow_the_plugins_own_width() {
+        let copies = HostedEffect::copies_needed;
+        // A stereo plugin on a 50 channel node: one copy per stereo group.
+        assert_eq!(copies(true, 50, 2, 2), 25);
+        // An odd width still covers the last channel.
+        assert_eq!(copies(true, 5, 2, 2), 3);
+        // Off, or a plugin that changes width, stays one instance.
+        assert_eq!(copies(false, 50, 2, 2), 1);
+        assert_eq!(copies(true, 50, 1, 2), 1);
+        // A generator has no input to group by.
+        assert_eq!(copies(true, 50, 0, 2), 1);
     }
 
     #[test]
@@ -1866,7 +2043,8 @@ mod tests {
 
     fn run_in_blocks(spec: &EffectSpec, input: &[f32], block: usize) -> Vec<f32> {
         let mut reg = EffectRegistry::new();
-        let mut build = instantiate_effect(spec, "inv", 48_000, block, 1, false, true, 2, &mut reg);
+        let mut build =
+            instantiate_effect(spec, "inv", 48_000, block, 1, false, true, 2, &[], &mut reg);
         let mut out = input.to_vec();
         for chunk in out.chunks_mut(block * 2) {
             let frames = chunk.len() / 2;
@@ -1912,7 +2090,7 @@ mod tests {
             for block in crate::audio::graph::BUFFER_FRAME_OPTIONS.map(|n| n as usize) {
                 let mut reg = EffectRegistry::new();
                 let mut build =
-                    instantiate_effect(&spec, "rt", 48_000, block, 1, true, true, 2, &mut reg);
+                    instantiate_effect(&spec, "rt", 48_000, block, 1, true, true, 2, &[], &mut reg);
                 let mut buf = program(block);
                 // First blocks may size lazily; the steady state must not.
                 for _ in 0..4 {
@@ -1934,8 +2112,18 @@ mod tests {
         for width in [1usize, 2, 4, 6] {
             let mut reg = EffectRegistry::new();
             let spec = EffectSpec::LevelMeter(LevelMeterData {});
-            let mut build =
-                instantiate_effect(&spec, "lm", 48_000, 1024, 1, true, true, width, &mut reg);
+            let mut build = instantiate_effect(
+                &spec,
+                "lm",
+                48_000,
+                1024,
+                1,
+                true,
+                true,
+                width,
+                &[],
+                &mut reg,
+            );
             let meter = build.meter.clone().expect("level meter publishes a handle");
             let frames = 1024;
             // Channel c carries a constant 0.1 * (c + 1).
@@ -1962,7 +2150,7 @@ mod tests {
         let specs = builtin_specs();
         for spec in &specs {
             let mut build =
-                instantiate_effect(spec, "dispatch", sr, 1024, 1, true, true, 2, &mut reg);
+                instantiate_effect(spec, "dispatch", sr, 1024, 1, true, true, 2, &[], &mut reg);
             assert!(build.effect.latency_frames() < 100_000);
             let mut buf = vec![0.25f32; 96];
             let side = vec![0.5f32; 96];
@@ -2017,8 +2205,18 @@ mod tests {
             }),
         ];
         for spec in &specs {
-            let mut build =
-                instantiate_effect(spec, "finite", 48_000, 1024, 1, true, true, 2, &mut reg);
+            let mut build = instantiate_effect(
+                spec,
+                "finite",
+                48_000,
+                1024,
+                1,
+                true,
+                true,
+                2,
+                &[],
+                &mut reg,
+            );
             let mut poisoned = vec![0.25; 96];
             poisoned[10] = f32::NAN;
             poisoned[11] = f32::INFINITY;
@@ -2125,7 +2323,7 @@ mod tests {
         ];
         for (i, spec) in specs.iter().enumerate() {
             let node = format!("reuse-{i}");
-            let first = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            let first = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &[], &mut reg);
             assert!(
                 first.control.is_some()
                     || first.meter.is_some()
@@ -2134,7 +2332,8 @@ mod tests {
             );
             // Same node id → the registry already holds the state; the rebuild
             // must go through from_state and stay functional.
-            let mut second = instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &mut reg);
+            let mut second =
+                instantiate_effect(spec, &node, sr, 1024, 1, false, true, 2, &[], &mut reg);
             assert!(second.control.is_none());
             assert!(second.meter.is_none() && second.lufs.is_none() && second.scope.is_none());
             let mut buf = vec![0.3f32; 96];

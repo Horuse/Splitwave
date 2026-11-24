@@ -122,7 +122,7 @@
 		<div
 			transition:fly={{ duration: 200, y: 5 }}
 			data-layer="popover"
-			class="absolute top-full right-0 left-0 z-20 mt-1 flex flex-col gap-1 overflow-hidden rounded-[10px] border border-theme/10 bg-popover p-1 [--menu-item-r:5px]">
+			class="absolute top-full right-0 left-0 z-[60] mt-1 flex flex-col gap-1 overflow-hidden rounded-[10px] border border-theme/10 bg-popover p-1 [--menu-item-r:5px]">
 			<input
 				bind:this={inputEl}
 				bind:value={search}

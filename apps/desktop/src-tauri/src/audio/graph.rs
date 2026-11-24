@@ -641,7 +641,7 @@ pub struct PluginData {
     /// do not put a value changed from outside into the state they hand back. They
     /// are set again when the plugin starts.
     #[serde(default)]
-    pub param_values: std::collections::HashMap<String, f64>,
+    pub params: std::collections::HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -1564,7 +1564,7 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
                 auto_copies: data.auto_copies,
                 param_values: {
                     let mut v: Vec<(u32, f64)> = data
-                        .param_values
+                        .params
                         .iter()
                         .filter_map(|(k, val)| Some((k.parse().ok()?, *val)))
                         .collect();

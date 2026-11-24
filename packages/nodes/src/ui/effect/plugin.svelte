@@ -57,7 +57,7 @@
 			// Drop the previous plugin's state; loading it into a different plugin
 			// feeds garbage to its state parser (some plugins panic on it).
 			state: null,
-			paramValues: {},
+			params: {},
 			// The new plugin's buses are unknown until it answers below; the old
 			// plugin's sockets must not stay on the node meanwhile.
 			layout: null
@@ -253,7 +253,7 @@
 	function setSaveParams(v: boolean) {
 		// Off means the project stops keeping the settings: the saved ones go too,
 		// so the plugin starts from its own defaults next time.
-		flow.updateNodeData(id, v ? { saveParams: true } : { saveParams: false, state: null, paramValues: {} });
+		flow.updateNodeData(id, v ? { saveParams: true } : { saveParams: false, state: null, params: {} });
 	}
 
 	const pinnedIds = $derived(data.pinned ?? []);
@@ -296,13 +296,13 @@
 		// it on the next rebuild and ends up in a state its own editor disagrees
 		// with.
 		if (data.path !== capturedFor) return;
-		const patch: { state?: string; paramValues?: Record<string, number> } = {};
+		const patch: { state?: string; params?: Record<string, number> } = {};
 		if (state && state !== data.state) patch.state = state;
 		// The values go in beside the state: a plugin may leave a value changed from
 		// outside out of the state it hands back.
 		if (params.length) {
 			const values = Object.fromEntries(params.map((p) => [String(p.id), p.value]));
-			if (JSON.stringify(values) !== JSON.stringify(data.paramValues ?? {})) patch.paramValues = values;
+			if (JSON.stringify(values) !== JSON.stringify(data.params ?? {})) patch.params = values;
 		}
 		if (Object.keys(patch).length) flow.updateNodeData(id, patch);
 	}

@@ -29,4 +29,4 @@ saveParams: boolean,
  * do not put a value changed from outside into the state they hand back. They
  * are set again when the plugin starts.
  */
-paramValues: { [key in string]: number }, };
+params: { [key in string]: number }, };

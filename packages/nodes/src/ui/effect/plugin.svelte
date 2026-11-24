@@ -203,12 +203,17 @@
 			// handed to the others the way a knob on this node would be.
 			const moved: Record<number, number> = {};
 			const now = Date.now();
+			let changed = false;
 			for (let i = 0; i < fresh.length; i++) {
+				if (fresh[i].value !== params[i].value) changed = true;
 				if (status.copies > 1 && fresh[i].value !== params[i].value && now - (touched.get(fresh[i].id) ?? 0) > SETTLE_MS) {
 					moved[fresh[i].id] = fresh[i].value;
 				}
 				params[i].value = fresh[i].value;
 			}
+			// A value that moved, here or in the plugin window, is kept in the project
+			// right away; nothing is read while nothing changes.
+			if (changed) saveSoon();
 			if (Object.keys(moved).length) engine.audio.updateEffect(id, { pluginParams: moved }).catch(() => {});
 		} else {
 			params = fresh;
@@ -243,15 +248,6 @@
 		engine.audio.updateEffect(id, { pluginParams: values }).catch(() => {});
 		saveSoon();
 	}
-
-	// Edits made in the plugin's own window, and anything else the plugin changes
-	// by itself, are picked up while it runs. A stopped pipeline has no plugin to
-	// ask, so the last read is what the project keeps.
-	$effect(() => {
-		if (!loaded || !running || !saving) return;
-		const timer = setInterval(captureState, 3000);
-		return () => clearInterval(timer);
-	});
 
 	function setSaveParams(v: boolean) {
 		// Off means the project stops keeping the settings: the saved ones go too,

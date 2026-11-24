@@ -631,16 +631,12 @@ pub struct PluginData {
     /// A node wider than the plugin runs one copy per group of the plugin's own
     /// width, so every channel is processed. Off: one copy, and the channels
     /// beyond it pass through untouched.
-    #[serde(default = "default_auto_copies")]
+    #[serde(default = "default_true")]
     pub auto_copies: bool,
     /// Keep the plugin's settings in the project, so they come back after the
     /// pipeline stops or the project is reopened. On unless the user turns it off.
-    #[serde(default = "default_auto_copies")]
+    #[serde(default = "default_true")]
     pub save_params: bool,
-}
-
-fn default_auto_copies() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]

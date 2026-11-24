@@ -84,30 +84,32 @@ pub fn probe(
     host_for(format).probe(path, plugin_id)
 }
 
-fn probed() -> &'static Mutex<HashMap<(PluginFormat, String, String), super::host_api::PortLayout>>
-{
-    static PROBED: OnceLock<
-        Mutex<HashMap<(PluginFormat, String, String), super::host_api::PortLayout>>,
-    > = OnceLock::new();
+type ProbeKey = (PluginFormat, String, String);
+type ProbeResult = Result<super::host_api::PortLayout, String>;
+
+fn probed() -> &'static Mutex<HashMap<ProbeKey, ProbeResult>> {
+    static PROBED: OnceLock<Mutex<HashMap<ProbeKey, ProbeResult>>> = OnceLock::new();
     PROBED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// `probe`, remembered per plugin for the life of the process. A node saved
-/// before ports were stored has none, so the engine reads them itself; this
-/// keeps every later graph update from instantiating the plugin again. A plugin
-/// that fails is asked again next time rather than remembered as broken.
-pub fn probe_cached(
-    format: PluginFormat,
-    path: &str,
-    plugin_id: &str,
-) -> Result<super::host_api::PortLayout, String> {
+/// `probe`, remembered per plugin until a rescan. A node saved before ports were
+/// stored has none, so the engine reads them itself. A failure is remembered too:
+/// a plugin that will not load takes seconds to give up, and asking again at
+/// every graph change would make editing crawl.
+pub fn probe_cached(format: PluginFormat, path: &str, plugin_id: &str) -> ProbeResult {
     let key = (format, path.to_string(), plugin_id.to_string());
-    if let Some(layout) = probed().lock().unwrap().get(&key) {
-        return Ok(layout.clone());
+    if let Some(known) = probed().lock().unwrap().get(&key) {
+        return known.clone();
     }
-    let layout = probe(format, path, plugin_id)?;
-    probed().lock().unwrap().insert(key, layout.clone());
-    Ok(layout)
+    let result = probe(format, path, plugin_id);
+    probed().lock().unwrap().insert(key, result.clone());
+    result
+}
+
+/// Forgets every remembered probe, so a rescan sees plugins that were installed,
+/// fixed or updated since.
+pub fn forget_probes() {
+    probed().lock().unwrap().clear();
 }
 
 fn copy_counts() -> &'static Mutex<HashMap<String, usize>> {

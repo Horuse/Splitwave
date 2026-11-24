@@ -23,4 +23,10 @@ autoCopies: boolean,
  * Keep the plugin's settings in the project, so they come back after the
  * pipeline stops or the project is reopened. On unless the user turns it off.
  */
-saveParams: boolean, };
+saveParams: boolean, 
+/**
+ * The plugin's parameter values by id, kept apart from `state`: some plugins
+ * do not put a value changed from outside into the state they hand back. They
+ * are set again when the plugin starts.
+ */
+paramValues: { [key in string]: number }, };

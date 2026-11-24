@@ -637,6 +637,11 @@ pub struct PluginData {
     /// pipeline stops or the project is reopened. On unless the user turns it off.
     #[serde(default = "default_true")]
     pub save_params: bool,
+    /// The plugin's parameter values by id, kept apart from `state`: some plugins
+    /// do not put a value changed from outside into the state they hand back. They
+    /// are set again when the plugin starts.
+    #[serde(default)]
+    pub param_values: std::collections::HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, TS)]
@@ -745,6 +750,8 @@ pub enum EffectSpec {
         // so it is structural; None means it has not answered yet.
         layout: Option<crate::audio::plugins::host_api::PortLayout>,
         auto_copies: bool,
+        // Parameter values set again after the state is restored.
+        param_values: Vec<(u32, f64)>,
     },
 }
 
@@ -1555,6 +1562,15 @@ fn effect_from_node(n: &RoleNode<'_>) -> AppResult<EffectSpec> {
                 state: data.state,
                 layout,
                 auto_copies: data.auto_copies,
+                param_values: {
+                    let mut v: Vec<(u32, f64)> = data
+                        .param_values
+                        .iter()
+                        .filter_map(|(k, val)| Some((k.parse().ok()?, *val)))
+                        .collect();
+                    v.sort_by_key(|(id, _)| *id);
+                    v
+                },
             }
         }
         _ => unreachable!("non-effect kind passed to effect_from_node"),

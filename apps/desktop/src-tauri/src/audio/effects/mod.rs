@@ -1072,6 +1072,7 @@ pub fn instantiate_effect(
             ref state,
             ref layout,
             auto_copies,
+            ref param_values,
             ..
         } => {
             // Empty path == node not yet configured: inert passthrough, not a
@@ -1208,6 +1209,11 @@ pub fn instantiate_effect(
                     )
                 }
                 Ok(nodes) => {
+                    // After the state is restored: the plugin gets the values it had,
+                    // through the same queue a knob uses, so every copy takes them.
+                    for (id, value) in param_values {
+                        ring.push(*id, *value);
+                    }
                     if primary {
                         registry.plugin_primary_claimed.insert(node_id.to_string());
                     }
@@ -1827,6 +1833,7 @@ mod tests {
             state: None,
             layout: None,
             auto_copies: true,
+            param_values: Vec::new(),
         };
         let mut build =
             instantiate_effect(&spec, "p", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
@@ -1849,6 +1856,7 @@ mod tests {
             state: None,
             layout: None,
             auto_copies: true,
+            param_values: Vec::new(),
         };
         let mut build =
             instantiate_effect(&spec, "p2", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
@@ -1884,6 +1892,7 @@ mod tests {
             state: None,
             layout: Some(stereo_layout()),
             auto_copies: true,
+            param_values: Vec::new(),
         };
         let mut build =
             instantiate_effect(&spec, "p3", 48_000, 1024, 1, true, true, 2, &[], &mut reg);
@@ -1906,6 +1915,7 @@ mod tests {
             state: None,
             layout: None,
             auto_copies: true,
+            param_values: Vec::new(),
         };
         let mut build =
             instantiate_effect(&spec, "p4", 48_000, 1024, 1, true, true, 2, &[], &mut reg);

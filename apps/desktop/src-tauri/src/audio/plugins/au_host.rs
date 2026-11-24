@@ -1603,6 +1603,54 @@ mod tests {
         forget("params-test");
     }
 
+    /// A unit may leave a value set from outside out of the state it hands back
+    /// (Duck does), so the node keeps the values apart and sets them again through
+    /// the same queue a knob uses. Checked on a unit that is installed.
+    #[test]
+    fn values_pushed_through_the_ring_reach_the_unit() {
+        let _plugin_serial = crate::audio::plugins::test_util::plugin_test_lock();
+        const URL: &str = "au://aumf/DUCK/DvMc";
+        let Ok(layout) = probe_layout(URL) else {
+            println!("SKIPPED: Duck not installed");
+            return;
+        };
+        let ring = Arc::new(ParamRing::new());
+        let mut node = activate(
+            "ringed",
+            URL,
+            48_000,
+            512,
+            layout.main_in(),
+            layout.main_out(),
+            None,
+            true,
+            ring.clone(),
+        )
+        .expect("activate");
+        let target = get_params("ringed")
+            .into_iter()
+            .find(|p| p.name == "Trigger threshold")
+            .expect("a known parameter");
+        let want = target.min + (target.max - target.min) * 0.3;
+        assert!(
+            (target.value - want).abs() > 0.1,
+            "the value to set must differ"
+        );
+        ring.push(target.id, want as f64);
+        let stride =
+            node.in_channels().max(node.out_channels()) + node.aux_buses().iter().sum::<usize>();
+        let mut block = vec![0.0f32; 512 * stride];
+        node.process(&mut block, 512);
+        let got = get_params("ringed")
+            .into_iter()
+            .find(|p| p.id == target.id)
+            .unwrap()
+            .value;
+        assert!((got - want).abs() < 0.01, "want {want} got {got}");
+        drop(node);
+        forget("ringed");
+    }
+
     /// Round-trips a real unit's settings: save, restore into a fresh instance,
     /// and read the parameter back. Pins the class-info plist path end to end.
     #[test]

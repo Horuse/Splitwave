@@ -140,7 +140,9 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               run: |
                   set -euxo pipefail
-                  app=$(find apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -1)
+                  # Absolute: the root `tauri` script runs from apps/desktop, so a path
+                  # relative to the repo root would not be found.
+                  app=$(find "$PWD/apps/desktop/src-tauri/target/release/bundle/appimage" -maxdepth 1 -name '*.AppImage' | head -1)
                   rm -f "$app.sig"
                   bun run tauri signer sign "$app"
 

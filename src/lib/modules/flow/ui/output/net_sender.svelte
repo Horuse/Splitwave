@@ -10,6 +10,7 @@
 	import SegmentedButtons from '$lib/components/segmented_buttons.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type NetSenderNodeType = Node<NetSenderNodeData, 'netSender'>;
 	let { id, data }: NodeProps<NetSenderNodeType> = $props();
@@ -19,11 +20,11 @@
 	let srcTooltip = $derived.by(() => {
 		if (data.codec === 'opus') {
 			if (appSettings.pipelineSampleRate === 48_000) return undefined;
-			return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(48_000)}`;
+			return t('node.source.resampling', { from: formatHz(appSettings.pipelineSampleRate), to: formatHz(48_000) });
 		}
 		const targetSr = data.sampleRate ?? appSettings.pipelineSampleRate;
 		if (targetSr === appSettings.pipelineSampleRate) return undefined;
-		return `Resampling: ${formatHz(appSettings.pipelineSampleRate)} → ${formatHz(targetSr)}`;
+		return t('node.source.resampling', { from: formatHz(appSettings.pipelineSampleRate), to: formatHz(targetSr) });
 	});
 
 	let rate = $state(0); // bytes/sec
@@ -77,11 +78,11 @@
 		flow.updateNodeData(id, { port });
 	}
 
-	const CODECS: { value: NetCodec; label: string; sub: string }[] = [
-		{ value: 'opus', label: 'Opus', sub: 'compressed' },
+	const CODECS = $derived<{ value: NetCodec; label: string; sub: string }[]>([
+		{ value: 'opus', label: 'Opus', sub: t('node.webrtc.compressed') },
 		{ value: 'pcm-f32', label: 'PCM', sub: 'f32' },
 		{ value: 'pcm-i16', label: 'PCM', sub: 'i16' }
-	];
+	]);
 
 	const BITRATES: { bps: number; label: string }[] = [
 		{ bps: 32_000, label: '32' },
@@ -90,11 +91,11 @@
 		{ bps: 128_000, label: '128' }
 	];
 
-	const APPS: { value: OpusApplication; label: string; sub: string }[] = [
-		{ value: 'voip', label: 'VoIP', sub: 'voice' },
-		{ value: 'audio', label: 'Audio', sub: 'music' },
-		{ value: 'low-delay', label: 'Low', sub: 'delay' }
-	];
+	const APPS = $derived<{ value: OpusApplication; label: string; sub: string }[]>([
+		{ value: 'voip', label: t('node.recording.voip'), sub: t('node.webrtc.voice') },
+		{ value: 'audio', label: t('node.recording.audioApp'), sub: t('node.webrtc.music') },
+		{ value: 'low-delay', label: t('node.recording.lowDelay'), sub: t('node.webrtc.delaySub') }
+	]);
 
 	function setCodec(codec: NetCodec) {
 		flow.updateNodeData(id, { codec });
@@ -120,9 +121,9 @@
 	});
 
 	let rateOptions = $derived([
-		{ value: 'auto', label: 'Auto' },
+		{ value: 'auto', label: t('node.sender.autoRate') },
 		...PRESET_RATES.map((r) => ({ value: String(r), label: formatKhzValue(r) })),
-		{ value: 'custom', label: 'Custom' }
+		{ value: 'custom', label: t('common.custom') }
 	]);
 
 	function setRateSelection(sel: string) {
@@ -147,11 +148,11 @@
 	}
 </script>
 
-<Wrapper label="Net Sender" icon={ArrowUpload} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
+<Wrapper label={t('node.netSender.label')} icon={ArrowUpload} accent="network" {srcTooltip} hasInput channelIo nodeId={id} maxChannels={MAX_CHANNELS}>
 	<div class="nodrag nopan flex w-48 flex-col gap-2">
 		<!-- target -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Target IP</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.sender.targetIp')}</span>
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800 placeholder:text-neutral-400"
 				placeholder="192.168.1.20"
@@ -159,7 +160,7 @@
 				onchange={(e) => setTargetIp(e.currentTarget.value)} />
 		</div>
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">UDP port</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.sender.udpPort')}</span>
 			<input
 				class="nowheel h-6 rounded border border-neutral-300 bg-neutral-50 px-1.5 font-mono text-[10px] text-neutral-800"
 				type="number"
@@ -171,7 +172,7 @@
 
 		<!-- throughput -->
 		<div class="node-spec flex items-center justify-between">
-			<span>Sending</span>
+			<span>{t('node.sender.sending')}</span>
 			<span class="tabular-nums">{formatRate(rate)}</span>
 		</div>
 
@@ -179,20 +180,20 @@
 
 		<!-- codec -->
 		<div class="flex flex-col gap-0.5">
-			<span class="font-mono text-[9px] text-neutral-500">Codec</span>
+			<span class="font-mono text-[9px] text-neutral-500">{t('node.sender.codec')}</span>
 			<SegmentedButtons options={CODECS.map((c) => ({ value: c.value, label: c.label, subtitle: c.sub }))} value={data.codec} onSelect={setCodec} />
 		</div>
 
 		{#if data.codec === 'opus'}
 			<!-- bitrate -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Bitrate (kbps)</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.sender.bitrate')}</span>
 				<SegmentedButtons options={BITRATES.map((b) => ({ value: b.bps, label: b.label }))} value={data.opusBitrate} onSelect={setBitrate} />
 			</div>
 
 			<!-- application -->
 			<div class="flex flex-col gap-0.5">
-				<span class="font-mono text-[9px] text-neutral-500">Mode</span>
+				<span class="font-mono text-[9px] text-neutral-500">{t('node.sender.mode')}</span>
 				<SegmentedButtons
 					options={APPS.map((a) => ({ value: a.value, label: a.label, subtitle: a.sub }))}
 					value={data.opusApplication}
@@ -201,7 +202,13 @@
 		{:else}
 			<!-- sample rate -->
 			<div class="flex flex-col gap-1">
-				<SegmentedButtons label="Sample rate" note="kHz" options={rateOptions} value={rateSelection} onSelect={setRateSelection} columns={3} />
+				<SegmentedButtons
+					label={t('node.sender.sampleRate')}
+					note="kHz"
+					options={rateOptions}
+					value={rateSelection}
+					onSelect={setRateSelection}
+					columns={3} />
 				{#if rateSelection === 'custom'}
 					<div class="flex items-center justify-end gap-1">
 						<span class="font-mono text-[9px] text-neutral-500">Hz</span>
@@ -210,7 +217,7 @@
 							min={8000}
 							max={384000}
 							step={100}
-							label="Sample rate"
+							label={t('node.sender.sampleRate')}
 							onchange={setCustomRate} />
 					</div>
 				{/if}

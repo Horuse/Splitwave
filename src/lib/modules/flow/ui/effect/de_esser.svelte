@@ -8,6 +8,7 @@
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
 	import { formatHz } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type DeEsserNodeType = Node<DeEsserNodeData, 'deEsser'>;
 	let { id, data }: NodeProps<DeEsserNodeType> = $props();
@@ -29,12 +30,21 @@
 	}
 </script>
 
-<Wrapper label="De-esser" icon={SoundWave} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label={t('node.deEsser.label')}
+	icon={SoundWave}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<PresetBar kind="deEsser" {data} onApply={applyPreset} />
 
 		<Slider
-			label="Frequency"
+			label={t('node.deEsser.frequency')}
 			value={data.frequency}
 			min={2000}
 			max={16000}
@@ -45,7 +55,7 @@
 			ticks={[4000, 6500, 9000, 12000]}
 			onChange={(v) => set({ frequency: v })} />
 		<Slider
-			label="Threshold"
+			label={t('node.deEsser.threshold')}
 			value={data.thresholdDb}
 			min={-80}
 			max={0}
@@ -55,7 +65,7 @@
 			ticks={[-60, -40, -20, 0]}
 			onChange={(v) => set({ thresholdDb: v })} />
 		<Slider
-			label="Ratio"
+			label={t('node.deEsser.ratio')}
 			value={data.ratio}
 			min={1}
 			max={12}
@@ -65,7 +75,7 @@
 			ticks={[2, 4, 8, 12]}
 			onChange={(v) => set({ ratio: v })} />
 		<span class="text-[9px] leading-tight text-neutral-500">
-			Compresses only the band above Frequency when it passes Threshold, so sibilance softens while the rest of the voice stays untouched.
+			{t('node.deEsser.hint')}
 		</span>
 	</div>
 </Wrapper>

@@ -5,6 +5,7 @@
 	import Wrapper from '../node.svelte';
 	import { Trending } from '$lib/components/icons';
 	import Slider from './_slider.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type GainNodeType = Node<GainNodeData, 'gain'>;
 	let { id, data }: NodeProps<GainNodeType> = $props();
@@ -30,10 +31,10 @@
 	}
 </script>
 
-<Wrapper label="Gain" icon={Trending} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper label={t('node.gain.label')} icon={Trending} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="nowheel nodrag w-48">
 		<Slider
-			label="Level"
+			label={t('node.gain.level')}
 			value={data.gainDb}
 			min={-24}
 			max={24}

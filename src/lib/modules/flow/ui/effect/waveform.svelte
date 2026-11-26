@@ -7,6 +7,7 @@
 	import { CATEGORY_TEXT } from '$lib/modules/flow/utils/accents';
 	import ChannelHandles from '../_channel_handles.svelte';
 	import WaveformScope from '$lib/components/waveform_scope.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
 
@@ -51,7 +52,7 @@
 	<div class="flex shrink-0 items-center justify-between px-3 pt-2 pb-1">
 		<span class="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-neutral-900 uppercase">
 			<Pulse class={['size-3 shrink-0', CATEGORY_TEXT.monitor]} />
-			Waveform
+			{t('node.waveform.label')}
 		</span>
 	</div>
 

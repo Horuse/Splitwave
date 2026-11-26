@@ -6,6 +6,7 @@
 	import { Balance } from '$lib/components/icons';
 	import Toggle from '$lib/components/toggle.svelte';
 	import Slider from './_slider.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type ChannelBalanceNodeType = Node<ChannelBalanceNodeData, 'channelBalance'>;
 	let { id, data }: NodeProps<ChannelBalanceNodeType> = $props();
@@ -42,7 +43,7 @@
 
 	function panLabel(): string {
 		const d = diff();
-		if (Math.abs(d) < 0.05) return 'Center';
+		if (Math.abs(d) < 0.05) return t('node.balance.center');
 		return d > 0 ? `${d.toFixed(1)} dB R` : `${(-d).toFixed(1)} dB L`;
 	}
 
@@ -53,7 +54,16 @@
 	}
 </script>
 
-<Wrapper label="Channel Balance" icon={Balance} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper
+	label={t('node.channelBalance.label')}
+	icon={Balance}
+	accent="effect"
+	hasInput
+	hasOutput
+	channelIo
+	nodeId={id}
+	bypassed={data.bypassed}
+	onBypass={toggleBypass}>
 	<div class="flex w-50 flex-col gap-1.5">
 		<div class="flex flex-col gap-0.5 text-[10px] text-neutral-1000">
 			<div class="flex items-baseline justify-between">
@@ -71,9 +81,18 @@
 			</div>
 		</div>
 
-		<Slider label="Left" value={data.leftGainDb} min={-24} max={24} step={0.1} unit=" dB" defaultValue={0} ticks={[-12, -6, 0, 6, 12]} onChange={setLeft} />
 		<Slider
-			label="Right"
+			label={t('node.balance.left')}
+			value={data.leftGainDb}
+			min={-24}
+			max={24}
+			step={0.1}
+			unit=" dB"
+			defaultValue={0}
+			ticks={[-12, -6, 0, 6, 12]}
+			onChange={setLeft} />
+		<Slider
+			label={t('node.balance.right')}
 			value={data.rightGainDb}
 			min={-24}
 			max={24}
@@ -85,9 +104,9 @@
 
 		<div class="flex items-center justify-between text-[10px] text-neutral-1000">
 			<button type="button" class="nodrag nopan rounded border border-neutral-300 bg-neutral-100 px-2 py-0.5 hover:bg-neutral-200" onclick={center}>
-				Center
+				{t('node.balance.center')}
 			</button>
-			<Toggle size="sm" label="Link inverse" checked={linked} onChange={(v) => (linked = v)} />
+			<Toggle size="sm" label={t('node.balance.linkInverse')} checked={linked} onChange={(v) => (linked = v)} />
 		</div>
 	</div>
 </Wrapper>

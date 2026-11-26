@@ -18,13 +18,14 @@
 	} from '$lib/modules/settings/stores.svelte';
 	import NumberStepper from '$lib/components/number_stepper.svelte';
 	import { formatHz } from '$lib/components/format';
+	import { LOCALES, t } from '$lib/modules/i18n';
 	import PresetsSection from './_presets_section.svelte';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
-		{ value: 'bezier', label: 'Bezier', hint: 'Smooth curve, the default' },
-		{ value: 'smoothstep', label: 'Smooth step', hint: 'Right angles, rounded' },
-		{ value: 'step', label: 'Step', hint: 'Sharp right angles' },
-		{ value: 'straight', label: 'Straight', hint: 'Direct line' }
+		{ value: 'bezier', label: 'settings.shapeBezier', hint: 'settings.shapeBezierHint' },
+		{ value: 'smoothstep', label: 'settings.shapeSmoothstep', hint: 'settings.shapeSmoothstepHint' },
+		{ value: 'step', label: 'settings.shapeStep', hint: 'settings.shapeStepHint' },
+		{ value: 'straight', label: 'settings.shapeStraight', hint: 'settings.shapeStraightHint' }
 	];
 
 	function setShape(shape: EdgeShape) {
@@ -38,9 +39,9 @@
 	}
 
 	const THEMES: { value: ThemePref; label: string }[] = [
-		{ value: 'light', label: 'Light' },
-		{ value: 'dark', label: 'Dark' },
-		{ value: 'system', label: 'System' }
+		{ value: 'light', label: 'theme.light' },
+		{ value: 'dark', label: 'theme.dark' },
+		{ value: 'system', label: 'theme.system' }
 	];
 
 	function resetAll() {
@@ -95,34 +96,34 @@
 	<div class="flex max-w-2xl flex-col gap-8">
 		<section class="flex flex-col gap-3">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Appearance</h2>
-				<p class="text-xs text-neutral-900">System follows your OS setting and changes with it.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.appearance')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.appearanceHint')}</p>
 			</div>
 
 			<div class="grid grid-cols-3 gap-2">
-				{#each THEMES as t (t.value)}
+				{#each THEMES as theme (theme.value)}
 					<button
 						type="button"
-						onclick={() => ($themeStore = t.value)}
+						onclick={() => ($themeStore = theme.value)}
 						class={[
 							'rounded-xl border px-3 py-2 text-[11px] font-medium transition-colors',
-							$themeStore === t.value
+							$themeStore === theme.value
 								? 'border-neutral-900 bg-neutral-200 text-theme'
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
 						]}>
-						{t.label}
+						{t(theme.label)}
 					</button>
 				{/each}
 			</div>
 
 			<div class="flex items-center gap-2">
-				<span class="text-xs text-neutral-900">Interface scale</span>
+				<span class="text-xs text-neutral-900">{t('settings.interfaceScale')}</span>
 				<NumberStepper
 					value={appSettings.uiScale}
 					min={UI_SCALE_MIN}
 					max={UI_SCALE_MAX}
 					step={UI_SCALE_STEP}
-					label="Interface scale"
+					label={t('settings.interfaceScale')}
 					onchange={(v) => appSettings.setUiScale(v)} />
 				<span class="font-mono text-xs text-neutral-800 tabular-nums">%</span>
 				<button
@@ -130,15 +131,35 @@
 					disabled={appSettings.uiScale === 100}
 					onclick={() => appSettings.setUiScale(100)}
 					class="rounded-lg border border-neutral-400 bg-neutral-100 px-3 py-1 text-[11px] font-medium text-neutral-1000 transition-colors hover:bg-neutral-200 disabled:opacity-40">
-					Reset
+					{t('common.reset')}
 				</button>
+			</div>
+
+			<div class="flex flex-col gap-1">
+				<span class="text-xs text-neutral-900">{t('settings.language')}</span>
+				<div class="grid grid-cols-3 gap-2">
+					{#each LOCALES as locale (locale.id)}
+						<button
+							type="button"
+							onclick={() => appSettings.setLanguage(locale.id)}
+							class={[
+								'rounded-xl border px-3 py-2 text-[11px] font-medium transition-colors',
+								appSettings.language === locale.id
+									? 'border-neutral-900 bg-neutral-200 text-theme'
+									: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
+							]}>
+							<span lang={locale.id}>{locale.label}</span>
+						</button>
+					{/each}
+				</div>
+				<p class="text-xs text-neutral-900">{t('settings.languageHint')}</p>
 			</div>
 		</section>
 
 		<section class="flex flex-col gap-3">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Cable shape</h2>
-				<p class="text-xs text-neutral-900">How connections are routed between nodes.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.cableShape')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.cableShapeHint')}</p>
 			</div>
 
 			<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -146,7 +167,7 @@
 					<button
 						type="button"
 						onclick={() => setShape(s.value)}
-						title={s.hint}
+						title={t(s.hint)}
 						class={[
 							'flex flex-col items-center gap-2 rounded-xl border p-3 transition-colors',
 							edgeSettings.shape === s.value
@@ -154,7 +175,7 @@
 								: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
 						]}>
 						<EdgeShapeIcon shape={s.value} animated={edgeSettings.animated} />
-						<span class="text-[11px] font-medium">{s.label}</span>
+						<span class="text-[11px] font-medium">{t(s.label)}</span>
 					</button>
 				{/each}
 			</div>
@@ -162,30 +183,30 @@
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Rendering</h2>
-				<p class="text-xs text-neutral-900">Turn these off first if the canvas drops frames on a large graph.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.rendering')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.renderingHint')}</p>
 			</div>
 
-			{#each [{ key: 'animated' as const, label: 'Animate cables', hint: 'Marching dashes along every connection. Runs a CSS animation per edge.' }, { key: 'pins' as const, label: 'Connector pins', hint: 'Draws a plug at each end of a cable.' }] as row (row.key)}
-				<Toggle checked={edgeSettings[row.key]} label={row.label} hint={row.hint} onChange={() => toggle(row.key)} />
+			{#each [{ key: 'animated' as const, label: 'settings.animateCables', hint: 'settings.animateCablesHint' }, { key: 'pins' as const, label: 'settings.connectorPins', hint: 'settings.connectorPinsHint' }] as row (row.key)}
+				<Toggle checked={edgeSettings[row.key]} label={t(row.label)} hint={t(row.hint)} onChange={() => toggle(row.key)} />
 			{/each}
 		</section>
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Canvas</h2>
-				<p class="text-xs text-neutral-900">Where nodes land when you drag them.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.canvas')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.canvasHint')}</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.snapToGrid}
-				label="Snap to grid"
-				hint="Nodes align to a fixed grid instead of moving freely."
+				label={t('settings.snapToGrid')}
+				hint={t('settings.snapToGridHint')}
 				onChange={() => setApp('snapToGrid', !appSettings.snapToGrid)} />
 
 			{#if appSettings.snapToGrid}
 				<div class="flex items-center gap-2 pl-1">
-					<span class="text-xs text-neutral-900">Grid size</span>
+					<span class="text-xs text-neutral-900">{t('settings.gridSize')}</span>
 					{#each GRID_SIZES as size (size)}
 						<button
 							type="button"
@@ -205,8 +226,8 @@
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">History</h2>
-				<p class="text-xs text-neutral-900">Snapshots kept per pipeline. Older ones are dropped as new ones arrive.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.history')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.historyHint')}</p>
 			</div>
 
 			<div class="flex items-center gap-2">
@@ -228,43 +249,40 @@
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Updates</h2>
-				<p class="text-xs text-neutral-900">Checking from the menu always works, whatever this is set to.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.updates')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.updatesHint')}</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.checkUpdatesOnLaunch}
-				label="Check on launch"
-				hint="Looks for a new version each time the app starts."
+				label={t('settings.checkOnLaunch')}
+				hint={t('settings.checkOnLaunchHint')}
 				onChange={() => setApp('checkUpdatesOnLaunch', !appSettings.checkUpdatesOnLaunch)} />
 
 			<Toggle
 				checked={appSettings.includePreReleases}
-				label="Receive pre-release updates (Beta / RC)"
-				hint="Download preview versions (beta, RC, alpha) with the newest features and bug fixes before general release."
+				label={t('settings.preReleases')}
+				hint={t('settings.preReleasesHint')}
 				onChange={() => setApp('includePreReleases', !appSettings.includePreReleases)} />
 		</section>
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Recording</h2>
-				<p class="text-xs text-neutral-900">Guards against accidentally erasing an existing recording in Overwrite mode.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.recording')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.recordingHint')}</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.confirmOverwriteChanges}
-				label="Confirm changes in Overwrite mode"
-				hint="Asks for confirmation before changing format, channels or sample rate of an overwrite recording. Can also be skipped per file."
+				label={t('settings.confirmOverwrite')}
+				hint={t('settings.confirmOverwriteHint')}
 				onChange={() => setApp('confirmOverwriteChanges', !appSettings.confirmOverwriteChanges)} />
 		</section>
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Pipeline sample rate</h2>
-				<p class="text-xs text-neutral-900">
-					Working sample rate for mixing and DSP. Matching this rate across your input and output devices ensures bit-transparent audio with zero
-					resampling artifacts, preserving low-level details and preventing intersample clipping.
-				</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.pipelineRate')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.pipelineRateHint')}</p>
 			</div>
 
 			<div class="flex flex-wrap items-center gap-2">
@@ -293,53 +311,53 @@
 							? 'border-neutral-900 bg-neutral-200 text-theme'
 							: 'border-neutral-400 bg-neutral-100 text-neutral-1000 hover:bg-neutral-200'
 					]}>
-					Custom
+					{t('common.custom')}
 				</button>
 			</div>
 
 			{#if customRateSelected || !PIPELINE_SAMPLE_RATE_PRESETS.includes(appSettings.pipelineSampleRate as any)}
 				<div class="flex items-center gap-2 pt-1 pl-1">
-					<span class="text-xs text-neutral-900">Custom frequency</span>
+					<span class="text-xs text-neutral-900">{t('settings.customRate')}</span>
 					<NumberStepper
 						value={appSettings.pipelineSampleRate}
 						min={8000}
 						max={384000}
 						step={1}
-						label="Custom sample rate"
+						label={t('settings.customSampleRate')}
 						onchange={(v) => setApp('pipelineSampleRate', Math.min(Math.max(Math.round(v) || 48000, 8000), 384000))} />
-					<span class="font-mono text-xs text-neutral-800 tabular-nums">Hz (step: 1 Hz)</span>
+					<span class="font-mono text-xs text-neutral-800 tabular-nums">{t('settings.customRateHint')}</span>
 				</div>
 			{/if}
 		</section>
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Device disconnection</h2>
-				<p class="text-xs text-neutral-900">What happens when an audio device disconnects while a pipeline is running.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.disconnection')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.disconnectionHint')}</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.keepRunningOnDisconnect}
-				label="Keep pipeline running on disconnect"
-				hint="Streams silence to outputs and waits for the device to reconnect. When disabled, disconnecting a device stops the pipeline immediately."
+				label={t('settings.keepRunning')}
+				hint={t('settings.keepRunningHint')}
 				onChange={() => setApp('keepRunningOnDisconnect', !appSettings.keepRunningOnDisconnect)} />
 		</section>
 
 		<section class="flex flex-col gap-2">
 			<div>
-				<h2 class="text-sm font-semibold text-theme">Startup</h2>
-				<p class="text-xs text-neutral-900">Registers Splitwave with your OS's login items.</p>
+				<h2 class="text-sm font-semibold text-theme">{t('settings.startup')}</h2>
+				<p class="text-xs text-neutral-900">{t('settings.startupHint')}</p>
 			</div>
 
 			<Toggle
 				checked={appSettings.launchOnStartup}
-				label="Launch on system startup"
-				hint="Starts Splitwave automatically when you log in."
+				label={t('settings.launchOnStartup')}
+				hint={t('settings.launchOnStartupHint')}
 				onChange={() => setLaunchOnStartup(!appSettings.launchOnStartup)} />
 		</section>
 
 		<PresetsSection />
 
-		<button type="button" class="button-main primary self-start text-xs" onclick={() => resetAll()}> Reset to defaults </button>
+		<button type="button" class="button-main primary self-start text-xs" onclick={() => resetAll()}> {t('settings.resetAll')} </button>
 	</div>
 </div>

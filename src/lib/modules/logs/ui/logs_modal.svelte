@@ -3,6 +3,7 @@
 	import CopyButton from '$lib/components/copy_button.svelte';
 	import { logStore } from '../stores.svelte';
 	import type { LogEntry } from '../types';
+	import { t } from '$lib/modules/i18n';
 
 	const LEVELS = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'];
 
@@ -65,7 +66,7 @@
 	});
 </script>
 
-<ModalShell title="Logs" size="xl" onClose={() => (logStore.open = false)}>
+<ModalShell title={t('logs.title')} size="xl" onClose={() => (logStore.open = false)}>
 	{#snippet badge()}
 		<span class="rounded-md bg-neutral-200 px-2 py-0.5 font-mono text-[10px] text-neutral-1000">
 			{filtered.length}
@@ -77,7 +78,7 @@
 			<input
 				bind:value={query}
 				type="text"
-				placeholder="Filter…"
+				placeholder={t('common.filter')}
 				spellcheck="false"
 				class="flex-1 rounded-md border border-neutral-400 bg-neutral-100 px-2 py-1 text-sm outline-none" />
 			<div class="flex items-center gap-1">
@@ -114,14 +115,14 @@
 					</span>
 				</div>
 			{:else}
-				<p class="p-2 text-neutral-900 italic">No log lines.</p>
+				<p class="p-2 text-neutral-900 italic">{t('logs.empty')}</p>
 			{/each}
 		</div>
 	</div>
 
 	{#snippet footer()}
-		<button type="button" class="button-main primary rounded-lg" onclick={() => logStore.clear()}> Clear </button>
-		<CopyButton text={() => asText(filtered)} label="Copy" />
-		<button type="button" class="button-main green rounded-lg" onclick={() => (logStore.open = false)}> Close </button>
+		<button type="button" class="button-main primary rounded-lg" onclick={() => logStore.clear()}> {t('logs.clear')} </button>
+		<CopyButton text={() => asText(filtered)} label={t('common.copy')} />
+		<button type="button" class="button-main green rounded-lg" onclick={() => (logStore.open = false)}> {t('common.close')} </button>
 	{/snippet}
 </ModalShell>

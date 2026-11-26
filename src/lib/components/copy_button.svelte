@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Copy, Checkmark } from '$lib/components/icons';
+	import { t } from '$lib/modules/i18n';
 
 	let {
 		text,
-		label = 'Copy',
-		copiedLabel = 'Copied!',
+		label,
+		copiedLabel,
 		class: className = 'button-main primary gap-3 rounded-lg'
 	}: {
 		text: string | (() => string);
@@ -29,9 +30,9 @@
 <button type="button" class={className} onclick={copy}>
 	{#if copied}
 		<Checkmark class="size-4" />
-		{copiedLabel}
+		{copiedLabel ?? t('common.copied')}
 	{:else}
 		<Copy class="size-4" />
-		{label}
+		{label ?? t('common.copy')}
 	{/if}
 </button>

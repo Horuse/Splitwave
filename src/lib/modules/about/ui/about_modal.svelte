@@ -2,6 +2,7 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { modalManager, type ModalBaseProps } from '$lib/modules/overlay/modal';
 	import { getCachedAppInfo, loadAppInfo } from '$lib/modules/app_info';
+	import { t } from '$lib/modules/i18n';
 
 	let { modalId }: ModalBaseProps = $props();
 
@@ -15,10 +16,10 @@
 	});
 
 	const links = [
-		{ label: 'Website', url: 'https://splitwave.app/' },
-		{ label: 'GitHub', url: `https://github.com/${REPO}` },
-		{ label: 'Issues', url: `https://github.com/${REPO}/issues` },
-		{ label: 'Discussions', url: `https://github.com/${REPO}/discussions` }
+		{ label: 'about.website', url: 'https://splitwave.app/' },
+		{ label: 'about.github', url: `https://github.com/${REPO}` },
+		{ label: 'about.issues', url: `https://github.com/${REPO}/issues` },
+		{ label: 'about.discussions', url: `https://github.com/${REPO}/discussions` }
 	];
 
 	async function open(url: string) {
@@ -44,8 +45,7 @@
 	</div>
 
 	<p class="max-w-md text-center text-sm leading-relaxed text-neutral-900">
-		Audio routing for macOS, Linux, and Windows. Build a node graph of inputs, effects, and outputs; the engine processes audio in real time and writes to
-		files in any of six formats.
+		{t('about.description')}
 	</p>
 
 	<div class="grid w-full grid-cols-2 gap-2">
@@ -54,18 +54,18 @@
 				type="button"
 				class="rounded-xl border border-neutral-400 bg-neutral-100 px-4 py-2 text-xs font-medium text-neutral-1000 transition-colors hover:bg-neutral-200 hover:text-theme"
 				onclick={() => open(link.url)}>
-				{link.label}
+				{t(link.label)}
 			</button>
 		{/each}
 	</div>
 
-	<button type="button" class="button-main primary rounded-lg" onclick={close}>Close</button>
+	<button type="button" class="button-main primary rounded-lg" onclick={close}>{t('common.close')}</button>
 
 	<div class="flex flex-col items-center gap-1 text-center text-[10px] text-neutral-900">
 		<p>
-			Built with Tauri, Svelte, Rust ·
+			{t('about.builtWith')}
 			<button type="button" class="underline hover:text-neutral-1000" onclick={() => open(`https://github.com/${REPO}/blob/main/LICENSE`)}
-				>MIT License</button>
+				>{t('about.license')}</button>
 		</p>
 		<a href="mailto:support@splitwave.app" class="underline hover:text-neutral-1000"> support@splitwave.app </a>
 	</div>

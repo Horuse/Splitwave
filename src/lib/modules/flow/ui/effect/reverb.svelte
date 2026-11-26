@@ -7,6 +7,7 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import Slider from './_slider.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	type ReverbNodeType = Node<ReverbNodeData, 'reverb'>;
 	let { id, data }: NodeProps<ReverbNodeType> = $props();
@@ -46,8 +47,8 @@
 		pts.push(`0,${H}`);
 		pts.push(`3,0`);
 		for (let i = 1; i <= N; i++) {
-			const t = (i / N) * 3;
-			const amp = Math.exp(-decayRate * t);
+			const time = (i / N) * 3;
+			const amp = Math.exp(-decayRate * time);
 			const y = H - amp * H;
 			const x = 3 + (i / N) * (W - 3);
 			pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
@@ -77,8 +78,8 @@
 		const upper: string[] = [];
 		const lower: string[] = [];
 		for (let i = 0; i <= N; i++) {
-			const t = (i / N) * 3;
-			const amp = Math.exp(-decayRate * t);
+			const time = (i / N) * 3;
+			const amp = Math.exp(-decayRate * time);
 			const x = 3 + (i / N) * (W - 3);
 			const cy = H - amp * H;
 			upper.push(`${x.toFixed(1)},${Math.max(0, cy - amp * H * spread).toFixed(1)}`);
@@ -88,7 +89,7 @@
 	});
 </script>
 
-<Wrapper label="Reverb" icon={Reverb} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper label={t('node.reverb.label')} icon={Reverb} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex flex-col gap-2">
 		<PresetBar kind="reverb" {data} onApply={applyPreset} />
 
@@ -107,14 +108,14 @@
 				{/each}
 				<polyline points={envelopePath()} fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round" />
 				<text x={W - 2} y={H - 2} font-size="7" fill="currentColor" class="text-neutral-500" text-anchor="end">
-					wet {Math.round(data.mix * 100)}%
+					{t('node.reverb.wet', { pct: Math.round(data.mix * 100) })}
 				</text>
 			</svg>
 		</div>
 
 		<div class="flex w-52 flex-col gap-1.5">
 			<Slider
-				label="Room"
+				label={t('node.reverb.room')}
 				value={data.roomSize}
 				min={0}
 				max={1}
@@ -124,7 +125,7 @@
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('roomSize', v)} />
 			<Slider
-				label="Damping"
+				label={t('node.reverb.damping')}
 				value={data.damping}
 				min={0}
 				max={1}
@@ -134,7 +135,7 @@
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('damping', v)} />
 			<Slider
-				label="Width"
+				label={t('node.reverb.width')}
 				value={data.width}
 				min={0}
 				max={1}
@@ -144,7 +145,7 @@
 				ticks={[0.25, 0.5, 0.75]}
 				onChange={(v) => patch('width', v)} />
 			<Slider
-				label="Mix"
+				label={t('node.reverb.mix')}
 				value={data.mix}
 				min={0}
 				max={1}

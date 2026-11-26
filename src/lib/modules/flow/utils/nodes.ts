@@ -30,6 +30,7 @@ import {
 	Wand as WandIcon
 } from '$lib/components/icons';
 import type { AnyNodeData, NodeCategory, NodeDataMap, NodeKind } from '$lib/modules/pipeline/types';
+import { t } from '$lib/modules/i18n';
 import Microphone from '../ui/input/microphone.svelte';
 import SystemAudio from '../ui/input/system_audio.svelte';
 import AppAudio from '../ui/input/app_audio.svelte';
@@ -83,8 +84,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	microphone: entry<'microphone'>({
 		kind: 'microphone',
 		category: 'input',
-		label: 'Microphone',
-		description: 'Capture from a physical input (built-in mic, USB, audio interface).',
+		get label() {
+			return t('node.microphone.label');
+		},
+		get description() {
+			return t('node.microphone.description');
+		},
 		component: Microphone,
 		icon: MicIcon,
 		defaultData: DEFAULT_NODE_DATA['microphone']
@@ -92,8 +97,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	systemAudio: entry<'systemAudio'>({
 		kind: 'systemAudio',
 		category: 'input',
-		label: 'System Audio',
-		description: 'Capture everything the system is playing.',
+		get label() {
+			return t('node.systemAudio.label');
+		},
+		get description() {
+			return t('node.systemAudio.description');
+		},
 		component: SystemAudio,
 		icon: SoundWaveIcon,
 		defaultData: DEFAULT_NODE_DATA['systemAudio']
@@ -101,8 +110,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	appAudio: entry<'appAudio'>({
 		kind: 'appAudio',
 		category: 'input',
-		label: 'App Audio',
-		description: 'Capture audio from a single running application.',
+		get label() {
+			return t('node.appAudio.label');
+		},
+		get description() {
+			return t('node.appAudio.description');
+		},
 		component: AppAudio,
 		icon: AppsIcon,
 		defaultData: DEFAULT_NODE_DATA['appAudio']
@@ -110,8 +123,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	audioFile: entry<'audioFile'>({
 		kind: 'audioFile',
 		category: 'input',
-		label: 'Audio File',
-		description: 'Play a WAV file as a source. With no live inputs the pipeline runs faster than real time.',
+		get label() {
+			return t('node.audioFile.label');
+		},
+		get description() {
+			return t('node.audioFile.description');
+		},
 		component: AudioFile,
 		icon: MusicNoteIcon,
 		defaultData: DEFAULT_NODE_DATA['audioFile']
@@ -119,8 +136,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	speaker: entry<'speaker'>({
 		kind: 'speaker',
 		category: 'output',
-		label: 'Speaker',
-		description: 'Route audio to a physical output (built-in speakers, headphones, interface).',
+		get label() {
+			return t('node.speaker.label');
+		},
+		get description() {
+			return t('node.speaker.description');
+		},
 		component: Speaker,
 		icon: SpeakerIcon,
 		defaultData: DEFAULT_NODE_DATA['speaker']
@@ -128,8 +149,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	fileRecording: entry<'fileRecording'>({
 		kind: 'fileRecording',
 		category: 'output',
-		label: 'File Recording',
-		description: 'Record to WAV / FLAC / AIFF (lossless), or Opus / MP3 / AAC (lossy; AAC macOS-only).',
+		get label() {
+			return t('node.fileRecording.label');
+		},
+		get description() {
+			return t('node.fileRecording.description');
+		},
 		component: FileRecording,
 		icon: FileRecordIcon,
 		defaultData: DEFAULT_NODE_DATA['fileRecording']
@@ -137,8 +162,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	gain: entry<'gain'>({
 		kind: 'gain',
 		category: 'effect',
-		label: 'Gain',
-		description: 'Linear amplitude scaling in dB.',
+		get label() {
+			return t('node.gain.label');
+		},
+		get description() {
+			return t('node.gain.description');
+		},
 		component: Gain,
 		icon: TrendingIcon,
 		defaultData: DEFAULT_NODE_DATA['gain']
@@ -146,8 +175,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	mute: entry<'mute'>({
 		kind: 'mute',
 		category: 'effect',
-		label: 'Mute',
-		description: 'Silence the signal.',
+		get label() {
+			return t('node.mute.label');
+		},
+		get description() {
+			return t('node.mute.description');
+		},
 		component: Mute,
 		icon: SpeakerMuteIcon,
 		defaultData: DEFAULT_NODE_DATA['mute']
@@ -155,8 +188,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	channelBalance: entry<'channelBalance'>({
 		kind: 'channelBalance',
 		category: 'effect',
-		label: 'Channel Balance',
-		description: 'Separate gain for left and right channels.',
+		get label() {
+			return t('node.channelBalance.label');
+		},
+		get description() {
+			return t('node.channelBalance.description');
+		},
 		component: ChannelBalance,
 		icon: BalanceIcon,
 		defaultData: DEFAULT_NODE_DATA['channelBalance']
@@ -164,8 +201,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	saturator: entry<'saturator'>({
 		kind: 'saturator',
 		category: 'effect',
-		label: 'Saturator',
-		description: 'Soft tanh saturator — smooth distortion, no hard clipping. Not a brick-wall limiter.',
+		get label() {
+			return t('node.saturator.label');
+		},
+		get description() {
+			return t('node.saturator.description');
+		},
 		component: Saturator,
 		icon: SaturatorIcon,
 		defaultData: DEFAULT_NODE_DATA['saturator']
@@ -173,8 +214,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	eq: entry<'eq'>({
 		kind: 'eq',
 		category: 'effect',
-		label: 'EQ',
-		description: '10-band graphic EQ at ISO octave centres (32 Hz → 16 kHz).',
+		get label() {
+			return t('node.eq.label');
+		},
+		get description() {
+			return t('node.eq.description');
+		},
 		component: Eq,
 		icon: SlidersIcon,
 		defaultData: DEFAULT_NODE_DATA['eq']
@@ -182,8 +227,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	levelMeter: entry<'levelMeter'>({
 		kind: 'levelMeter',
 		category: 'monitor',
-		label: 'Level Meter',
-		description: 'Live L/R peak + RMS meter. Works standalone or anywhere in a chain.',
+		get label() {
+			return t('node.levelMeter.label');
+		},
+		get description() {
+			return t('node.levelMeter.description');
+		},
 		component: LevelMeter,
 		icon: DataBarIcon,
 		defaultData: DEFAULT_NODE_DATA['levelMeter']
@@ -191,8 +240,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	lufsMeter: entry<'lufsMeter'>({
 		kind: 'lufsMeter',
 		category: 'monitor',
-		label: 'Loudness',
-		description: 'EBU R128 loudness — M/S/I LUFS, True Peak, Loudness Range, PLR, Dynamic Range.',
+		get label() {
+			return t('node.lufsMeter.label');
+		},
+		get description() {
+			return t('node.lufsMeter.description');
+		},
 		component: LufsMeter,
 		icon: GaugeIcon,
 		defaultData: DEFAULT_NODE_DATA['lufsMeter']
@@ -200,8 +253,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	waveform: entry<'waveform'>({
 		kind: 'waveform',
 		category: 'monitor',
-		label: 'Waveform',
-		description: 'Live waveform — filled min/max envelope for L and R channels.',
+		get label() {
+			return t('node.waveform.label');
+		},
+		get description() {
+			return t('node.waveform.description');
+		},
 		component: Waveform,
 		icon: PulseIcon,
 		defaultData: DEFAULT_NODE_DATA['waveform'],
@@ -210,8 +267,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	spectrum: entry<'spectrum'>({
 		kind: 'spectrum',
 		category: 'monitor',
-		label: 'Spectrum',
-		description: 'Live spectrum analyzer — log-frequency FFT magnitude with a peak-hold fall-off.',
+		get label() {
+			return t('node.spectrum.label');
+		},
+		get description() {
+			return t('node.spectrum.description');
+		},
 		component: Spectrum,
 		icon: DataBarIcon,
 		defaultData: DEFAULT_NODE_DATA['spectrum']
@@ -219,8 +280,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	limiter: entry<'limiter'>({
 		kind: 'limiter',
 		category: 'effect',
-		label: 'Limiter',
-		description: 'Brick-wall limiter with look-ahead — catches peaks before they emerge, instant attack with exponential release.',
+		get label() {
+			return t('node.limiter.label');
+		},
+		get description() {
+			return t('node.limiter.description');
+		},
 		component: Limiter,
 		icon: LimiterIcon,
 		defaultData: DEFAULT_NODE_DATA['limiter']
@@ -228,8 +293,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	compressor: entry<'compressor'>({
 		kind: 'compressor',
 		category: 'effect',
-		label: 'Compressor',
-		description: 'Threshold/ratio compressor with soft knee, separate attack/release, and makeup gain.',
+		get label() {
+			return t('node.compressor.label');
+		},
+		get description() {
+			return t('node.compressor.description');
+		},
 		component: Compressor,
 		icon: CompressorIcon,
 		defaultData: DEFAULT_NODE_DATA['compressor']
@@ -237,8 +306,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	noiseGate: entry<'noiseGate'>({
 		kind: 'noiseGate',
 		category: 'effect',
-		label: 'Noise Gate',
-		description: 'Closes when input drops below threshold; hold timer prevents chatter on borderline signals.',
+		get label() {
+			return t('node.noiseGate.label');
+		},
+		get description() {
+			return t('node.noiseGate.description');
+		},
 		component: NoiseGate,
 		icon: NoiseGateIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseGate']
@@ -246,8 +319,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	delay: entry<'delay'>({
 		kind: 'delay',
 		category: 'effect',
-		label: 'Delay',
-		description: 'Stereo delay (1-2000 ms) with feedback and dry/wet mix.',
+		get label() {
+			return t('node.delay.label');
+		},
+		get description() {
+			return t('node.delay.description');
+		},
 		component: Delay,
 		icon: DelayIcon,
 		defaultData: DEFAULT_NODE_DATA['delay']
@@ -255,8 +332,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	reverb: entry<'reverb'>({
 		kind: 'reverb',
 		category: 'effect',
-		label: 'Reverb',
-		description: 'Freeverb algorithmic reverb — room size, damping, stereo width, dry/wet mix.',
+		get label() {
+			return t('node.reverb.label');
+		},
+		get description() {
+			return t('node.reverb.description');
+		},
 		component: Reverb,
 		icon: ReverbIcon,
 		defaultData: DEFAULT_NODE_DATA['reverb']
@@ -264,8 +345,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	noiseSuppressor: entry<'noiseSuppressor'>({
 		kind: 'noiseSuppressor',
 		category: 'effect',
-		label: 'Noise Suppressor',
-		description: 'DeepFilterNet deep-learning speech denoise. Model runs at 48 kHz mono; resampled and downmixed for you.',
+		get label() {
+			return t('node.noiseSuppressor.label');
+		},
+		get description() {
+			return t('node.noiseSuppressor.description');
+		},
 		component: NoiseSuppressor,
 		icon: WandIcon,
 		defaultData: DEFAULT_NODE_DATA['noiseSuppressor']
@@ -273,8 +358,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	declick: entry<'declick'>({
 		kind: 'declick',
 		category: 'effect',
-		label: 'Declick',
-		description: 'Removes short impulsive clicks and crackle — median detector replaces spikes, clean audio passes through.',
+		get label() {
+			return t('node.declick.label');
+		},
+		get description() {
+			return t('node.declick.description');
+		},
 		component: Declick,
 		icon: BackspaceIcon,
 		defaultData: DEFAULT_NODE_DATA['declick']
@@ -282,8 +371,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	deEsser: entry<'deEsser'>({
 		kind: 'deEsser',
 		category: 'effect',
-		label: 'De-esser',
-		description: 'Tames harsh "s"/"sh" sibilance — splits off the high band and compresses only that, leaving the voice body untouched.',
+		get label() {
+			return t('node.deEsser.label');
+		},
+		get description() {
+			return t('node.deEsser.description');
+		},
 		component: DeEsser,
 		icon: SoundWaveIcon,
 		defaultData: DEFAULT_NODE_DATA['deEsser']
@@ -291,8 +384,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	plugin: entry<'plugin'>({
 		kind: 'plugin',
 		category: 'effect',
-		label: 'Plugin',
-		description: 'Host a third-party CLAP audio plugin as a node — scan installed plugins and route channels through it like any effect.',
+		get label() {
+			return t('node.plugin.label');
+		},
+		get description() {
+			return t('node.plugin.description');
+		},
 		component: Plugin,
 		icon: PlugIcon,
 		defaultData: DEFAULT_NODE_DATA['plugin']
@@ -300,8 +397,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	webRtcCollaborator: entry<'webRtcCollaborator'>({
 		kind: 'webRtcCollaborator',
 		category: 'network',
-		label: 'WebRTC',
-		description: 'Collaborate over WebRTC — send this signal to remote peers and route each peer back into the graph.',
+		get label() {
+			return t('node.webRtcCollaborator.label');
+		},
+		get description() {
+			return t('node.webRtcCollaborator.description');
+		},
 		component: WebRtcCollaborator,
 		icon: PeopleTeamIcon,
 		defaultData: DEFAULT_NODE_DATA['webRtcCollaborator']
@@ -309,8 +410,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	netReceiver: entry<'netReceiver'>({
 		kind: 'netReceiver',
 		category: 'network',
-		label: 'Net Receiver',
-		description: 'Receive audio over UDP from a direct IP sender (Opus or raw PCM).',
+		get label() {
+			return t('node.netReceiver.label');
+		},
+		get description() {
+			return t('node.netReceiver.description');
+		},
 		component: NetReceiver,
 		icon: ArrowDownloadIcon,
 		defaultData: DEFAULT_NODE_DATA['netReceiver']
@@ -318,8 +423,12 @@ export const registry: Record<NodeKind, NodeRegistryEntry> = {
 	netSender: entry<'netSender'>({
 		kind: 'netSender',
 		category: 'network',
-		label: 'Net Sender',
-		description: 'Send audio over UDP to a direct IP target (Opus or raw PCM).',
+		get label() {
+			return t('node.netSender.label');
+		},
+		get description() {
+			return t('node.netSender.description');
+		},
 		component: NetSender,
 		icon: ArrowUploadIcon,
 		defaultData: DEFAULT_NODE_DATA['netSender']
@@ -333,11 +442,21 @@ export const kinds: NodeKind[] = Object.keys(registry) as NodeKind[];
 export const categoryOrder: NodeCategory[] = ['input', 'output', 'monitor', 'network', 'effect'];
 
 export const categoryLabel: Record<NodeCategory, string> = {
-	input: 'Inputs',
-	output: 'Outputs',
-	monitor: 'Monitors',
-	network: 'Network',
-	effect: 'Effects'
+	get input() {
+		return t('category.input');
+	},
+	get output() {
+		return t('category.output');
+	},
+	get monitor() {
+		return t('category.monitor');
+	},
+	get network() {
+		return t('category.network');
+	},
+	get effect() {
+		return t('category.effect');
+	}
 };
 
 export const kindsByCategory: Record<NodeCategory, NodeKind[]> = categoryOrder.reduce(

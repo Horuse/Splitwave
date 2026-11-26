@@ -7,6 +7,7 @@
 	import type { NodeCategory } from '$lib/modules/pipeline/types';
 	import { ArrowSwap } from '$lib/components/icons';
 	import { Tooltip } from '$lib/modules/overlay/ui';
+	import { t } from '$lib/modules/i18n';
 	import ChannelHandles from './_channel_handles.svelte';
 
 	const isPreview = getContext(PREVIEW_CTX) === true;
@@ -104,9 +105,9 @@
 							? 'border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200'
 							: 'border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-200'
 					]}
-					title={bypassed ? 'Bypassed -- click to engage' : 'Engaged -- click to bypass'}
+					title={bypassed ? t('flow.nodeBypassedHint') : t('flow.nodeEngagedHint')}
 					onclick={onBypass}>
-					{bypassed ? 'BYP' : 'ON'}
+					{bypassed ? t('flow.badgeBypassed') : t('flow.badgeEngaged')}
 				</button>
 			{/if}
 		</div>

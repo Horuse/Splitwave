@@ -1,29 +1,22 @@
 <script lang="ts">
 	import Header from '$lib/components/layout/header.svelte';
 	import HeaderNav from '$lib/components/layout/header_nav.svelte';
+	import { t } from '$lib/modules/i18n';
 
 	const ENTRIES = [
-		{
-			title: 'Multi-select channels with Option',
-			video: '/wiki/alt_connect.mp4',
-			body: 'Hold Option (Alt on Windows/Linux) while picking channels to select several at once, then drag them together as one connection.'
-		},
-		{
-			title: 'Select, copy and paste nodes',
-			video: '/wiki/ctrl_copy_paste.mp4',
-			body: 'Press Ctrl+A (Cmd+A) to select every node on the canvas. Copy with Ctrl+C and paste with Ctrl+V (Cmd on macOS) to duplicate the selection.'
-		},
-		{
-			title: 'Box select with Shift',
-			video: '/wiki/shift_select.mp4',
-			body: 'Hold Shift to switch the canvas into box-select mode, then drag a rectangle over the nodes you want to select.'
-		},
-		{
-			title: 'Delete multiple connections at once',
-			video: '/wiki/shift_delete_edges.mp4',
-			body: 'Hold Shift and click each connection you want to remove, then press Delete to drop them all at once.'
-		}
+		{ key: 'multiselect', video: '/wiki/alt_connect.mp4' },
+		{ key: 'copyPaste', video: '/wiki/ctrl_copy_paste.mp4' },
+		{ key: 'boxSelect', video: '/wiki/shift_select.mp4' },
+		{ key: 'deleteEdges', video: '/wiki/shift_delete_edges.mp4' }
 	];
+
+	const entries = $derived(
+		ENTRIES.map((entry) => ({
+			...entry,
+			title: t(`wiki.${entry.key}.title`),
+			body: t(`wiki.${entry.key}.body`)
+		}))
+	);
 </script>
 
 <Header>
@@ -34,7 +27,7 @@
 
 <div class="min-h-0 flex-1 overflow-y-auto p-8">
 	<div class="flex max-w-2xl flex-col gap-8">
-		{#each ENTRIES as entry (entry.title)}
+		{#each entries as entry (entry.key)}
 			<section class="flex flex-col gap-3">
 				<div>
 					<h2 class="text-sm font-semibold text-theme">{entry.title}</h2>

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { arch, type as osType } from '@tauri-apps/plugin-os';
 import { updaterStore } from './stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
+import { t } from '$lib/modules/i18n';
 
 // Shape returned by the `check_for_updates` command; mirrors the plugin's
 // `check` metadata so `new Update(...)` can wrap it unchanged.
@@ -51,7 +52,7 @@ function osLabel(os: string): string {
 }
 
 function noBuildMessage(): string {
-	return `Unfortunately, the latest version has no build for ${arch()} on ${osLabel(osType())}. It looks like you built it yourself, or this platform is no longer supported.`;
+	return t('updater.noBuild', { arch: arch(), os: osLabel(osType()) });
 }
 
 async function resolveUpdateEndpoint(): Promise<string | null> {

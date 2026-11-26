@@ -7,6 +7,7 @@
 	import { PresetBar } from '$lib/modules/preset/ui';
 	import type { PresetData } from '$lib/modules/preset';
 	import { formatFreq, formatGain } from '$lib/components/format';
+	import { t } from '$lib/modules/i18n';
 
 	type EqNodeType = Node<EqNodeData, 'eq'>;
 	let { id, data }: NodeProps<EqNodeType> = $props();
@@ -79,9 +80,9 @@
 		const lnMax = Math.log(F_MAX);
 		let d = '';
 		for (let i = 0; i < POINTS; i++) {
-			const t = i / (POINTS - 1);
-			const f = Math.exp(lnMin + t * (lnMax - lnMin));
-			const x = t * CURVE_W;
+			const frac = i / (POINTS - 1);
+			const f = Math.exp(lnMin + frac * (lnMax - lnMin));
+			const x = frac * CURVE_W;
 			const y = dbToY(combinedDbAt(f));
 			d += `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)} `;
 		}
@@ -163,7 +164,7 @@
 	}
 </script>
 
-<Wrapper label="EQ" icon={Sliders} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
+<Wrapper label={t('node.eq.label')} icon={Sliders} accent="effect" hasInput hasOutput channelIo nodeId={id} bypassed={data.bypassed} onBypass={toggleBypass}>
 	<div class="flex w-72 flex-col gap-1.5">
 		<PresetBar kind="eq" {data} onApply={applyPreset} />
 
@@ -171,7 +172,7 @@
 			viewBox="0 0 {CURVE_W} {CURVE_H}"
 			class="h-16 w-full rounded border border-neutral-300 bg-neutral-100"
 			role="img"
-			aria-label="EQ frequency response">
+			aria-label={t('node.eq.response')}>
 			{#each dbGrid as db (db)}
 				<line
 					x1="0"

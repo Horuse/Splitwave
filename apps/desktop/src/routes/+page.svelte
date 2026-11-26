@@ -85,13 +85,7 @@
 		if (busy) return;
 		busy = id;
 		try {
-			if (audioStore.isRunning) {
-				await audioStore.deactivatePipeline();
-			} else {
-				const p = await pipelineMethods.get(id);
-				if (!p || isFromFuture(p)) return;
-				await audioStore.activatePipeline(id, { nodes: p.nodes, edges: p.edges });
-			}
+			await audioStore.togglePipeline(id);
 		} catch (e) {
 			audioStore.reportError(e);
 		} finally {

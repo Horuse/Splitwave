@@ -226,7 +226,7 @@ class AudioStore {
 	private async handleStartError(e: unknown, pipelineId: string, graph: StartPipelinePayload): Promise<boolean> {
 		const nodeId = this.chooseFileNodeIdFrom(e);
 		if (!nodeId) return false;
-		if (pipelineStore.editorActions) {
+		if (pipelineStore.editorActions?.getSnapshot()?.id === pipelineId) {
 			this.chooseFileNodeId = nodeId;
 			this.pendingRetryPipelineId = pipelineId;
 			return true;
@@ -278,6 +278,19 @@ class AudioStore {
 			})
 			.catch(() => {});
 		return { nodes: graph.nodes.map(patchNode), edges: graph.edges };
+	}
+
+	/** Tray / pipeline-list toggle for a saved pipeline: stops it when it is
+	 * the running one, otherwise switches to it. */
+	async togglePipeline(pipelineId: string): Promise<void> {
+		if (this.runningPipelineId === pipelineId) {
+			await this.deactivatePipeline();
+			return;
+		}
+		const p = await pipelineMethods.get(pipelineId);
+		if (!p || isFromFuture(p)) return;
+		if (this.isRunning) await this.deactivatePipeline();
+		await this.activatePipeline(pipelineId, { nodes: p.nodes, edges: p.edges });
 	}
 
 	/** Explicit user stop: unlike an engine-reported `stopped`/`error` event

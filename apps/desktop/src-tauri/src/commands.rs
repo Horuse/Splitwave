@@ -620,6 +620,49 @@ pub async fn stop_pipeline(state: State<'_, AppState>, app: AppHandle) -> AppRes
     result
 }
 
+#[derive(serde::Deserialize)]
+pub struct TrayPipeline {
+    pub id: String,
+    pub name: String,
+}
+
+/// Rebuilds the macOS menu-bar pipeline list. Other platforms have no menu bar
+/// item, so this is a no-op there.
+#[tauri::command]
+pub fn sync_tray_menu(
+    app: AppHandle,
+    pipelines: Vec<TrayPipeline>,
+    running_id: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pipelines: Vec<crate::tray::Pipeline> = pipelines
+            .into_iter()
+            .map(|p| crate::tray::Pipeline {
+                id: p.id,
+                name: p.name,
+            })
+            .collect();
+        crate::tray::sync(&app, &pipelines, running_id.as_deref()).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, pipelines, running_id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn show_main_window(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    crate::tray::show_main_window(&app);
+    #[cfg(not(target_os = "macos"))]
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 // Updater errors serialize Display-only, hiding reqwest's cause; unwind source()+Debug.
 #[tauri::command]
 pub async fn diagnose_update_error(app: AppHandle, endpoint: Option<String>) -> String {

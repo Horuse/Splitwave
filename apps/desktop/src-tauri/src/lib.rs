@@ -7,6 +7,8 @@ mod native_crash;
 mod state;
 #[doc(hidden)]
 pub mod testkit;
+#[cfg(target_os = "macos")]
+mod tray;
 mod watchdog;
 
 use std::path::PathBuf;
@@ -362,12 +364,37 @@ pub fn run() {
             {
                 let menu = build_menu(&handle)?;
                 app.set_menu(menu)?;
+                tray::init(&handle)?;
                 app.on_menu_event(|app, event| {
-                    let _ = app.emit(MENU_EVENT, event.id().0.as_str());
+                    let id = event.id().0.as_str();
+                    if let Some(pipeline_id) = id.strip_prefix(tray::PIPELINE_ID_PREFIX) {
+                        let _ = app.emit(tray::TOGGLE_EVENT, pipeline_id.to_string());
+                    } else if id == tray::SHOW_ID {
+                        tray::show_main_window(app);
+                    } else if id == tray::QUIT_ID {
+                        app.exit(0);
+                    } else {
+                        let _ = app.emit(MENU_EVENT, id);
+                    }
                 });
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (window, event);
+            }
+            // The menu bar stays usable after the window closes, so the engine
+            // keeps running until Quit. Plugin editors are ordinary windows.
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -417,6 +444,8 @@ pub fn run() {
             commands::latency_report,
             commands::start_pipeline,
             commands::stop_pipeline,
+            commands::sync_tray_menu,
+            commands::show_main_window,
             commands::reconcile_pipeline,
             commands::update_effect,
             commands::seek_audio_file,
@@ -449,9 +478,13 @@ pub fn run() {
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 mark_clean_exit();
+            }
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                tray::show_main_window(app);
             }
         });
 }

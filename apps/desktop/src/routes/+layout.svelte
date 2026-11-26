@@ -24,12 +24,41 @@
 	import { platform } from '@tauri-apps/plugin-os';
 	import { initAnnouncements } from '$lib/modules/announcements';
 	import { initChangelogWatch } from '$lib/modules/changelog';
+	import { isFromFuture } from '$lib/modules/pipeline/migrations';
+	import { syncTrayMenu, onTrayTogglePipeline, showMainWindow } from '$lib/modules/tray';
 
 	const isDev = import.meta.env.DEV;
 
 	let { children } = $props();
 
 	let unlistenMenu: UnlistenFn | undefined;
+	let unlistenTray: UnlistenFn | undefined;
+	let trayReady = $state(false);
+	let trayBusy = $state(false);
+
+	async function toggleFromTray(pipelineId: string) {
+		if (trayBusy) return;
+		trayBusy = true;
+		try {
+			await audioStore.togglePipeline(pipelineId);
+			if (audioStore.pendingRetryPipelineId === pipelineId) await showMainWindow();
+		} catch (e) {
+			audioStore.reportError(e);
+			// The window may be hidden; surface the failure where it can be read.
+			showMainWindow().catch(() => {});
+		} finally {
+			trayBusy = false;
+		}
+	}
+
+	// Keep the menu-bar list and its active checkmark in step with the app.
+	$effect(() => {
+		if (!trayReady || trayBusy) return;
+		syncTrayMenu(
+			pipelineStore.pipelines.filter((p) => !isFromFuture(p)).map((p) => ({ id: p.id, name: p.name })),
+			audioStore.runningPipelineId
+		).catch(() => {});
+	});
 
 	function focusedField(): HTMLInputElement | HTMLTextAreaElement | null {
 		const el = document.activeElement;
@@ -130,6 +159,10 @@
 		// plugin-os reads a Tauri-injected global; absent in plain-browser preview.
 		try {
 			const os = platform();
+			if (os === 'macos') {
+				unlistenTray = await onTrayTogglePipeline((id) => void toggleFromTray(id));
+				trayReady = true;
+			}
 			if (os === 'linux' || os === 'windows') window.addEventListener('keydown', onKeydown);
 		} catch {
 			// no OS plugin (preview) -- native menus/accelerators are irrelevant here
@@ -138,6 +171,7 @@
 
 	onDestroy(() => {
 		unlistenMenu?.();
+		unlistenTray?.();
 		window.removeEventListener('keydown', onKeydown);
 		window.removeEventListener('keydown', onLogsHotkey);
 		audioStore.destroy();

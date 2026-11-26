@@ -208,6 +208,7 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2", features = ["image-png", "tray-icon"] }
 embed_plist = "1.2"
 objc2 = "0.6"
 # Audio Unit hosting. Generated, maintained bindings to the AudioToolbox C API;

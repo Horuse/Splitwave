@@ -1,3 +1,4 @@
+import type { IconSvg } from '$lib/modules/pipeline/icons/store.svelte';
 import type { ThemePref } from '$lib/modules/theme/stores';
 
 /** Main window to panel. */
@@ -10,6 +11,8 @@ export type TrayStatus = 'idle' | 'running' | 'warning';
 export type TrayPipeline = {
 	id: string;
 	name: string;
+	/** Resolved by the main window, so the panel never loads the icon set. */
+	icon: IconSvg | null;
 	outputs: string[];
 	/** Saved by a newer version, cannot be run. */
 	stale: boolean;

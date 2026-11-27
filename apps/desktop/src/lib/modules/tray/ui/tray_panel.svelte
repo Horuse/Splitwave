@@ -4,6 +4,8 @@
 	import Stop from '~icons/fluent/stop-16-filled';
 	import Open from '~icons/fluent/open-16-filled';
 	import Warning from '~icons/fluent/warning-16-filled';
+	import Default from '~icons/fluent/sound-wave-circle-20-filled';
+	import IconGlyph from '$lib/modules/pipeline/ui/icon_glyph.svelte';
 	import { ElapsedTime } from '$lib/modules/audio/ui';
 	import Power from '~icons/fluent/power-20-filled';
 	import type { TrayPipeline } from '../types';
@@ -46,6 +48,9 @@
 	<header class="flex flex-col gap-0.5 border-b border-neutral-300 px-4 py-3">
 		<span class="flex items-center gap-2 text-sm font-semibold">
 			<span class={['size-2 shrink-0 rounded-full', active ? 'bg-brand' : 'bg-neutral-500']}></span>
+			{#if active?.icon}
+				<IconGlyph svg={active.icon} class="size-5 shrink-0" />
+			{/if}
 			<span class="truncate">{active ? active.name : 'Nothing is running'}</span>
 			{#if active}
 				<span class="ml-auto shrink-0 pl-2 text-xs font-normal text-brand tabular-nums"><ElapsedTime since={startedAt} /></span>
@@ -81,16 +86,23 @@
 				title={running ? `Stop ${p.name}` : `Run ${p.name}`}
 				aria-pressed={running}
 				onclick={() => (running ? onstop() : onrun(p.id))}>
-				<span class="flex w-64 items-center gap-3">
+				<span class="flex min-w-0 flex-1 items-center gap-3">
+					<span class={['flex size-6 shrink-0 items-center justify-center', running ? 'text-brand' : 'text-neutral-900']}>
+						{#if p.icon}
+							<IconGlyph svg={p.icon} class="size-6" />
+						{:else}
+							<Default class="size-6" />
+						{/if}
+					</span>
+					<span class="flex min-w-0 flex-1 flex-col">
+						<span class="truncate text-sm font-medium text-theme">{p.name}</span>
+						<span class="truncate text-xs font-normal text-neutral-900">{describe(p)}</span>
+					</span>
 					{#if running}
 						<Stop class="size-4 shrink-0 text-brand" />
 					{:else}
 						<Play class="size-4 shrink-0 text-neutral-800" />
 					{/if}
-					<span class="flex min-w-0 flex-col">
-						<span class="truncate text-sm font-medium text-theme">{p.name}</span>
-						<span class="truncate text-xs font-normal text-neutral-900">{describe(p)}</span>
-					</span>
 				</span>
 			</Button>
 		{:else}

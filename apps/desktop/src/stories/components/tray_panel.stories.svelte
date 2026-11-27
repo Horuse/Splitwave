@@ -3,10 +3,15 @@
 	import { fn } from 'storybook/test';
 	import { TrayPanel } from '$lib/modules/tray/ui';
 
+	const HEADPHONES = {
+		viewBox: '0 0 20 20',
+		body: '<path fill="currentColor" d="M3 10a7 7 0 0 1 14 0v1h-3.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H16a2 2 0 0 0 2-2v-6a8 8 0 1 0-16 0v6a2 2 0 0 0 2 2h2.5a.5.5 0 0 0 .5-.5v-6a.5.5 0 0 0-.5-.5H3z"/>'
+	};
+
 	const PIPELINES = [
-		{ id: 'music', name: 'Headphones - Music', outputs: ['External Headphones'], stale: false },
-		{ id: 'meeting', name: 'Meeting mix', outputs: ['MacBook Pro Speakers', 'File Recording'], stale: false },
-		{ id: 'guitar', name: 'Guitar monitoring', outputs: [], stale: false }
+		{ id: 'music', name: 'Headphones - Music', icon: HEADPHONES, outputs: ['External Headphones'], stale: false },
+		{ id: 'meeting', name: 'Meeting mix', icon: null, outputs: ['MacBook Pro Speakers', 'File Recording'], stale: false },
+		{ id: 'guitar', name: 'Guitar monitoring', icon: null, outputs: [], stale: false }
 	];
 
 	const { Story } = defineMeta({
@@ -53,11 +58,12 @@
 		pipelines: [
 			...Array.from({ length: 12 }, (_, i) => ({
 				id: String(i),
+				icon: i % 2 ? HEADPHONES : null,
 				name: `Recording - interface, pedalboard and four microphones ${i + 1}`,
 				outputs: ['Universal Audio Apollo Twin X Duo USB', 'BlackHole 16ch'],
 				stale: false
 			})),
-			{ id: 'future', name: 'From the future', outputs: [], stale: true }
+			{ id: 'future', name: 'From the future', icon: null, outputs: [], stale: true }
 		]
 	}}
 	{template} />

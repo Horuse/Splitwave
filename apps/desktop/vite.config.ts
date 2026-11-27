@@ -4,6 +4,7 @@ import adapter from '@sveltejs/adapter-static';
 import { mdsvex } from 'mdsvex';
 import tailwindcss from '@tailwindcss/vite';
 import Icons from 'unplugin-icons/vite';
+import { pipelineIcons } from './vite_pipeline_icons.ts';
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -19,7 +20,8 @@ export default defineConfig(async () => ({
 			// See https://svelte.dev/docs/kit/single-page-apps and https://v2.tauri.app/start/frontend/sveltekit/
 			adapter: adapter({ fallback: 'index.html' })
 		}),
-		Icons({ compiler: 'svelte' })
+		Icons({ compiler: 'svelte' }),
+		pipelineIcons()
 	],
 
 	// Packages that ship .svelte source -- let the Svelte plugin handle them

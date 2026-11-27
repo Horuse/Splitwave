@@ -19,6 +19,7 @@
 		"build-storybook": "storybook build"
 	},
 	"dependencies": {
+		"@iconify/utils": "^3.1.7",
 		"@number-flow/svelte": "catalog:",
 		"@paralleldrive/cuid2": "^3.3.0",
 		"@splitwave/nodes": "workspace:*",

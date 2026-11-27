@@ -427,6 +427,7 @@
 		return {
 			id: pipeline.id,
 			name: pipeline.name,
+			icon: pipeline.icon,
 			createdAt: pipeline.createdAt,
 			nodes: fromXyNodes(nodes),
 			edges: fromXyEdges(edges),

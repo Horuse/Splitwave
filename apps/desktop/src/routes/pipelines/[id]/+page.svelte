@@ -9,6 +9,8 @@
 	import { SnapshotHistory, SavedIndicator, UndoRedo } from '$lib/modules/flow/ui';
 	import { Toaster } from 'svelte-french-toast';
 	import { isFromFuture } from '$lib/modules/pipeline/migrations';
+	import PipelineIcon from '$lib/modules/pipeline/ui/pipeline_icon.svelte';
+	import { pickPipelineIcon } from '$lib/modules/pipeline/ui/pick_icon';
 	import ArrowLeft from '~icons/fluent/arrow-left-16-filled';
 
 	let pipeline = $state<Pipeline | null>(null);
@@ -37,21 +39,30 @@
 	const MIN_NAME_WIDTH_PX = 60;
 	const NAME_EXTRA_PX = 4;
 
+	// Merge with the latest editor snapshot when one exists so we don't clobber
+	// unsaved node/edge changes.
+	function saveDetails() {
+		if (!pipeline) return;
+		const snapshot = pipelineStore.editorActions?.getSnapshot();
+		pipelineStore.save(snapshot ? { ...snapshot, name: pipeline.name, icon: pipeline.icon } : { ...pipeline, updatedAt: Date.now() });
+	}
+
+	async function changeIcon() {
+		const target = pipeline;
+		if (!target) return;
+		const icon = await pickPipelineIcon(target.icon);
+		if (icon === undefined || pipeline !== target) return;
+		target.icon = icon ?? undefined;
+		saveDetails();
+	}
+
 	let nameSaveTimer: ReturnType<typeof setTimeout> | undefined;
 	function onNameInput() {
 		if (pipeline && pipeline.name.length > MAX_NAME_LENGTH) {
 			pipeline.name = pipeline.name.slice(0, MAX_NAME_LENGTH);
 		}
 		clearTimeout(nameSaveTimer);
-		nameSaveTimer = setTimeout(() => {
-			if (!pipeline) return;
-			// Merge with the latest editor snapshot when one exists so we don't
-			// clobber unsaved node/edge changes; otherwise persist the current
-			// pipeline object with the new name.
-			const snapshot = pipelineStore.editorActions?.getSnapshot();
-			const next = snapshot ? { ...snapshot, name: pipeline.name } : { ...pipeline, updatedAt: Date.now() };
-			pipelineStore.save(next);
-		}, 500);
+		nameSaveTimer = setTimeout(saveDetails, 500);
 	}
 
 	let nameInput = $state<HTMLInputElement | null>(null);
@@ -83,6 +94,9 @@
 		<div class="flex items-center gap-3">
 			<Button icon href="/" aria-label="Back to pipelines" title="Back to pipelines"><ArrowLeft class="size-4" /></Button>
 			{#if pipeline}
+				<Button icon onclick={changeIcon} aria-label="Change pipeline icon" title="Change pipeline icon">
+					<PipelineIcon name={pipeline.icon} class="size-5" />
+				</Button>
 				<div class="relative">
 					<span bind:this={nameMirror} class="pointer-events-none invisible absolute top-0 left-0 px-2.5 whitespace-pre" aria-hidden="true">
 						{pipeline.name}

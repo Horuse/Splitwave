@@ -4,6 +4,7 @@ import { audioStore } from '$lib/modules/audio/stores.svelte';
 import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
 import { methods as pipelineMethods } from '$lib/modules/pipeline/methods';
 import { isFromFuture } from '$lib/modules/pipeline/migrations';
+import { iconStore } from '$lib/modules/pipeline/icons/store.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { themeStore, type ThemePref } from '$lib/modules/theme/stores';
 import { outputLabels, waitingLabels } from './outputs';
@@ -23,10 +24,12 @@ class TrayBridge {
 	snapshot(): TraySnapshot {
 		this.names.remember([...audioStore.inputDevices, ...audioStore.outputDevices].map((d) => [d.id, d.name]));
 		this.names.remember(audioStore.audioApplications.map((a) => [a.bundleId, a.name]));
+		if (pipelineStore.pipelines.some((p) => p.icon)) void iconStore.load();
 		return {
 			pipelines: pipelineStore.pipelines.map((p) => {
 				const stale = isFromFuture(p);
-				return { id: p.id, name: p.name, stale, outputs: stale ? [] : outputLabels(p.nodes, this.names) };
+				const icon = p.icon ? iconStore.svg(p.icon) : null;
+				return { id: p.id, name: p.name, icon, stale, outputs: stale ? [] : outputLabels(p.nodes, this.names) };
 			}),
 			runningId: audioStore.runningPipelineId,
 			isRunning: audioStore.isRunning,

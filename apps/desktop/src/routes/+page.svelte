@@ -43,6 +43,16 @@
 		await pipelineStore.remove(id);
 	}
 
+	// `updatedAt` is left alone: the list is sorted by it and the row would jump.
+	async function changeIcon(id: string) {
+		const current = pipelineStore.pipelines.find((p) => p.id === id);
+		const icon = await pickPipelineIcon(current?.icon);
+		if (icon === undefined) return;
+		const p = await pipelineMethods.get(id);
+		if (!p || isFromFuture(p)) return;
+		await pipelineStore.save({ ...p, icon: icon ?? undefined });
+	}
+
 	// Fresh node ids: the engine keys effect state by them, so a copy must not share them.
 	async function duplicate(id: string) {
 		const src = await pipelineMethods.get(id);
@@ -71,6 +81,9 @@
 	import Delete from '~icons/fluent/delete-16-filled';
 	import Copy from '~icons/fluent/copy-16-filled';
 	import { createId } from '@paralleldrive/cuid2';
+	import ImageEdit from '~icons/fluent/image-edit-16-filled';
+	import PipelineIcon from '$lib/modules/pipeline/ui/pipeline_icon.svelte';
+	import { pickPipelineIcon } from '$lib/modules/pipeline/ui/pick_icon';
 	import More from '~icons/fluent/more-horizontal-24-filled';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
 	import { platform } from '@tauri-apps/plugin-os';
@@ -146,23 +159,26 @@
 							<svelte:element
 								this={stale ? 'div' : 'a'}
 								href={stale ? undefined : `/pipelines/${p.id}`}
-								class={['flex min-w-0 flex-1 flex-col gap-0.5', stale && 'opacity-60']}>
-								<span class="flex items-center gap-2">
-									<span class="truncate font-medium">{p.name}</span>
-									{#if stale}
-										<span class="rounded-full border border-amber-600/50 bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-600">
-											newer version
-										</span>
-									{/if}
-								</span>
-								<span class="text-xs text-neutral-900">
-									{#if stale}
-										Saved by a newer version - update Splitwave to open it.
-									{:else if isRunning}
-										<span class="text-brand">Running <RunningTimer /></span>
-									{:else}
-										{p.nodes.length} nodes, updated {relativeTime(p.updatedAt)}
-									{/if}
+								class={['flex min-w-0 flex-1 items-center gap-4', stale && 'opacity-60']}>
+								<PipelineIcon name={p.icon} class="size-10 shrink-0 text-neutral-900" />
+								<span class="flex min-w-0 flex-col gap-0.5">
+									<span class="flex items-center gap-2">
+										<span class="truncate font-medium">{p.name}</span>
+										{#if stale}
+											<span class="rounded-full border border-amber-600/50 bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-600">
+												newer version
+											</span>
+										{/if}
+									</span>
+									<span class="text-xs text-neutral-900">
+										{#if stale}
+											Saved by a newer version - update Splitwave to open it.
+										{:else if isRunning}
+											<span class="text-brand">Running <RunningTimer /></span>
+										{:else}
+											{p.nodes.length} nodes, updated {relativeTime(p.updatedAt)}
+										{/if}
+									</span>
 								</span>
 							</svelte:element>
 							<div class="flex shrink-0 items-center gap-2">
@@ -179,6 +195,14 @@
 										</Button>
 									{/snippet}
 									<Menu>
+										<MenuItem
+											label="Change icon"
+											icon={ImageEdit}
+											disabled={stale}
+											onclick={() => {
+												menuFor = null;
+												changeIcon(p.id);
+											}} />
 										<MenuItem
 											label="Duplicate"
 											icon={Copy}

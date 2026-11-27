@@ -12,5 +12,5 @@
 		"moduleResolution": "bundler",
 		"types": ["$app/types", "bun-types", "unplugin-icons/types/svelte"]
 	},
-	"include": ["src", "tests", "vite.config.ts"]
+	"include": ["src", "tests", "vite.config.ts", "vite_pipeline_icons.ts"]
 }

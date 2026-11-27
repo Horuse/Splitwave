@@ -13,8 +13,9 @@
     },
     "apps/desktop": {
       "name": "@splitwave/desktop",
-      "version": "2.0.0-beta.1",
+      "version": "2.0.0-beta.2",
       "dependencies": {
+        "@iconify/utils": "^3.1.7",
         "@number-flow/svelte": "catalog:",
         "@paralleldrive/cuid2": "^3.3.0",
         "@splitwave/nodes": "workspace:*",

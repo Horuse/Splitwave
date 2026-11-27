@@ -7,6 +7,7 @@ import { migrateTypedHandles } from '../src/lib/modules/pipeline/migrations/v3_t
 import { migrateMuteKeyInput } from '../src/lib/modules/pipeline/migrations/v3_mute_key_input';
 import type { Pipeline } from '@splitwave/nodes';
 import { PIPELINE_VERSION } from '../src/lib/modules/pipeline/version';
+import { pruneDanglingEdges } from '../src/lib/modules/pipeline/sanitize';
 
 function pipeline(overrides: Partial<Pipeline> = {}): Pipeline {
 	return {
@@ -260,5 +261,25 @@ describe('complete pipeline migration', () => {
 			pipeline: pipeline({ version: PIPELINE_VERSION + 1 })
 		};
 		expect(migrateSnapshot(future)).toBe(future);
+	});
+});
+
+describe('pipeline icon', () => {
+	const stored: Pipeline = {
+		id: 'p',
+		name: 'Music',
+		icon: 'headphones-20-filled',
+		nodes: [],
+		edges: [{ id: 'e', source: 'gone', target: 'gone' }],
+		createdAt: 0,
+		updatedAt: 0
+	};
+
+	it('survives migration and edge pruning on read', () => {
+		expect(pruneDanglingEdges(migrate(stored)).icon).toBe('headphones-20-filled');
+	});
+
+	it('survives migration of a history snapshot', () => {
+		expect(migrateSnapshot({ takenAt: 0, pipeline: stored }).pipeline.icon).toBe('headphones-20-filled');
 	});
 });

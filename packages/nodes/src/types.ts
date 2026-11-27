@@ -186,6 +186,8 @@ export interface PipelineEdge {
 export interface Pipeline {
 	id: string;
 	name: string;
+	/** Fluent icon name such as `headphones-20-filled`. */
+	icon?: string;
 	nodes: PipelineNode[];
 	edges: PipelineEdge[];
 	createdAt: number;

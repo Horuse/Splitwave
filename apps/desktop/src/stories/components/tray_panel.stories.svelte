@@ -16,7 +16,8 @@
 			runningId: { control: 'select', options: [null, 'music', 'meeting', 'guitar'] },
 			isRunning: { control: 'boolean' },
 			busyId: { control: 'select', options: [null, 'music', 'meeting', 'guitar'] },
-			error: { control: 'text' }
+			error: { control: 'text' },
+			waitingFor: { control: 'object' }
 		},
 		args: {
 			pipelines: PIPELINES,
@@ -24,6 +25,8 @@
 			isRunning: false,
 			busyId: null,
 			error: null,
+			startedAt: Date.now() - 754_000,
+			waitingFor: [],
 			onrun: fn(),
 			onstop: fn(),
 			onopen: fn(),
@@ -40,6 +43,7 @@
 
 <Story name="Idle" {template} />
 <Story name="Running" args={{ runningId: 'music', isRunning: true }} {template} />
+<Story name="Waiting for device" args={{ runningId: 'music', isRunning: true, waitingFor: ['Fifine Microphone', 'Spotify'] }} {template} />
 <Story name="Switching" args={{ runningId: 'music', isRunning: true, busyId: 'meeting' }} {template} />
 <Story name="Error" args={{ error: 'audio device no longer available: External Headphones' }} {template} />
 <Story name="Empty" args={{ pipelines: [] }} {template} />

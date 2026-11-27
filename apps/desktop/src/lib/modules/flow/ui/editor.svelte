@@ -40,6 +40,9 @@
 
 	let { pipeline }: { pipeline: Pipeline } = $props();
 
+	/** The engine runs this pipeline; another running one must not see these edits. */
+	let live = $derived(audioStore.isRunningPipeline(pipeline.id));
+
 	const flow = useSvelteFlow();
 	let canvasEl = $state<HTMLDivElement>();
 
@@ -276,7 +279,7 @@
 				items.push({
 					label: 'Rewind',
 					icon: Rewind,
-					disabled: !audioStore.isRunning || !data.filePath,
+					disabled: !live || !data.filePath,
 					action: () => audioMethods.seekAudioFile(id, 0).catch(() => {})
 				});
 				items.push({
@@ -499,6 +502,7 @@
 		revertToSnapshot(history[cursor]);
 	}
 
+	pipelineStore.editorPipelineId = untrack(() => pipeline.id);
 	pipelineStore.editorActions = {
 		addNode,
 		addNodeWithData,
@@ -574,11 +578,11 @@
 		try {
 			do {
 				restartQueued = false;
-				await audioStore.restartPipeline({
+				await audioStore.restartPipeline(pipeline.id, {
 					nodes: fromXyNodes(nodes),
 					edges: fromXyEdges(edges)
 				});
-			} while (restartQueued && audioStore.isRunning);
+			} while (restartQueued && live);
 		} catch (e) {
 			audioStore.reportError(e);
 		} finally {
@@ -594,7 +598,7 @@
 		if (!rerouted && data === lastDataSig) return;
 		lastRoutingSig = routing;
 		lastDataSig = data;
-		if (!audioStore.isRunning) return;
+		if (!untrack(() => live)) return;
 		clearTimeout(settleTimer);
 		settleTimer = undefined;
 		if (rerouted) {
@@ -651,7 +655,7 @@
 	let audioFileDone = $state<Record<string, boolean>>({});
 
 	$effect(() => {
-		if (!audioStore.isRunning) {
+		if (!live) {
 			audioFileDone = {};
 		}
 	});
@@ -671,7 +675,7 @@
 		window.addEventListener('beforeunload', onBeforeUnload);
 		listen<AudioFileProgress>('audio://audio_file_progress', (e) => {
 			const { nodeId, stopped } = e.payload;
-			if (!audioStore.isRunning) return;
+			if (!live) return;
 			audioFileDone[nodeId] = stopped;
 			if (!stopped) return;
 			const hasLive = nodes.some((n) => LIVE_INPUT_TYPES.includes(n.type ?? ''));
@@ -696,6 +700,7 @@
 		unlistenAudioFile?.();
 		if (pipelineStore.editorActions?.getSnapshot === getSnapshot) {
 			pipelineStore.editorActions = null;
+			pipelineStore.editorPipelineId = null;
 		}
 	});
 </script>

@@ -233,6 +233,7 @@ objc2-app-kit = { version = "0.3", features = [
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-single-instance = "2"
 # SCK integration uses a hand-rolled Swift static library at `native/`,
 # compiled by build.rs (direct `swiftc`, no SwiftPM). The screencapturekit
 # crate is rejected here because its build.rs uses `swift build` which fails

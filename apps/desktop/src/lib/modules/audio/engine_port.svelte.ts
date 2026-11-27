@@ -20,16 +20,16 @@ import { ConfirmModal } from '$lib/modules/overlay/ui';
 
 export const appEnginePort: EnginePort = {
 	get isRunning() {
-		return audioStore.isRunning;
+		return audioStore.editorIsLive;
 	},
 	get sampleRate() {
 		return appSettings.pipelineSampleRate;
 	},
 	get bufferFrames() {
-		return latencyStore.report?.bufferFrames ?? null;
+		return audioStore.editorIsLive ? (latencyStore.report?.bufferFrames ?? null) : null;
 	},
 	os: platform(),
-	nodeTiming: (nodeId) => latencyStore.node(nodeId),
+	nodeTiming: (nodeId) => (audioStore.editorIsLive ? latencyStore.node(nodeId) : undefined),
 	updateEffect: (nodeId, patch) => methods.updateEffect(nodeId, patch),
 	listen: (event, handler) => tauriListen(event, handler),
 	audio: methods,

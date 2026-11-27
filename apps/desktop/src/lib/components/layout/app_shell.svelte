@@ -111,6 +111,11 @@
 	});
 
 	$effect(() => {
+		const status = !audioStore.isRunning ? 'idle' : audioStore.waitingNodes.length ? 'warning' : 'running';
+		trayMethods.setStatus(status).catch(() => {});
+	});
+
+	$effect(() => {
 		trayMethods.setCloseToTray(appSettings.closeToTray).catch(() => {});
 	});
 

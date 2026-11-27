@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { numberAnimations } from '@splitwave/ui';
 	import { TrayPanel } from '$lib/modules/tray/ui';
 	import { methods } from '$lib/modules/tray/methods';
 	import { TRAY_INTENT_EVENT, TRAY_STATE_EVENT, type TrayIntent, type TraySnapshot } from '$lib/modules/tray/types';
@@ -23,6 +24,7 @@
 		const stateListener = listen<TraySnapshot>(TRAY_STATE_EVENT, ({ payload }) => {
 			snapshot = payload;
 			$themeStore = payload.theme;
+			numberAnimations.enabled = payload.animatedNumbers;
 		});
 		// The panel stays mounted while hidden, so each opening asks for fresh state.
 		const focusListener = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
@@ -44,6 +46,8 @@
 			pipelines={snapshot.pipelines}
 			runningId={snapshot.runningId}
 			isRunning={snapshot.isRunning}
+			startedAt={snapshot.startedAt}
+			waitingFor={snapshot.waitingFor}
 			busyId={snapshot.busyId}
 			error={snapshot.error}
 			onrun={(pipelineId) => send({ kind: 'run', pipelineId })}

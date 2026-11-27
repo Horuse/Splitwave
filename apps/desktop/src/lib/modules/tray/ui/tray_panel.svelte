@@ -3,6 +3,8 @@
 	import Play from '~icons/fluent/play-16-filled';
 	import Stop from '~icons/fluent/stop-16-filled';
 	import Open from '~icons/fluent/open-16-filled';
+	import Warning from '~icons/fluent/warning-16-filled';
+	import { ElapsedTime } from '$lib/modules/audio/ui';
 	import Power from '~icons/fluent/power-20-filled';
 	import type { TrayPipeline } from '../types';
 
@@ -10,6 +12,8 @@
 		pipelines,
 		runningId,
 		isRunning,
+		startedAt = null,
+		waitingFor = [],
 		busyId = null,
 		error = null,
 		onrun,
@@ -20,6 +24,8 @@
 		pipelines: TrayPipeline[];
 		runningId: string | null;
 		isRunning: boolean;
+		startedAt?: number | null;
+		waitingFor?: string[];
 		busyId?: string | null;
 		error?: string | null;
 		onrun: (pipelineId: string) => void;
@@ -41,11 +47,21 @@
 		<span class="flex items-center gap-2 text-sm font-semibold">
 			<span class={['size-2 shrink-0 rounded-full', active ? 'bg-brand' : 'bg-neutral-500']}></span>
 			<span class="truncate">{active ? active.name : 'Nothing is running'}</span>
+			{#if active}
+				<span class="ml-auto shrink-0 pl-2 text-xs font-normal text-brand tabular-nums"><ElapsedTime since={startedAt} /></span>
+			{/if}
 		</span>
 		<span class="truncate pl-4 text-xs text-neutral-900">
 			{active ? describe(active) : 'Pick a pipeline to start routing'}
 		</span>
 	</header>
+
+	{#if active && waitingFor.length}
+		<p role="status" class="flex items-start gap-2 border-b border-neutral-300 bg-amber-500/15 px-4 py-2 text-xs text-amber-600">
+			<Warning class="size-4 shrink-0" />
+			<span class="line-clamp-3">Waiting for {waitingFor.join(', ')}</span>
+		</p>
+	{/if}
 
 	{#if error}
 		<p role="alert" class="line-clamp-3 border-b border-neutral-300 bg-red-500/15 px-4 py-2 text-xs text-red-500">{error}</p>

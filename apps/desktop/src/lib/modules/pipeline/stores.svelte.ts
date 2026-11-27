@@ -41,6 +41,8 @@ export type EditorActions = {
 class PipelineStore {
 	pipelines = $state<Pipeline[]>([]);
 	editorActions = $state<EditorActions | null>(null);
+	/** Id of the pipeline open in the editor. */
+	editorPipelineId = $state<string | null>(null);
 	clipboard = $state<ClipboardEntry | null>(null);
 	/** Wall-clock millis of the last successful auto-save. `0` before any. */
 	lastSavedAt = $state<number>(0);

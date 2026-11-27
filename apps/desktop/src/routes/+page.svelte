@@ -38,7 +38,9 @@
 			confirmLabel: 'Delete',
 			danger: true
 		});
-		if (ok) await pipelineStore.remove(id);
+		if (!ok) return;
+		if (audioStore.isRunningPipeline(id)) await audioStore.deactivatePipeline();
+		await pipelineStore.remove(id);
 	}
 
 	// Fresh node ids: the engine keys effect state by them, so a copy must not share them.
@@ -64,15 +66,13 @@
 
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
 	import { methods as audioMethods } from '$lib/modules/audio/methods';
-	import { RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
+	import { RunButton, RunningTimer, DriverUpdateBanner } from '$lib/modules/audio/ui';
 	import Add from '~icons/fluent/add-24-filled';
 	import Delete from '~icons/fluent/delete-16-filled';
 	import Copy from '~icons/fluent/copy-16-filled';
 	import { createId } from '@paralleldrive/cuid2';
 	import More from '~icons/fluent/more-horizontal-24-filled';
-	import Play from '~icons/fluent/play-24-filled';
 	import SoundWave from '~icons/fluent/sound-wave-circle-16-filled';
-	import Stop from '~icons/fluent/stop-24-filled';
 	import { platform } from '@tauri-apps/plugin-os';
 
 	const isWindows = platform() === 'windows';
@@ -85,7 +85,7 @@
 		if (busy) return;
 		busy = id;
 		try {
-			if (audioStore.isRunning) {
+			if (audioStore.isRunningPipeline(id)) {
 				await audioStore.deactivatePipeline();
 			} else {
 				const p = await pipelineMethods.get(id);
@@ -132,7 +132,7 @@
 			<div class="flex flex-col gap-3">
 				{#each pipelineStore.pipelines as p (p.id)}
 					{@const stale = isFromFuture(p)}
-					{@const isRunning = audioStore.isRunning && audioStore.runningPipelineId === p.id}
+					{@const isRunning = audioStore.isRunningPipeline(p.id)}
 					<div animate:flip={{ duration: 200 }} transition:slide={{ duration: 200 }}>
 						<Card nested class={['flex items-center gap-4 p-3', isRunning ? 'border-brand/30 bg-brand/5' : !stale && 'hover:border-neutral-500']}>
 							<svelte:element
@@ -166,21 +166,12 @@
 								</span>
 							</svelte:element>
 							<div class="flex shrink-0 items-center gap-2">
-								<Button
+								<RunButton
 									size="lg"
-									tone={isRunning ? 'danger' : 'neutral'}
+									state={isRunning ? 'stop' : audioStore.isRunning ? 'switch' : 'run'}
 									loading={busy === p.id}
-									loadingPosition="start"
-									disabled={stale || (!!busy && busy !== p.id) || (audioStore.isRunning && !isRunning)}
-									onclick={(e) => toggle(p.id, e)}>
-									{#if isRunning}
-										<Stop class="size-4" />
-										Stop
-									{:else}
-										<Play class="size-4" />
-										Run
-									{/if}
-								</Button>
+									disabled={stale || (!!busy && busy !== p.id)}
+									onclick={(e) => toggle(p.id, e)} />
 								<Popover placement="bottom-end" bind:open={() => menuFor === p.id, (v) => (menuFor = v ? p.id : null)}>
 									{#snippet trigger()}
 										<Button icon size="lg" aria-label="More" title="More">

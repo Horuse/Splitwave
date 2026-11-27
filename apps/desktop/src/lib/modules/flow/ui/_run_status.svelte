@@ -6,9 +6,11 @@
 	import Timer from '~icons/fluent/timer-16-filled';
 
 	let { pipelineId }: { pipelineId: string } = $props();
+
+	let live = $derived(audioStore.isRunningPipeline(pipelineId));
 </script>
 
-{#if audioStore.isRunning}
+{#if live}
 	<Panel position="top-left">
 		<span
 			class="flex h-7 items-center gap-1.5 border border-(--lv-3) bg-(--lv-1) px-2.5 text-xs text-brand"
@@ -21,7 +23,7 @@
 {/if}
 
 <Panel position="top-right" class="flex items-center gap-2">
-	{#if audioStore.isRunning}
+	{#if live}
 		<LatencyBadge />
 	{/if}
 	<PipelineRateBadge />

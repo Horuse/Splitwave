@@ -3,6 +3,9 @@ import type { AudioApplication, AudioDevice, PluginDescriptor, PluginParam } fro
 import { audioStore } from '$lib/modules/audio/stores.svelte';
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import type { LatencyReport } from '@splitwave/nodes/generated/LatencyReport';
+import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+
+const STORY_PIPELINE_ID = 'story';
 
 export type Platform = 'macos' | 'windows' | 'linux';
 export type LinkQuality = 'offline' | 'good' | 'lossy';
@@ -272,6 +275,8 @@ export function installMockBackend(env: MockEnv): void {
 	audioStore.outputDevices = outputs;
 	audioStore.audioApplications = apps;
 	audioStore.isRunning = env.running;
+	audioStore.runningPipelineId = env.running ? STORY_PIPELINE_ID : null;
+	pipelineStore.editorPipelineId = STORY_PIPELINE_ID;
 	audioStore.startedAt = env.running ? Date.now() : null;
 	audioStore.missingFilePaths = new Set(env.missingFile ? ['/Users/demo/Music/demo-track.wav'] : []);
 	appSettings.pipelineSampleRate = env.pipelineSampleRate;

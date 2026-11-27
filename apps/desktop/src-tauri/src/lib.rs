@@ -316,6 +316,11 @@ pub fn run() {
         .ok();
 
     tauri::Builder::default()
+        // Registered first: a second launch has to exit before anything else
+        // starts, and surface the running window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main(app);
+        }))
         .setup(|app| {
             info!("app started");
             let handle = app.handle().clone();
@@ -389,6 +394,7 @@ pub fn run() {
         .invoke_handler(with_watchdog(tauri::generate_handler![
             tray::set_close_to_tray,
             tray::tray_available,
+            tray::set_tray_status,
             tray::show_main_window,
             tray::quit_app,
             commands::scan_plugins,

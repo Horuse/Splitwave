@@ -1,6 +1,6 @@
 //! Tray icon and the webview panel it opens.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 #[cfg(not(target_os = "linux"))]
 use std::time::Duration;
@@ -24,9 +24,30 @@ const PANEL_GAP: f64 = 6.0;
 #[cfg(not(target_os = "linux"))]
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
 
+/// What the tray icon says about the engine.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayStatus {
+    Idle,
+    Running,
+    /// Running without a device, app or file the pipeline asks for.
+    Warning,
+}
+
+impl TrayStatus {
+    fn load(cell: &AtomicU8) -> Self {
+        match cell.load(Ordering::Relaxed) {
+            value if value == Self::Running as u8 => Self::Running,
+            value if value == Self::Warning as u8 => Self::Warning,
+            _ => Self::Idle,
+        }
+    }
+}
+
 pub struct TrayState {
     close_to_tray: AtomicBool,
     available: AtomicBool,
+    status: AtomicU8,
     blurred_at: Mutex<Option<Instant>>,
 }
 
@@ -35,6 +56,7 @@ impl Default for TrayState {
         Self {
             close_to_tray: AtomicBool::new(true),
             available: AtomicBool::new(false),
+            status: AtomicU8::new(TrayStatus::Idle as u8),
             blurred_at: Mutex::new(None),
         }
     }
@@ -97,7 +119,7 @@ fn create_panel(app: &AppHandle) -> tauri::Result<()> {
 fn create_icon(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = tauri::tray::TrayIconBuilder::with_id(TRAY_ID).tooltip("Splitwave");
     builder = builder
-        .icon(tray_image())
+        .icon(tray_image(TrayStatus::Idle))
         // macOS tints a template image to match the menu bar.
         .icon_as_template(cfg!(target_os = "macos"));
 
@@ -142,22 +164,41 @@ fn create_icon(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn tray_image() -> Image<'static> {
-    tauri::include_image!("icons/tray/menubar.png")
+fn tray_image(status: TrayStatus) -> Image<'static> {
+    match status {
+        TrayStatus::Idle => tauri::include_image!("icons/tray/menubar.png"),
+        TrayStatus::Running => tauri::include_image!("icons/tray/menubar-running.png"),
+        TrayStatus::Warning => tauri::include_image!("icons/tray/menubar-warning.png"),
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn tray_image() -> Image<'static> {
-    tauri::include_image!("icons/tray/white.png")
+fn tray_image(status: TrayStatus) -> Image<'static> {
+    match status {
+        TrayStatus::Idle => tauri::include_image!("icons/tray/white.png"),
+        TrayStatus::Running => tauri::include_image!("icons/tray/white-running.png"),
+        TrayStatus::Warning => tauri::include_image!("icons/tray/white-warning.png"),
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn tray_image() -> Image<'static> {
-    if windows_light_taskbar() {
-        tauri::include_image!("icons/tray/black.png")
-    } else {
-        tauri::include_image!("icons/tray/white.png")
+fn tray_image(status: TrayStatus) -> Image<'static> {
+    match (windows_light_taskbar(), status) {
+        (true, TrayStatus::Idle) => tauri::include_image!("icons/tray/black.png"),
+        (true, TrayStatus::Running) => tauri::include_image!("icons/tray/black-running.png"),
+        (true, TrayStatus::Warning) => tauri::include_image!("icons/tray/black-warning.png"),
+        (false, TrayStatus::Idle) => tauri::include_image!("icons/tray/white.png"),
+        (false, TrayStatus::Running) => tauri::include_image!("icons/tray/white-running.png"),
+        (false, TrayStatus::Warning) => tauri::include_image!("icons/tray/white-warning.png"),
     }
+}
+
+fn refresh_icon(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let status = TrayStatus::load(&app.state::<TrayState>().status);
+    report(tray.set_icon_with_as_template(Some(tray_image(status)), cfg!(target_os = "macos")));
 }
 
 /// The taskbar has its own theme, separate from the one apps get.
@@ -300,9 +341,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
         }
         #[cfg(target_os = "windows")]
         (MAIN_WINDOW, WindowEvent::ThemeChanged(_)) => {
-            if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                report(tray.set_icon(Some(tray_image())));
-            }
+            refresh_icon(app);
         }
         _ => {}
     }
@@ -311,6 +350,13 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 #[tauri::command]
 pub fn set_close_to_tray(enabled: bool, state: State<'_, TrayState>) {
     state.close_to_tray.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn set_tray_status(status: TrayStatus, app: AppHandle, state: State<'_, TrayState>) {
+    if state.status.swap(status as u8, Ordering::Relaxed) != status as u8 {
+        refresh_icon(&app);
+    }
 }
 
 #[tauri::command]

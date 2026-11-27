@@ -1,32 +1,29 @@
 <script lang="ts">
 	import type { ClassValue } from 'svelte/elements';
-	import { Button } from '@splitwave/ui';
 	import { audioStore } from '../stores.svelte';
 	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
-	import Play from '~icons/fluent/play-24-filled';
-	import Stop from '~icons/fluent/stop-24-filled';
+	import RunButton, { type RunState } from './run_button.svelte';
 
 	let {
 		pipelineId,
-		icon = false,
 		size,
 		opaque = false,
 		class: className
 	}: {
 		pipelineId: string;
-		icon?: boolean;
 		size?: 'md' | 'lg' | 'xl';
 		/** Same tint mixed into the background, for a button that sits over the canvas. */
 		opaque?: boolean;
 		class?: ClassValue;
 	} = $props();
 
-	const OPAQUE = {
+	const OPAQUE: Record<RunState, string> = {
 		stop: 'bg-[color-mix(in_oklab,var(--color-red-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-red-500)_50%,var(--color-background))]',
-		run: 'bg-[color-mix(in_oklab,var(--color-orange-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-orange-500)_50%,var(--color-background))]'
+		run: 'bg-[color-mix(in_oklab,var(--color-orange-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-orange-500)_50%,var(--color-background))]',
+		switch: 'bg-[color-mix(in_oklab,var(--color-amber-500)_40%,var(--color-background))] hover:bg-[color-mix(in_oklab,var(--color-amber-500)_50%,var(--color-background))]'
 	};
 
-	let label = $derived(audioStore.isRunning ? 'Stop' : 'Run');
+	let runState = $derived<RunState>(audioStore.isRunningPipeline(pipelineId) ? 'stop' : audioStore.isRunning ? 'switch' : 'run');
 
 	let busy = $state(false);
 
@@ -34,7 +31,7 @@
 		if (busy) return;
 		busy = true;
 		try {
-			if (audioStore.isRunning) {
+			if (audioStore.isRunningPipeline(pipelineId)) {
 				await audioStore.deactivatePipeline();
 			} else {
 				const snapshot = pipelineStore.editorActions?.getSnapshot();
@@ -52,20 +49,4 @@
 	}
 </script>
 
-<Button
-	{icon}
-	{size}
-	class={[opaque && (audioStore.isRunning ? OPAQUE.stop : OPAQUE.run), className]}
-	tone={audioStore.isRunning ? 'danger' : 'brand'}
-	loading={busy}
-	loadingPosition={icon ? undefined : 'start'}
-	title={label}
-	aria-label={label}
-	onclick={toggle}>
-	{#if audioStore.isRunning}
-		<Stop class="size-3.5" />
-	{:else}
-		<Play class="size-3.5" />
-	{/if}
-	{#if !icon}{label}{/if}
-</Button>
+<RunButton state={runState} {size} loading={busy} class={[opaque && OPAQUE[runState], className]} onclick={toggle} />

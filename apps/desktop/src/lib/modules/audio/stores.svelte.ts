@@ -43,6 +43,7 @@ class AudioStore {
 	missingFilePaths = $state<Set<string>>(new Set());
 	safeMode = $state(false);
 
+	private transitions: Promise<unknown> = Promise.resolve();
 	private lastGraph: StartPipelinePayload | null = null;
 	private fullGraph: StartPipelinePayload | null = null;
 	private reconnectTimer: ReturnType<typeof setInterval> | undefined;
@@ -52,6 +53,30 @@ class AudioStore {
 	private unlisten: UnlistenFn | undefined;
 	private unlistenSpeakerError: UnlistenFn | undefined;
 	private unlistenInputError: UnlistenFn | undefined;
+
+	/** Nodes left out of the running graph until their device, app or file returns. */
+	get waitingNodes(): PipelineNode[] {
+		if (!this.isRunning) return [];
+		return this.fullGraph?.nodes.filter((n) => this.pendingNodeIds.has(n.id)) ?? [];
+	}
+
+	/** Whether the engine is running this pipeline, not merely some pipeline. */
+	isRunningPipeline(pipelineId: string | null): boolean {
+		return this.isRunning && pipelineId !== null && this.runningPipelineId === pipelineId;
+	}
+
+	/** Whether the nodes on the editor canvas are the ones making sound. */
+	get editorIsLive(): boolean {
+		return this.isRunningPipeline(pipelineStore.editorPipelineId);
+	}
+
+	/** Starts, stops and reconciles run one at a time: a late reconcile of one
+	 * pipeline must never land on top of the next. */
+	private serialize<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.transitions.then(operation, operation);
+		this.transitions = result.catch(() => {});
+		return result;
+	}
 
 	async refreshInputDevices(): Promise<void> {
 		this.inputDevices = await methods.listInputDevices();
@@ -77,7 +102,10 @@ class AudioStore {
 		await Promise.all([this.refreshInputDevices(), this.refreshOutputDevices()]);
 		void this.refreshAudioApplications();
 		this.isRunning = await methods.isPipelineRunning().catch(() => false);
-		if (this.isRunning) this.startedAt = Date.now();
+		if (this.isRunning) {
+			this.startedAt = Date.now();
+			this.runningPipelineId = await pipelineMethods.getActivePipelineId().catch(() => null);
+		}
 		this.unlisten = await methods.onState((e) => {
 			if (e.kind === 'started') {
 				this.isRunning = true;
@@ -91,7 +119,7 @@ class AudioStore {
 				}
 			} else if (e.kind === 'error') {
 				this.stopPendingReconnectLoop();
-				this.pendingNodeIds.clear();
+				this.pendingNodeIds = new Set();
 				this.isRunning = false;
 				this.runningPipelineId = null;
 				this.startedAt = null;
@@ -101,106 +129,118 @@ class AudioStore {
 		});
 
 		methods
-			.onInputError(async (payload) => {
-				if (this.inputRecovering || !this.isRunning) return;
-				this.inputRecovering = true;
-				const msg = payload.error || 'Input device disconnected';
-				try {
-					if (!appSettings.keepRunningOnDisconnect) {
-						this.stopPendingReconnectLoop();
-						this.pendingNodeIds.clear();
-						this.isRunning = false;
-						this.runningPipelineId = null;
-						this.startedAt = null;
-						await methods.stopPipeline().catch(() => {});
-						this.reportError(msg);
-						return;
-					}
-					// If we have full graph, try to exclude the disconnected node and keep running
-					if (this.fullGraph && payload.nodeId) {
-						this.pendingNodeIds.add(payload.nodeId);
-						const reduced = this.buildReducedGraph(this.fullGraph, this.pendingNodeIds);
-						if (reduced.nodes.length > 0) {
-							try {
-								await methods.reconcilePipeline(reduced);
-								this.lastGraph = reduced;
-								this.startPendingReconnectLoop();
-								this.reportError(msg);
-								return;
-							} catch {
-								// Reconcile failed or no working route left, fall through
+			.onInputError((payload) =>
+				this.serialize(async () => {
+					if (this.inputRecovering || !this.isRunning) return;
+					this.inputRecovering = true;
+					const msg = payload.error || 'Input device disconnected';
+					try {
+						if (!appSettings.keepRunningOnDisconnect) {
+							this.stopPendingReconnectLoop();
+							this.pendingNodeIds = new Set();
+							this.isRunning = false;
+							this.runningPipelineId = null;
+							this.startedAt = null;
+							await methods.stopPipeline().catch(() => {});
+							this.reportError(msg);
+							return;
+						}
+						// If we have full graph, try to exclude the disconnected node and keep running
+						if (this.fullGraph && payload.nodeId) {
+							this.pendingNodeIds = new Set([...this.pendingNodeIds, payload.nodeId]);
+							const reduced = this.buildReducedGraph(this.fullGraph, this.pendingNodeIds);
+							if (reduced.nodes.length > 0) {
+								try {
+									await methods.reconcilePipeline(reduced);
+									this.lastGraph = reduced;
+									this.startPendingReconnectLoop();
+									this.reportError(msg);
+									return;
+								} catch {
+									// Reconcile failed or no working route left, fall through
+								}
 							}
 						}
+						// Stop backend to avoid orphan threads, but keep frontend active & reconnecting
+						await methods.stopPipeline().catch(() => {});
+						this.startPendingReconnectLoop();
+						this.reportError(msg);
+					} catch (e: unknown) {
+						this.reportError(msg);
+					} finally {
+						this.inputRecovering = false;
 					}
-					// Stop backend to avoid orphan threads, but keep frontend active & reconnecting
-					await methods.stopPipeline().catch(() => {});
-					this.startPendingReconnectLoop();
-					this.reportError(msg);
-				} catch (e: unknown) {
-					this.reportError(msg);
-				} finally {
-					this.inputRecovering = false;
-				}
-			})
+				})
+			)
 			.then((fn) => {
 				this.unlistenInputError = fn;
 			})
 			.catch(() => {});
 
 		methods
-			.onSpeakerError(async (payload) => {
-				if (this.speakerRecovering || !this.isRunning) return;
-				this.speakerRecovering = true;
-				const msg = payload?.error || 'Speaker device disconnected';
-				try {
-					if (!appSettings.keepRunningOnDisconnect) {
-						this.stopPendingReconnectLoop();
-						this.pendingNodeIds.clear();
-						this.isRunning = false;
-						this.runningPipelineId = null;
-						this.startedAt = null;
-						await methods.stopPipeline().catch(() => {});
-						this.reportError(msg);
-						return;
-					}
-					if (this.fullGraph && payload?.nodeId) {
-						this.pendingNodeIds.add(payload.nodeId);
-						const reduced = this.buildReducedGraph(this.fullGraph, this.pendingNodeIds);
-						if (reduced.nodes.length > 0) {
-							try {
-								await methods.reconcilePipeline(reduced);
-								this.lastGraph = reduced;
-								this.startPendingReconnectLoop();
-								this.reportError(msg);
-								return;
-							} catch {
-								// Reconcile failed (e.g. no valid route left)
+			.onSpeakerError((payload) =>
+				this.serialize(async () => {
+					if (this.speakerRecovering || !this.isRunning) return;
+					this.speakerRecovering = true;
+					const msg = payload?.error || 'Speaker device disconnected';
+					try {
+						if (!appSettings.keepRunningOnDisconnect) {
+							this.stopPendingReconnectLoop();
+							this.pendingNodeIds = new Set();
+							this.isRunning = false;
+							this.runningPipelineId = null;
+							this.startedAt = null;
+							await methods.stopPipeline().catch(() => {});
+							this.reportError(msg);
+							return;
+						}
+						if (this.fullGraph && payload?.nodeId) {
+							this.pendingNodeIds = new Set([...this.pendingNodeIds, payload.nodeId]);
+							const reduced = this.buildReducedGraph(this.fullGraph, this.pendingNodeIds);
+							if (reduced.nodes.length > 0) {
+								try {
+									await methods.reconcilePipeline(reduced);
+									this.lastGraph = reduced;
+									this.startPendingReconnectLoop();
+									this.reportError(msg);
+									return;
+								} catch {
+									// Reconcile failed (e.g. no valid route left)
+								}
 							}
 						}
+						// Stop backend to avoid orphan threads, but keep frontend active & reconnecting
+						await methods.stopPipeline().catch(() => {});
+						this.startPendingReconnectLoop();
+						this.reportError(msg);
+					} catch (e: unknown) {
+						this.reportError(msg);
+					} finally {
+						this.speakerRecovering = false;
 					}
-					// Stop backend to avoid orphan threads, but keep frontend active & reconnecting
-					await methods.stopPipeline().catch(() => {});
-					this.startPendingReconnectLoop();
-					this.reportError(msg);
-				} catch (e: unknown) {
-					this.reportError(msg);
-				} finally {
-					this.speakerRecovering = false;
-				}
-			})
+				})
+			)
 			.then((fn) => {
 				this.unlistenSpeakerError = fn;
 			})
 			.catch(() => {});
 	}
 
-	async activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+	/** Runs a pipeline, stopping whichever other one is running. */
+	activatePipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+		return this.serialize(() => this.activate(pipelineId, graph));
+	}
+
+	private async activate(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+		if (this.isRunning && this.runningPipelineId !== pipelineId) await this.deactivate();
 		this.safeMode = false;
 		this.lastGraph = graph;
 		this.fullGraph = graph;
 		const excluded = appSettings.keepRunningOnDisconnect ? await this.unresolvedInputIds(graph) : new Set<string>();
 		this.pendingNodeIds = excluded;
 		const toStart = excluded.size > 0 ? this.buildReducedGraph(graph, excluded) : graph;
+		// The `started` event can arrive before the command returns.
+		this.runningPipelineId = pipelineId;
 		try {
 			await methods.startPipeline(toStart);
 			this.lastGraph = toStart;
@@ -208,16 +248,16 @@ class AudioStore {
 				this.startPendingReconnectLoop();
 			}
 		} catch (e) {
+			if (!this.isRunning) this.runningPipelineId = null;
 			if (await this.handleStartError(e, pipelineId, graph)) return;
 			this.stopPendingReconnectLoop();
-			this.pendingNodeIds.clear();
+			this.pendingNodeIds = new Set();
 			this.isRunning = false;
 			this.runningPipelineId = null;
 			this.startedAt = null;
 			await methods.stopPipeline().catch(() => {});
 			throw e;
 		}
-		this.runningPipelineId = pipelineId;
 		await pipelineMethods.setActivePipelineId(pipelineId).catch(() => {});
 	}
 
@@ -228,14 +268,14 @@ class AudioStore {
 		const nodeId = this.chooseFileNodeIdFrom(e);
 		if (!nodeId) return false;
 		// The tray panel can start a pipeline other than the one open in the editor.
-		if (pipelineStore.editorActions?.getSnapshot()?.id === pipelineId) {
+		if (pipelineStore.editorPipelineId === pipelineId) {
 			this.chooseFileNodeId = nodeId;
 			this.pendingRetryPipelineId = pipelineId;
 			return true;
 		}
 		const next = await this.promptRecordingFile(pipelineId, graph, nodeId);
 		if (!next) return true;
-		await this.activatePipeline(pipelineId, next);
+		await this.activate(pipelineId, next);
 		return true;
 	}
 
@@ -287,9 +327,13 @@ class AudioStore {
 	/** Explicit user stop: unlike an engine-reported `stopped`/`error` event
 	 * (handled in `init()`), this also forgets the persisted active pipeline
 	 * so a future launch doesn't try to auto-activate it again. */
-	async deactivatePipeline(): Promise<void> {
+	deactivatePipeline(): Promise<void> {
+		return this.serialize(() => this.deactivate());
+	}
+
+	private async deactivate(): Promise<void> {
 		this.stopPendingReconnectLoop();
-		this.pendingNodeIds.clear();
+		this.pendingNodeIds = new Set();
 		this.isRunning = false;
 		this.runningPipelineId = null;
 		this.startedAt = null;
@@ -301,7 +345,11 @@ class AudioStore {
 	 * PC last rebooted). Any App Audio / Audio File source not available yet
 	 * is left out of the initial start and reconnected later by the polling
 	 * loop once it becomes available. */
-	async autoActivateOnLaunch(): Promise<void> {
+	autoActivateOnLaunch(): Promise<void> {
+		return this.serialize(() => this.autoActivate());
+	}
+
+	private async autoActivate(): Promise<void> {
 		const crashGuard = browser && window.localStorage.getItem('splitwave:boot_audio_crash_guard') === 'true';
 		if (errorStore.hadPreviousCrash || crashGuard) {
 			this.safeMode = true;
@@ -320,9 +368,11 @@ class AudioStore {
 		this.pendingNodeIds = excluded;
 		const reduced = this.buildReducedGraph(full, excluded);
 		if (browser) window.localStorage.setItem('splitwave:boot_audio_crash_guard', 'true');
+		this.runningPipelineId = id;
 		try {
 			await methods.startPipeline(reduced);
 		} catch (e) {
+			this.runningPipelineId = null;
 			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
 			this.reportError(e);
 			return;
@@ -331,7 +381,6 @@ class AudioStore {
 			if (browser) window.localStorage.removeItem('splitwave:boot_audio_crash_guard');
 		}, 4000);
 		this.lastGraph = reduced;
-		this.runningPipelineId = id;
 		if (excluded.size > 0) {
 			this.startPendingReconnectLoop();
 		}
@@ -408,36 +457,47 @@ class AudioStore {
 		}
 		this.reconnectInFlight = true;
 		try {
-			const stillUnresolved = await this.unresolvedInputIds(this.fullGraph);
-			const reduced = this.buildReducedGraph(this.fullGraph, stillUnresolved);
-			const result = await reconcilePendingChange(this.pendingNodeIds, stillUnresolved, reduced, methods.reconcilePipeline, methods.startPipeline);
-			if (result !== 'applied') return;
-			this.pendingNodeIds = stillUnresolved;
-			this.lastGraph = reduced;
-			if (stillUnresolved.size === 0) this.stopPendingReconnectLoop();
+			await this.serialize(() => this.reconnectPending());
 		} finally {
 			this.reconnectInFlight = false;
 		}
 	}
 
+	private async reconnectPending(): Promise<void> {
+		// A stop or switch may have run while this was queued.
+		if (!this.isRunning || !this.fullGraph || this.pendingNodeIds.size === 0) return;
+		const stillUnresolved = await this.unresolvedInputIds(this.fullGraph);
+		const reduced = this.buildReducedGraph(this.fullGraph, stillUnresolved);
+		const result = await reconcilePendingChange(this.pendingNodeIds, stillUnresolved, reduced, methods.reconcilePipeline, methods.startPipeline);
+		if (result !== 'applied') return;
+		this.pendingNodeIds = stillUnresolved;
+		this.lastGraph = reduced;
+		if (stillUnresolved.size === 0) this.stopPendingReconnectLoop();
+	}
+
 	/** Reopens every device of the running pipeline at the current engine
 	 * sample rate and buffer size. No-op when nothing is running. */
-	async applyEngineFormat(): Promise<void> {
-		if (!this.isRunning || !this.fullGraph) return;
-		await this.restartPipeline(this.fullGraph);
+	applyEngineFormat(): Promise<void> {
+		return this.serialize(async () => {
+			if (!this.isRunning || !this.fullGraph) return;
+			await this.restart(this.fullGraph);
+		});
 	}
 
 	/** Apply a new graph to the running pipeline. Uses `reconcile_pipeline`,
 	 * which diffs the new graph and only touches what changed — input
 	 * streams stay alive across edits when their spec is unchanged.
 	 * Falls back to stop + start if the pipeline isn't running. */
-	async restartPipeline(graph: StartPipelinePayload): Promise<void> {
+	restartPipeline(pipelineId: string, graph: StartPipelinePayload): Promise<void> {
+		return this.serialize(async () => {
+			if (this.runningPipelineId !== pipelineId) return;
+			await this.restart(graph);
+		});
+	}
+
+	private async restart(graph: StartPipelinePayload): Promise<void> {
 		this.fullGraph = graph;
-		for (const id of this.pendingNodeIds) {
-			if (!graph.nodes.some((n) => n.id === id)) {
-				this.pendingNodeIds.delete(id);
-			}
-		}
+		this.pendingNodeIds = new Set([...this.pendingNodeIds].filter((id) => graph.nodes.some((n) => n.id === id)));
 		if (this.pendingNodeIds.size === 0) {
 			this.stopPendingReconnectLoop();
 		}
@@ -476,7 +536,7 @@ class AudioStore {
 
 	private routeStartError(e: unknown): boolean {
 		const nodeId = this.chooseFileNodeIdFrom(e);
-		if (!nodeId) return false;
+		if (!nodeId || !this.editorIsLive) return false;
 		this.chooseFileNodeId = nodeId;
 		this.pendingRetryPipelineId = null;
 		return true;

@@ -18,6 +18,7 @@ interface Stored {
 	bufferFrames: number;
 	uiScale: number;
 	animatedNumbers: boolean;
+	closeToTray: boolean;
 }
 
 const DEFAULTS: Stored = {
@@ -32,7 +33,8 @@ const DEFAULTS: Stored = {
 	pipelineSampleRate: DEFAULT_SAMPLE_RATE,
 	bufferFrames: DEFAULT_BUFFER_FRAMES,
 	uiScale: 100,
-	animatedNumbers: true
+	animatedNumbers: true,
+	closeToTray: true
 };
 
 export const SNAPSHOT_LIMITS = [10, 20, 50, 100] as const;
@@ -70,6 +72,7 @@ class AppSettings {
 	);
 	uiScale = $state(this.#initial.uiScale ?? 100);
 	animatedNumbers = $state(this.#initial.animatedNumbers ?? true);
+	closeToTray = $state(this.#initial.closeToTray);
 
 	persist(): void {
 		if (!browser) return;
@@ -85,7 +88,8 @@ class AppSettings {
 			pipelineSampleRate,
 			bufferFrames,
 			uiScale,
-			animatedNumbers
+			animatedNumbers,
+			closeToTray
 		} = this;
 		window.localStorage.setItem(
 			KEY,
@@ -101,7 +105,8 @@ class AppSettings {
 				pipelineSampleRate,
 				bufferFrames,
 				uiScale,
-				animatedNumbers
+				animatedNumbers,
+				closeToTray
 			})
 		);
 	}

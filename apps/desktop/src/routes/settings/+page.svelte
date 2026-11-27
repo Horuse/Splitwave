@@ -28,6 +28,7 @@
 	import { formatHz, formatLatencyMs } from '@splitwave/nodes';
 	import PresetsSection from './_presets_section.svelte';
 	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { methods as trayMethods } from '$lib/modules/tray/methods';
 	import { DEFAULT_SAMPLE_RATE, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE } from '@splitwave/nodes/generated/engine';
 
 	const SHAPES: { value: EdgeShape; label: string; hint: string }[] = [
@@ -87,6 +88,7 @@
 			| 'pipelineSampleRate'
 			| 'bufferFrames'
 			| 'animatedNumbers'
+			| 'closeToTray'
 	>(key: K, value: (typeof appSettings)[K]) {
 		appSettings[key] = value;
 		appSettings.persist();
@@ -106,8 +108,14 @@
 		}
 	}
 
+	let trayAvailable = $state(true);
+
 	onMount(() => {
 		void appSettings.syncLaunchOnStartup();
+		trayMethods
+			.isAvailable()
+			.then((available) => (trayAvailable = available))
+			.catch((e) => audioStore.reportError(e));
 	});
 </script>
 
@@ -293,6 +301,15 @@
 				label="Launch on system startup"
 				hint="Starts Splitwave automatically when you log in."
 				onChange={() => setLaunchOnStartup(!appSettings.launchOnStartup)} />
+
+			<Toggle
+				checked={trayAvailable && appSettings.closeToTray}
+				disabled={!trayAvailable}
+				label="Keep running in the tray"
+				hint={trayAvailable
+					? 'Closing the window hides it and audio keeps playing. Quit from the tray panel. When off, closing the window quits Splitwave.'
+					: 'The tray icon is not available on this system, so closing the window quits Splitwave. See the logs for the reason.'}
+				onChange={() => setApp('closeToTray', !appSettings.closeToTray)} />
 		</SectionCard>
 
 		<SectionCard

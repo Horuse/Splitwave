@@ -1,0 +1,193 @@
+<script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+	import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+	import { Toaster } from 'svelte-french-toast';
+	import { audioStore } from '$lib/modules/audio/stores.svelte';
+	import { pipelineStore } from '$lib/modules/pipeline/stores.svelte';
+	import { installErrorHandlers } from '$lib/modules/error';
+	import { ErrorModal } from '$lib/modules/error/ui';
+	import { checkForUpdates } from '$lib/modules/updater';
+	import { appSettings } from '$lib/modules/settings/stores.svelte';
+	import { UpdateBanner } from '$lib/modules/updater/ui';
+	import { DebugPanel } from '$lib/modules/debug';
+	import { loadAppInfo } from '$lib/modules/app_info';
+	import { numberAnimations, watchSmoothRadius } from '@splitwave/ui';
+	import { page } from '$app/state';
+	import { fade } from 'svelte/transition';
+	import AppSidebar from '$lib/components/layout/app_sidebar.svelte';
+	import { trayBridge } from '$lib/modules/tray/bridge.svelte';
+	import { methods as trayMethods } from '$lib/modules/tray/methods';
+	import { ModalRender } from '$lib/modules/overlay/ui';
+	import { modalManager } from '$lib/modules/overlay/modal';
+	import { AboutModal } from '$lib/modules/about/ui';
+	import { logStore } from '$lib/modules/logs';
+	import { LogsModal } from '$lib/modules/logs/ui';
+	import { platform } from '@tauri-apps/plugin-os';
+	import { initAnnouncements } from '$lib/modules/announcements';
+	import { initChangelogWatch } from '$lib/modules/changelog';
+
+	const isDev = import.meta.env.DEV;
+
+	let { children } = $props();
+
+	let unlistenMenu: UnlistenFn | undefined;
+	let unlistenTray: UnlistenFn | undefined;
+
+	function focusedField(): HTMLInputElement | HTMLTextAreaElement | null {
+		const el = document.activeElement;
+		return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el : null;
+	}
+
+	// The macOS Edit menu routes Copy/Paste/Select All here instead of letting AppKit
+	// handle them, so the text-field behaviour has to be reproduced by hand.
+	function fieldCopy(el: HTMLInputElement | HTMLTextAreaElement) {
+		const { selectionStart, selectionEnd } = el;
+		if (selectionStart === null || selectionEnd === null || selectionStart === selectionEnd) return;
+		navigator.clipboard.writeText(el.value.slice(selectionStart, selectionEnd)).catch(() => {});
+	}
+
+	async function fieldPaste(el: HTMLInputElement | HTMLTextAreaElement) {
+		const text = await navigator.clipboard.readText();
+		if (!text) return;
+		const start = el.selectionStart ?? el.value.length;
+		const end = el.selectionEnd ?? start;
+		el.setRangeText(text, start, end, 'end');
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+	}
+
+	function handleMenu(id: string) {
+		const field = focusedField();
+		switch (id) {
+			case 'copy':
+				if (field) fieldCopy(field);
+				else pipelineStore.editorActions?.copySelection();
+				return;
+			case 'paste':
+				if (field) fieldPaste(field).catch(() => {});
+				else pipelineStore.editorActions?.paste();
+				return;
+			case 'select_all':
+				if (field) field.select();
+				else pipelineStore.editorActions?.selectAll();
+				return;
+			case 'about':
+				modalManager.open('', AboutModal, { canClose: true });
+				break;
+			case 'check_updates':
+				checkForUpdates().catch(() => {});
+				break;
+			case 'undo':
+				pipelineStore.editorActions?.undo();
+				break;
+			case 'redo':
+				pipelineStore.editorActions?.redo();
+				break;
+		}
+	}
+
+	// Linux and Windows have no native menu, so their Cmd/Ctrl+Z accelerators are
+	// gone -- wire undo/redo here. Skip while typing so text-field undo still works.
+	function onKeydown(e: KeyboardEvent) {
+		if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+		const t = e.target as HTMLElement | null;
+		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+		e.preventDefault();
+		if (e.shiftKey) pipelineStore.editorActions?.redo();
+		else pipelineStore.editorActions?.undo();
+	}
+
+	// Cmd/Ctrl+Shift+L opens the log viewer. Shipped in release builds too --
+	// it is the only way to read engine logs on a user's machine.
+	function onLogsHotkey(e: KeyboardEvent) {
+		if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'l') return;
+		e.preventDefault();
+		logStore.open = !logStore.open;
+	}
+
+	onMount(() => watchSmoothRadius());
+
+	$effect(() => {
+		trayBridge.publish(trayBridge.snapshot());
+	});
+
+	$effect(() => {
+		trayMethods.setCloseToTray(appSettings.closeToTray).catch(() => {});
+	});
+
+	$effect(() => {
+		numberAnimations.enabled = appSettings.animatedNumbers;
+	});
+
+	onMount(async () => {
+		logStore.installConsoleCapture();
+		appSettings.applyUiScale();
+		window.addEventListener('keydown', onLogsHotkey);
+		await installErrorHandlers().catch(() => {});
+		loadAppInfo().catch(() => {});
+		trayBridge
+			.start()
+			.then((fn) => {
+				unlistenTray = fn;
+			})
+			.catch(() => {});
+		try {
+			await audioStore.init();
+			await audioStore.autoActivateOnLaunch();
+		} catch {}
+		pipelineStore.refresh().catch(() => {});
+		initAnnouncements();
+		initChangelogWatch();
+		if (appSettings.checkUpdatesOnLaunch) checkForUpdates(true).catch(() => {});
+		listen<string>('menu://action', (e) => handleMenu(e.payload))
+			.then((fn) => {
+				unlistenMenu = fn;
+			})
+			.catch(() => {});
+		// plugin-os reads a Tauri-injected global; absent in plain-browser preview.
+		try {
+			const os = platform();
+			if (os === 'linux' || os === 'windows') window.addEventListener('keydown', onKeydown);
+		} catch {
+			// no OS plugin (preview) -- native menus/accelerators are irrelevant here
+		}
+	});
+
+	onDestroy(() => {
+		unlistenMenu?.();
+		unlistenTray?.();
+		window.removeEventListener('keydown', onKeydown);
+		window.removeEventListener('keydown', onLogsHotkey);
+		audioStore.destroy();
+	});
+</script>
+
+<UpdateBanner />
+
+<div class="flex h-screen overflow-hidden">
+	{#if page.route.id !== '/pipelines/[id]'}
+		<AppSidebar />
+	{/if}
+	<main class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+		{#if page.route.id === '/pipelines/[id]'}
+			{@render children()}
+		{:else}
+			{#key page.url.pathname}
+				<div class="flex min-h-0 flex-1 flex-col" in:fade={{ duration: 150 }}>
+					{@render children()}
+				</div>
+			{/key}
+		{/if}
+	</main>
+</div>
+
+<ErrorModal />
+
+{#if logStore.open}
+	<LogsModal />
+{/if}
+
+<ModalRender />
+
+{#if isDev}
+	<DebugPanel />
+{/if}

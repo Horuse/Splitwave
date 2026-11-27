@@ -7,6 +7,7 @@ mod native_crash;
 mod state;
 #[doc(hidden)]
 pub mod testkit;
+mod tray;
 mod watchdog;
 
 use std::path::PathBuf;
@@ -367,8 +368,12 @@ pub fn run() {
                 });
             }
 
+            tray::init(&handle);
+
             Ok(())
         })
+        .on_window_event(tray::on_window_event)
+        .manage(tray::TrayState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -382,6 +387,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::spawn())
         .invoke_handler(with_watchdog(tauri::generate_handler![
+            tray::set_close_to_tray,
+            tray::tray_available,
+            tray::show_main_window,
+            tray::quit_app,
             commands::scan_plugins,
             commands::open_plugin_editor,
             commands::close_plugin_editor,
@@ -449,9 +458,11 @@ pub fn run() {
         ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                mark_clean_exit();
-            }
+        .run(|_app, event| match event {
+            tauri::RunEvent::Exit => mark_clean_exit(),
+            // The Dock icon is the way back to a window hidden to the tray.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show_main(_app),
+            _ => {}
         });
 }

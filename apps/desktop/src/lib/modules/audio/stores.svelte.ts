@@ -11,6 +11,7 @@ import type { FileRecordingNodeData, PipelineNode, RecordingFormat } from '@spli
 import { appSettings } from '$lib/modules/settings/stores.svelte';
 import { errorStore } from '$lib/modules/error';
 import { reconcilePendingChange } from './reconnect';
+import { methods as trayMethods } from '$lib/modules/tray/methods';
 
 // Mirrors `extension()` in the File Recording node: the dialog filter must
 // match the encoder the node will actually write.
@@ -226,7 +227,8 @@ class AudioStore {
 	private async handleStartError(e: unknown, pipelineId: string, graph: StartPipelinePayload): Promise<boolean> {
 		const nodeId = this.chooseFileNodeIdFrom(e);
 		if (!nodeId) return false;
-		if (pipelineStore.editorActions) {
+		// The tray panel can start a pipeline other than the one open in the editor.
+		if (pipelineStore.editorActions?.getSnapshot()?.id === pipelineId) {
 			this.chooseFileNodeId = nodeId;
 			this.pendingRetryPipelineId = pipelineId;
 			return true;
@@ -253,6 +255,8 @@ class AudioStore {
 		const data = node.data as FileRecordingNodeData;
 		const ext = recordingExtension(data.format);
 		const append = data.mode === 'append';
+		// A start from the tray panel may find this window hidden.
+		await trayMethods.showMainWindow().catch(() => {});
 		let path: string | null;
 		if (append) {
 			const picked = await open({

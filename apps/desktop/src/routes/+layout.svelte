@@ -24,8 +24,11 @@
 	import { platform } from '@tauri-apps/plugin-os';
 	import { initAnnouncements } from '$lib/modules/announcements';
 	import { initChangelogWatch } from '$lib/modules/changelog';
+	import { installAnimationRelease } from '$lib/utils/release_animations';
 
 	const isDev = import.meta.env.DEV;
+
+	installAnimationRelease();
 
 	let { children } = $props();
 
